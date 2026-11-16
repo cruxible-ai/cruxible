@@ -1301,11 +1301,7 @@ def _readmit(
             ),
             reobservations_refused=recompiled.reobservations_refused,
         )
-    if (
-        source.candidate is not None
-        and len(source.candidate.members) > 1
-        and any(member.artifact_kind == "claim-type" for member in source.candidate.members)
-    ):
+    if exact_bytes_cannot_rebase(source):
         raise ProposalReadmitRequiresResubmission()
     if landing and not mode.previewing:
         landed = land_exact_bytes(instance, source, mode=mode)
@@ -1317,6 +1313,31 @@ def _readmit(
             proposal=ProposalInspection(proposal=landed, accepted_coordinate=link.coordinate),
         )
     return _readmit_exact_bytes(instance, mode, source, proposal_id=proposal_id, actor_id=actor_id)
+
+
+def holds_claim_type_closure(source: ProposalResult) -> bool:
+    """A change set of several members holding a ClaimType: a closure built at its base."""
+
+    return (
+        source.candidate is not None
+        and len(source.candidate.members) > 1
+        and any(member.artifact_kind == "claim-type" for member in source.candidate.members)
+    )
+
+
+def exact_bytes_cannot_rebase(source: ProposalResult) -> bool:
+    """Whether this change set may not be readmitted by its own bytes: a generated
+    claim-type migration, whose dependent inventory and pins only rerunning the
+    migration rebuilds.
+
+    Any other change set rebases by its bytes and is evaluated again at the head
+    (a kit change, a Document); one with retained authoring input recompiles
+    there instead, and never reaches this check.
+    """
+
+    return holds_claim_type_closure(source) and (
+        "/claim-type-migration-" in source.admission.target_ref
+    )
 
 
 def _readmit_exact_bytes(
@@ -1440,11 +1461,7 @@ def land_exact_bytes(
         if carried.admission.proposal_id != source_id:
             return carried
         instance.proposal_evidence().refuse_closed(source_id)
-        if (
-            source.candidate is not None
-            and len(source.candidate.members) > 1
-            and any(member.artifact_kind == "claim-type" for member in source.candidate.members)
-        ):
+        if exact_bytes_cannot_rebase(source):
             raise ProposalReadmitRequiresResubmission()
         try:
             readmitted = _readmit_exact_bytes(

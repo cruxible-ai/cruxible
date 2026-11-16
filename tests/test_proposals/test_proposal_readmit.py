@@ -648,3 +648,79 @@ def test_a_refused_readmit_names_the_real_exit_by_origin_never_readmit(
     assert "(effectful_operation_payload_mismatch: Recovery re-derived another change)" in message
     assert "proposal readmit" not in message
     assert ("proposal withdraw prop-1" in message) is not approver
+
+
+def test_a_late_signer_is_told_a_generated_migration_cannot_land_and_who_reruns_it(
+    tmp_path: Path,
+) -> None:
+    """A real generated claim-type migration cannot be landed for a signer registered
+    after its base: there is no retained input to recompile and its closure is not
+    rebased by bytes. The refusal says that and names the author's command, and
+    nothing is admitted or closed."""
+
+    from cruxible_core.governance.keys import generate_client_principal_key
+    from cruxible_core.service.authoring.documents import (
+        service_propose_playbill_principal_change,
+    )
+    from cruxible_core.service.proposals.review import service_prepare_playbill_approval
+    from cruxible_core.storage.cas import BodyAccessContext
+
+    instance, claim_id, owner = _accepted_claim_world(tmp_path)
+    migration = service_migrate_claim_type(
+        instance,
+        request=ClaimTypeMigrationRequest(
+            mode="submit",
+            successor=_successor(instance),
+            dependents=(
+                ClaimTypeDependentDisposition(
+                    identity=ArtifactIdentity(kind="Claim", name=claim_id),
+                    disposition="successor",
+                ),
+            ),
+        ),
+        actor=AuthenticatedActor(actor_id="owner"),
+    )
+    source_id = migration.proposal.proposal.admission.proposal_id  # type: ignore[union-attr]
+    late = generate_client_principal_key(
+        tmp_path / "late-keys", principal_id="late", kind="ordinary", forbidden_roots=()
+    )
+    registration = service_propose_playbill_principal_change(
+        instance,
+        principal=late.principal,
+        actor_id="owner",
+        proposal_name="register-late",
+        timestamp=TIMESTAMP,
+    )
+    candidate = registration.proposal.candidate
+    assert candidate is not None
+    service_submit_playbill_approval(
+        instance,
+        proposal_id=registration.proposal.admission.proposal_id,
+        attestation=_sign(
+            owner, candidate.candidate_digest, candidate.candidate.parent_semantic_root
+        ).attestation,
+        authenticated_submitter="owner",
+        activate_when_complete=True,
+        may_activate=True,
+    )
+    assert any(
+        record.principal_id == "late"
+        for record in instance.accepted_history()[-1].principals.principals
+    )
+    admissions = instance.proposal_evidence().list_admissions()
+
+    with pytest.raises(ProposalReadmitRequiresResubmission) as refused:
+        service_prepare_playbill_approval(
+            instance,
+            proposal_id=source_id,
+            signer_id="late",
+            access=BodyAccessContext(principal_id="late", can_read_body=True),
+            land=lambda: None,
+        )
+
+    message = str(refused.value)
+    assert "generated dependency-closure migration" in message
+    assert "signer registered after its base" in message
+    assert "its author 'owner' reruns `cruxible claim-type migrate`" in message
+    assert instance.proposal_evidence().list_admissions() == admissions
+    assert instance.proposal_evidence().read_withdrawal(source_id) is None

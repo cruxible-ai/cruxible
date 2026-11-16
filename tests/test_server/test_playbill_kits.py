@@ -2637,3 +2637,46 @@ def test_a_kit_commit_below_graph_write_proposes_and_does_not_activate(
     assert consumer.tree() == before
     activated = playbill_api.playbill_activate(consumer.instance_id, capped.proposal_id)
     assert activated.status == "accepted"  # type: ignore[union-attr]
+
+
+def test_a_late_reviewer_lands_and_approves_a_proposed_kit_change(
+    strict_worlds: tuple[_World, _World], tmp_path: Path
+) -> None:
+    """A kit change holds ClaimTypes among other members and has no retained authoring
+    input; it was refused as "a generated dependency-closure migration". Nothing it
+    touches changed since its base, so it lands at the head by its own bytes and is
+    evaluated there again, and the late reviewer signs the landed candidate."""
+
+    from cruxible_client.contracts.principals import PRINCIPAL_ID_HEADER
+    from tests.test_server.test_late_signer_landing import register_late, sign_and_submit
+
+    publisher, consumer = strict_worlds
+    publisher.author(_claim_type(SEATS, {"type": "integer"}), _claim_type(PLAN, {"type": "string"}))
+    release = publisher.build("1.0.0")
+    proposed = playbill_api.playbill_kit_add(
+        consumer.instance_id, KitAddRequest(bundle=release, source="test", dry_run=False)
+    )
+    assert proposed.status == "proposed" and proposed.approval_required, proposed
+    assert proposed.proposal_id is not None
+
+    late_key = register_late(
+        consumer.http,
+        consumer.instance_id,
+        tmp_path,
+        consumer.reviewer_key,
+        tmp_path / "consumer-operator-custody" / "operator.ed25519",
+    )
+    receipt = sign_and_submit(
+        consumer.http,
+        consumer.instance_id,
+        proposed.proposal_id,
+        signer="late",
+        key=late_key,
+        headers={PRINCIPAL_ID_HEADER: "late"},
+    )
+
+    assert receipt["challenge_proposal_id"] != proposed.proposal_id
+    assert receipt["readmits"] == proposed.proposal_id, receipt
+    assert receipt["activation"]["status"] == "accepted", receipt  # type: ignore[index]
+    for path, content in release.contents().items():
+        assert consumer.tree()[path] == content

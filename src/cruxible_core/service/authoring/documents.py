@@ -37,6 +37,7 @@ from cruxible_client.contracts.errors import (
     ProposalActivationRequestInvalid,
     ProposalAlreadyAccepted,
     ProposalIntegrityError,
+    ProposalReadmitRequiresResubmission,
     ProposalStale,
     SettlementIntegrityError,
 )
@@ -688,7 +689,16 @@ def land_for_signer(instance: PlaybillInstance, proposal_id: str) -> str:
             reason="changed_since_base",
             detail="changed at the head since its base: " + render_stale_paths(stale_paths),
         )
-    recompiled = _recompile_for_review(instance, proposal, approver=True)
+    try:
+        recompiled = _recompile_for_review(instance, proposal, approver=True)
+    except ProposalReadmitRequiresResubmission as exc:
+        author = proposal.admission.actor_id
+        raise ProposalReadmitRequiresResubmission(
+            f"proposal {proposal_id} is a generated dependency-closure migration with no "
+            "retained input, so it cannot be landed at the head for a signer registered "
+            f"after its base; its author {author!r} reruns `cruxible claim-type migrate` "
+            "preflight/submit at the current head, and you approve the new proposal"
+        ) from exc
     if recompiled is None:
         raise ProposalStale(proposal_id)
     if recompiled.proposal_id is None:
@@ -1084,10 +1094,17 @@ def _recompile_for_review(
         origin = lowering_origin(instance, source)
     except ProposalStale:
         origin = None
-    if origin is None or origin.admission.procedure_operation is None:
+    from cruxible_core.service.proposals.proposals import holds_claim_type_closure
+
+    if (origin is None or origin.admission.procedure_operation is None) and not (
+        origin is not None and holds_claim_type_closure(source)
+    ):
         # Nothing it touches changed since its base: the same change set lands
         # at the head by its own bytes. A Line's or Procedure's proposal
-        # re-decides at the head instead, as its recompilation always has.
+        # re-decides at the head instead, as its recompilation always has, and
+        # so does an authored change set holding a ClaimType among other
+        # members (its closure is rebuilt from its retained input), exactly as
+        # its author's readmit does.
         landed = _land_exact_bytes_for_review(instance, source)
         if landed is not None:
             return landed
