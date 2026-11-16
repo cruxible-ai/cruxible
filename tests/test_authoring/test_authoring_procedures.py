@@ -42,7 +42,7 @@ from cruxible_client.contracts.query.grammar import QueryProjection
 from cruxible_core.authoring import lowering
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.authoring.preflight import compute_preflight
-from cruxible_core.authoring.store import AuthoringIntentStore
+from cruxible_core.authoring.store import AuthoringIntentRefused, AuthoringIntentStore
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.governance.keys import GeneratedKeyMaterial
 from cruxible_core.proposals.proposals import AuthenticatedActor
@@ -397,12 +397,15 @@ def test_change_set_membership_and_candidate_reference_refusals(tmp_path: Path) 
     renamed_values = query.model_dump(mode="json")
     renamed_values["identity"] = {"kind": "QueryDefinition", "name": "renamed"}
     renamed = validate_query_definition(renamed_values)
-    with pytest.raises(ValueError, match="cannot change member identity"):
+    # A caller fault: a typed refusal naming a new intent as the repair, never a 500.
+    with pytest.raises(AuthoringIntentRefused, match="cannot change member identity") as refusal:
         coordinator.replace_payload(
             created.intent.intent_id,
             actor=actor,
             payload=_change_set_payload(renamed),
         )
+    assert refusal.value.error_code == "cruxible.authoring.intent_kind_changed"
+    assert refusal.value.http_status == 400
 
     # A Query the change set does not stage (and the base does not hold) is
     # unresolved, named by the step that reads it.
