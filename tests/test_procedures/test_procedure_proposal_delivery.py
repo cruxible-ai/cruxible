@@ -2410,8 +2410,10 @@ def test_a_transition_records_the_whole_call_span_through_delivery_and_recovery(
         reader.latest_version_record(claim.identity.name, version, observed_by=middle, keys=keys)
         is None
     )
+    # By its latest instant the call counts (the run's own fetch observation,
+    # unwidened here, may be the later instant reported).
     met = reader.latest_version_record(claim.identity.name, version, observed_by=latest, keys=keys)
-    assert met is not None and met.record.observed_at == earliest
+    assert met is not None and earliest <= met.record.observed_at <= latest
 
 
 def test_a_mixed_terminal_proposes_the_change_and_reports_the_unchanged_item(

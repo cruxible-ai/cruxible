@@ -768,7 +768,14 @@ def test_an_absence_reobservation_verifies_every_member_of_its_witness(
     logical source. The re-observation's receipt cites the first page, which is sound.
     """
 
-    from cruxible_core.evidence.claim_reobservations import ClaimReobservationStore
+    from datetime import UTC, datetime, timedelta
+
+    from cruxible_client.contracts.claims import claim_path, parse_claim
+    from cruxible_core.evidence.claim_reobservations import (
+        ClaimReobservationStore,
+        ReobservationReader,
+        cited_content_keys,
+    )
     from cruxible_core.procedures.claims_context import AcceptedClaimsContext
     from cruxible_core.service.evidence import capture_reads
 
@@ -806,17 +813,34 @@ def test_an_absence_reobservation_verifies_every_member_of_its_witness(
             raise capture_reads.CaptureReadInvalid("Capture verification failed: corrupt")
 
         monkeypatch.setattr(capture_reads, "verify_accepted_capture", failing)
+    # The pages re-read in new bytes stating the same entries (D-R8): identical
+    # bytes would reuse the held Captures and deliver nothing (ruling 1c).
+    restated = [
+        json.dumps({**json.loads(page), "fetched": "again"}, sort_keys=True).encode()
+        for page in delisted
+    ]
     third = run_pages(
-        instance, Pages(delisted, sources=sources), line="test.kev-pages-line", minute=2
+        instance, Pages(restated, sources=sources), line="test.kev-pages-line", minute=2
     )
     assert third.status == "succeeded", third.terminal
     (call,) = (node for node in third.nodes if node.node == "pages")
     members = tuple(call.summary.capture_digests)
-    recorded = ClaimReobservationStore(instance).history(inverse)
-    if defect is None:
-        assert [record.capture_digest for record in recorded] == [members[0]]
-    else:
-        assert recorded == ()
+    # Nothing is recorded per Claim; the terminal's one transition re-checks the
+    # inverse in the first page's new bytes only when its whole witness stands.
+    assert ClaimReobservationStore(instance).history(inverse) == ()
+    head = instance.accepted_coordinate()
+    claim = parse_claim(
+        instance.tree_at(head.git_oid)[claim_path(inverse)], path=claim_path(inverse)
+    )
+    keys = cited_content_keys(
+        instance, coordinate=head, capture_digests=tuple(claim.backing.capture_digests)
+    )
+    # The journal stamps the wall clock: read after every record.
+    reading = ReobservationReader(instance).latest(
+        inverse, keys, datetime.now(UTC) + timedelta(days=1)
+    )
+    reobserving = {item.reobserving_capture_digest for item in reading.evidence}
+    assert (members[0] in reobserving) == (defect is None)
 
 
 def test_a_list_the_provider_says_is_incomplete_never_retires(tmp_path: Path) -> None:

@@ -2386,8 +2386,13 @@ class ProposalTerminalEgressSink:
                 return None
             return held.capture_contract_digest, observed_content(held).digest
 
+        store = ClaimReobservationStore(self.instance)
+        witnesses: dict[object, None] = {}
         transitions: list[ContentTransition] = []
         moved_instants: list[datetime] = []
+        #: Live Claims citing content whose own item did not re-check: a moved
+        #: content's transition must except them, or it would refresh them.
+        unchecked: dict[str, tuple[str, str]] = {}
         for child in unchanged:
             if not isinstance(child, TerminalEgressChildReceiptV3):
                 continue  # a reused Subject observes nothing
@@ -2405,13 +2410,28 @@ class ProposalTerminalEgressSink:
             if capture in claim.backing.capture_digests:
                 refused[child.item_key] = "capture_already_cited"
                 continue
+            source = cited_key(claim)
             moved = envelope_of(capture)
             if moved is None or not verified(capture):
                 refused[child.item_key] = "capture_not_admitted"
+                if source is not None:
+                    unchecked[claim_id] = source
                 continue
-            source = cited_key(claim)
             if source is None:
                 refused[child.item_key] = "content_not_cited"
+                continue
+            receipt = request.claims_evidence.get(child.item_key)
+            witness = None if receipt is None else receipt.absence
+            if witness is not None and (
+                store._witness_refusal(  # noqa: SLF001
+                    witness, envelope=moved, coordinate=coordinate, verified=witnesses
+                )
+                is not None
+            ):
+                # An absence re-checks only when every Capture its enumeration
+                # read stands here (D-R37 a6), not only the one it cites.
+                refused[child.item_key] = "absence_witness_unverified"
+                unchecked[claim_id] = source
                 continue
             target = (moved.capture_contract_digest, observed_content(moved).digest)
             if source == target:
@@ -2436,7 +2456,9 @@ class ProposalTerminalEgressSink:
         if not transitions:
             return refused
         moved_from = {(item.contract_digest, item.from_content_digest) for item in transitions}
-        excepted: list[str] = []
+        excepted: list[str] = [
+            claim_id for claim_id, source in unchecked.items() if source in moved_from
+        ]
         for change in request.claims_changes.values():
             # The terminal's own Claims that changed instead: a revision's
             # predecessor or a retirement's Claim, when it cites moved content.
@@ -2450,7 +2472,7 @@ class ProposalTerminalEgressSink:
             key = cited_key(parse_claim(raw, path=claim_path(changed_id)))
             if key is not None and key in moved_from:
                 excepted.append(changed_id)
-        ClaimReobservationStore(self.instance).transition(
+        store.transition(
             transitions,
             excepted=excepted,
             earliest=min(moved_instants),
