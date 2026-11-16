@@ -489,6 +489,20 @@ LIGHT_PROCEDURE_LAW = next(law for law in NAMED_REFERENCE_LAWS if law.artifact_k
 QUERY_DEFINITION_V3_ACCEPTANCE_LAW = next(
     law for law in NAMED_REFERENCE_LAWS if law.artifact_kind == "query-definition"
 )
+# A QueryDefinition that shifts ``now`` (``now - 3d``). Same law as v3 over a
+# format that also holds the offset; a definition without one stays v3.
+QUERY_DEFINITION_V4_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=_artifact_law_coordinate(
+        "cruxible.query-definition.v4", "cruxible-query-definition-v4", semantic_revision=1
+    ),
+    artifact_kind="query-definition",
+    artifact_tag="cruxible-query-definition-v4",
+)
+#: Formats a kind admits for a new artifact beside its NAMED_REFERENCE_FORMATS
+#: entry: each is written only for content the named format cannot hold.
+NAMED_REFERENCE_SUCCESSOR_FORMATS: dict[str, frozenset[str]] = {
+    "query-definition": frozenset({"cruxible-query-definition-v4"}),
+}
 
 NAMED_PROVIDER_IDENTITY_LAW = InstalledAcceptanceLaw(
     coordinate=_artifact_law_coordinate(
@@ -501,6 +515,7 @@ NAMED_PROVIDER_IDENTITY_LAW = InstalledAcceptanceLaw(
 ACCEPTANCE_LAWS = AcceptanceLawRegistry(
     (
         *NAMED_REFERENCE_LAWS,
+        QUERY_DEFINITION_V4_ACCEPTANCE_LAW,
         NAMED_PROVIDER_IDENTITY_LAW,
         LIGHT_CAPTURE_CONTRACT_LAW,
         PROVIDER_V3_ACCEPTANCE_LAW,

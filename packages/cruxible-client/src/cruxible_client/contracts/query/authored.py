@@ -20,8 +20,10 @@ from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.query.definitions import (
     QueryDefinition,
     QueryEvaluationPolicy,
+    shifts_evaluation_time,
 )
 from cruxible_client.contracts.query.grammar import (
+    QUERY_TIME_OFFSET_MAX_SECONDS,
     QueryBudgets,
     QueryClaimFieldRef,
     QueryClaimPresenceFilter,
@@ -129,6 +131,8 @@ class QuerySpecError(FormatError):
 class FilterOperand:
     kind: Literal["reference", "parameter", "literal", "name", "decimal"]
     value: str | int | bool | None
+    #: ``now - 3d``: the shift in seconds; only a ``now`` reference carries one.
+    offset_seconds: int = 0
 
 
 @dataclass(frozen=True)
@@ -148,9 +152,33 @@ _PAIR_HOP = re.compile(
 
 
 _TOKEN = re.compile(
-    r'\s*(?:("(?:[^"\\]|\\.)*")|(-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?)|'
-    r"(\$?[a-zA-Z_][a-zA-Z0-9_.]*)|(==|!=|<=|>=|[=<>~(),]))"
+    r'\s*(?:("(?:[^"\\]|\\.)*")|([0-9]+[a-zA-Z_][a-zA-Z0-9_]*)|'
+    r"(-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?![a-zA-Z0-9_]))|"
+    r"(\$?[a-zA-Z_][a-zA-Z0-9_.]*)|(==|!=|<=|>=|[=<>~(),+-]))"
 )
+
+#: ``now`` offsets take fixed-length units only, Elasticsearch-style.
+TIME_OFFSET_UNITS = {"d": 86400, "h": 3600, "m": 60, "s": 1}
+_DURATION = re.compile(r"([0-9]+)([a-zA-Z_][a-zA-Z0-9_]*)")
+_CALENDAR_UNITS = frozenset(
+    {"M", "mo", "mon", "month", "months", "y", "Y", "yr", "yrs", "year", "years"}
+)
+
+
+def render_time_offset(offset_seconds: int) -> str:
+    """``now`` with its offset in the largest unit that divides it: -259200 is ``now - 3d``.
+
+    The stored offset is whole seconds, so ``now - 72h`` and ``now - 3d`` are one
+    definition; this is the one spelling it renders back as.
+    """
+
+    if offset_seconds == 0:
+        return "now"
+    magnitude = abs(offset_seconds)
+    unit, size = next((u, n) for u, n in TIME_OFFSET_UNITS.items() if magnitude % n == 0)
+    return f"now {'-' if offset_seconds < 0 else '+'} {magnitude // size}{unit}"
+
+
 _SYMBOLS = {
     "=": "eq",
     "==": "eq",
@@ -275,9 +303,45 @@ class _FilterParser:
             except ValueError:
                 self.fail("expected a valid JSON literal", self.tokens[self.index - 1][1])
             return FilterOperand("literal", value)
+        if token == "now" and self.peek() in {"+", "-"}:
+            return FilterOperand("reference", token, self.time_offset())
         return FilterOperand(
             "reference" if reference or "." in token or token == "now" else "name", token
         )
+
+    def time_offset(self) -> int:
+        """``+ 12h`` or ``- 3d`` after ``now``: whole seconds, fixed-length units only."""
+
+        sign = -1 if self.take() == "-" else 1
+        column = self.tokens[self.index][1] if self.index < len(self.tokens) else None
+        matched = _DURATION.fullmatch(self.peek())
+        if matched is None:
+            self.fail(
+                "expected a duration after now + or now -, such as now - 3d; "
+                "units are d, h, m, s (ISO durations such as P3D are not read)",
+                column,
+            )
+        self.take()
+        count, unit = matched.groups()
+        if unit not in TIME_OFFSET_UNITS:
+            calendar = unit in _CALENDAR_UNITS
+            raise QuerySpecError(
+                "cruxible.query.time_offset_unit_unsupported",
+                (
+                    f"{unit!r} is a calendar unit whose length varies; write the offset in days, "
+                    "such as now - 90d"
+                    if calendar
+                    else f"{unit!r} is not an offset unit; use d, h, m or s, such as now - 3d"
+                ),
+                path=self.path,
+                column=None if column is None else self.column_offset + column,
+            )
+        if len(count) > 1 and count.startswith("0"):
+            self.fail("write the duration count without leading zeros", column)
+        seconds = int(count) * TIME_OFFSET_UNITS[unit]
+        if seconds > QUERY_TIME_OFFSET_MAX_SECONDS:
+            self.fail("a now offset reaches at most 36500d", column)
+        return sign * seconds
 
 
 def parse_filter(
@@ -337,10 +401,10 @@ class _LowerQuery:
             )
 
     def ref(
-        self, text: str, path: str, *, scalar: bool = False
+        self, text: str, path: str, *, scalar: bool = False, offset_seconds: int = 0
     ) -> tuple[QueryValueRef, QueryValueType]:
         if text == "now":
-            return QueryEvaluationTimeRef(), "timestamp"
+            return QueryEvaluationTimeRef(offset_seconds=offset_seconds), "timestamp"
         for field in ("role", "verdict"):
             if text.startswith(field + "(") and text.endswith(")"):
                 ref, _ = self.ref(text[len(field) + 1 : -1], path)
@@ -383,7 +447,9 @@ class _LowerQuery:
         if operand.kind == "reference" or (
             operand.kind == "name" and operand.value in self.bindings
         ):
-            ref, actual = self.ref(str(operand.value), path, scalar=True)
+            ref, actual = self.ref(
+                str(operand.value), path, scalar=True, offset_seconds=operand.offset_seconds
+            )
             if actual != value_type:
                 raise QuerySpecError(
                     "cruxible.query.value_type_mismatch",
@@ -442,7 +508,10 @@ class _LowerQuery:
                     return child.model_copy(update={"negated": not child.negated})
                 return QueryNegationFilter(operand=child)
             left, value_type = self.ref(
-                str(expr.operands[0].value), path, scalar=expr.kind != "presence"
+                str(expr.operands[0].value),
+                path,
+                scalar=expr.kind != "presence",
+                offset_seconds=expr.operands[0].offset_seconds,
             )
             if expr.kind == "presence":
                 if not isinstance(left, QueryClaimValueRef):
@@ -702,12 +771,17 @@ class _LowerQuery:
                 )
             )
         path_shape = bool(traversal)
+        where = self.filter(self.spec.where, "$.where") if self.spec.where is not None else None
         return QueryDefinition(
+            # The one format the content needs: v4 only when a filter shifts now.
+            artifact_format="cruxible-query-definition-v4"
+            if shifts_evaluation_time((where, tuple(traversal)))
+            else "cruxible-query-definition-v3",
             identity=self.spec.identity,
             description=self.spec.description,
             entry=entry,
             traversal=tuple(traversal),
-            where=self.filter(self.spec.where, "$.where") if self.spec.where is not None else None,
+            where=where,
             result_binding=binding,
             result_shape="path" if path_shape else "subject",
             result_cardinality="many",
@@ -766,7 +840,7 @@ def query_spec_from_definition(query: QueryDefinition) -> QuerySpecInput:
         if isinstance(value, QueryParameterRef):
             return "$" + value.parameter
         if isinstance(value, QueryEvaluationTimeRef):
-            return "now"
+            return render_time_offset(value.offset_seconds)
         if isinstance(value, QuerySubjectFieldRef):
             return (
                 value.binding if value.field == "subject_id" else f"{value.binding}.{value.field}"

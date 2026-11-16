@@ -38,6 +38,7 @@ from cruxible_client.contracts.claims import (
 )
 from cruxible_client.contracts.codes import CurrentCode
 from cruxible_client.contracts.errors import CruxibleError, FormatError
+from cruxible_client.contracts.query.definitions import QUERY_DEFINITION_FORMATS
 from cruxible_client.contracts.semantic_delta import semantic_field_delta
 from cruxible_core.claims.artifact_references import (
     movable_references,
@@ -466,7 +467,7 @@ def _canonical_successor_bytes(
     try:
         if supplied_content is not None:
             candidate = supplied_content
-        elif current.artifact_tag == "cruxible-query-definition-v3":
+        elif current.artifact_tag in QUERY_DEFINITION_FORMATS:
             from cruxible_client.contracts.query.definitions import (
                 QueryDefinition,
                 render_query_definition,

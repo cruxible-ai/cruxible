@@ -132,7 +132,7 @@ from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimeP
 from cruxible_client.contracts.procedures.dispositions import ProcedureMeasurementReview
 from cruxible_client.contracts.projection_extensions import ProjectionFact
 from cruxible_client.contracts.public_names import public_name, stored_name
-from cruxible_client.contracts.query.definitions import QueryDefinition
+from cruxible_client.contracts.query.definitions import QUERY_DEFINITION_FORMATS, QueryDefinition
 from cruxible_client.contracts.read_values import TruncatedText, summary_value, whole_value_read
 from cruxible_client.contracts.repairs import RepairOperation, served_repair_for_refusal
 from cruxible_client.contracts.semantic import SemanticAddress, SourceMapping
@@ -2037,7 +2037,7 @@ def _query_card(
     from cruxible_client.contracts.query.authored import QuerySpecInput, query_spec_from_definition
 
     definition: QuerySpecInput | QueryDefinition | None = None
-    if getattr(query, "artifact_format") == "cruxible-query-definition-v3":
+    if getattr(query, "artifact_format") in QUERY_DEFINITION_FORMATS:
         try:
             definition = query_spec_from_definition(query)
         except ValueError:

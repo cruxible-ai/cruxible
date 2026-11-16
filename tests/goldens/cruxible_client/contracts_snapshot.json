@@ -11571,8 +11571,11 @@
             "description": "One governed, named, Claim-native canonical query declaration.",
             "properties": {
               "artifact_format": {
-                "const": "cruxible-query-definition-v3",
                 "default": "cruxible-query-definition-v3",
+                "enum": [
+                  "cruxible-query-definition-v3",
+                  "cruxible-query-definition-v4"
+                ],
                 "title": "Artifact Format",
                 "type": "string"
               },
@@ -11814,8 +11817,11 @@
             "description": "Authoring grammar with stated defaults and named dependencies.\n\nThe shape, cardinality, dedupe, evaluation policy and budgets may be left\nout (``query_spec_defaults``); the stored definition states them.",
             "properties": {
               "artifact_format": {
-                "const": "cruxible-query-definition-v3",
                 "default": "cruxible-query-definition-v3",
+                "enum": [
+                  "cruxible-query-definition-v3",
+                  "cruxible-query-definition-v4"
+                ],
                 "title": "Artifact Format",
                 "type": "string"
               },
@@ -12194,7 +12200,7 @@
           },
           "QueryEvaluationTimeRef": {
             "additionalProperties": false,
-            "description": "The run's explicit evaluation time; never an implicit wall clock.",
+            "description": "The run's explicit evaluation time, optionally shifted; never a wall clock.\n\n``offset_seconds`` is the fixed shift authored as ``now - 3d`` or\n``now + 12h``, held in whole seconds (UTC, no calendar units): ``now -\n72h`` and ``now - 3d`` are one offset, -259200. An unshifted ref is v1 and\nserializes exactly as before; a shifted one is v2, which only a\n``cruxible-query-definition-v4`` definition holds.",
             "properties": {
               "kind": {
                 "const": "evaluation_time",
@@ -12202,9 +12208,19 @@
                 "title": "Kind",
                 "type": "string"
               },
+              "offset_seconds": {
+                "default": 0,
+                "maximum": 3153600000,
+                "minimum": -3153600000,
+                "title": "Offset Seconds",
+                "type": "integer"
+              },
               "tag": {
-                "const": "playbill-query-evaluation-time-ref-v1",
                 "default": "playbill-query-evaluation-time-ref-v1",
+                "enum": [
+                  "playbill-query-evaluation-time-ref-v1",
+                  "playbill-query-evaluation-time-ref-v2"
+                ],
                 "title": "Tag",
                 "type": "string"
               }
@@ -92303,8 +92319,11 @@
             "description": "Authoring grammar with stated defaults and named dependencies.\n\nThe shape, cardinality, dedupe, evaluation policy and budgets may be left\nout (``query_spec_defaults``); the stored definition states them.",
             "properties": {
               "artifact_format": {
-                "const": "cruxible-query-definition-v3",
                 "default": "cruxible-query-definition-v3",
+                "enum": [
+                  "cruxible-query-definition-v3",
+                  "cruxible-query-definition-v4"
+                ],
                 "title": "Artifact Format",
                 "type": "string"
               },
@@ -92683,7 +92702,7 @@
           },
           "QueryEvaluationTimeRef": {
             "additionalProperties": false,
-            "description": "The run's explicit evaluation time; never an implicit wall clock.",
+            "description": "The run's explicit evaluation time, optionally shifted; never a wall clock.\n\n``offset_seconds`` is the fixed shift authored as ``now - 3d`` or\n``now + 12h``, held in whole seconds (UTC, no calendar units): ``now -\n72h`` and ``now - 3d`` are one offset, -259200. An unshifted ref is v1 and\nserializes exactly as before; a shifted one is v2, which only a\n``cruxible-query-definition-v4`` definition holds.",
             "properties": {
               "kind": {
                 "const": "evaluation_time",
@@ -92691,9 +92710,19 @@
                 "title": "Kind",
                 "type": "string"
               },
+              "offset_seconds": {
+                "default": 0,
+                "maximum": 3153600000,
+                "minimum": -3153600000,
+                "title": "Offset Seconds",
+                "type": "integer"
+              },
               "tag": {
-                "const": "playbill-query-evaluation-time-ref-v1",
                 "default": "playbill-query-evaluation-time-ref-v1",
+                "enum": [
+                  "playbill-query-evaluation-time-ref-v1",
+                  "playbill-query-evaluation-time-ref-v2"
+                ],
                 "title": "Tag",
                 "type": "string"
               }
