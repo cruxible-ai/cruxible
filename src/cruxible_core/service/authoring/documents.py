@@ -651,6 +651,19 @@ def refuse_accepted(
         )
 
 
+def activation_not_permitted_detail(proposal_id: str) -> str:
+    """Why a change the approval policy lets through stopped at proposed, and who lands it.
+
+    A compound operation (kit add or remove, provider move) at a tier below
+    graph_write proposes but does not activate, exactly as a value write does.
+    """
+
+    return (
+        "Not activated: this request's tier cannot activate (needs graph_write). "
+        f"Next: someone who can runs cruxible proposal activate {proposal_id}"
+    )
+
+
 def land_for_signer(instance: PlaybillInstance, proposal_id: str) -> str:
     """Land a moved proposal at the head for a signer its base predates; the landed id.
 

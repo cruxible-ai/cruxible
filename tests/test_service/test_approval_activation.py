@@ -259,3 +259,43 @@ def test_a_compiler_upgrades_one_signature_may_be_its_authors() -> None:
 
     assert (outstanding.remaining, outstanding.independent) == (1, False)
     assert outstanding.eligible_signers == ("owner", "reviewer")
+
+
+@pytest.mark.parametrize("may_activate", [False, True])
+def test_a_provider_move_below_graph_write_proposes_and_does_not_activate(
+    tmp_path: Path, may_activate: bool
+) -> None:
+    """Round 3: provider move (governed_write) activated whatever the policy let
+    through; a request whose tier may not activate leaves it proposed."""
+
+    from cruxible_core.service.change_preview import change_scope
+    from cruxible_core.service.procedures.provider_builds import _submit
+
+    instance, _owner = initialize_local(tmp_path)
+    body = instance.store_document_body(b"# Moved\n")
+    head = instance.accepted_coordinate()
+    with change_scope(
+        instance,
+        dry_run=False,
+        at=head.git_oid,
+        kind="derived",
+        operation="cruxible.provider.move",
+        describe="moving a provider",
+    ) as mode:
+        status, proposal_id, approval, detail = _submit(
+            instance,
+            mode,
+            {DOCUMENT_PATH: render_document(_shell(body.digest))},
+            actor_id="owner",
+            timestamp="2026-08-16T17:00:00.000000Z",
+            may_activate=may_activate,
+        )
+
+    if may_activate:
+        assert status == "accepted"
+        assert instance.accepted_coordinate() != head
+    else:
+        assert (status, approval) == ("proposed", False)
+        assert detail is not None
+        assert f"someone who can runs cruxible proposal activate {proposal_id}" in detail
+        assert instance.accepted_coordinate() == head

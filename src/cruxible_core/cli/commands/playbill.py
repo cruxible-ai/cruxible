@@ -2351,7 +2351,8 @@ def _echo_kit_change(
                     f"Next: cruxible proposal approve {result.proposal_id} "
                     "--signer-id ID --key FILE (the approval that completes it activates it)"
                 )
-            else:
+            elif result.detail is None:
+                # Otherwise the detail already names who activates it.
                 click.echo(f"Next: cruxible proposal activate {result.proposal_id}")
     echo_preview_next(result.status, result.coordinate)
 

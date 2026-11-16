@@ -935,6 +935,7 @@ def playbill_provider_move(instance_id: str, request: ProviderMoveRequest) -> Pr
                 request,
                 actor_id=_actor_id(instance_id),
                 timestamp=canonical_candidate_timestamp(utc_now()),
+                may_activate=_permits("cruxible_proposal_activate", instance_id=instance_id),
             ),
         )
 
@@ -995,6 +996,7 @@ def playbill_kit_add(instance_id: str, request: KitAddRequest) -> KitChangeResul
                 actor_id=_actor_id(instance_id),
                 timestamp=canonical_candidate_timestamp(utc_now()),
                 install_provider=install,
+                may_activate=_permits("cruxible_proposal_activate", instance_id=instance_id),
             ),
         )
 
@@ -1009,6 +1011,7 @@ def playbill_kit_remove(instance_id: str, request: KitRemoveRequest) -> KitChang
                 request,
                 actor_id=_actor_id(instance_id),
                 timestamp=canonical_candidate_timestamp(utc_now()),
+                may_activate=_permits("cruxible_proposal_activate", instance_id=instance_id),
             ),
         )
 

@@ -148,7 +148,10 @@ from cruxible_core.providers.package_inspection import (
     inspect_provider_package,
 )
 from cruxible_core.runtime.instance import PlaybillInstance
-from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
+from cruxible_core.service.authoring.documents import (
+    activation_not_permitted_detail,
+    service_activate_playbill_proposal,
+)
 from cruxible_core.service.change_preview import ChangeMode, admit_change_set, change_scope
 from cruxible_core.service.procedures.provider_installation import ExpectedProviderBuild
 from cruxible_core.service.proposals.proposals import open_proposal_at_target
@@ -1662,6 +1665,7 @@ def _submit(
     repins: tuple[ProviderRepinV1, ...] = (),
     stops: tuple[StoppedAutomationV1, ...] = (),
     automation_carries: tuple[AutomationCarryV1, ...] = (),
+    may_activate: bool = True,
 ) -> KitChangeResult:
     assert mode.head is not None
     base = mode.head
@@ -1741,6 +1745,19 @@ def _submit(
     status: Literal[
         "unchanged", "proposed", "accepted", "blocked", "would_propose", "would_block"
     ] = admitted.status
+    if status == "proposed" and not admitted.approval_required and not may_activate:
+        # The policy lets it through, but this request's tier may not activate.
+        assert admitted.proposal_id is not None
+        return KitChangeResult(
+            kit_id=kit_id,
+            version=version,
+            status=status,
+            proposal_id=admitted.proposal_id,
+            plan=plan,
+            detail=activation_not_permitted_detail(admitted.proposal_id),
+            coordinate=mode.coordinate,
+            **described,  # type: ignore[arg-type]
+        )
     if status == "proposed" and not admitted.approval_required:
         # Like provider install and value writes, a kit change the approval
         # policy lets through lands at once; otherwise it stops at proposed.
@@ -2295,6 +2312,7 @@ def service_add_kit(
     actor_id: str,
     timestamp: str,
     install_provider: ProviderInstaller | None = None,
+    may_activate: bool = True,
 ) -> KitChangeResult:
     """Propose the diff that brings this instance to one kit release.
 
@@ -2326,6 +2344,7 @@ def service_add_kit(
             actor_id=actor_id,
             timestamp=timestamp,
             install_provider=install_provider,
+            may_activate=may_activate,
         )
         previewing = mode.previewing
     template = request.bundle.manifest.automation_template
@@ -2367,6 +2386,7 @@ def _add_kit(
     actor_id: str,
     timestamp: str,
     install_provider: ProviderInstaller | None = None,
+    may_activate: bool = True,
 ) -> KitChangeResult:
     assert mode.head is not None
     bundle = request.bundle
@@ -2777,6 +2797,7 @@ def _add_kit(
         plan=plan,
         actor_id=actor_id,
         timestamp=timestamp,
+        may_activate=may_activate,
         **described,  # type: ignore[arg-type]
     )
 
@@ -2787,6 +2808,7 @@ def service_remove_kit(
     *,
     actor_id: str,
     timestamp: str,
+    may_activate: bool = True,
 ) -> KitChangeResult:
     """Propose retiring mutable definitions a kit owns; Contracts and carried ones stay.
 
@@ -2801,7 +2823,14 @@ def service_remove_kit(
         operation="cruxible.kit.remove",
         describe=f"removing kit {request.kit_id}",
     ) as mode:
-        return _remove_kit(instance, mode, request, actor_id=actor_id, timestamp=timestamp)
+        return _remove_kit(
+            instance,
+            mode,
+            request,
+            actor_id=actor_id,
+            timestamp=timestamp,
+            may_activate=may_activate,
+        )
 
 
 def _remove_kit(
@@ -2811,6 +2840,7 @@ def _remove_kit(
     *,
     actor_id: str,
     timestamp: str,
+    may_activate: bool = True,
 ) -> KitChangeResult:
     assert mode.head is not None
     tree = instance.immutable_tree_at(mode.head.git_oid)
@@ -2913,6 +2943,7 @@ def _remove_kit(
         plan=plan,
         actor_id=actor_id,
         timestamp=timestamp,
+        may_activate=may_activate,
     )
 
 

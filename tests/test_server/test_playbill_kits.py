@@ -2423,3 +2423,31 @@ def test_a_manifest_names_only_a_template_it_lists_as_a_file() -> None:
     bare = KitManifest(kit_id="acme", version="1.0.0", owns=("acme.",), artifacts=())
     assert listed.content_digest == bare.content_digest
     assert "automation_template" not in bare.model_dump(mode="json")
+
+
+def test_a_kit_commit_below_graph_write_proposes_and_does_not_activate(
+    worlds: tuple[_World, _World],
+) -> None:
+    """Round 3: kit add is a governed_write operation, and it activated whatever the
+    approval policy let through. A request whose tier may not activate (an MCP server
+    under CRUXIBLE_MODE=governed_write) now leaves it proposed and says who lands it."""
+
+    from cruxible_core.runtime.permissions import PermissionMode, request_permission_scope
+
+    publisher, consumer = worlds
+    publisher.author(_claim_type(PLAN, {"type": "string"}))
+    release = publisher.build("1.0.0")
+    before = consumer.tree()
+
+    with request_permission_scope(PermissionMode.GOVERNED_WRITE):
+        capped = playbill_api.playbill_kit_add(
+            consumer.instance_id, KitAddRequest(bundle=release, source="test", dry_run=False)
+        )
+
+    assert capped.status == "proposed", capped.detail
+    assert capped.proposal_id is not None
+    assert capped.detail is not None
+    assert f"someone who can runs cruxible proposal activate {capped.proposal_id}" in capped.detail
+    assert consumer.tree() == before
+    activated = playbill_api.playbill_activate(consumer.instance_id, capped.proposal_id)
+    assert activated.status == "accepted"  # type: ignore[union-attr]
