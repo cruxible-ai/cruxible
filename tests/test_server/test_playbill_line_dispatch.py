@@ -7,6 +7,7 @@ from click.testing import CliRunner
 
 from cruxible_client import AccessProfile, Cruxible, CruxibleClient
 from cruxible_client.contracts.operational_reads import GetLineCard
+from cruxible_client.contracts.principals import PRINCIPAL_ID_HEADER
 from cruxible_client.contracts.triggers import CaptureLandingSchedule
 from cruxible_core.cli.commands import playbill as commands
 from cruxible_core.exhaust.line_dispatch import dispatch_root
@@ -33,6 +34,9 @@ def _served_line_world(playbill_http, tmp_path, monkeypatch):  # type: ignore[no
     )
     now = READ_TIME + timedelta(seconds=2)
     monkeypatch.setattr("cruxible_core.runtime.playbill_api._evaluation_time", lambda _: now)
+    # Evaluating, dispatching and running are attributed writes: they act as the
+    # world's owner, which the implicit local operator is not.
+    http.headers[PRINCIPAL_ID_HEADER] = "owner"
     transport = CruxibleClient(base_url="http://testserver")
     transport._client.close()
     transport._client = http
@@ -57,7 +61,7 @@ def test_typed_sdk_http_evaluate_enable_and_dispatch(playbill_http, tmp_path, mo
     assert checked.status == "met" and not checked.occurrences[0].pending
     assert not dispatch_root(instance).exists()
     enabled = handle.enable()
-    assert enabled.state == "enabled" and enabled.enabled_by.kind == "local_operator"
+    assert enabled.state == "enabled" and enabled.enabled_by.kind == "principal_claim"
     assert enabled.outcome == "enabled"
     card = sdk.get(handle.ref).value
     assert isinstance(card, GetLineCard)
@@ -263,6 +267,8 @@ def test_a_read_only_caller_may_dry_run_evaluate_but_not_enqueue(
         playbill_http, tmp_path, monkeypatch
     )
     capture(instance, procedure)
+    # The bearer credential decides who acts; it claims no principal of its own.
+    http.headers.pop(PRINCIPAL_ID_HEADER)
     reader = get_runtime_credential_store().create_credential(
         instance_id=instance_id,
         label="reader-token",

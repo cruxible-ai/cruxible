@@ -12,7 +12,8 @@ Precedence, first that applies:
    and the key's custody before the server acts as that principal; a record
    that cannot be used refuses with its typed error
    (`cruxible_client.authoring.folder_identity`), never reads as "no one".
-3. ``none``: the implicit local operator, which cannot author.
+3. ``none``: the implicit local operator, which cannot author or make any
+   other write that records who did it.
 
 A TCP daemon (``CRUXIBLE_SERVER_URL`` or a binding naming a URL) ignores the
 record: there the bearer credential decides who acts.

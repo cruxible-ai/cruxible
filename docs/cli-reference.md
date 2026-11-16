@@ -51,11 +51,19 @@ credential decides who acts, and a principal ID that disagrees with it is refuse
 way: they are signed with the principal's private key.
 
 A request that names no principal acts as the implicit local operator
-(`operator`), which is not a principal. It may not settle or close a proposal:
-approve (submitting an approval), activate, reject, withdraw and readmit refuse
-it with `cruxible.identity.principal_unconfigured` and its repair (name a
-principal). A principal registered under the name `operator` acts like any
-other.
+(`operator`), which is not a principal. It may not make a write whose record
+names who did it: authoring and the write verbs, approve (submitting an
+approval), activate, reject, withdraw and readmit, `capture erase`, `claim
+attest`, `prediction propose` and `settle`, `instance decommission` and
+`rebuild-next`, `provider install`, `retire` and `move`, `kit build`, `add` and
+`remove`, `compiler upgrade` and principal changes (`principal add`, `rotate`,
+`recover`, `revoke`), `procedure measure` and `dispose`, and every run it would start
+(`procedure run`, `action run`, `line run`, `line evaluate`, `line dispatch`,
+`runbook run`) refuse it with `cruxible.identity.principal_unconfigured` and
+its repair (name a principal). `init`, `line enable` and `line disable`, and
+Capture uploads stay open to it; writes that record no actor (ledger mirror
+set, clear and publish, `body store`, `block depublish`) are unchanged. A
+principal registered under the name `operator` acts like any other.
 
 `CRUXIBLE_CLIENT_TIMEOUT_S` (default 180) bounds how long a client waits for a
 daemon that has accepted a request. An SDK `Cruxible.connect()` reads only the

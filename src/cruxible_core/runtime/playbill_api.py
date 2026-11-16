@@ -450,27 +450,46 @@ def _actor_id(instance_id: str) -> str:
     return actor.actor_id
 
 
-def _governed_actor_id(instance_id: str) -> str:
-    """The actor of a governed act on a proposal, which must be an accepted principal.
+def _attributed_actor(instance_id: str, act: str = "Cruxible writes") -> GovernedActorContext:
+    """The actor of a write whose record names who did it: a registered principal.
 
-    Approving, activating, rejecting, withdrawing and readmitting a proposal
-    record who did it. An auth-off request that names no principal acts as the
-    implicit local operator (``operator``), which is not a principal: it cannot
-    author, and it may not settle or close a proposal either. It is refused with
-    the same ``cruxible.identity.principal_unconfigured`` refusal and repair
-    authoring and ``whoami`` give it, so no receipt names a non-principal. A
+    Proposal acts (approve, activate, reject, withdraw, readmit), Capture
+    erasure, attestations, predictions and their settlement, instance
+    decommission and next rebuild, provider and kit operations, compiler and
+    principal proposals, measurements and dispositions, and every run a caller
+    starts (Procedure, Line, Runbook, internal action) record who did it. An
+    auth-off request that names no principal acts as the implicit local
+    operator (``operator``), which is not a principal: it is refused with the
+    same ``cruxible.identity.principal_unconfigured`` refusal and repair
+    authoring and ``whoami`` give it, so no record names a non-principal. A
     principal registered under the name ``operator`` is an ordinary principal
-    and passes.
+    and passes. ``init``, Line enable and disable, and Capture uploads stay
+    open to the local operator; writes that record no actor use
+    ``_require_writer``.
     """
 
-    actor_id = _actor_id(instance_id)
+    actor = _write_actor_context(instance_id)
+    if actor is None:
+        raise AuthenticationError(f"{act} requires an authenticated actor identity")
     if _credential_actor_context() is None:
+        # Only the implicit local operator reaches here: a claimed principal and
+        # a bearer credential's principal were checked on the way in.
         refusal = principal_refusal(
-            get_playbill_manager().get(instance_id), actor_id, configured=False
+            get_playbill_manager().get(instance_id), actor.actor_id, configured=False
         )
         if refusal is not None:
             raise refusal
-    return actor_id
+    return actor
+
+
+def _attributed_actor_id(instance_id: str) -> str:
+    return _attributed_actor(instance_id).actor_id
+
+
+def _governed_actor_id(instance_id: str) -> str:
+    """The actor of a governed act on a proposal; see ``_attributed_actor``."""
+
+    return _attributed_actor_id(instance_id)
 
 
 def _require_governed_actor(instance_id: str) -> None:
@@ -682,7 +701,7 @@ def playbill_instance_decommission(
         ) as mode:
             record = instance.decommission(
                 reason=reason,
-                decommissioned_by=_actor_id(instance_id),
+                decommissioned_by=_attributed_actor_id(instance_id),
                 confirm_head=mode.confirm_head,
             )
             return contracts.InstanceDecommissionResult(
@@ -706,8 +725,8 @@ def playbill_instance_rebuild_next(instance_id: str) -> contracts.NextRebuildRes
     from cruxible_core.consumers.next.facts import FORMAT, rebuild
 
     check_permission("cruxible_instance_rebuild_next", instance_id=instance_id)
-    # Only a registered principal repairs an instance, as for every instance write.
-    _actor_id(instance_id)
+    # Only a registered principal repairs an instance, and the local operator is none.
+    _attributed_actor(instance_id, "Rebuilding next")
     instance = get_playbill_manager().get(instance_id)
     rebuilt = rebuild(instance, now=utc_now())
     return contracts.NextRebuildResult(
@@ -904,7 +923,7 @@ def playbill_provider_install(
                 manager.get(instance_id),
                 operator=manager.provider_runtime_operator(),
                 request=request,
-                actor_id=_actor_id(instance_id),
+                actor_id=_attributed_actor_id(instance_id),
                 timestamp=canonical_candidate_timestamp(utc_now()),
             ),
         )
@@ -920,7 +939,7 @@ def playbill_provider_retire(
             lambda: service_retire_provider(
                 get_playbill_manager().get(instance_id),
                 request,
-                actor_id=_actor_id(instance_id),
+                actor_id=_attributed_actor_id(instance_id),
                 timestamp=canonical_candidate_timestamp(utc_now()),
             ),
         )
@@ -934,7 +953,7 @@ def playbill_provider_move(instance_id: str, request: ProviderMoveRequest) -> Pr
             lambda: service_move_provider(
                 get_playbill_manager().get(instance_id),
                 request,
-                actor_id=_actor_id(instance_id),
+                actor_id=_attributed_actor_id(instance_id),
                 timestamp=canonical_candidate_timestamp(utc_now()),
                 may_activate=_permits("cruxible_proposal_activate", instance_id=instance_id),
             ),
@@ -943,19 +962,18 @@ def playbill_provider_move(instance_id: str, request: ProviderMoveRequest) -> Pr
 
 def playbill_kit_build(instance_id: str, request: KitBuildRequest) -> KitBuildResult:
     check_permission("cruxible_kit_build", instance_id=instance_id)
-    actor = _actor_context()
-    template_actor_id: str | None = None
     if request.automation_template is not None:
         # Checking the template is its authoring preview: the preview's own gate.
         check_permission("cruxible_authoring_compile", instance_id=instance_id)
-        template_actor_id = _actor_id(instance_id)
+    # The manifest records the building principal, so the builder must be one.
+    actor_id = _attributed_actor(instance_id, "Kit build").actor_id
     return _proposal_validation_boundary(
         "kit build",
         lambda: service_build_kit(
             get_playbill_manager().get(instance_id),
             request,
-            principal_id=None if actor is None else actor.actor_id,
-            template_actor_id=template_actor_id,
+            principal_id=actor_id,
+            template_actor_id=None if request.automation_template is None else actor_id,
         ),
     )
 
@@ -983,7 +1001,7 @@ def playbill_kit_add(instance_id: str, request: KitAddRequest) -> KitChangeResul
             manager.get(instance_id),
             operator=manager.provider_runtime_operator(),
             request=request,
-            actor_id=_actor_id(instance_id),
+            actor_id=_attributed_actor_id(instance_id),
             timestamp=canonical_candidate_timestamp(utc_now()),
             expected_build=expected_build,
         )
@@ -994,7 +1012,7 @@ def playbill_kit_add(instance_id: str, request: KitAddRequest) -> KitChangeResul
             lambda: service_add_kit(
                 get_playbill_manager().get(instance_id),
                 request,
-                actor_id=_actor_id(instance_id),
+                actor_id=_attributed_actor_id(instance_id),
                 timestamp=canonical_candidate_timestamp(utc_now()),
                 install_provider=install,
                 may_activate=_permits("cruxible_proposal_activate", instance_id=instance_id),
@@ -1010,7 +1028,7 @@ def playbill_kit_remove(instance_id: str, request: KitRemoveRequest) -> KitChang
             lambda: service_remove_kit(
                 get_playbill_manager().get(instance_id),
                 request,
-                actor_id=_actor_id(instance_id),
+                actor_id=_attributed_actor_id(instance_id),
                 timestamp=canonical_candidate_timestamp(utc_now()),
                 may_activate=_permits("cruxible_proposal_activate", instance_id=instance_id),
             ),
@@ -1173,7 +1191,7 @@ def playbill_propose_compiler_upgrade(
                 get_playbill_manager().get(instance_id),
                 target=target,
                 base=base,
-                actor_id=_actor_id(instance_id),
+                actor_id=_attributed_actor_id(instance_id),
                 proposal_name=proposal_name,
                 timestamp=canonical_candidate_timestamp(utc_now()),
                 dry_run=dry_run,
@@ -1199,7 +1217,7 @@ def playbill_propose_principal_change(
             lambda: service_propose_playbill_principal_change(
                 get_playbill_manager().get(instance_id),
                 principal=principal,
-                actor_id=_actor_id(instance_id),
+                actor_id=_attributed_actor_id(instance_id),
                 proposal_name=proposal_name,
                 timestamp=canonical_candidate_timestamp(utc_now()),
                 base=base,
@@ -1574,7 +1592,7 @@ def playbill_erase_capture(instance_id: str, request: CaptureEraseRequest) -> Ca
 
     check_permission("cruxible_capture_erase", instance_id=instance_id)
     with change_entry(request.dry_run, "irreversible"):
-        actor_id = _actor_id(instance_id)
+        actor_id = _attributed_actor_id(instance_id)
         instance = get_playbill_manager().get(instance_id)
         with state_change_scope(
             dry_run=request.dry_run,
@@ -1836,7 +1854,7 @@ def playbill_prepare_claim_attestation_evidence(
     return service_prepare_claim_attestation_evidence(
         get_playbill_manager().get(instance_id),
         request=request,
-        actor_id=_actor_id(instance_id),
+        actor_id=_attributed_actor_id(instance_id),
     )
 
 
@@ -1849,7 +1867,7 @@ def playbill_append_claim_attestation(
     return service_append_claim_attestation(
         get_playbill_manager().get(instance_id),
         request=request,
-        actor_id=_actor_id(instance_id),
+        actor_id=_attributed_actor_id(instance_id),
     )
 
 
@@ -1878,9 +1896,7 @@ def playbill_predict(
     """Submit a governed test of an already accepted hypothesis."""
 
     check_permission("cruxible_prediction_propose", instance_id=instance_id)
-    actor_context = _write_actor_context(instance_id)
-    if actor_context is None:
-        raise AuthenticationError("Prediction authoring requires an authenticated actor identity")
+    actor_context = _attributed_actor(instance_id, "Prediction authoring")
     return service_predict_playbill(
         get_playbill_manager().get(instance_id),
         request=request,
@@ -1898,9 +1914,7 @@ def playbill_settle_prediction(
     """Settle one prediction through admission or retained terminal authority."""
 
     check_permission("cruxible_prediction_settle", instance_id=instance_id)
-    actor_context = _write_actor_context(instance_id)
-    if actor_context is None:
-        raise AuthenticationError("Prediction settlement requires an authenticated actor identity")
+    actor_context = _attributed_actor(instance_id, "Prediction settlement")
     return service_settle_playbill_prediction(
         get_playbill_manager().get(instance_id),
         prediction_id=prediction_id,
@@ -1937,11 +1951,7 @@ def playbill_action_run(
             + ", ".join(sorted(INTERNAL_ACTIONS))
             + "."
         )
-    actor_context = _write_actor_context(instance_id)
-    if actor_context is None:
-        raise AuthenticationError(
-            "Firing an internal action requires an authenticated actor identity"
-        )
+    actor_context = _attributed_actor(instance_id, "Firing an internal action")
     manager = get_playbill_manager()
     instance = manager.get(instance_id)
     event = fire_manual(
@@ -2492,10 +2502,7 @@ def _procedure_run_admitted(
         instance_id,
         lambda: procedure_run_target_rung(get_playbill_manager().get(instance_id), name, at),
     )
-    actor = _write_actor_context(instance_id)
-    if actor is None:
-        raise AuthenticationError("Procedure run requires an authenticated actor identity")
-    return actor
+    return _attributed_actor(instance_id, "Procedure run")
 
 
 def _run_procedure(
@@ -2591,9 +2598,7 @@ def playbill_procedure_measure(
     """
 
     check_permission("cruxible_procedure_measure", instance_id=instance_id)
-    actor_context = _write_actor_context(instance_id)
-    if actor_context is None:
-        raise AuthenticationError("Measurement evaluation requires an authenticated actor identity")
+    actor_context = _attributed_actor(instance_id, "Measurement evaluation")
     return service_measure_playbill_procedure(
         get_playbill_manager().get(instance_id),
         name=name,
@@ -2615,9 +2620,7 @@ def playbill_procedure_dispose(
     )
 
     check_permission("cruxible_procedure_dispose", instance_id=instance_id)
-    actor_context = _write_actor_context(instance_id)
-    if actor_context is None:
-        raise AuthenticationError("Resolution review requires an authenticated actor identity")
+    actor_context = _attributed_actor(instance_id, "Resolution review")
     return service_dispose_procedure_resolution(
         get_playbill_manager().get(instance_id),
         name=name,
@@ -2706,9 +2709,7 @@ def playbill_line_evaluate(
         instance_id=instance_id,
         required_override=None if request.dry_run else PermissionMode.GOVERNED_WRITE,
     )
-    actor = None if request.dry_run else _write_actor_context(instance_id)
-    if actor is None and not request.dry_run:
-        raise AuthenticationError("Evaluation requires an authenticated actor identity")
+    actor = None if request.dry_run else _attributed_actor(instance_id, "Evaluation")
     from cruxible_core.service.procedures.line_dispatch import service_evaluate_line
 
     return service_evaluate_line(
@@ -2814,9 +2815,7 @@ def playbill_line_dispatch(
         instance_id,
         lambda: line_run_target_rung(get_playbill_manager().get(instance_id), line),
     )
-    actor = _write_actor_context(instance_id)
-    if actor is None:
-        raise AuthenticationError("Dispatch requires an authenticated actor identity")
+    actor = _attributed_actor(instance_id, "Dispatch")
     from cruxible_core.service.procedures.line_dispatch import service_dispatch_line
 
     manager = get_playbill_manager()
@@ -2852,9 +2851,7 @@ def playbill_line_run(
         instance_id,
         lambda: line_run_target_rung(get_playbill_manager().get(instance_id), line_identity_digest),
     )
-    actor = _write_actor_context(instance_id)
-    if actor is None:
-        raise AuthenticationError("Line run requires an authenticated actor identity")
+    actor = _attributed_actor(instance_id, "Line run")
     manager = get_playbill_manager()
     try:
         workspace_file_reader = manager.workspace_file_reader(instance_id)
@@ -2897,9 +2894,7 @@ def playbill_runbook_run(instance_id: str, name: str) -> RunbookRunResult:
             instance_id=instance_id,
             required_override=PermissionMode.GOVERNED_WRITE,
         )
-    actor = _write_actor_context(instance_id)
-    if actor is None:
-        raise AuthenticationError("Runbook run requires an authenticated actor identity")
+    actor = _attributed_actor(instance_id, "Runbook run")
     manager = get_playbill_manager()
     try:
         workspace_file_reader = manager.workspace_file_reader(instance_id)

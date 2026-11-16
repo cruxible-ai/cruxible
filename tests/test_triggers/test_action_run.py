@@ -37,6 +37,20 @@ _NEXT_COVERED_SEQUENCE = {
 }
 
 
+@pytest.fixture(autouse=True)
+def _acting_as_a_principal(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Firing an action is an attributed write, so these calls act as ``owner``:
+    the implicit local operator is refused before any fire (its own test lives
+    with the principal-claim tests)."""
+
+    from cruxible_core.server.actor_identity import local_operator_actor_context
+
+    actor = local_operator_actor_context().model_copy(
+        update={"actor_type": "service_account", "actor_id": "owner"}
+    )
+    monkeypatch.setattr(playbill_api, "_attributed_actor", lambda *_args: actor)
+
+
 def _bare_instance(root: Path):  # type: ignore[no-untyped-def]
     """Enough of an instance for the journal alone: ``root`` and ``descriptor``."""
 
