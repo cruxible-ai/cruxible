@@ -1603,7 +1603,7 @@ Cruxible ships builtin ClaimTypes, and a new instance starts with every one of t
 values; stored in the canonical form `nfc, casefold, collapse_whitespace,
 trim`). `semantic.distinct_from` states that its object Subject is a different
 thing from its subject, whatever names or keys they share (any kinds; many
-values). An instance created before a builtin shipped adopts it with
+values): `duplicates` never groups the pair. An instance created before a builtin shipped adopts it with
 `propose --builtin NAME`, which asks the daemon to propose its exact builtin
 definition; MCP's
 `cruxible_claim_type_propose` takes `builtin` in place of `input`, and the SDK
@@ -3920,6 +3920,39 @@ Nothing renews a mandate, so its repair starts a successor from
 `cruxible authoring example procedure-mandate`; a successor
 whose window reaches past the lead time, or the mandate's retirement, closes
 the row.
+
+## duplicates
+
+~~~text
+cruxible duplicates --kind KIND [--limit N] [--cursor CURSOR] [--json]
+~~~
+
+`duplicates` is the post-hoc duplicates audit: computed on demand, never on
+the write path. For one Subject kind it lists
+what is equal under a broad comparison (NFKC, casefold, punctuation stripped,
+whitespace collapsed and trimmed, plus the alias graph) but distinct under the
+declared rules: Subjects whose ids or aliases meet (`subjects` groups), Subjects
+of a `hint` kind holding one canonical key (`keys` groups), and live
+values of one literal predicate that meet but differ under its canonical form
+(`values` groups, naming the form). Cruxible proposes no fix; each group names its
+resolutions. Merge two Subjects by adding a `semantic.alias` to the one that
+stays and retiring the other (`cruxible retire KIND/ID --with-claims`); keep them apart by asserting
+`semantic.distinct_from` between them: no group ever holds a pair asserted
+distinct (a key's Subjects are taken in path order, and each joins the first
+group holding no Subject it is asserted distinct from), though each may still
+appear in a group with a third Subject. Unify values by a governed ClaimType
+succession declaring a wider `canonical_form` (dependents re-authored). The
+audit reads at most 50,000 rows in all, one budget shared by its reads --
+Subjects, aliases, `distinct_from` relations, key Claims, values -- each asking SQL for no
+more than what remains; when the budget runs out it says so
+(`budget_exhausted`) and the groups cover only what was read. `scanned` counts
+the rows each read returned. It pages
+(default 25 groups, at most 200), recomputing within the same bound for
+each page.
+A cut page has `truncated: true` and a `next_cursor` for `--cursor`, which
+continues only while accepted state is unchanged; otherwise it is refused as
+`cruxible.list.cursor_stale`. MCP: `cruxible_duplicates` (full profile); SDK:
+`cx.duplicates(kind)`.
 
 ## audit
 

@@ -32,6 +32,7 @@ from cruxible_client.contracts.claim_reads import (
     ClaimReadBatchRequest,
     ClaimReadBatchResult,
 )
+from cruxible_client.contracts.duplicates import DuplicatesAuditRequest, DuplicatesAuditResult
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.floor import FloorDelta
 from cruxible_client.contracts.get_reads import (
@@ -1311,6 +1312,20 @@ def next_work(
     return playbill_api.playbill_next(
         resolve_server_instance_id(instance_id),
         request=req.model_dump(mode="json", exclude_none=True),
+    )
+
+
+@router.post(
+    "/{instance_id}/duplicates",
+    response_model=DuplicatesAuditResult,
+)
+def duplicates(
+    instance_id: str,
+    req: DuplicatesAuditRequest,
+) -> DuplicatesAuditResult:
+    return playbill_api.playbill_duplicates(
+        resolve_server_instance_id(instance_id),
+        request=req,
     )
 
 

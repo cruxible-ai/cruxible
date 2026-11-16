@@ -193,9 +193,19 @@ which you review like any change ([Kits](kits.md)).
 
 ## Duplicates
 
-The same thing recorded twice splits what's known about it. When you find two
-Subjects that name one thing, or two that only look alike, record your
-judgment as state, so it isn't asked again:
+The same thing recorded twice splits what's known about it.
+`cruxible duplicates --kind KIND` lists Subjects whose ids, aliases
+or key values look the same under a loose comparison (case, punctuation) but
+differ under the kind's own rules:
+
+~~~text
+$ cruxible duplicates --kind catalog.part
+Possible duplicates of catalog.part: 2 group(s); read 3 Subject(s), 0 alias(es), 7 value(s).
+  subjects 'bp1142': catalog.part/bp-1142 (bp-1142), catalog.part/bp1142 (bp1142)
+  ...
+~~~
+
+Record your judgment as state, so it isn't asked again:
 
 - **The same thing**: merge them. Add the other spelling as an alias of the
   Subject you keep, then retire the duplicate with its Claims:

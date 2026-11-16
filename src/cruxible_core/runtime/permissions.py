@@ -119,6 +119,7 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_inbox_link": PermissionMode.GOVERNED_WRITE,
     "cruxible_since": PermissionMode.READ_ONLY,
     "cruxible_next": PermissionMode.READ_ONLY,
+    "cruxible_duplicates": PermissionMode.READ_ONLY,
     "cruxible_audit": PermissionMode.READ_ONLY,
     "cruxible_floor_export": PermissionMode.READ_ONLY,
     # The vocabulary file: export writes the workspace file (no state) and plan

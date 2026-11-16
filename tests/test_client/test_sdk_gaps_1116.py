@@ -84,3 +84,12 @@ def test_a_runbook_repair_is_spelled_as_the_sdk_handle() -> None:
         next_repair_command(repair.operation, arguments=repair.arguments, surface="sdk")
         == 'cx.runbook("maintain").run()'
     )
+
+
+def test_the_duplicates_audit_is_one_client_call(tmp_path: Path) -> None:
+    cx, client = _cx(tmp_path)
+
+    assert cx.duplicates("acme.part", limit=5) == "<duplicates>"
+    assert client.calls == [
+        ("duplicates", ("inst",), {"kind": "acme.part", "limit": 5, "cursor": None})
+    ]

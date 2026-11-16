@@ -34,6 +34,7 @@ from cruxible_client.contracts.claim_reads import (
     ClaimReadBatchResult,
 )
 from cruxible_client.contracts.declared_blocks import DeclaredBlockPageObservation
+from cruxible_client.contracts.duplicates import DuplicatesAuditRequest, DuplicatesAuditResult
 from cruxible_client.contracts.errors import (
     SinceRequestInvalid,
 )
@@ -1933,6 +1934,28 @@ class CruxibleClient:
             json=request.model_dump(mode="json"),
         )
         return self._parse_model(response, contracts.SinceResult)
+
+    def duplicates(
+        self,
+        instance_id: str,
+        *,
+        kind: str,
+        limit: int | None = None,
+        cursor: str | None = None,
+    ) -> DuplicatesAuditResult:
+        """One page of possible duplicates of ``kind``; follow ``next_cursor`` while truncated."""
+        request = DuplicatesAuditRequest.model_validate(
+            {
+                "kind": kind,
+                **({} if limit is None else {"limit": limit}),
+                **({} if cursor is None else {"cursor": cursor}),
+            }
+        )
+        response = self._client.post(
+            f"/api/v1/{instance_id}/duplicates",
+            json=request.model_dump(mode="json", exclude_none=True),
+        )
+        return self._parse_model(response, DuplicatesAuditResult)
 
     def audit(
         self,

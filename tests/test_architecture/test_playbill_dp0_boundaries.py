@@ -449,6 +449,7 @@ def test_public_registration_catalogs_are_playbill_only() -> None:
         "migrate_claim_type",
         "next",
         "audit",
+        "duplicates",
         "since",
         "backlinks",
     }

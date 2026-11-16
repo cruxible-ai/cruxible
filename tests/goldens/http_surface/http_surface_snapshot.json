@@ -89,6 +89,9 @@
   "/api/v1/{instance_id}/documents/proposals": {
     "POST": "ProposalInspection"
   },
+  "/api/v1/{instance_id}/duplicates": {
+    "POST": "DuplicatesAuditResult"
+  },
   "/api/v1/{instance_id}/files/check": {
     "POST": "FileCheckResult"
   },

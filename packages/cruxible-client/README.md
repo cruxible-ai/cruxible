@@ -1270,6 +1270,24 @@ Scans the attached workspace and reads actionable work with explicit access prof
 |---|---|---|
 | `expiring_within` | `None` (seven days) | A `cruxible_client.Duration`: how far ahead expiring evidence counts. |
 
+<a id="api-cruxible-duplicates"></a>
+
+### `Cruxible.duplicates`
+
+[Source](src/cruxible_client/authoring/sdk.py)
+
+```text
+duplicates(kind: str, *, limit: int | None = None, cursor: str | None = None) -> DuplicatesAuditResult
+```
+
+Lists possible duplicates of one kind: Subjects whose ids, aliases or values of
+one predicate meet under a broad comparison (casefold, no punctuation, the
+alias graph) but differ under the declared rules, and Subjects of a `hint` kind
+that hold one key. Resolve with a `semantic.alias` and a retirement, or assert
+`semantic.distinct_from`.
+
+**Conditions and effects:** A pure, bounded read; a cut page carries `next_cursor`.
+
 <a id="api-cruxible-audit"></a>
 
 ### `Cruxible.audit`
@@ -6516,6 +6534,18 @@ since(
 ```
 
 HTTP: `POST f'/api/v1/{instance_id}/since'`.
+
+<a id="api-cruxibleclient-duplicates"></a>
+
+### `CruxibleClient.duplicates`
+
+[Source](src/cruxible_client/transport/http.py)
+
+```text
+duplicates(instance_id: str, *, kind: str, limit: int | None = None, cursor: str | None = None) -> DuplicatesAuditResult
+```
+
+HTTP: `POST f'/api/v1/{instance_id}/duplicates'`. One page of the duplicates audit of one kind.
 
 <a id="api-cruxibleclient-audit"></a>
 

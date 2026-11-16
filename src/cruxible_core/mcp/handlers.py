@@ -77,6 +77,10 @@ from cruxible_client.contracts.declared_blocks import (
     BlockRepinResult,
 )
 from cruxible_client.contracts.documents import DocumentShell
+from cruxible_client.contracts.duplicates import (
+    DUPLICATES_AUDIT_DEFAULT_LIMIT,
+    DuplicatesAuditResult,
+)
 from cruxible_client.contracts.file_catalog import FileCompilationBundle
 from cruxible_client.contracts.get_reads import (
     ByteRange,
@@ -2101,6 +2105,19 @@ def handle_playbill_next(
         )
 
     return _daemon_call(remote, operation_name="cruxible_next")
+
+
+def handle_playbill_duplicates(
+    instance_id: str,
+    *,
+    kind: str,
+    limit: int = DUPLICATES_AUDIT_DEFAULT_LIMIT,
+    cursor: str | None = None,
+) -> DuplicatesAuditResult:
+    return _daemon_call(
+        lambda client: client.duplicates(instance_id, kind=kind, limit=limit, cursor=cursor),
+        operation_name="cruxible_duplicates",
+    )
 
 
 def handle_playbill_audit(

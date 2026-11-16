@@ -1017,6 +1017,11 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
     ),
     "next": _command("playbill", "next_work", "Read the deterministic repair queue."),
     "audit": _command("playbill", "audit", "Read ranked Claim verification work."),
+    "duplicates": _command(
+        "playbill",
+        "duplicates_audit",
+        "List possible duplicates of one kind for an agent to resolve.",
+    ),
     "get": _command(
         "playbill", "get_by_ref", "Read one governed thing by reference, values first."
     ),

@@ -393,6 +393,7 @@ _READ_ONLY_POSTS: dict[str, str] = {
     "/api/v1/{instance_id}/claims/backings": "reads the Claims backing a projection",
     "/api/v1/{instance_id}/claims/read-batch": "reads a batch of Claims",
     "/api/v1/{instance_id}/coverage/resolve": "resolves observations against accepted coverage",
+    "/api/v1/{instance_id}/duplicates": "lists duplicate candidates",
     "/api/v1/{instance_id}/audit": (
         "reads the audit view; appends an audit-run event, but changes no accepted state"
     ),

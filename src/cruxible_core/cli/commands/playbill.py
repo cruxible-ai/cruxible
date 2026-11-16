@@ -109,6 +109,10 @@ from cruxible_client.contracts.compiler_upgrade_landing import (
     CompilerUpgradeSigningKey,
 )
 from cruxible_client.contracts.documents import DocumentShell
+from cruxible_client.contracts.duplicates import (
+    DUPLICATES_AUDIT_DEFAULT_LIMIT,
+    DUPLICATES_AUDIT_MAX_LIMIT,
+)
 from cruxible_client.contracts.errors import (
     CanonicalEncodingError,
     SinceRequestInvalid,
@@ -9226,6 +9230,60 @@ def next_work(
             )
         )
     )
+
+
+@playbill_group.command("duplicates")
+@click.option("--kind", required=True, help="The Subject kind to audit.")
+@click.option(
+    "--limit",
+    default=DUPLICATES_AUDIT_DEFAULT_LIMIT,
+    show_default=True,
+    type=click.IntRange(1, DUPLICATES_AUDIT_MAX_LIMIT),
+    help="Groups per page.",
+)
+@click.option("--cursor", default=None, help="Continue a previous page of the same audit.")
+@json_option
+@handle_errors
+def duplicates_audit(kind: str, limit: int, cursor: str | None, output_json: bool) -> None:
+    """List possible duplicates of one kind; a pure, bounded read.
+
+    Subjects whose ids or aliases, and values of one predicate, that meet under
+    a broad comparison (casefold, no punctuation, the alias graph) but differ
+    under the declared rules; and Subjects of a hint kind holding one key.
+    Resolve a Subject or key group with an alias plus a retirement or with
+    semantic.distinct_from; a value group with a governed canonical_form
+    succession.
+    """
+
+    result = _server_call(
+        lambda client, instance_id: client.duplicates(
+            instance_id, kind=kind, limit=limit, cursor=cursor
+        ),
+        command_name="cruxible duplicates",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    scanned = result.scanned
+    click.echo(
+        f"Possible duplicates of {result.kind}: {len(result.groups)} group(s); read "
+        f"{scanned.subjects} Subject(s), {scanned.aliases} alias(es), {scanned.values} value(s)"
+        + (" (stopped at its bound)" if result.budget_exhausted else "")
+        + "."
+    )
+    for group in result.groups:
+        if group.group == "subjects":
+            members = ", ".join(
+                f"{item.subject} ({', '.join(item.names)})" for item in group.subjects
+            )
+            click.echo(f"  subjects {group.key!r}: {members}")
+        elif group.group == "keys":
+            key = ", ".join(f"{part.predicate}={part.value!r}" for part in group.key)
+            click.echo(f"  key {key}: {', '.join(group.subjects)}")
+        else:
+            members = ", ".join(f"{item.value!r} {item.claim}" for item in group.values)
+            click.echo(f"  {group.predicate} {group.key!r}: {members}")
+    _echo_list_continuation(result.next_cursor)
 
 
 @playbill_group.command("audit")

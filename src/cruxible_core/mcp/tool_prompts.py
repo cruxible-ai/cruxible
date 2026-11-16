@@ -341,6 +341,14 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use when a predicted Claim and its matching later observation are accepted: pass the "
         "prediction id and the observation's Claim ID."
     ),
+    "cruxible_duplicates": (
+        "Use to find what may name one thing twice in one kind: Subjects whose ids or aliases, "
+        "and values of one predicate, that meet under a broad comparison (casefold, no "
+        "punctuation, the alias graph) but differ under the declared rules, and Subjects of a "
+        "hint kind holding one key. Resolve a Subject or key group with semantic.alias plus "
+        "retire, or semantic.distinct_from; a value group with "
+        "a canonical_form succession. A pure, bounded read; pass next_cursor while truncated."
+    ),
     "cruxible_audit": (
         "Rank visible Claim verification work by exact stake, weakness, and recency factors. "
         "This read records completed coverage but never recommends or executes a repair."
