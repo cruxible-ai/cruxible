@@ -332,7 +332,6 @@ from cruxible_core.procedures.terminal_dependencies import (
     DependencyEvidenceFactsV1,
     DependencyToken,
     TerminalChildReceiptV1,
-    TerminalItemDependencyAuditV1,
     TerminalItemDependencyManifestV1,
     TerminalItemDerivedFactsV1,
     accepted_state_token,
@@ -348,7 +347,7 @@ from cruxible_core.procedures.terminal_dependencies import (
     receipt_token,
     render_shared_terminal_dependencies,
     shared_terminal_dependencies,
-    split_item_dependencies,
+    split_item_dependency_payloads,
     terminal_item_key,
     witnessed_list_capture,
 )
@@ -6654,7 +6653,7 @@ class ProcedureExecutor:
         receipts: list[TerminalChildReceiptV1] = []
         manifests: dict[str, TerminalItemDependencyManifestV1] = {}
         folded: list[TerminalItemDerivedFactsV1] = []
-        audits: list[TerminalItemDependencyAuditV1] = []
+        stamps: list[str] = []
         item_drafts: list[tuple[str, str]] = []
         recorded_at: list[datetime] = []
         for index, value in enumerate(values):
@@ -6680,11 +6679,7 @@ class ProcedureExecutor:
             folded.append(derived)
             stamp = format_datetime(self.clock.now())
             assert stamp is not None  # a clock reading always renders
-            audits.append(
-                TerminalItemDependencyAuditV1(
-                    deployment_digest=admission.deployment_snapshot_digest, recorded_at=stamp
-                )
-            )
+            stamps.append(stamp)
             # Preserve the per-item clock reads and their order from single appends.
             recorded_at.append(self.clock.now())
             item_drafts.append((item_key, derived.manifest_digest))
@@ -6698,16 +6693,16 @@ class ProcedureExecutor:
             shared_digest = self.bodies.store(
                 render_shared_terminal_dependencies(shared), journal_payload=True
             ).digest
-            payloads = [
-                split_item_dependencies(
-                    manifest,
-                    derived,
+            payloads = list(
+                split_item_dependency_payloads(
+                    tuple(manifests.values()),
+                    folded,
                     shared=shared,
                     shared_digest=shared_digest,
-                    audit=audit,
-                ).model_dump(mode="json")
-                for manifest, derived, audit in zip(manifests.values(), folded, audits, strict=True)
-            ]
+                    deployment_digest=admission.deployment_snapshot_digest,
+                    recorded_at=stamps,
+                )
+            )
         group = self._append_events(
             admission,
             records,

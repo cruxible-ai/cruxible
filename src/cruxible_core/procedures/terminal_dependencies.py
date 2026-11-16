@@ -473,47 +473,58 @@ def render_shared_terminal_dependencies(shared: TerminalSharedDependenciesV1) ->
     return canonical_bytes(shared.model_dump(mode="json"))
 
 
-def split_item_dependencies(
-    manifest: TerminalItemDependencyManifestV1,
-    derived: TerminalItemDerivedFactsV1,
+def split_item_dependency_payloads(
+    manifests: Sequence[TerminalItemDependencyManifestV1],
+    derived: Sequence[TerminalItemDerivedFactsV1],
     *,
     shared: TerminalSharedDependenciesV1,
     shared_digest: str,
-    audit: TerminalItemDependencyAuditV1,
-) -> TerminalItemDependencyRecordV2:
-    """One item's record: what it consumed beyond its terminal's shared set."""
+    deployment_digest: str | None,
+    recorded_at: Sequence[str],
+) -> list[dict[str, object]]:
+    """Each item's ``item_dependencies`` payload: what it consumed beyond the shared set.
 
-    # Sets, so each item costs what its own closure holds, never closure x shared.
-    common = {item.input_name: set(item.capture_digests) for item in shared.coverage}
-    held = {field: set(getattr(shared.digests, field)) for field in _SLOT_FIELDS.values()}
-    return TerminalItemDependencyRecordV2(
-        shared_digest=shared_digest,
-        own=TerminalDependencyDigestsV1(
-            **{
-                field: tuple(
-                    digest for digest in getattr(manifest, field) if digest not in held[field]
-                )
-                for field in _SLOT_FIELDS.values()
+    Every payload is the JSON form of :class:`TerminalItemDependencyRecordV2`,
+    built directly: a settle journals one per item, so this constructs no model
+    per item (the manifests and facts it splits are already validated, and
+    removing digests from a sorted unique tuple keeps it sorted and unique).
+    The shared set's lookups are built once for the terminal, so each item
+    costs what its own closure holds.
+    """
+
+    _tagged(shared_digest, label="shared dependencies digest")
+    held = {field: frozenset(getattr(shared.digests, field)) for field in _SLOT_FIELDS.values()}
+    common = {item.input_name: frozenset(item.capture_digests) for item in shared.coverage}
+    empty: frozenset[str] = frozenset()
+    payloads: list[dict[str, object]] = []
+    for manifest, facts, stamp in zip(manifests, derived, recorded_at, strict=True):
+        body = facts.model_dump(mode="json")
+        body["source_coverage"] = [
+            {
+                **entry,
+                "capture_digests": [
+                    digest
+                    for digest in entry["capture_digests"]
+                    if digest not in common.get(entry["input_name"], empty)
+                ],
             }
-        ),
-        derived=derived.model_copy(
-            update={
-                "source_coverage": tuple(
-                    item.model_copy(
-                        update={
-                            "capture_digests": tuple(
-                                digest
-                                for digest in item.capture_digests
-                                if digest not in common.get(item.input_name, ())
-                            )
-                        }
-                    )
-                    for item in derived.source_coverage
-                )
+            for entry in body["source_coverage"]
+        ]
+        payloads.append(
+            {
+                "tag": ITEM_DEPENDENCIES_RECORD_V2,
+                "shared_digest": shared_digest,
+                "own": {
+                    field: [
+                        digest for digest in getattr(manifest, field) if digest not in held[field]
+                    ]
+                    for field in _SLOT_FIELDS.values()
+                },
+                "derived": body,
+                "audit": {"deployment_digest": deployment_digest, "recorded_at": stamp},
             }
-        ),
-        audit=audit,
-    )
+        )
+    return payloads
 
 
 def join_item_dependencies(
@@ -939,7 +950,7 @@ __all__ = [
     "render_shared_terminal_dependencies",
     "resolve_item_dependencies",
     "shared_terminal_dependencies",
-    "split_item_dependencies",
+    "split_item_dependency_payloads",
     "capture_root",
     "citable_captures",
     "witnessed_list_capture",

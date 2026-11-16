@@ -36,6 +36,7 @@ from tests.test_procedures.test_procedure_execution import (
     _prepare,
     _StateReader,
 )
+from tests.test_procedures.test_terminal_dependencies import _model_builds
 
 #: The item each row of the read posts: its id.
 ITEM = Contract.model_validate(
@@ -374,7 +375,7 @@ def test_terminal_fan_out_obeys_run_budget_with_scalar_return(tmp_path, kind):
     assert budget["field_path"] == "items"
 
 
-def _record_items_over_a_capture_list(tmp_path, *, captures: int, items: int):  # type: ignore[no-untyped-def]
+def _record_items_over_a_capture_list(tmp_path, *, captures: int, items: int, builds=None):  # type: ignore[no-untyped-def]
     """Journal one terminal's ``items``, each derived from the same ``captures`` and one own.
 
     The shape of a list-fed terminal (an OSV-style fetch of one response per
@@ -457,9 +458,12 @@ def _record_items_over_a_capture_list(tmp_path, *, captures: int, items: int):  
         admission, records, "admission_bound", prepared.bound_payload().model_dump(mode="json")
     )
     before = {path.name for path in (tmp_path / "cas").rglob("*") if path.is_file()}
-    children, _values, manifests, _selected = executor._record_terminal_items(  # noqa: SLF001
-        node, admission=prepared.admission, state=state, records=records
-    )
+    with _model_builds() as counted:
+        children, _values, manifests, _selected = executor._record_terminal_items(  # noqa: SLF001
+            node, admission=prepared.admission, state=state, records=records
+        )
+    if builds is not None:
+        builds.update(counted)
     stored = sum(
         path.stat().st_size
         for path in (tmp_path / "cas").rglob("*")
@@ -521,3 +525,34 @@ def test_an_item_record_does_not_grow_with_the_runs_capture_count(tmp_path) -> N
         f"v1 {small_inline[0]} -> {large_inline[0]}; "
         f"terminal stored {small_stored} -> {large_stored}"
     )
+
+
+def test_journaling_item_records_builds_no_record_model_per_item(tmp_path) -> None:
+    """The shared-set split adds no model build per item (the settle scale guard's count).
+
+    Each item's ``item_dependencies`` payload is built as JSON from its already
+    validated manifest and facts; the record, its digests, its audit and copies
+    of its facts are never constructed per item.
+    """
+
+    record_models = (
+        "TerminalItemDependencyRecordV2.",
+        "TerminalDependencyDigestsV1.",
+        "TerminalItemDependencyAuditV1.",
+        "TerminalSharedDependenciesV1.",
+        "TerminalSharedCoverageV1.",
+        "TerminalItemDerivedFactsV1.model_copy",
+        "TerminalItemSourceCoverageV1.model_copy",
+    )
+    counts = {}
+    for items in (3, 12):
+        builds: dict[str, int] = {}
+        _record_items_over_a_capture_list(
+            tmp_path / str(items), captures=10, items=items, builds=builds
+        )
+        counts[items] = {
+            name: count for name, count in builds.items() if name.startswith(record_models)
+        }
+    # Once per terminal (the shared set), never per item.
+    assert counts[3] == counts[12]
+    assert counts[3]["TerminalSharedDependenciesV1.__init__"] == 1

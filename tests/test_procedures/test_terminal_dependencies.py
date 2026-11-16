@@ -1,6 +1,10 @@
 """Per-terminal-item dependency closure derived from exact tokens."""
 
+import sys
+from collections import Counter
 from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
+from typing import Any
 
 import pytest
 
@@ -366,11 +370,11 @@ def _closures(captures: int, items: int):  # type: ignore[no-untyped-def]
 def test_an_item_record_cites_its_terminals_shared_set_and_restores_exactly() -> None:
     from cruxible_client.contracts.canonical import canonical_bytes
     from cruxible_core.procedures.terminal_dependencies import (
-        TerminalItemDependencyAuditV1,
+        TerminalItemDependencyRecordV2,
         render_shared_terminal_dependencies,
         resolve_item_dependencies,
         shared_terminal_dependencies,
-        split_item_dependencies,
+        split_item_dependency_payloads,
     )
 
     manifests, derived = _closures(captures=5, items=3)
@@ -379,20 +383,28 @@ def test_an_item_record_cites_its_terminals_shared_set_and_restores_exactly() ->
     assert len(shared.digests.produced_capture_digests) == 5  # the own Captures are not shared
     assert shared.coverage[0].input_name == "doc.pages"
     shared_digest = _digest("e")
-    audit = TerminalItemDependencyAuditV1(recorded_at="2026-11-15T00:00:00Z")
-    for manifest, facts in zip(manifests, derived, strict=True):
-        record = split_item_dependencies(
-            manifest, facts, shared=shared, shared_digest=shared_digest, audit=audit
-        )
+    payloads = split_item_dependency_payloads(
+        manifests,
+        derived,
+        shared=shared,
+        shared_digest=shared_digest,
+        deployment_digest=None,
+        recorded_at=["2026-11-15T00:00:00Z"] * len(manifests),
+    )
+    for manifest, facts, payload in zip(manifests, derived, payloads, strict=True):
+        # The payload is a record's exact JSON form, built without the model.
+        record = TerminalItemDependencyRecordV2.model_validate(payload)
+        assert canonical_bytes(record.model_dump(mode="json")) == canonical_bytes(payload)
         assert len(record.own.produced_capture_digests) == 1 and not record.own.receipt_digests
         assert len(record.derived.source_coverage[0].capture_digests) == 1
-        payload = record.model_dump(mode="json")
         restored = resolve_item_dependencies(payload, {shared_digest: content}.__getitem__)
         # The manifest digest is the one rule it always was, over the whole closure.
         assert restored == (manifest, facts)
         assert terminal_item_manifest_digest(restored[0]) == facts.manifest_digest
         # A record the shared set does not reproduce is refused.
-        tampered = {**payload, "own": {**payload["own"], "produced_capture_digests": []}}
+        own = payload["own"]
+        assert isinstance(own, dict)
+        tampered = {**payload, "own": {**own, "produced_capture_digests": []}}
         with pytest.raises(ValueError, match="manifest digest"):
             resolve_item_dependencies(tampered, {shared_digest: content}.__getitem__)
     # The inline shape written before the shared set still resolves.
@@ -408,3 +420,66 @@ def test_an_item_record_cites_its_terminals_shared_set_and_restores_exactly() ->
             payload,
             {shared_digest: canonical_bytes(shared.model_dump(mode="json")) + b" "}.__getitem__,
         )
+
+
+@contextmanager
+def _model_builds() -> Iterator[Counter[str]]:
+    """Count Pydantic model constructions on this thread, as the settle scale guard does."""
+
+    from pydantic import BaseModel
+
+    codes = {
+        getattr(BaseModel, name).__code__: name
+        for name in (
+            "__init__",
+            "model_validate",
+            "model_validate_json",
+            "model_copy",
+            "model_construct",
+        )
+    }
+    counts: Counter[str] = Counter()
+    previous = sys.getprofile()
+
+    def count(frame: Any, event: str, arg: Any) -> None:
+        if event == "call" and frame.f_code in codes:
+            value = frame.f_locals.get("self", frame.f_locals.get("cls"))
+            name = value.__name__ if isinstance(value, type) else type(value).__name__
+            counts[f"{name}.{codes[frame.f_code]}"] += 1
+
+    sys.setprofile(count)
+    try:
+        yield counts
+    finally:
+        sys.setprofile(previous)
+
+
+def test_splitting_item_records_builds_no_model_per_item() -> None:
+    """A settle journals one record per item: splitting them adds no model build per item.
+
+    The scale guard (tests/test_scale/test_settle_per_item.py) caps model builds
+    per settled item; the shared-set split once built a record, its digests, an
+    audit and a copy of the facts and of each coverage entry for every item.
+    """
+
+    from cruxible_core.procedures.terminal_dependencies import (
+        shared_terminal_dependencies,
+        split_item_dependency_payloads,
+    )
+
+    builds = {}
+    for items in (3, 30):
+        manifests, derived = _closures(captures=8, items=items)
+        shared = shared_terminal_dependencies(manifests, derived)
+        with _model_builds() as counts:
+            payloads = split_item_dependency_payloads(
+                manifests,
+                derived,
+                shared=shared,
+                shared_digest=_digest("e"),
+                deployment_digest=_digest("d"),
+                recorded_at=["2026-11-15T00:00:00Z"] * items,
+            )
+        assert len(payloads) == items
+        builds[items] = dict(counts)
+    assert builds == {3: {}, 30: {}}
