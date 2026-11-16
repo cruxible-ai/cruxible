@@ -3178,6 +3178,19 @@ all; a post over either bound refuses `inbox_item_over_budget` and posts
 nothing. Rule of thumb: propose when the automation can state the belief, post
 when it cannot.
 
+An inbox or claims step whose `for_each` is a Query read's `rows`
+(`$steps.<read>.rows`) reads each row as:
+
+| Reference | Value |
+|---|---|
+| `$item.<column>` | A column the Query declares (a projection field); an absent value is left out. |
+| `$item.subject` | The row's Subject, `<kind>/<id>` (a `subject<kind>` value). |
+| `$item.bindings.<name>` | The Subject bound to that Query binding, `<kind>/<id>`; left out when unbound. |
+
+A declared column named `subject` or `bindings` takes its place. Any other
+`$item` reference refuses at authoring (`item_reference_unresolved`), listing
+what the row offers; declare other values as Query columns.
+
 Known limitation: a settle run submits its delegated proposal against the
 accepted head and then activates it. If another generation is accepted between
 the two, activation refuses `settle_publication_refused`, and that proposal
