@@ -5091,7 +5091,11 @@ def _already_done(
     plan: _Plan,
     request: WriteRequest,
 ) -> WriteOutcome:
-    """Every change is already live: unchanged, with nothing submitted (S2)."""
+    """Every change is already live: unchanged, with nothing submitted (S2).
+
+    A write that also carries doc edits answers accepted at the head, as
+    before: its doc writes and confirmations happen on the client.
+    """
 
     changes = tuple(
         ChangeOutcome(op=item.op, **(item.unchanged_outcome or item.outcome))
@@ -5107,6 +5111,17 @@ def _already_done(
         because=request.because,
     )
     first = next((item.subject for item in changes if item.subject is not None), None)
+    if request.docs:
+        # A write carrying doc edits is not unchanged: the client writes the
+        # files and confirms them against this answer (accepted, at the head).
+        return WriteOutcome(
+            status="would_accept" if request.dry_run else "accepted",
+            changes=changes,
+            coordinate=compact_coordinate(instance, head),
+            base=None if request.dry_run else compact_coordinate(instance, head),
+            warnings=warnings,
+            next=None if first is None else _render_get(request.surface, first),
+        )
     return WriteOutcome(
         status="unchanged",
         changes=changes,
