@@ -143,7 +143,11 @@ def test_cli_curation_lifecycle_commands_delegate_once(
                 ),
                 generation=3,
                 operational_head_digest="sha256:" + "5" * 64,
-                item={"item_id": values["item_id"], "status": "resolved"},
+                item={
+                    "item_id": values["item_id"],
+                    "status": "resolved",
+                    "latest_event_digest": "sha256:" + "6" * 64,
+                },
             )
 
         def overrule_curation(
@@ -186,6 +190,11 @@ def test_cli_curation_lifecycle_commands_delegate_once(
 
     assert result.exit_code == 0, result.output
     assert [name for name, _values in calls] == [expected_operation]
+    # The next ruling names the new digest; a suppressed item leaves the list,
+    # so the ruling prints it and the undo that uses it (gape-03).
+    assert f"latest_event_digest: sha256:{'6' * 64}" in result.output
+    undo = "Undo: cruxible curation unsuppress sha256:" + "1" * 64
+    assert (undo in result.output) == (expected_operation == "suppress")
 
 
 @pytest.mark.parametrize(

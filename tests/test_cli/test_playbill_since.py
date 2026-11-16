@@ -154,3 +154,70 @@ def test_cli_since_accepts_a_profile_file_relying_on_model_defaults(
     (profile,) = profiles
     assert profile["tag"] == "playbill-coverage-access-profile-v1"
     assert profile["disclose_restricted_existence"] is True
+
+
+def test_cli_since_text_continues_with_a_command_that_runs(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """gapb-15: the More line is the next page's command, cursor on stdin."""
+
+    import json
+    import shlex
+
+    coordinate = contracts.AcceptedCoordinate(
+        git_oid="1" * 64,
+        semantic_root="sha256:" + "2" * 64,
+        generation_root="sha256:" + "3" * 64,
+        compiler_digest="sha256:" + "4" * 64,
+    )
+    cursor = {
+        "instance_id": "inst_since",
+        "lower_generation": 3,
+        "head_coordinate": coordinate.model_dump(mode="json"),
+        "access_profile": {
+            "tag": "playbill-coverage-access-profile-v1",
+            "profile_id": "cli-since",
+            "permitted_access_classes": ["instance", "public"],
+            "disclose_restricted_existence": False,
+        },
+        "max_rows": 1,
+        "max_bytes": 65_536,
+        "last_generation": 4,
+        "last_member_path": "claims/CLM-1.json",
+    }
+    cursor["cursor_digest"] = contracts._since_digest(  # type: ignore[attr-defined]
+        "playbill-since-cursor-v1", cursor
+    )
+    seen: list[object] = []
+
+    class StubClient:
+        def since(self, instance_id: str, *, generation: int, cursor: object, **_values: object):
+            seen.append(cursor)
+            values = {
+                "coordinate": coordinate.model_dump(mode="json"),
+                "generation": 6,
+                "rows": [],
+                "next_cursor": cursor_value,
+                "truncated": True,
+            }
+            return contracts.SinceResult.model_validate(
+                {
+                    **values,
+                    "result_digest": contracts._since_digest(  # type: ignore[attr-defined]
+                        "playbill-since-result-v1", values
+                    ),
+                }
+            )
+
+    cursor_value = contracts.SinceCursor.model_validate(cursor).model_dump(mode="json")
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    prefix = ["--server-url", "https://since.example.test", "--instance-id", "inst_since"]
+    first = CliRunner().invoke(cli, [*prefix, "since", "3", "--max-rows", "1"])
+
+    assert first.exit_code == 0, first.output
+    (more,) = [line for line in first.output.splitlines() if line.startswith("More: ")]
+    command, _, here = more.removeprefix("More: ").partition(" <<< ")
+    argv = shlex.split(command)
+    assert argv[:3] == ["cruxible", "since", "3"] and argv[-2:] == ["--cursor", "-"]
+    # Running it as printed sends the same cursor back.
+    second = CliRunner().invoke(cli, [*prefix, *argv[1:]], input=shlex.split(here)[0])
+    assert second.exit_code == 0, second.output
+    assert json.loads(json.dumps(seen[-1])) == cursor_value

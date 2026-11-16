@@ -29,6 +29,8 @@
     }
   },
   "dispatch_sites": {
+    "packages/cruxible-client/src/cruxible_client/contracts/repair_spelling.py::_composed": "core's own served repair operation ids, spelled per client (CLI, MCP, SDK)",
+    "packages/cruxible-client/src/cruxible_client/contracts/repair_spelling.py::_line": "core's own served repair operation ids, spelled per client (CLI, MCP, SDK)",
     "src/cruxible_core/ledger/git.py::GitLedger._update_refs": "git update-ref command verbs (update, delete, verify), not a provider operation",
     "src/cruxible_core/mcp/handlers.py::_write_request": "core's own MCP tool names",
     "src/cruxible_core/server/errors.py::_message_for_error": "core's own MCP tool names",

@@ -19,13 +19,14 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
-from typing import Any, Literal, TypeAlias
+from typing import Annotated, Any, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from cruxible_client.contracts.canonical import CasDigest
 from cruxible_client.contracts.change_control import DryRun, PreviewAt, StateCoordinate
 from cruxible_client.contracts.errors import CruxibleError
+from cruxible_client.contracts.placeholders import NotPlaceholder
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.repairs import ServedRepair
 
@@ -167,7 +168,7 @@ class CaptureEraseRequest(_StrictErasureModel):
             "card prints."
         )
     )
-    because: str = Field(
+    because: Annotated[str, NotPlaceholder] = Field(
         min_length=1,
         max_length=CAPTURE_ERASURE_BECAUSE_MAX_LENGTH,
         description="Why the body is erased, recorded and shown; never repeat the erased bytes.",

@@ -56,30 +56,30 @@ def test_rebind_and_retire_repairs_show_every_required_operand() -> None:
     erased = {"claim_id": CLAIM, "citation": "e" * 12}
     operands = ("capture", "because")
     assert _repair_command("cruxible.rebind", arguments=erased, operands=operands) == (
-        f"cruxible rebind {CLAIM} --citation {'e' * 12} --capture CAP --because TEXT"
+        f"cruxible rebind {CLAIM} --citation {'e' * 12} --capture '<CAP>' --because '<TEXT>'"
     )
     assert _repair_command(
         "cruxible.rebind", arguments=erased, operands=operands, surface="sdk"
-    ) == (f'cx.rebind("{CLAIM}", citation="{"e" * 12}", capture="CAP", because="TEXT")')
+    ) == (f'cx.rebind("{CLAIM}", citation="{"e" * 12}", capture="<CAP>", because="<TEXT>")')
     mcp = _repair_command("cruxible.rebind", arguments=erased, operands=operands, surface="mcp")
     assert mcp == (
         'cruxible_write(changes=[{"op": "rebind", "target": "'
         + CLAIM
         + '", "citation": "'
         + "e" * 12
-        + '", "evidence": {"kind": "capture", "capture": "CAP"}}], because="TEXT")'
+        + '", "evidence": {"kind": "capture", "capture": "<CAP>"}}], because="<TEXT>")'
     )
     file_drift = _repair_command("cruxible.rebind", arguments=erased, operands=("file", "because"))
     assert file_drift == (
-        f"cruxible rebind {CLAIM} --citation {'e' * 12} --file FILE#ANCHOR --because TEXT"
+        f"cruxible rebind {CLAIM} --citation {'e' * 12} --file '<FILE#ANCHOR>' --because '<TEXT>'"
     )
     retire = {"claim_id": CLAIM}
     assert _repair_command("cruxible.claim.retire", arguments=retire, operands=("because",)) == (
-        f"cruxible retire {CLAIM} --because TEXT"
+        f"cruxible retire {CLAIM} --because '<TEXT>'"
     )
     assert _repair_command(
         "cruxible.claim.retire", arguments=retire, operands=("because",), surface="mcp"
-    ) == (f'cruxible_retire(target="{CLAIM}", because="TEXT")')
+    ) == (f'cruxible_retire(target="{CLAIM}", because="<TEXT>")')
 
 
 def test_a_claim_that_cannot_resolve_reads_ineligible_not_refused() -> None:

@@ -2332,7 +2332,7 @@ def _prediction_settleable(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None
     # resolves its exact contract and window, and the settler adds only the
     # observation's Claim ID.
     bound = row.detail["bound_contract_id"]
-    assert row.repair.command == f"cruxible prediction settle {bound}"
+    assert row.repair.command == f"cruxible prediction settle {bound} --observation '<CLAIM_ID>'"
     observation = worker.observe(instance, owner, capture, at="2026-09-02T12:02:00.000000Z")
     filled = SettleRequest(observation=observation.identity.name)
     # A window id the worker does not hold names no prediction.
@@ -2596,7 +2596,7 @@ def test_next_withholds_the_settle_repair_from_a_caller_who_cannot_settle(tmp_pa
     governed = service_playbill_next(instance, request=request, caller_rung=1)
     (row,) = settle_rows(governed)
     bound = row.detail["bound_contract_id"]
-    assert row.repair.command == f"cruxible prediction settle {bound}"
+    assert row.repair.command == f"cruxible prediction settle {bound} --observation '<CLAIM_ID>'"
     assert "hidden" not in governed.status.model_dump(mode="json")
 
     read_only = service_playbill_next(instance, request=request, caller_rung=0)
@@ -2612,7 +2612,9 @@ def test_next_withholds_the_settle_repair_from_a_caller_who_cannot_settle(tmp_pa
         }
     )
     (mcp_row,) = settle_rows(service_playbill_next(instance, request=mcp, caller_rung=1))
-    assert mcp_row.repair.command == f'cruxible_prediction_settle(prediction_id="{bound}")'
+    assert mcp_row.repair.command == (
+        f'cruxible_prediction_settle(prediction_id="{bound}", observation="<CLAIM_ID>")'
+    )
 
     default_profile = mcp.model_copy(update={"caller_tools": ("cruxible_next",)})
     profiled = service_playbill_next(instance, request=default_profile, caller_rung=1)

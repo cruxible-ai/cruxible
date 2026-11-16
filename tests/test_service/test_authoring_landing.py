@@ -6,6 +6,7 @@ import pytest
 
 from cruxible_client import contracts
 from cruxible_client.contracts.authoring.inputs import ClaimInput, lower_authoring_input
+from cruxible_client.contracts.authoring_landing import landing_for_surface
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.proposals.proposals import AuthenticatedActor
 from cruxible_core.runtime import playbill_api
@@ -80,9 +81,22 @@ def test_authoring_submit_lands_when_allowed(
         assert submitted.outcome.proposal_id == submitted.status.proposal_id
         assert submitted.outcome.proposal_id is not None
         assert submitted.outcome.next is not None
-        assert (
-            "approve" if expected == "independent_approval_required" else "activate"
-        ) in submitted.outcome.next
+        verb = "approve" if expected == "independent_approval_required" else "activate"
+        assert verb in submitted.outcome.next
+        # The next step is structured, so every client spells it as its own call.
+        repair = submitted.outcome.next_repair
+        assert repair is not None and repair.operation == f"cruxible.proposal.{verb}"
+        assert repair.arguments["proposal_id"] == submitted.outcome.proposal_id
+        mcp = landing_for_surface(submitted.outcome, "mcp")
+        sdk = landing_for_surface(submitted.outcome, "sdk")
+        assert mcp is not None and sdk is not None
+        assert f"cruxible_proposal_{verb}(" in str(mcp.next)
+        assert "cx." in str(sdk.next) and "cruxible " not in str(sdk.next)
+        if expected == "independent_approval_required":
+            # The next step names who can approve: an active principal other
+            # than the author, from the candidate's outstanding approvals.
+            assert submitted.outcome.next.endswith("--signer-id reviewer")
+            assert "one of: reviewer" in submitted.outcome.message
         assert instance.accepted_coordinate() == before
 
 

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Mapping
 from typing import Any, TypeAlias
 
@@ -468,22 +467,6 @@ def hand_edit_repair(code: str, *, required_change: str | None = None) -> HandEd
     )
 
 
-def render_served_repair(repair: ServedRepair) -> str:
-    """Render one structured repair for a terminal without inventing a command.
-
-    A runnable repair prints the served operation and the exact arguments it
-    carries; a hand edit prints its target and the change it requires. Neither
-    branch composes an invocation the caller could paste and have fail.
-    """
-
-    if isinstance(repair, HandEditRepair):
-        return f"hand edit {repair.hand_edit.target}: {repair.hand_edit.required_change}"
-    if not repair.arguments:
-        return repair.operation
-    arguments = json.dumps(repair.arguments, sort_keys=True, separators=(",", ":"))
-    return f"{repair.operation} {arguments}"
-
-
 def served_repair_for_refusal(code: str) -> ServedRepair:
     """Resolve one served refusal code to its declared structured repair.
 
@@ -512,6 +495,5 @@ __all__ = [
     "ServedRepairEnvelope",
     "ServedRepair",
     "hand_edit_repair",
-    "render_served_repair",
     "served_repair_for_refusal",
 ]

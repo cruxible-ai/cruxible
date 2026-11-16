@@ -62,8 +62,8 @@ def test_an_admin_token_alone_cannot_mint_in_another_principals_name(
         body = refused.json()  # type: ignore[attr-defined]
         assert body["error_code"] == "runtime_credential.principal_authority_required"
         assert (
-            "cruxible credential mint --principal-id reviewer --key-dir DIR --mode governed_write"
-            in body["message"]
+            "cruxible credential mint --principal-id reviewer --key-dir '<DIR>' "
+            "--mode governed_write" in body["message"]
         )
         assert body["repair"]["operation"] == "credential.mint"
 
@@ -464,6 +464,16 @@ def test_rotating_a_bound_credential_needs_its_principals_authority(
             == "runtime_credential.principal_authority_required"
         )
         assert "token" not in refused.text or refused.json().get("token") is None  # type: ignore[attr-defined]
+        # Repaired by signing this rotation, never by minting a second credential
+        # beside the one being rotated (gapa-13).
+        assert refused.json()["repair"] == {  # type: ignore[attr-defined]
+            "operation": "credential.rotate",
+            "arguments": {"credential_id": reviewer.record.credential_id, "key_dir": "<DIR>"},
+        }
+        assert (
+            f"credential rotate {reviewer.record.credential_id} --key-dir '<DIR>'"
+            in refused.json()["message"]  # type: ignore[attr-defined]
+        )
     current = store.get(reviewer.record.credential_id)
     assert current is not None and current.revoked_at is None
 
@@ -513,6 +523,15 @@ def test_rotating_a_bound_credential_needs_its_principals_authority(
     )
     assert revoked.status_code == 200, revoked.text
     assert revoked.json()["status"] == "revoked"
+    # The revoked token is refused with a code and the way back (gapa-14).
+    stale = client.get(
+        f"/api/v1/{instance_id}/whoami",
+        headers={"Authorization": f"Bearer {rotated['token']}"},
+    )
+    assert stale.status_code == 401, stale.text
+    assert stale.json()["error_code"] == "cruxible.auth.credential_unrecognized"
+    assert "credential rotate" in stale.json()["message"]
+    assert stale.json()["repair"]["operation"] == "credential.mint"
 
 
 _UNGUARDED_WRITES = (

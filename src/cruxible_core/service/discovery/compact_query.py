@@ -520,7 +520,7 @@ class _CompactPlan:
             nearest=nearest(name, incoming) or incoming[:NEAREST_LIMIT],
             repair=(
                 f"follow backwards along a predicate whose values are {self.kind} Subjects "
-                f"(orient kind={self.kind} lists them as incoming)"
+                f"(orient with kind {self.kind} lists them as incoming)"
                 if incoming
                 else "follow forward instead, or query the other kind"
             ),
@@ -850,7 +850,11 @@ def _refuse_engine(result: ClaimQueryResult, *, declared: Sequence[str] = ()) ->
         "cruxible.query.parameter_missing",
         "cruxible.query.parameter_type_mismatch",
     }:
-        repair = f"pass params named {', '.join(declared)}" if declared else "pass no params"
+        repair = (
+            f"give a value for each declared parameter: {', '.join(declared)}"
+            if declared
+            else "give no parameters"
+        )
     raise query_refusal(code, result.refusal.message, nearest=declared, repair=repair)
 
 

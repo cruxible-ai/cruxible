@@ -17,6 +17,7 @@ import hmac
 import os
 import re
 import secrets
+import shlex
 import stat
 import sys
 import threading
@@ -86,10 +87,14 @@ def prepare_bootstrap_secret(state_root: Path, *, extra_file: Path | None = None
     written = write_owner_only_secret(path, secret)
     if extra_file is not None:
         write_owner_only_secret(extra_file, secret)
+    quoted = shlex.quote(str(written))
     print(
         f"Auth on: bootstrap secret written to {written} (0600, never printed); "
         "`cruxible server status|restart|stop` read it from there. "
-        f"Claim an admin token: cruxible credential claim-bootstrap --secret-file {written}",
+        "Start a project in its repository: "
+        f'(1) CRUXIBLE_SERVER_BEARER_TOKEN="$(cat {quoted})" cruxible host create; '
+        f"(2) cruxible credential claim-bootstrap --secret-file {quoted}; "
+        "(3) CRUXIBLE_SERVER_BEARER_TOKEN=<the admin token it printed> cruxible init",
         file=sys.stderr,
     )
     return written

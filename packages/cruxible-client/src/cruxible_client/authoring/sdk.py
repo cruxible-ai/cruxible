@@ -139,6 +139,7 @@ from cruxible_client.contracts.authoring.models import (
     authoring_member_identity,
     authoring_program_digest,
 )
+from cruxible_client.contracts.authoring_landing import landing_for_surface
 from cruxible_client.contracts.backlinks import BacklinksRequest, BacklinksResult
 from cruxible_client.contracts.canonical import (
     CanonicalValue,
@@ -2338,7 +2339,8 @@ class Intent:
         self._raw = dict(raw)
         self._preflight = preflight
         self._candidate_status = candidate_status
-        self.outcome = outcome
+        # The daemon spells ``outcome.next`` for the CLI; an Intent shows the SDK call.
+        self.outcome = landing_for_surface(outcome, "sdk")
 
     @classmethod
     def from_preflight(
@@ -2559,7 +2561,7 @@ class Intent:
         self._playbill._observe_authoring_submit(result)
         self._raw = result.intent
         self._candidate_status = result.status
-        self.outcome = result.outcome
+        self.outcome = landing_for_surface(result.outcome, "sdk")
         return self
 
     def status(self) -> api.CandidateStatusRecord:
@@ -5672,7 +5674,7 @@ class ProjectionBlocks:
         artifacts: Sequence[ArtifactIdentity] | None = None,
         currency_policy: ProjectionCurrencyPolicy | None = None,
         backing_digest: str | None = None,
-        evaluation_time: datetime,
+        evaluation_time: datetime | None = None,
         body: str | bytes | None = None,
         compact: bool = True,
         render: bool = False,
@@ -5684,7 +5686,8 @@ class ProjectionBlocks:
         repins preserve that format. ``render`` writes the body as a table or list from
         the block's one query backing instead of ``body``; a body that is still its
         query's rendering is rendered again without it. ``dry_run`` returns the stamp
-        it would write and writes nothing.
+        it would write and writes nothing. ``evaluation_time`` defaults to now, on this
+        handle's clock, as the CLI and MCP repins do.
 
         Next: Cruxible.orient() to map state, Cruxible.query() for rows, or Cruxible.get().
         """
@@ -5716,7 +5719,9 @@ class ProjectionBlocks:
             artifacts=artifacts,
             currency_policy=currency_policy,
             backing_digest=backing_digest,
-            evaluation_time=evaluation_time,
+            evaluation_time=(
+                evaluation_time if evaluation_time is not None else self._playbill._clock()
+            ),
             coordinate=self._playbill.coordinate,
             body=body.encode("utf-8") if isinstance(body, str) else body,
             compact=compact,

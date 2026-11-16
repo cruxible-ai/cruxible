@@ -35,6 +35,8 @@ from cruxible_client.contracts.get_reads import (
 from cruxible_client.contracts.operational_reads import LiveHead, LiveView
 from cruxible_client.contracts.proposal_models import AuthenticatedActor
 from cruxible_client.contracts.read_values import ShownObject
+from cruxible_client.contracts.repair_spelling import render_repair
+from cruxible_client.contracts.repairs import RepairOperation
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime
 from cruxible_client.contracts.write import (
     DocConfirmationOutcome,
@@ -517,10 +519,9 @@ def read_doc_edits(
                 )
             )
             ref = f"file:{source}@{record.sequence}"
-            step = (
-                f"cruxible get {ref} --detail body"
-                if request.surface == "cli"
-                else f'get(ref="{ref}", detail="body")'
+            step = render_repair(
+                RepairOperation(operation="cruxible.get", arguments={"ref": ref, "detail": "body"}),
+                surface=request.surface,
             )
             revisions.append(
                 GetRevision(

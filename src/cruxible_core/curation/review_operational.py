@@ -33,6 +33,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
 from cruxible_client.contracts.errors import CruxibleError
 from cruxible_client.contracts.projection import AcceptedCoordinate
+from cruxible_client.contracts.repairs import RepairOperation
 from cruxible_client.contracts.temporal import ensure_utc
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.storage import fsync_directory as _fsync_directory
@@ -87,8 +88,16 @@ class ReviewOperationalConcurrentChangeError(CruxibleError):
     def error_code(self) -> str:
         return self.code
 
+    #: Read the item again: its latest event digest is what a ruling names.
+    repair = RepairOperation(operation="cruxible.curation.list")
+
     def __init__(self) -> None:
-        super().__init__(f"{self.code}: operational partition changed concurrently")
+        super().__init__(
+            f"{self.code}: operational partition changed concurrently: the item moved since "
+            "it was read, so the latest event digest this names is no longer current "
+            "(detection on each accepted generation can move a curation item); list it again "
+            "and pass its current latest_event_digest"
+        )
 
 
 class _StrictOperationalModel(BaseModel):

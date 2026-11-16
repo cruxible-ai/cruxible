@@ -306,7 +306,9 @@ class QueryVocabulary:
             "cruxible.query.unknown_field",
             message,
             nearest=suggestions,
-            repair=f"use a predicate of {label} (orient kind={label} lists them) or subject_id",
+            repair=(
+                f"use a predicate of {label} (orient with kind {label} lists them) or subject_id"
+            ),
             field_path=field_path,
         )
 

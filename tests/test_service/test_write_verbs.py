@@ -1312,6 +1312,42 @@ def test_a_set_refuses_when_its_slot_moved_since_the_read_coordinate(
     assert len(contested.candidates) == 2
 
 
+def test_a_stale_read_repairs_in_the_callers_spelling_and_verb(
+    instance: PlaybillInstance,
+) -> None:
+    """gapb-04/05: a retire is repaired by a retire, each in the caller's own spelling."""
+
+    first = _write(instance, _set(WI1, "status", "ready"))
+    read_at = first.coordinate.git_oid
+    _write(instance, _set(WI1, "status", "blocked"), because="Someone else saw it.")
+
+    cli_set = _refusal(_write(instance, _set(WI1, "status", "done"), at=read_at, surface="cli"))
+    assert cli_set.repair == (
+        f"Read it again (cruxible get {WI1}); to replace what it holds now, run it again "
+        "without --at, or set it with --contend to contest it"
+    )
+    sdk_retire = _refusal(_write(instance, _RETIRE_BY_SLOT, at=read_at, surface="sdk"))
+    assert sdk_retire.code == "cruxible.write.slot_changed"
+    assert sdk_retire.repair == (
+        f'Read it again (cx.get("{WI1}")); if it should still end, cx.refresh(), then call it again'
+    )
+    assert "set" not in sdk_retire.repair and "contend" not in sdk_retire.repair
+
+
+def test_a_preview_hint_keeps_the_callers_accept_never(instance: PlaybillInstance) -> None:
+    """coldcli-09: committing the preview of a proposal-only write still only proposes."""
+
+    preview = _write(
+        instance, _set(WI1, "status", "ready"), dry_run=True, accept="never", surface="cli"
+    )
+    assert preview.next == (
+        "Run the same command without --dry-run and keeping --no-accept, adding --at "
+        f"{preview.coordinate.git_oid}"
+    )
+    plain = _write(instance, _set(WI1, "status", "ready"), dry_run=True, surface="sdk")
+    assert plain.next == f'Call it again with dry_run=False, at="{plain.coordinate.git_oid}"'
+
+
 def _no_proposal_to_activate(instance: PlaybillInstance) -> None:
     assert service_list_playbill_proposals(instance, status="open").entries == ()
 
@@ -2052,8 +2088,8 @@ def test_a_contest_row_offers_one_keep_option_per_contender_and_picks_none(
     }
     # Each retirement names the operand it still needs (round-3 4b: full operands).
     assert {item.command for item in options} == {
-        f"cruxible retire {first} --because TEXT",
-        f"cruxible retire {second} --because TEXT",
+        f"cruxible retire {first} --because '<TEXT>'",
+        f"cruxible retire {second} --because '<TEXT>'",
     }
     assert {item.operands_to_add for item in options} == {("because",)}
 
@@ -2314,6 +2350,23 @@ def test_rebind_names_the_citation_when_none_of_that_file_is_held(
     )
     assert refusal.code == "cruxible.write.citation_not_held"
     assert len(refusal.candidates) == 1 and len(refusal.candidates[0]) == 12
+    assert refusal.repair == 'Name one of the listed citations with citation: "<ID>"'
+
+
+def test_selection_and_section_refusals_name_their_repair() -> None:
+    """gapb-24/25: a missing or repeated anchor, and a heading-less note, say what to do."""
+
+    from cruxible_client.authoring.sdk_types import SourceSelectionError
+    from cruxible_client.authoring.selectors import _unique_window
+    from cruxible_client.contracts.doc_sections import DocSectionError, append_section
+
+    with pytest.raises(SourceSelectionError, match="does not occur in the file; repair: copy"):
+        _unique_window(b"alpha\nbeta\n", "gamma")
+    with pytest.raises(SourceSelectionError, match="occurs 2 times .*repair: quote more"):
+        _unique_window(b"alpha\nalpha\n", "alpha")
+    with pytest.raises(DocSectionError) as heading:
+        append_section(b"# Notes\n", text="no heading here")
+    assert heading.value.repair is not None and "--heading TITLE" in heading.value.repair
 
 
 _TWO_FILES_CATALOG = """\

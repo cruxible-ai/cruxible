@@ -132,7 +132,8 @@ def test_each_doc_refusal_carries_its_own_repair(tmp_path: Path) -> None:
     assert projection.repair_line == "cruxible block repin notes.md summary"
     invalid = refused(AppendSection(file="new.md", text="no heading"))
     assert invalid.error_code == "cruxible.doc.section_invalid"
-    assert invalid.repair_line is None
+    # A heading-less append names the heading it needs (gapb-25).
+    assert invalid.repair_line is not None and "--heading TITLE" in invalid.repair_line
 
 
 @pytest.mark.parametrize(
