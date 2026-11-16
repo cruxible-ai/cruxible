@@ -3201,7 +3201,13 @@ no branching and no parameters of its own. Author one with a `runbook` input
 (`{kind: runbook, name, steps: [{line: NAME} | {action: NAME}, ...]}`); a
 Trigger may aim at it with `runbook_name` on a cadence, cron or
 generation_accepted schedule, and each Line step then runs under that Line's
-own enablement.
+own enablement: a step whose Line is not enabled stops the scheduled run there.
+A scheduled Trigger fires only while the daemon is running. An instant missed
+while it was down is not run afterwards, and for a Runbook nothing reports it
+(a Trigger aimed at a Line leaves a `line_coverage_gap` row in `next`): run the
+Runbook yourself after downtime. A Runbook's scheduled runs never overlap:
+instants that come due while its run is still going are folded into one run
+right after it, and nothing reports the folded instants.
 
 `cruxible runbook run NAME` runs the steps in order, each Line as your manual
 `line run` and each action fired as `action run` fires it. It stops at the
