@@ -4161,9 +4161,8 @@ names), `Capability:<name>@N`, `Contract:<name>@N`, `query:<name>`,
 `ApprovalPolicy:instance`, `ProcedureRuntimePolicy:instance`, an artifact path,
 or a proposal id or prefix (a proposal's status, and for a refusal its code,
 message and repair). A built-in name resolves in the `cruxible.` spelling
-cards print (`get CaptureContract:cruxible.coordinator-self-source-v1`) as
-well as its stored `playbill.` one: a ref resolves as written first, and only
-on a miss through the printed spelling. Operational things resolve too: `ProcedureRun:RUN-…` (or
+cards print (`get CaptureContract:cruxible.coordinator-self-source-v1`): a ref
+resolves as written first, and only on a miss through that printed spelling. Operational things resolve too: `ProcedureRun:RUN-…` (or
 the bare run id) answers a run's state, outcomes and terminal detail;
 `Line:<name>` (or the Line identity digest `next` names a due Line by, in full
 or as a 12+ hex prefix) answers the Line's Procedure, its schedule kinds, each
