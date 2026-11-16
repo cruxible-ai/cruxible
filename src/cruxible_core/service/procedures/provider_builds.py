@@ -152,12 +152,18 @@ def service_retire_provider(
                 status="unchanged",
                 coordinate=AcceptedCoordinate.from_internal(mode.head),
             )
+        from cruxible_core.service.discovery.kit_owners import (
+            bundled_retirement_warning,
+            kit_provider_owners,
+        )
+
         with instance.bind_accepted_projection(mode.head) as projection:
             pinners = live_pinners(
                 projection.typed.connection,
                 provider.identity.qualified,
                 provider_digest(provider).tagged,
             )
+            bundling = kit_provider_owners(instance, projection.typed.connection).get(name)
         if pinners:
             return ProviderRetireResult(
                 build=name,
@@ -179,6 +185,9 @@ def service_retire_provider(
             approval_required=approval,
             detail=detail,
             coordinate=AcceptedCoordinate.from_internal(mode.head),
+            warnings=()
+            if bundling is None
+            else (bundled_retirement_warning(provider.identity.qualified, bundling),),
         )
 
 

@@ -63,7 +63,7 @@ from cruxible_client.contracts.query.grammar import (
 from cruxible_client.kits import read_kit_directory, write_kit_directory
 from cruxible_client.transport.http import CruxibleClient
 from cruxible_core.claims.artifact_references import REFERENCE_FIELDS
-from cruxible_core.errors import DataValidationError
+from cruxible_core.errors import DataValidationError, RequestRefusedError
 from cruxible_core.governance.keys import generate_client_principal_key
 from cruxible_core.ledger.signing import LocalEd25519ApprovalSigner
 from cruxible_core.runtime import playbill_api
@@ -2832,3 +2832,63 @@ def test_a_late_signer_on_a_kit_change_is_told_the_kits_own_command(
         assert "cruxible_kit_add" in mcp_text
         for text in (wire["message"], cli_text, mcp_text):
             assert "kit remove" not in text and "cruxible_kit_remove" not in text
+
+
+def _retire(world: _World, predicate: str) -> tuple[str, ...]:
+    """Retire one ClaimType by an authored succession; returns the submit's warnings."""
+
+    current = world.claim_type(predicate)
+    retired = current.model_copy(
+        update={
+            "lifecycle": ArtifactLifecycle(
+                state="retired", predecessor_digest=claim_type_digest(current).tagged
+            )
+        }
+    )
+    draft = world.pb.changes(rationale="We no longer track plans.")
+    draft.succeed_claim_type(retired)
+    submitted = draft.prepare().submit(accept="never")
+    assert submitted._candidate_status is not None
+    assert submitted._candidate_status.proposal_id is not None
+    world.approve(submitted._candidate_status.proposal_id)
+    world.pb.refresh()
+    return submitted.kit_warnings
+
+
+def test_s7_an_upgrade_keeps_a_definition_the_consumer_retired(
+    worlds: tuple[_World, _World],
+) -> None:
+    """S7: your retirement stands across an upgrade, unasked; a dependent on it refuses."""
+
+    publisher, consumer = worlds
+    publisher.author(_claim_type(SEATS, {"type": "integer"}), _claim_type(PLAN, {"type": "string"}))
+    consumer.add(publisher.build("1.0.0"))
+    # Retiring what a kit bundles says so, naming the kit (until revive lands).
+    assert _retire(consumer, PLAN) == (
+        f"ClaimType:{PLAN} is bundled by kit acme; once retired it stays retired across "
+        "acme's upgrades",
+    )
+    publisher.succeed(SEATS, {"type": "integer", "minimum": 0})
+
+    upgraded = consumer.add(publisher.build("1.1.0"))
+
+    assert upgraded.status == "accepted", upgraded.detail
+    assert {(item.path, item.action, item.consequence) for item in upgraded.plan} == {
+        (_path(PLAN), "keep", "consumer_retired"),
+        (_path(SEATS), "replace", None),
+    }
+    assert consumer.claim_type(PLAN).lifecycle.state == "retired"
+    # It stays the kit's: the next upgrade keeps it retired again, still unasked.
+    (installed,) = _installed(playbill_api.playbill_kit_status(consumer.instance_id))
+    assert installed.version == "1.1.0" and installed.kept == ()
+    assert any(
+        item.path == _path(PLAN) and item.consequence == "consumer_retired"
+        for item in consumer.add(publisher.build("1.1.0")).plan
+    )
+
+    # A release that adds a definition depending on it refuses, naming both.
+    _author_query(publisher, _query("acme.plans", (PLAN,)))
+    with pytest.raises(RequestRefusedError) as refused:
+        consumer.add(publisher.build("1.2.0"))
+    assert refused.value.error_code == "cruxible.kit.retired_dependency"
+    assert "acme.plans" in str(refused.value) and f"ClaimType:{PLAN}" in str(refused.value)

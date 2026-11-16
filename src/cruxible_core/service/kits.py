@@ -14,7 +14,7 @@ from __future__ import annotations
 import dataclasses
 import functools
 import json
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from typing import Any, Literal, Protocol, cast
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
@@ -979,9 +979,80 @@ class _Diff:
         self.content: dict[str, str] = {}
         # Divergences kept on purpose, recorded in the receipt.
         self.kept: list[KitKeptDivergence] = []
+        # Paths the kit installed that this instance retired since (S7): kept
+        # retired, still the kit's (they stay in the receipt).
+        self.kept_retired: dict[str, str] = {}
         # Identity -> dependents counted beyond the pin closure (evidence-rule
         # consumers of a CaptureContract, with their closures).
         self.semantic_counts: dict[str, int] = {}
+
+
+def _refuse_retired_dependencies(
+    diff: _Diff,
+    pins_of: Mapping[str, tuple[str, ...]],
+    states: Mapping[str, ArtifactDependencyStateV1],
+) -> None:
+    """Refuse when a definition the kit still installs pins one kept retired (S7)."""
+
+    for path in sorted(diff.writes):
+        for pinned in pins_of.get(path, ()):
+            if pinned in diff.kept_retired:
+                dependent = states[path].identity.qualified
+                retired = diff.kept_retired[pinned]
+                raise RequestRefusedError(
+                    "cruxible.kit.retired_dependency",
+                    f"{dependent}, which this release installs, depends on {retired}, which "
+                    "this instance retired; the kit keeps your retirement, so it cannot "
+                    "install the dependent",
+                    repair=HandEditRepair(
+                        hand_edit=HandEditInstruction(
+                            target=retired,
+                            required_change=(
+                                f"Retire {dependent} too (it then stays retired as well), or "
+                                f"author a live successor of {retired} to use it again, then "
+                                "add the kit again"
+                            ),
+                        )
+                    ),
+                )
+
+
+def _refuse_retired_provider_dependents(
+    contents: Mapping[str, bytes], diff: _Diff, steps: Sequence[KitProviderStep]
+) -> None:
+    """Refuse when a definition the kit installs pins a build this instance retired (S7)."""
+
+    retired = {step.build: step.provider_id for step in steps if step.action == "kept_retired"}
+    if not retired:
+        return
+    for path in sorted(diff.writes):
+        if path not in contents:
+            continue
+        state = _artifact_state(path, contents[path])
+        for pin in state.pins:
+            if (
+                isinstance(pin, ArtifactPin)
+                and pin.target.kind == "Provider"
+                and pin.target.name in retired
+            ):
+                dependent = state.identity.qualified
+                build = f"Provider:{pin.target.name}"
+                raise RequestRefusedError(
+                    "cruxible.kit.retired_dependency",
+                    f"{dependent}, which this release installs, depends on {build}, which "
+                    "this instance retired; the kit keeps your retirement, so it cannot "
+                    "install the dependent",
+                    repair=HandEditRepair(
+                        hand_edit=HandEditInstruction(
+                            target=build,
+                            required_change=(
+                                f"Retire {dependent} too (it then stays retired as well), or "
+                                f"install {build} again (cruxible provider install), then add "
+                                "the kit again"
+                            ),
+                        )
+                    ),
+                )
 
 
 def kit_back_remap(
@@ -1076,7 +1147,9 @@ def _diff_release(
     # Digests the release pins outside itself, already moved to this instance's
     # (a bundled provider's Provider).
     diff.installed.update(preset or {})
-    for path, _pinned in _dependency_order(states, payloads, outside=held):
+    pins_of: dict[str, tuple[str, ...]] = {}
+    for path, pinned in _dependency_order(states, payloads, outside=held):
+        pins_of[path] = pinned
         release_digest = states[path].artifact_digest
         identity = states[path].identity.qualified
         payload = _substitute(path, payloads[path], diff.installed)
@@ -1100,6 +1173,22 @@ def _diff_release(
             diff.plan.append(KitPathPlan(path=path, action="unchanged", identity=identity))
             diff.installed[release_digest] = current_state.artifact_digest
             diff.content[path] = kit_content_digest(current_payload)
+            continue
+        if not live and path in installed and not carried:
+            # S7: the kit installed it and this instance retired it since: the
+            # retirement is the consumer's word, so it stays retired, unasked.
+            diff.plan.append(
+                KitPathPlan(
+                    path=path,
+                    action="keep",
+                    identity=identity,
+                    consequence="consumer_retired",
+                    detail="kept retired",
+                )
+            )
+            diff.installed[release_digest] = current_state.artifact_digest
+            diff.content[path] = kit_content_digest(current_payload)
+            diff.kept_retired[path] = identity
             continue
         previously = kept.get(path)
         if previously is not None and previously.release_digest == release_digest:
@@ -1169,6 +1258,7 @@ def _diff_release(
         diff.writes[path] = content
         diff.installed[release_digest] = digest
         diff.content[path] = kit_content_digest(payload)
+    _refuse_retired_dependencies(diff, pins_of, states)
     return diff, owned
 
 
@@ -2146,6 +2236,9 @@ def _provider_steps(
                     "is not installed",
                 )
             )
+        elif state == "retired":
+            # S7: the consumer retired this build; the kit keeps that retirement.
+            steps.append(KitProviderStep(**named, action="kept_retired", detail="kept retired"))
         elif state == "missing":
             missing.append(provider)
             steps.append(
@@ -2166,10 +2259,7 @@ def _provider_steps(
                 KitProviderStep(
                     **named,
                     action="blocked",
-                    detail=f"build {provider.build} is retired here; installing the kit "
-                    "would restore it"
-                    if state == "retired"
-                    else f"build {provider.build} is installed here with another dependency "
+                    detail=f"build {provider.build} is installed here with another dependency "
                     "closure than the kit bundles (cruxible.provider.build_rematerialized); "
                     "the same wheel and lock name one build",
                 )
@@ -2742,7 +2832,9 @@ def _add_kit(
         tree = instance.immutable_tree_at(mode.head.git_oid)
         awaiting_install = False
         assert inspected is not None
-        satisfied = {step.provider_id for step in steps if step.action == "satisfied"}
+        satisfied = {
+            step.provider_id for step in steps if step.action in {"satisfied", "kept_retired"}
+        }
         absent = [
             provider.provider_id
             for provider in manifest.providers
@@ -2781,6 +2873,7 @@ def _add_kit(
         preset={**left_out_moves, **_provider_remap(tree, contents, manifest, inspected)},
         held=held,
     )
+    _refuse_retired_provider_dependents(contents, diff, steps)
     retire_with = _settle_dropped(
         tree,
         installed,

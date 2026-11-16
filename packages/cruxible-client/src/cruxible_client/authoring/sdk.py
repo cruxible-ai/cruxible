@@ -862,6 +862,7 @@ class _IntentDraft:
             preflight=result.preflight,
             candidate_status=result.status,
             outcome=result.outcome,
+            warnings=result.warnings,
         )
 
 
@@ -2361,6 +2362,7 @@ class Intent:
         preflight: api.AuthoringPreflightResult | None = None,
         candidate_status: api.CandidateStatusRecord | None = None,
         outcome: api.AuthoringLanding | None = None,
+        warnings: tuple[str, ...] = (),
     ) -> None:
         self._playbill = cx
         self._draft = draft
@@ -2369,6 +2371,8 @@ class Intent:
         self._candidate_status = candidate_status
         # The daemon spells ``outcome.next`` for the CLI; an Intent shows the SDK call.
         self.outcome = landing_for_surface(outcome, "sdk")
+        #: Each kit-bundled definition the submitted change retires (S7).
+        self.kit_warnings = warnings
 
     @classmethod
     def from_preflight(
@@ -2590,6 +2594,7 @@ class Intent:
         self._raw = result.intent
         self._candidate_status = result.status
         self.outcome = landing_for_surface(result.outcome, "sdk")
+        self.kit_warnings = result.warnings
         return self
 
     def status(self) -> api.CandidateStatusRecord:

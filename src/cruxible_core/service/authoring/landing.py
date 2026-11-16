@@ -115,6 +115,11 @@ def service_land_authoring_submit(
             )
     data = submitted.model_dump(mode="json")
     data["outcome"] = outcome.model_dump(mode="json")
+    from cruxible_core.service.discovery.kit_owners import kit_retirement_warnings
+
+    warned = kit_retirement_warnings(coordinator.instance, status.candidate_digest)
+    if warned:
+        data["warnings"] = list(warned)
     data["status"] = status.model_dump(mode="json")
     data["intent"]["candidate_status"] = data["status"]
     return contracts.AuthoringSubmitResultRecord.model_validate(data)
@@ -197,7 +202,16 @@ def land_direct_proposal(
         receipt, outcome = land_proposal(instance, proposal_id=proposal_id, actor_id=actor_id)
         if receipt.accepted_coordinate is not None:
             accepted = receipt.accepted_coordinate
-    return inspection.model_copy(update={"outcome": outcome, "accepted_coordinate": accepted})
+    from cruxible_core.service.discovery.kit_owners import kit_retirement_warnings
+
+    warned = (
+        ()
+        if proposal.candidate is None
+        else kit_retirement_warnings(instance, proposal.candidate.candidate_digest)
+    )
+    return inspection.model_copy(
+        update={"outcome": outcome, "accepted_coordinate": accepted, "warnings": warned}
+    )
 
 
 def _recompiled_submission(

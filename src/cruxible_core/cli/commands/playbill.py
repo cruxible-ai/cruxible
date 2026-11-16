@@ -2149,6 +2149,8 @@ def retire_provider(build: str, dry_run: bool | None, at: str | None, output_jso
         click.echo(f"{result.build}: {result.status}")
         for identity in result.pinned_by:
             click.echo(f"  pinned by {identity}")
+        for warning in result.warnings:
+            click.echo(f"warning: {printable(warning)}", err=True)
         if result.detail:
             click.echo(result.detail)
         if result.proposal_id:
@@ -2228,6 +2230,7 @@ def kit_group() -> None:
 _KIT_CONSEQUENCE_TEXT = {
     "overwrites_your_edit": "overwrites your edit",
     "re_adds_retired": "re-adds a definition you retired",
+    "consumer_retired": "keeps your retirement",
     "takes_over_outside_definition": "takes over a definition you defined outside the kit",
     "replaces_carried_definition": "replaces a definition the kit depends on",
     "release_dropped": "the release dropped it",
@@ -2237,6 +2240,7 @@ _KIT_CONSEQUENCE_TEXT = {
 _KIT_KEEP_TEXT = {
     "overwrites_your_edit": ("keeps your edit", "your edit"),
     "re_adds_retired": ("keeps it retired", "you retired it"),
+    "consumer_retired": ("kept retired", "you retired it"),
     "takes_over_outside_definition": (
         "keeps your definition from outside the kit",
         "your definition from outside the kit",
@@ -2401,7 +2405,12 @@ def _echo_kit_change(
         if item.action == "unchanged" and not shows_unchanged:
             continue
         kind = _kit_plan_heading((item.identity or item.path).partition(":")[0])
-        line = f"  {item.action}: {_public_name(item.identity) if item.identity else item.path}"
+        named = _public_name(item.identity) if item.identity else item.path
+        if item.consequence == "consumer_retired":
+            # S7: your retirement stands; nothing to decide.
+            groups.setdefault(kind, []).append(f"  kept retired: {named}")
+            continue
+        line = f"  {item.action}: {named}"
         notes = []
         if item.consequence is not None:
             notes.append(
@@ -4877,7 +4886,7 @@ def _echo_proposal(
         )
     actor = admission.get("actor_id") if isinstance(admission, Mapping) else None
     if inspection.outcome is not None:
-        _echo_landing(inspection.outcome)
+        _echo_landing(inspection.outcome, inspection.warnings)
     elif (
         proposal_id
         and principal_change
@@ -4894,9 +4903,14 @@ def _echo_proposal(
     echo_preview_next(inspection.status, inspection.accepted_coordinate)
 
 
-def _echo_landing(outcome: contracts.AuthoringLanding | None) -> None:
-    """Whether a direct propose landed its change, or why it stopped and what to run."""
+def _echo_landing(outcome: contracts.AuthoringLanding | None, warnings: Sequence[str] = ()) -> None:
+    """Whether a direct propose landed its change, or why it stopped and what to run.
 
+    ``warnings`` (S7): each kit-bundled definition the change retires.
+    """
+
+    for warning in warnings:
+        click.echo(f"warning: {printable(warning)}", err=True)
     if outcome is None:
         return
     for line in landing_lines(outcome):
@@ -4972,7 +4986,7 @@ def retire_claim_type(
     if reason_line is not None:
         click.echo(f"refused: {reason_line}")
         return
-    _echo_landing(result.outcome)
+    _echo_landing(result.outcome, result.warnings)
 
 
 @claim_type_group.command("migrate")
@@ -5026,7 +5040,7 @@ def migrate_claim_type(request_file: str, no_accept: bool, output_json: bool) ->
         proposal_id = admission.get("proposal_id", "<submitted>")
         click.echo(f"Proposal: {proposal_id}")
         if result.proposal.outcome is not None:
-            _echo_landing(result.proposal.outcome)
+            _echo_landing(result.proposal.outcome, result.proposal.warnings)
         else:
             click.echo(f"Next: cruxible proposal approve {proposal_id}")
     click.echo("Semantic delta:")

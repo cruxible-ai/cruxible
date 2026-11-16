@@ -303,6 +303,9 @@ class ProviderRetireResult(_Strict):
     approval_required: bool = False
     detail: str | None = None
     coordinate: AcceptedCoordinate | None = None
+    #: The installed kit that bundles this build, said once (S7): a retired
+    #: build stays retired across that kit's upgrades.
+    warnings: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
 
 
 class ProviderMoveRequest(_Strict):

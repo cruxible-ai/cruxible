@@ -862,6 +862,9 @@ class ProposalInspection(BaseModel):
         default=None,
         exclude_if=lambda value: value is None,
     )
+    #: Each kit-bundled definition this change retires, said once (S7): it
+    #: stays retired across that kit's upgrades.
+    warnings: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
 
 
 class ProposalListEntry(BaseModel):
@@ -1505,6 +1508,9 @@ class AuthoringSubmitResultRecord(BaseModel):
 
     tag: Literal["playbill-authoring-submit-result-v1"] = "playbill-authoring-submit-result-v1"
     outcome: AuthoringLanding
+    #: Each kit-bundled definition this change retires, said once (S7): it
+    #: stays retired across that kit's upgrades.
+    warnings: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
     intent: dict[str, Any]
     status: CandidateStatusRecord
     workspace_advertisement: WorkspaceAdvertisement = NOT_ATTACHED_ADVERTISEMENT

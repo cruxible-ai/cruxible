@@ -450,9 +450,17 @@ upgrade always proposes, and the release's version wins by default. The
 preview names what each replacement does:
 
 - it overwrites an edit you made since install;
-- it re-adds a definition you retired;
+- it re-adds a definition retired outside the kit's record (for example after
+  `kit remove`);
 - it takes over a definition you defined outside the kit;
 - it replaces a definition the kit carried in as a dependency.
+
+A definition the kit installed that you retired since -- any kind, including a
+provider build -- stays retired: the upgrade skips it without `--keep` and lists
+it as `kept retired: ...`. The add refuses only when something the release
+still installs depends on it (`cruxible.kit.retired_dependency`, naming both).
+Retiring a definition an installed kit bundles warns, naming the kit, because
+nothing re-adds it afterwards.
 
 To keep your version instead, name it with `--keep` (repeatable, by identity
 such as `--keep ClaimType:catalog.part.title`), or keep every definition you

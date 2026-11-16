@@ -821,6 +821,9 @@ def kit_content_digest(payload: dict[str, object]) -> str:
 KitConsequence = Literal[
     "overwrites_your_edit",
     "re_adds_retired",
+    #: A definition the kit installed that this instance retired since (S7):
+    #: it stays retired, skipped without --keep.
+    "consumer_retired",
     "takes_over_outside_definition",
     "replaces_carried_definition",
     "release_dropped",
@@ -1046,7 +1049,14 @@ KitTransition = Literal["install", "upgrade", "downgrade", "reinstall"]
 #: install refused). Another installed build of the provider never blocks: the
 #: kit's build installs beside it.
 KitProviderAction = Literal[
-    "unchanged", "install", "would_install", "awaiting_approval", "satisfied", "blocked"
+    "unchanged",
+    "install",
+    "would_install",
+    "awaiting_approval",
+    "satisfied",
+    "blocked",
+    #: This build is retired here (S7): the consumer's retirement stands.
+    "kept_retired",
 ]
 
 

@@ -16544,6 +16544,22 @@
             "type": "string"
           }
         },
+        "warnings": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "warnings",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
         "workspace_advertisement": {
           "default_json_serializable": false,
           "has_default": true,
@@ -17656,6 +17672,14 @@
             "default": "playbill-authoring-submit-result-v1",
             "title": "Tag",
             "type": "string"
+          },
+          "warnings": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
           },
           "workspace_advertisement": {
             "$ref": "#/$defs/WorkspaceAdvertisement",
@@ -23232,6 +23256,14 @@
                 "title": "Tag",
                 "type": "string"
               },
+              "warnings": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Warnings",
+                "type": "array"
+              },
               "workspace_advertisement": {
                 "$ref": "#/$defs/WorkspaceAdvertisement",
                 "default": {
@@ -24506,6 +24538,14 @@
                 "default": "playbill-proposal-inspection-v1",
                 "title": "Tag",
                 "type": "string"
+              },
+              "warnings": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Warnings",
+                "type": "array"
               },
               "workspace_advertisement": {
                 "$ref": "#/$defs/WorkspaceAdvertisement",
@@ -74162,6 +74202,22 @@
             "type": "string"
           }
         },
+        "warnings": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "warnings",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
         "workspace_advertisement": {
           "default_json_serializable": false,
           "has_default": true,
@@ -74721,6 +74777,14 @@
             "default": "playbill-proposal-inspection-v1",
             "title": "Tag",
             "type": "string"
+          },
+          "warnings": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
           },
           "workspace_advertisement": {
             "$ref": "#/$defs/WorkspaceAdvertisement",
@@ -76238,6 +76302,14 @@
                 "default": "playbill-proposal-inspection-v1",
                 "title": "Tag",
                 "type": "string"
+              },
+              "warnings": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Warnings",
+                "type": "array"
               },
               "workspace_advertisement": {
                 "$ref": "#/$defs/WorkspaceAdvertisement",
@@ -83796,6 +83868,22 @@
             "title": "Tag",
             "type": "string"
           }
+        },
+        "warnings": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "warnings",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
         }
       },
       "json_schema": {
@@ -83908,6 +83996,14 @@
             "default": "cruxible-provider-retire-result-v1",
             "title": "Tag",
             "type": "string"
+          },
+          "warnings": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
           }
         },
         "required": [
