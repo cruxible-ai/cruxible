@@ -134,9 +134,13 @@ def test_write_tools_are_default_governed_write_tools_with_declared_parameters(
     assert tools[tool].outputSchema is not None
 
 
-def _capture(monkeypatch: pytest.MonkeyPatch, method: str, *, result: Any = "outcome") -> list[Any]:
+def _capture(monkeypatch: pytest.MonkeyPatch, method: str, *, result: Any = None) -> list[Any]:
     """Record the typed request the handler sends the daemon client's ``method``."""
 
+    if result is None:
+        result = WriteOutcome(
+            status="accepted", coordinate=GetCoordinate(git_oid="a" * 12, generation=1)
+        )
     captured: list[Any] = []
 
     def call(instance_id: str, *, request: Any) -> Any:
@@ -473,3 +477,50 @@ def test_mcp_set_catalogues_the_workspace_file_it_cites(monkeypatch, tmp_path):
     assert outcome.catalogued == (
         CataloguedFile(file="app/forms.py", name="doc-app-forms.py", written=True),
     )
+
+
+def test_a_capped_server_hands_off_the_calls_it_does_not_serve(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """gapa-06: under CRUXIBLE_MODE=governed_write the outcome's approve, activate and
+    next named graph_write tools this server refuses; they read as someone else's,
+    exactly as the daemon renders a call the caller's credential cannot run."""
+
+    from cruxible_client.contracts.write import ApprovalNeeded, WriteProposalRef
+    from cruxible_core.runtime.permissions import reset_permissions
+
+    approve = 'cruxible_proposal_approve(proposal_id="sha256:ab", signer_id="reviewer")'
+    activate = 'cruxible_proposal_activate(proposal_id="sha256:ab")'
+    awaiting = WriteOutcome(
+        status="awaiting_approval",
+        coordinate=GetCoordinate(git_oid="a" * 12, generation=1),
+        proposal=WriteProposalRef(proposal_id="sha256:ab", state="awaiting_external_approval"),
+        approval=ApprovalNeeded(
+            reason="independent_approval_required",
+            minimum_approvals=1,
+            eligible_approvers=("reviewer",),
+            approve=approve,
+            activate=activate,
+        ),
+        next=approve,
+    )
+    _capture(monkeypatch, "set", result=awaiting)
+    arguments = {"subject": "dev.item/a", "field": "status", "value": "done", "because": "x"}
+
+    monkeypatch.setenv("CRUXIBLE_MODE", "governed_write")
+    reset_permissions()
+    try:
+        capped = handlers.handle_playbill_set("inst_write", **arguments)
+    finally:
+        reset_permissions()
+    monkeypatch.setenv("CRUXIBLE_MODE", "graph_write")
+    try:
+        served = handlers.handle_playbill_set("inst_write", **arguments)
+    finally:
+        reset_permissions()
+
+    assert capped.approval is not None and capped.next is not None
+    assert capped.approval.approve == f"someone who can runs {approve}"
+    assert capped.approval.activate == f"someone who can runs {activate}"
+    assert capped.next == f"someone who can runs {approve}"
+    assert served == awaiting

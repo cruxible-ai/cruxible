@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import os
+import re
 import threading
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
@@ -93,6 +94,7 @@ from cruxible_client.contracts.kits import (
     KitRemoveRequest,
     KitStatus,
 )
+from cruxible_client.contracts.principals import AuthoringRefusal
 from cruxible_client.contracts.provider_installation import (
     ProviderCatalog,
     ProviderInstallRequest,
@@ -103,6 +105,7 @@ from cruxible_client.contracts.provider_installation import (
     ProviderRetireResult,
 )
 from cruxible_client.contracts.query.definitions import QueryDefinitionSpec
+from cruxible_client.contracts.repairs import hand_edit_repair
 from cruxible_client.contracts.runbooks import RunbookPreview, RunbookRunResult
 from cruxible_client.contracts.temporal import parse_datetime
 from cruxible_client.contracts.types import PrincipalRecord
@@ -162,7 +165,12 @@ from cruxible_core.mcp.identity import (
     verified_folder_identity,
 )
 from cruxible_core.mcp.init import run_mcp_init
-from cruxible_core.mcp.permissions import check_permission
+from cruxible_core.mcp.permissions import (
+    TOOL_PERMISSIONS,
+    PermissionMode,
+    check_permission,
+    get_capability_ceiling,
+)
 from cruxible_core.mcp.results import (
     McpConsoleResult,
     McpInitResult,
@@ -692,12 +700,43 @@ def handle_playbill_whoami(instance_id: str) -> McpWhoAmIResult:
     else:
         # A folder record that cannot be used refuses here, before whoami answers.
         source = "folder" if _folder_identity() is not None else "none"
+    identity = _playbill_whoami(instance_id)
+    cap = get_capability_ceiling()
+    effective = min(PermissionMode[identity.credential_permission_mode.upper()], cap)
+    if identity.can_author and effective < PermissionMode.GOVERNED_WRITE:
+        # The daemon answers for the credential; this server's own cap hides the
+        # authoring tools, so whoami says it cannot author here, and why.
+        identity = identity.model_copy(
+            update={"can_author": False, "authoring_refusal": _mode_cap_refusal(cap)}
+        )
     return McpWhoAmIResult(
         instance_id=instance_id,
         adapter_version=__version__,
         daemon_version=_daemon_version(),
-        identity=_playbill_whoami(instance_id),
+        identity=identity,
         identity_source=source,
+        mode_cap=cast(Any, cap.name.lower()),
+        effective_permission_mode=cast(Any, effective.name.lower()),
+    )
+
+
+def _mode_cap_refusal(cap: PermissionMode) -> AuthoringRefusal:
+    """Why a server capped below governed_write cannot author, and how to lift the cap."""
+
+    code: Literal["cruxible.identity.permission_insufficient"] = (
+        "cruxible.identity.permission_insufficient"
+    )
+    change = (
+        "set CRUXIBLE_MODE=governed_write (or higher) in this MCP server's environment "
+        "(the env block of the MCP client config) and restart it"
+    )
+    return AuthoringRefusal(
+        code=code,
+        detail=(
+            f"this MCP server runs at {cap.name.lower()} (CRUXIBLE_MODE), and authoring "
+            f"needs governed_write; repair: {change}"
+        ),
+        repair=hand_edit_repair(code, required_change=change),
     )
 
 
@@ -1579,16 +1618,20 @@ def handle_playbill_set(instance_id: str, **fields: Any) -> WriteOutcome:
     if isinstance(request.evidence, FileEvidence | SectionEvidence):
         # Through the workspace write, as cruxible_write: the cited file is read
         # here and catalogued when the catalog did not name it.
-        return write_workspace(
-            as_write_request(request),
-            workspace=mcp_workspace_root(),
-            submit=lambda observed: _daemon_call(
-                lambda client: client.write(instance_id, request=observed),
-                operation_name="cruxible_set",
-            ),
+        return _served_calls(
+            write_workspace(
+                as_write_request(request),
+                workspace=mcp_workspace_root(),
+                submit=lambda observed: _daemon_call(
+                    lambda client: client.write(instance_id, request=observed),
+                    operation_name="cruxible_set",
+                ),
+            )
         )
-    return _daemon_call(
-        lambda client: client.set(instance_id, request=request), operation_name="cruxible_set"
+    return _served_calls(
+        _daemon_call(
+            lambda client: client.set(instance_id, request=request), operation_name="cruxible_set"
+        )
     )
 
 
@@ -1596,8 +1639,11 @@ def handle_playbill_retire(instance_id: str, **fields: Any) -> WriteOutcome:
     """End one live Claim, by ID or by its Subject and field."""
 
     request = _write_request(RetireRequest, "cruxible_retire", fields)
-    return _daemon_call(
-        lambda client: client.retire(instance_id, request=request), operation_name="cruxible_retire"
+    return _served_calls(
+        _daemon_call(
+            lambda client: client.retire(instance_id, request=request),
+            operation_name="cruxible_retire",
+        )
     )
 
 
@@ -1610,18 +1656,57 @@ def handle_playbill_write(instance_id: str, **fields: Any) -> WriteOutcome:
         or isinstance(getattr(c, "evidence", None), FileEvidence | SectionEvidence)
         for c in request.changes
     ):
-        return _daemon_call(
-            lambda client: client.write(instance_id, request=request),
-            operation_name="cruxible_write",
+        return _served_calls(
+            _daemon_call(
+                lambda client: client.write(instance_id, request=request),
+                operation_name="cruxible_write",
+            )
         )
-    return write_workspace(
-        request,
-        workspace=mcp_workspace_root(),
-        submit=lambda observed: _daemon_call(
-            lambda client: client.write(instance_id, request=observed),
-            operation_name="cruxible_write",
-        ),
+    return _served_calls(
+        write_workspace(
+            request,
+            workspace=mcp_workspace_root(),
+            submit=lambda observed: _daemon_call(
+                lambda client: client.write(instance_id, request=observed),
+                operation_name="cruxible_write",
+            ),
+        )
     )
+
+
+_TOOL_CALL = re.compile(r"\b(cruxible_[a-z0-9_]+)\(")
+_HANDED_OFF = "someone who can runs "
+
+
+def _served_calls(outcome: WriteOutcome) -> WriteOutcome:
+    """The outcome's approve, activate and next calls as this server can serve them.
+
+    The daemon names a call the caller's credential cannot run as someone
+    else's ("someone who can runs ..."); a call to a tool this server's own cap
+    (``CRUXIBLE_MODE``) leaves unserved reads the same way, so no next line
+    offers a tool this server refuses.
+    """
+
+    cap = get_capability_ceiling()
+
+    def shown(call: str | None) -> str | None:
+        if call is None or call.startswith(_HANDED_OFF):
+            return call
+        named = _TOOL_CALL.match(call)
+        required = None if named is None else TOOL_PERMISSIONS.get(named.group(1))
+        return call if required is None or required <= cap else _HANDED_OFF + call
+
+    approval = outcome.approval
+    if approval is None and outcome.next is None:
+        return outcome
+    update: dict[str, Any] = {"next": shown(outcome.next)}
+    if approval is not None:
+        update["approval"] = approval.model_copy(
+            update={"approve": shown(approval.approve), "activate": shown(approval.activate)}
+        )
+    shown_outcome = outcome.model_copy(update=update)
+    file_paths = outcome.file_paths
+    return shown_outcome if file_paths is None else shown_outcome.with_file_paths(file_paths)
 
 
 def handle_playbill_query_spec(

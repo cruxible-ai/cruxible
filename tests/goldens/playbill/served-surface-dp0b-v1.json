@@ -3,7 +3,7 @@
   "succession": {
     "ratified_by": "maintainer",
     "register_entry": "2026-11-15:proposal-lifecycle-050",
-    "surface_digest": "sha256:de19ab945b10ccc6a368d8d58a859bd812bb61d2f18f1feeb673eefec971838f"
+    "surface_digest": "sha256:cbaf18dc06e58e2a67fde52b59b8b833199a67fdb11caba1c9eb9ff97931f5d3"
   },
   "surface": {
     "cli_leaves": [
@@ -3048,7 +3048,7 @@
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_whoami",
         "input_schema_digest": "sha256:0167ead570c40ac2ba921fc5289a06d08ae2a4969fc61d437836b7b9aefdf516",
         "name": "cruxible_whoami",
-        "output_schema_digest": "sha256:b6ceb6b542c40f483f640600fb130b2a45b4d111f95e479a9db12977694965a6",
+        "output_schema_digest": "sha256:bdadc8dcf8e5c0940ca78f2d6a1e8b5ccdd1031a22ad6643bcfce4e4e42d80d3",
         "permission": "READ_ONLY"
       },
       {

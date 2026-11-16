@@ -8,6 +8,8 @@ from pydantic import BaseModel, ConfigDict, model_validator
 
 from cruxible_client import contracts
 
+PermissionModeName = Literal["read_only", "governed_write", "graph_write", "admin"]
+
 
 class McpWhoAmIResult(BaseModel):
     """The instance this adapter acts on and the caller's identity there."""
@@ -22,6 +24,12 @@ class McpWhoAmIResult(BaseModel):
     #: Where this server's principal came from: its environment, the folder's
     #: record (`.cruxible/identity.json`, written by `cruxible init`), or none.
     identity_source: Literal["environment", "folder", "none"]
+    #: This server's own tier cap (``CRUXIBLE_MODE``; admin when unset): it
+    #: serves only the tools at or below it, whatever the credential allows.
+    mode_cap: PermissionModeName
+    #: What this server's tools can do here: the lower of the credential's tier
+    #: (``identity.credential_permission_mode``) and ``mode_cap``.
+    effective_permission_mode: PermissionModeName
 
 
 class McpServerInfoResult(BaseModel):
