@@ -81,3 +81,65 @@ def test_an_action_rows_repair_is_a_cli_command_on_every_surface(tmp_path: Path)
     fire_manual(instance, action="evidence.sweep", principal="owner", now=restart)
     assert trigger_events(instance, action="evidence.sweep")
     assert _next(instance, restart) == []
+
+
+def test_a_lines_outages_sum_into_one_row_per_trigger(tmp_path: Path) -> None:
+    """Review finding 3: two outages under one cron Trigger are one row with the
+    summed count; its repair evaluates the earliest uncovered range, then the next."""
+
+    from datetime import datetime
+
+    from tests.test_procedures import test_line_arming as arming
+    from tests.test_procedures.test_line_triggers import line_world
+    from tests.test_procedures.test_procedure_run_surface import READ_TIME
+
+    from cruxible_client.contracts.line_dispatch import LineEvaluateRequest
+    from cruxible_client.contracts.temporal import format_datetime
+    from cruxible_client.contracts.triggers import CronSchedule
+    from cruxible_core.service.procedures.line_dispatch import service_evaluate_line
+
+    instance, line, _procedure = line_world(tmp_path, CronSchedule(expression="*/10 * * * *"))
+    arming.service_enable_line(
+        instance,
+        line.identity.name,
+        principal=arming.LOCAL,
+        actor=arming._actor(instance),
+        now=READ_TIME + timedelta(seconds=10),
+        daemon_id="daemon",
+    )
+    arming._match(instance, READ_TIME + timedelta(minutes=1))
+    arming._match(instance, READ_TIME + timedelta(minutes=31), daemon_id="second")
+    arming._match(instance, READ_TIME + timedelta(minutes=32), daemon_id="second")
+    restarted = READ_TIME + timedelta(minutes=61)
+    arming._match(instance, restarted, daemon_id="third")
+
+    (row,) = _next(instance, restarted)
+    assert row.detail["count"] == 6
+    assert [row.detail["since"], row.detail["until"]] == [
+        format_datetime(READ_TIME + timedelta(minutes=10)),
+        format_datetime(READ_TIME + timedelta(minutes=60)),
+    ]
+    first_since = datetime.fromisoformat(row.repair.arguments["since"])
+    first_until = datetime.fromisoformat(row.repair.arguments["until"])
+    assert first_until == READ_TIME + timedelta(minutes=31)
+
+    service_evaluate_line(
+        instance,
+        line.identity.name,
+        LineEvaluateRequest(since=first_since, until=first_until),
+        actor=arming._actor(instance),
+        now=restarted + timedelta(seconds=5),
+    )
+    (left,) = _next(instance, restarted)
+    assert left.detail["count"] == 3
+    assert datetime.fromisoformat(left.repair.arguments["until"]) == restarted
+    service_evaluate_line(
+        instance,
+        line.identity.name,
+        LineEvaluateRequest(
+            since=datetime.fromisoformat(left.repair.arguments["since"]), until=restarted
+        ),
+        actor=arming._actor(instance),
+        now=restarted + timedelta(seconds=6),
+    )
+    assert _next(instance, restarted) == []

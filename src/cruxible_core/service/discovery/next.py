@@ -4712,6 +4712,11 @@ def _line_attention_items(
 
     gaps, pending = line_attention(instance, now=evaluation_time)
     items: list[PlaybillNextItemV1] = []
+    # A cadence or cron Trigger's instants in the Line's uncovered ranges, summed
+    # across every range into one row per Trigger: its first and last missed
+    # instant and the count. Its repair evaluates the earliest range holding its
+    # instants; once that range is covered the row moves on to the next one.
+    missed: dict[tuple[str, str], list[Any]] = {}
     for gap in gaps:
         line = gap.line.removeprefix("Line:")
         since, until = format_datetime(gap.since), format_datetime(gap.until)
@@ -4722,20 +4727,13 @@ def _line_attention_items(
             arguments={"line": line, "since": since, "until": until},
         )
         if gap.missed:
-            # A cadence or cron Trigger's instants fell due in the range: one
-            # row per Trigger, under the missed-instants rule, with the same
-            # evaluation of the range as its repair.
-            items.extend(
-                _missed_instants_item(
-                    trigger,
-                    target=gap.line,
-                    first=first,
-                    last=last,
-                    count=count,
-                    repair=evaluate,
-                )
-                for trigger, first, last, count in gap.missed
-            )
+            for trigger, first, last, count in gap.missed:
+                held = missed.get((gap.line, trigger))
+                if held is None:
+                    missed[(gap.line, trigger)] = [first, last, count, evaluate]
+                else:
+                    held[0], held[1] = min(held[0], first), max(held[1], last)
+                    held[2] += count
             continue
         items.append(
             _item(
@@ -4755,6 +4753,12 @@ def _line_attention_items(
                 ),
             )
         )
+    items.extend(
+        _missed_instants_item(
+            trigger, target=target, first=first, last=last, count=count, repair=repair
+        )
+        for (target, trigger), (first, last, count, repair) in missed.items()
+    )
     for work in pending:
         items.append(
             _item(
