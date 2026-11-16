@@ -863,7 +863,10 @@ Reshaping, parsing, casts, canonicalization, filtering and projection preserve
 that basis. `derive` and `aggregate` compute a `derived` value and require
 `role: derivation`; their receipts retain the computing transform ids and
 source extraction receipts. Derivations over Claim reads also bind exact
-`inputs` from that row's dependency closure. A settle Mandate settles a value
+`inputs` from that row's dependency closure. A read enters that closure only
+through a reference in the Claim's value, key or rationale (for example
+`{$steps.status.value}` in the rationale), so an input the templates never
+reference refuses `claims_inputs_invalid`. A settle Mandate settles a value
 only on a basis its scope lists for that ClaimType and change kind
 (`extracted`, `measured` for provider-parsed values, `derived`, or `absence`);
 see the settle scope below. Cruxible does not infer attestations.
