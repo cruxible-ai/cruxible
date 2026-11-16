@@ -2679,7 +2679,7 @@ def test_a_late_reviewer_is_refused_a_kit_change_before_anything_is_published(
     body = refused.json()
     assert body["error_code"] == "cruxible.proposal.readmit_requires_resubmission"
     assert "kit change planned against an earlier state" in body["message"]
-    assert "commits kit acme again at the current head (kit add" in body["message"]
+    assert "adds kit acme again at the current head (kit add)" in body["message"]
     assert body["repair"]["operation"] == "cruxible.kit.add"
     assert "migration" not in body["message"]
     assert evidence.list_admissions() == admissions
@@ -2705,3 +2705,121 @@ def test_a_late_reviewer_is_refused_a_kit_change_before_anything_is_published(
     assert evidence.list_admissions() == admissions
     assert evidence.read_withdrawal(proposed.proposal_id) is None
     assert consumer.tree() == before
+
+
+def _late_kit_refusals(
+    consumer: _World, proposal_id: str, late_key: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[str, str]:
+    """The late signer's refused approval as CLI `proposal approve` and MCP
+    `cruxible_proposal_approve` print it, both over the wire to this daemon."""
+
+    import asyncio
+
+    from click.testing import CliRunner
+    from mcp.shared.memory import create_connected_server_and_client_session
+
+    from cruxible_core.cli.main import cli
+    from cruxible_core.mcp import handlers
+    from cruxible_core.mcp.server import create_server
+
+    transport = CruxibleClient(base_url="http://cruxible")
+    transport._client = consumer.http  # type: ignore[assignment]
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: transport)
+    cli_result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://playbill.invalid",
+            "--instance-id",
+            consumer.instance_id,
+            "proposal",
+            "approve",
+            proposal_id,
+            "--signer-id",
+            "late",
+            "--key",
+            str(late_key),
+            "--yes",
+        ],
+    )
+    assert cli_result.exit_code == 1, cli_result.output
+
+    monkeypatch.setenv("CRUXIBLE_MCP_PROFILE", "full")
+    monkeypatch.setenv("CRUXIBLE_MCP_KEY_DIR", str(late_key.parent))
+    monkeypatch.setenv("CRUXIBLE_INSTANCE_ID", consumer.instance_id)
+    monkeypatch.setattr(handlers, "_get_client", lambda: transport)
+    server = create_server()
+
+    async def exercise() -> str:
+        async with create_connected_server_and_client_session(server._mcp_server) as session:
+            await session.initialize()
+            result = await session.call_tool(
+                "cruxible_proposal_approve", {"proposal_id": proposal_id, "signer_id": "late"}
+            )
+            assert result.isError
+            return " ".join(block.text for block in result.content if hasattr(block, "text"))
+
+    return cli_result.output, asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("change", ["add", "remove"])
+def test_a_late_signer_on_a_kit_change_is_told_the_kits_own_command(
+    strict_worlds: tuple[_World, _World],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    change: str,
+) -> None:
+    """A removal and an addition share the `kit-{id}-{digest}` target; the refusal's
+    repair followed the target alone and told a late signer on a removal to run
+    `kit add`, which would add the kit back. A removal is told `kit remove acme`, an
+    addition `kit add`, in the prose and the repair alike, on CLI and MCP."""
+
+    from cruxible_client.contracts.principals import PRINCIPAL_ID_HEADER
+    from tests.test_server.test_late_signer_landing import register_late
+
+    publisher, consumer = strict_worlds
+    publisher.author(_claim_type(SEATS, {"type": "integer"}), _claim_type(PLAN, {"type": "string"}))
+    release = publisher.build("1.0.0")
+    if change == "remove":
+        assert consumer.add(release).status == "proposed"  # approved and activated
+        proposed = playbill_api.playbill_kit_remove(
+            consumer.instance_id, KitRemoveRequest(kit_id="acme", dry_run=False)
+        )
+    else:
+        proposed = playbill_api.playbill_kit_add(
+            consumer.instance_id, KitAddRequest(bundle=release, source="test", dry_run=False)
+        )
+    assert proposed.status == "proposed" and proposed.proposal_id is not None, proposed
+    late_key = register_late(
+        consumer.http,
+        consumer.instance_id,
+        tmp_path,
+        consumer.reviewer_key,
+        tmp_path / "consumer-operator-custody" / "operator.ed25519",
+    )
+
+    wire = consumer.http.post(
+        f"/api/v1/{consumer.instance_id}/proposals/{proposed.proposal_id}/approval-challenge",
+        json={"signer_id": "late"},
+        headers={PRINCIPAL_ID_HEADER: "late"},
+    ).json()
+    cli_text, mcp_text = _late_kit_refusals(consumer, proposed.proposal_id, late_key, monkeypatch)
+
+    assert wire["error_code"] == "cruxible.proposal.readmit_requires_resubmission"
+    if change == "remove":
+        assert wire["repair"] == {
+            "operation": "cruxible.kit.remove",
+            "arguments": {"kit_id": "acme"},
+        }, wire
+        assert "removes kit acme again at the current head (kit remove)" in wire["message"]
+        assert "cruxible kit remove acme" in cli_text
+        assert "cruxible_kit_remove" in mcp_text and "acme" in mcp_text
+        for text in (wire["message"], cli_text, mcp_text):
+            assert "kit add" not in text and "cruxible_kit_add" not in text
+    else:
+        assert wire["repair"]["operation"] == "cruxible.kit.add", wire
+        assert "adds kit acme again at the current head (kit add)" in wire["message"]
+        assert "cruxible kit add" in cli_text
+        assert "cruxible_kit_add" in mcp_text
+        for text in (wire["message"], cli_text, mcp_text):
+            assert "kit remove" not in text and "cruxible_kit_remove" not in text
