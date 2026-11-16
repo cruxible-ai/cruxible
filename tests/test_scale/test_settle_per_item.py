@@ -118,7 +118,11 @@ PER_ITEM = {
     "encodes": 140,
     "encoded_bytes": 100 * 1024,
     "sql_connects": 0.25,
-    "sql_statements": 35,
+    # A new row set's subscription index (ruling 2026-11-16 b) writes each new
+    # row's set membership, its source head and its source once: two more
+    # statements per newly settled item (measured 37); an unchanged run writes
+    # none (tests/test_scale/test_unchanged_run_cost.py).
+    "sql_statements": 38,
     "non_acceptance_fsyncs": 0.1,
     "journal_fsyncs": 0,
     # One payload file per body; a shard handle counts only when reopened.
@@ -813,60 +817,33 @@ def test_a_small_commit_after_a_large_one_does_not_encode_the_parent_change(
 def test_reobservation_same_value_new_bytes_visits_each_item_once(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """D-R8, ruling 1d: new bytes, the same values: one transition, the cited envelope read once.
+    """D-R8, ruling 2026-11-16 (c): new bytes holding the same rows deliver nothing.
 
-    Every item restates its Claim on the new Capture; delivery records ONE
-    transition from the content they cite (its size the contents that moved,
-    never the Claims citing them) and reads the cited envelope once per batch.
+    The extract step's one row observation refreshes every Claim produced from
+    those rows: no item reaches delivery, nothing is recorded per Claim, and
+    the cited envelopes are not read, at either size.
     """
     from cruxible_core.evidence.claim_reobservations import ClaimReobservationStore
     from cruxible_core.procedures.proposal_delivery import ProposalTerminalEgressSink
-    from cruxible_core.storage.cas import ContentAddressedBodyStore
 
     _roomy_selection_budget(monkeypatch)
-    observations = []
     original_record = ProposalTerminalEgressSink._record_reobservations
-    original_transition = ClaimReobservationStore.transition
-    original_read = ContentAddressedBodyStore.read
-    active = [False]
     counters: Counter[str] = Counter()
-    cited: set[str] = set()
 
     def record(self: Any, request: Any, unchanged: Any) -> Any:
         counters["items"] += len(unchanged)
-        active[0] = True
-        try:
-            return original_record(self, request, unchanged)
-        finally:
-            active[0] = False
-
-    def transition(self: Any, transitions: Any, **kwargs: Any) -> Any:
-        counters["transitions"] += 1
-        counters["moved"] += len({(t.contract_digest, t.from_content_digest) for t in transitions})
-        assert kwargs["excepted"] == []
-        return original_transition(self, transitions, **kwargs)
-
-    def read(self: Any, digest: str, **kwargs: Any) -> Any:
-        if active[0] and digest in cited:
-            counters["cited_reads"] += 1
-        return original_read(self, digest, **kwargs)
+        return original_record(self, request, unchanged)
 
     monkeypatch.setattr(ProposalTerminalEgressSink, "_record_reobservations", record)
-    monkeypatch.setattr(ClaimReobservationStore, "transition", transition)
-    monkeypatch.setattr(ContentAddressedBodyStore, "read", read)
     for count in (N, 2 * N):
         directory = tmp_path / str(count)
         directory.mkdir()
         instance, root, line = settle_support.settle_world(directory, claims_terminal=True)
         _create_subjects(instance, settle_support.OWNERS[instance.root], count)
         _settle((instance, root, line), 0, count, 0)
-        from cruxible_client.contracts.claims import parse_claim
-
-        tree = instance.immutable_tree_at(instance.accepted_coordinate().git_oid)
-        claims = [parse_claim(tree[path], path=path) for path in tree if path.startswith("claims/")]
-        cited.clear()
-        cited.update(capture for claim in claims for capture in claim.backing.capture_digests)
         head = instance.accepted_coordinate()
+        store = ClaimReobservationStore(instance)
+        before = store.head_sequence()
         counters.clear()
         (root / fixtures.RELATIVE_PATH).write_bytes(
             canonical.canonical_bytes(
@@ -881,18 +858,11 @@ def test_reobservation_same_value_new_bytes_visits_each_item_once(
         )
         assert state.status == "succeeded", state.terminal
         (egress,) = state.terminal_egress
-        assert egress.proposal_id is None and len(egress.children) == count
+        assert egress.proposal_id is None and egress.children == ()
         assert instance.accepted_coordinate() == head
-        assert counters == {
-            "items": count,
-            "transitions": 1,
-            "moved": 1,
-            "cited_reads": 1,
-        }, counters
-        observations.append(dict(counters))
-    assert observations[1]["items"] == 2 * observations[0]["items"]
-    assert observations[1]["transitions"] == observations[0]["transitions"] == 1
-    assert observations[1]["cited_reads"] == observations[0]["cited_reads"] == 1
+        assert counters["items"] == 0
+        # The run's fetch and its extract step: two shared records, whatever the count.
+        assert store.head_sequence() - before == 2
 
 
 def _measure_absence_work(tmp_path, monkeypatch, *, policy, count):

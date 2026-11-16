@@ -87,7 +87,7 @@ ROW_MAP_BODY = "cruxible-row-map-v1"
 #: The row maps of one extract step's Captures (run-free).
 ROW_MAPS_BODY = "cruxible-row-maps-v1"
 _ACCESS = BodyAccessContext(principal_id="claim-reobservation", can_read_body=True)
-_SCHEMA_VERSION = 8
+_SCHEMA_VERSION = 9
 REOBSERVATION_DIRECTORY = "claim-reobservations"
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 # ``reobservations`` keeps the full history (audit, historical verification).
@@ -171,10 +171,9 @@ CREATE TABLE IF NOT EXISTS key_heads (
  carried_latest_us INTEGER NOT NULL,
  PRIMARY KEY(contract_digest, observed_content_digest, source, sequence)
 ) STRICT, WITHOUT ROWID;
-CREATE TABLE IF NOT EXISTS capture_rows (
- capture_digest TEXT NOT NULL, spec_digest TEXT NOT NULL, locator TEXT NOT NULL,
- contract_digest TEXT NOT NULL, row_digest TEXT NOT NULL,
- PRIMARY KEY(capture_digest, spec_digest, locator)
+CREATE TABLE IF NOT EXISTS capture_maps (
+ capture_digest TEXT NOT NULL, spec_digest TEXT NOT NULL, map_digest TEXT NOT NULL,
+ PRIMARY KEY(capture_digest, spec_digest)
 ) STRICT, WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS seen_maps (digest TEXT PRIMARY KEY) STRICT, WITHOUT ROWID;
 """
@@ -353,6 +352,25 @@ class RowMap:
     rows: tuple[tuple[str, str], ...]
 
 
+_ROW_MAPS: dict[str, dict[str, tuple[str, str]]] = {}
+_ROW_MAPS_CAPACITY = 256
+
+
+def _row_map(instance: PlaybillInstance, digest: str) -> dict[str, tuple[str, str]]:
+    """One Capture's row map, by record locator: an immutable body parsed once per process."""
+
+    held = _ROW_MAPS.get(digest)
+    if held is None:
+        body = _shared_body(instance, digest, tag=ROW_MAP_BODY)
+        contract = str(body["contract"])
+        held = {str(locator): (contract, str(row)) for locator, row in body["rows"]}
+        with _LOCK:
+            if len(_ROW_MAPS) >= _ROW_MAPS_CAPACITY:
+                _ROW_MAPS.pop(next(iter(_ROW_MAPS)))
+            _ROW_MAPS[digest] = held
+    return held
+
+
 def row_digest(contract: str, source: str, key: object, fields: object) -> str:
     """One extracted row's identity: its contract, logical source, record key and value."""
 
@@ -432,6 +450,7 @@ class ClaimReobservationStore:
                         "key_sources",
                         "key_heads",
                         "capture_rows",
+                        "capture_maps",
                         "seen_maps",
                         "transitions",
                         "transition_exceptions",
@@ -558,8 +577,8 @@ class ClaimReobservationStore:
         call observed another set before, each member key gets a ``key_heads``
         row carrying its best observation so far: that is the set's size, paid
         only on a change. A row observation's Capture row maps are projected
-        the first time each map is seen (``capture_rows``): sized by the new
-        Captures' records, never by the Claims produced from them.
+        the first time each map is seen (``capture_maps``): one row per new
+        Capture's map, never one per Claim produced from it.
         """
 
         recorded_us = _ordered(conn, sequence, recorded_at)
@@ -611,7 +630,7 @@ class ClaimReobservationStore:
             "SELECT set_digest FROM source_heads WHERE source=?", (source,)
         ).fetchone()
         if last is None or str(last[0]) != set_digest:
-            self._switch_source(conn, source, set_digest, sequence, recorded_us)
+            self._switch_source(conn, source, set_digest, sequence, recorded_us, first=last is None)
         conn.execute(
             "INSERT OR IGNORE INTO observation_points VALUES (?,?,?,?,?)",
             (set_digest, sequence, recorded_us, earliest_us, latest_us),
@@ -655,12 +674,11 @@ class ClaimReobservationStore:
                 found.setdefault(str(row), capture)
             if conn.execute("SELECT 1 FROM seen_maps WHERE digest=?", (map_digest,)).fetchone():
                 continue
-            conn.executemany(
-                "INSERT OR IGNORE INTO capture_rows VALUES (?,?,?,?,?)",
-                [
-                    (capture, str(body["spec"]), str(locator), str(body["contract"]), str(row))
-                    for locator, row in body["rows"]
-                ],
+            # One row per Capture's map: a record's row is read from the map
+            # body (an immutable artifact, parsed once per process).
+            conn.execute(
+                "INSERT OR IGNORE INTO capture_maps VALUES (?,?,?)",
+                (capture, str(body["spec"]), str(map_digest)),
             )
             conn.execute("INSERT OR IGNORE INTO seen_maps VALUES (?)", (map_digest,))
         conn.execute("INSERT OR IGNORE INTO seen_maps VALUES (?)", (digest,))
@@ -668,13 +686,20 @@ class ClaimReobservationStore:
 
     @staticmethod
     def _switch_source(
-        conn: sqlite3.Connection, source: str, set_digest: str, sequence: int, recorded_us: int
+        conn: sqlite3.Connection,
+        source: str,
+        set_digest: str,
+        sequence: int,
+        recorded_us: int,
+        *,
+        first: bool = False,
     ) -> None:
         """Point each member key of the set at it for this source, carrying its best so far.
 
         A key's carried observation is the best of what it carried and what its
         previous set held for this source, as of just before this record: two
-        seeks per member, written only when the source's set changed.
+        seeks per member, written only when the source's set changed (none to
+        carry from on a source's first observation).
         """
 
         rows = []
@@ -683,18 +708,23 @@ class ClaimReobservationStore:
             "WHERE set_digest=?",
             (set_digest,),
         ).fetchall():
-            prior = conn.execute(
-                "SELECT k.carried_us, k.carried_recorded_us, k.carried_sequence, "
-                "k.carried_capture, k.carried_latest_us, s.earliest_us, s.earliest_recorded_us, "
-                "s.earliest_sequence, s.latest_us, o.capture_digest FROM key_heads k "
-                "JOIN observation_sets s ON s.set_digest=k.set_digest "
-                "JOIN observed_sets o ON o.contract_digest=k.contract_digest AND "
-                "o.observed_content_digest=k.observed_content_digest AND "
-                "o.set_digest=k.set_digest "
-                "WHERE k.contract_digest=? AND k.observed_content_digest=? AND k.source=? "
-                "ORDER BY k.sequence DESC LIMIT 1",
-                (contract, content, source),
-            ).fetchone()
+            prior = (
+                None
+                if first
+                else conn.execute(
+                    "SELECT k.carried_us, k.carried_recorded_us, k.carried_sequence, "
+                    "k.carried_capture, k.carried_latest_us, s.earliest_us, "
+                    "s.earliest_recorded_us, s.earliest_sequence, s.latest_us, o.capture_digest "
+                    "FROM key_heads k "
+                    "JOIN observation_sets s ON s.set_digest=k.set_digest "
+                    "JOIN observed_sets o ON o.contract_digest=k.contract_digest AND "
+                    "o.observed_content_digest=k.observed_content_digest AND "
+                    "o.set_digest=k.set_digest "
+                    "WHERE k.contract_digest=? AND k.observed_content_digest=? AND k.source=? "
+                    "ORDER BY k.sequence DESC LIMIT 1",
+                    (contract, content, source),
+                ).fetchone()
+            )
             carried: tuple[int, int, int, str, int] = (-1, -1, -1, "", -1)
             if prior is not None:
                 held = (int(prior[0]), int(prior[1]), int(prior[2]), str(prior[3]))
@@ -1709,11 +1739,12 @@ class ReobservationReader:
                 return None
             self.probes += 1
             row = conn.execute(
-                "SELECT contract_digest, row_digest FROM capture_rows WHERE capture_digest=? "
-                "AND spec_digest=? AND locator=?",
-                (capture_digest, spec_digest, locator),
+                "SELECT map_digest FROM capture_maps WHERE capture_digest=? AND spec_digest=?",
+                (capture_digest, spec_digest),
             ).fetchone()
-        return None if row is None else (str(row[0]), str(row[1]))
+        if row is None:
+            return None
+        return _row_map(self.instance, str(row[0])).get(locator)
 
     def content_observed(self) -> bool:
         """Whether any content or row observation was ever recorded (one probe)."""
