@@ -935,8 +935,7 @@ def _refuse_definition_target(value: object) -> object:
         )
     raise PydanticCustomError(
         "retire_target_is_definition",
-        "{target} is a definition; retire ends a Claim (CLM-...) or a Subject (kind/id), "
-        "and {how}",
+        "{target} is a definition; retire ends a Claim (CLM-...) or a Subject (kind/id), and {how}",
         {"target": value, "how": how},
     )
 
