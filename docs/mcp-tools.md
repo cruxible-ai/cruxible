@@ -482,7 +482,7 @@ read, traversal paths, bound parameters, verdict) and its execution receipt.
 | `cruxible_audit` | Rank visible Claim verification work and record completed coverage | `READ_ONLY` |
 | `cruxible_curation_list` | List one page of the curation queue detection recorded (`limit`, `cursor`), with when detection last ran and which detectors are inactive; a pure read | `READ_ONLY` |
 | `cruxible_curation_duplicates` | List possible duplicates of one kind (`kind`, `limit`, `cursor`): Subjects and values equal under a broad comparison but distinct under the declared rules; a pure, bounded read | `READ_ONLY` |
-| `cruxible_curation_overrule` | Close an item as not applying, permanently, with attribution | `GOVERNED_WRITE` |
+| `cruxible_curation_overrule` | Close an item as not applying, permanently, with attribution. Irreversible, so it previews by default: commit with `dry_run: false` and `at` (the preview's git oid), else `cruxible.preview.confirmation_required` | `GOVERNED_WRITE` |
 | `cruxible_curation_accept_fixed` | Link an item to the accepted change that fixed it, by `accepted_proposal_id` or `accepted_generation` | `GOVERNED_WRITE` |
 | `cruxible_curation_suppress` | Hide an item (`scope: item`) or its lineage (`scope: lineage`) without resolving it | `GOVERNED_WRITE` |
 | `cruxible_curation_unsuppress` | Lift a suppression on an item | `GOVERNED_WRITE` |

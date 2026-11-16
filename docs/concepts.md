@@ -684,7 +684,8 @@ Three queues tell you what to do, each a read:
   Detection runs only when a `curation-detect` Trigger aimed at the
   `curation.detect` action is authored (none is seeded), never on `next`'s
   path; `curation list` only reads. Each item takes one ruling: `overrule`
-  closes it as not applying, permanently; `suppress` hides the item, or with
+  closes it as not applying, permanently (it previews first and commits only
+  with the preview's coordinate); `suppress` hides the item, or with
   `--scope lineage` also every successor its pattern opens; `unsuppress` lifts
   a suppression; and `accept-fixed` links it to the accepted proposal or
   generation that fixed it.

@@ -156,7 +156,9 @@ admission](evidence-and-admission.md#rules-are-per-role)).
 ### Pages that fell behind
 
 A generated table regenerates itself: `cruxible block sync --all` re-renders
-every stale rendered block from its query. A passage someone wrote is only
+every stale rendered block from its query, and so does the repair `next` names,
+`cruxible block repin FILE BLOCK`, for a block whose body is still its query's
+rendering. A passage someone wrote is only
 flagged: re-read it against the current state, rewrite it if needed, and
 restamp it with `cruxible block repin FILE BLOCK`, which is the author's
 declaration that it's right again. See [Documents and
@@ -227,6 +229,8 @@ Record your judgment as state, so it isn't asked again:
 Both are ordinary fields, so the judgment has its reason and its history like
 any other Claim. `cruxible curation list` shows the items detection recorded,
 and `overrule`, `suppress`, `unsuppress` and `accept-fixed` close them out.
+`overrule` is permanent, so it previews first: commit it with `--commit --at
+OID` from the preview (or answer its confirmation prompt).
 
 ## When a field turns into prose
 

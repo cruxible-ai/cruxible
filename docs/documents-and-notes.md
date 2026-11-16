@@ -328,7 +328,9 @@ kinds, and both are watched the same way.
    ~~~
 
 4. **Bring it back in step.** `cruxible block sync --all` re-renders every
-   stale rendered block. An authored block is only flagged: re-read it, rewrite
+   stale rendered block, and `cruxible block repin FILE BLOCK` (the repair
+   `next` names) renders one again while its body is still its query's
+   rendering; FILE is the page's path or its catalog name. An authored block is only flagged: re-read it, rewrite
    it if it no longer holds, and `cruxible block repin FILE BLOCK`. A repin is
    your declaration that the passage reflects its backings again.
 
