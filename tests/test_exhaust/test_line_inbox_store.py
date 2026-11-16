@@ -418,7 +418,7 @@ def test_a_layout_5_projection_gains_the_split_in_place_with_earlier_postings_un
     import sqlite3
 
     _instance, store, write = _world(tmp_path)
-    store.post([_posting({"a": 1}, run_id="RUN-1")], **write)  # type: ignore[arg-type]
+    _post_inline(store, [_posting({"a": 1}, run_id="RUN-1")], write)
     _layout_5(store)
 
     store.post([_posting({"a": 1}, run_id="RUN-2")], **write)  # type: ignore[arg-type]
@@ -426,8 +426,20 @@ def test_a_layout_5_projection_gains_the_split_in_place_with_earlier_postings_un
     assert store.posted_by_run("RUN-1") == (1, None)
     assert store.posted_by_run("RUN-2") == (1, 0)
     connection = sqlite3.connect(store.path)
-    assert connection.execute("PRAGMA user_version").fetchone()[0] == 6
+    # Layout 5 moves in place to 7 (the column, then the posting batches table).
+    assert connection.execute("PRAGMA user_version").fetchone()[0] == 7
     connection.close()
+
+
+def _post_inline(store: LineInboxStore, postings: list[InboxPosting], write: dict) -> None:  # type: ignore[type-arg]
+    """Post as builds before posting batches did: every item inline, one row each."""
+
+    original = LineInboxStore._posted_data
+    LineInboxStore._posted_data = lambda self, fresh: {"items": fresh}  # type: ignore[method-assign]
+    try:
+        store.post(postings, **write)
+    finally:
+        LineInboxStore._posted_data = original  # type: ignore[method-assign]
 
 
 def _layout_5(store: LineInboxStore) -> None:
@@ -450,13 +462,13 @@ def test_an_upgrade_stopped_before_its_version_moves_leaves_layout_5_and_reopens
     import sqlite3
 
     _instance, store, write = _world(tmp_path)
-    store.post([_posting({"a": 1}, run_id="RUN-1")], **write)  # type: ignore[arg-type]
+    _post_inline(store, [_posting({"a": 1}, run_id="RUN-1")], write)
     _layout_5(store)
     open_projection = store._open_projection  # noqa: SLF001
 
     def stopped_before_the_version(*_args: object) -> int:
         action, first, second = _args[:3]
-        if action == sqlite3.SQLITE_PRAGMA and first == "user_version" and second == "6":
+        if action == sqlite3.SQLITE_PRAGMA and first == "user_version" and second == "7":
             return sqlite3.SQLITE_DENY
         return sqlite3.SQLITE_OK
 
@@ -484,7 +496,7 @@ def test_a_column_an_earlier_upgrade_left_at_layout_5_is_kept_not_added_twice(
     import sqlite3
 
     _instance, store, write = _world(tmp_path)
-    store.post([_posting({"a": 1}, run_id="RUN-1")], **write)  # type: ignore[arg-type]
+    _post_inline(store, [_posting({"a": 1}, run_id="RUN-1")], write)
     _layout_5(store)
     connection = sqlite3.connect(store.path)
     connection.execute("ALTER TABLE postings ADD COLUMN created INTEGER")
@@ -494,3 +506,44 @@ def test_a_column_an_earlier_upgrade_left_at_layout_5_is_kept_not_added_twice(
     assert store.posted_by_run("RUN-1") == (1, None)
     store.post([_posting({"a": 1}, run_id="RUN-2")], **write)  # type: ignore[arg-type]
     assert store.posted_by_run("RUN-2") == (1, 0)
+
+
+def test_a_terminal_reposting_the_same_items_journals_one_batch_and_no_item_row(
+    tmp_path: Path,
+) -> None:
+    """Codex 3.5: a re-sighting batch cites the body the first posting stored."""
+
+    import sqlite3
+
+    instance, store, write = _world(tmp_path)
+    items = [{"cve": f"CVE-{index}"} for index in range(5)]
+
+    def post(run_id: str, at: datetime) -> None:
+        store.post(
+            [
+                _posting(item, run_id=run_id, item_key=f"item-{index}", at=at)
+                for index, item in enumerate(items)
+            ],
+            **write,  # type: ignore[arg-type]
+        )
+
+    post("RUN-1", NOW)
+    cas = instance.root / "cas"
+    before = {path for path in cas.rglob("*") if path.is_file()}
+    post("RUN-2", NOW + timedelta(hours=1))
+    added = {path for path in cas.rglob("*") if path.is_file()} - before
+    # The run's journal record payload alone: the items body is the first run's.
+    assert len(added) == 1
+    assert store.posted_by_run("RUN-1") == (5, 5)
+    assert store.posted_by_run("RUN-2") == (5, 0)
+    # A recovered delivery of the same terminal counts once.
+    post("RUN-2", NOW + timedelta(hours=1))
+    assert store.posted_by_run("RUN-2") == (5, 0)
+    conn = sqlite3.connect(store.path)
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM postings").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM posting_batches").fetchone()[0] == 2
+    finally:
+        conn.close()
+    entries, _cursor = store.page(line=None, status=None, limit=10, cursor=None)
+    assert {entry.envelope.occurrences for entry in entries} == {2}

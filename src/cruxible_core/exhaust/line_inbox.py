@@ -80,8 +80,23 @@ _PREVIEW: TypeAdapter[ShownValue] = TypeAdapter(ShownValue)
 #: 5: the activity rows (new items and decisions, by journal position).
 #: 6: each posting says whether it made a new item (``created``); a layout-5
 #: projection gains the column in place, its earlier rows unknown (NULL).
-_SCHEMA_VERSION = 6
-_TABLES = ("progress", "items", "postings", "unread", "dispositions", "incomplete", "activity")
+#: 7: a terminal's posting is one batch (``posting_batches``) citing a run-free
+#: body of its items; a layout-6 projection gains the table in place.
+_SCHEMA_VERSION = 7
+_TABLES = (
+    "progress",
+    "items",
+    "postings",
+    "posting_batches",
+    "unread",
+    "dispositions",
+    "incomplete",
+    "activity",
+)
+#: One terminal's posted items, less the run and instant they were posted at:
+#: a terminal posting the same items again cites the body it stored before.
+POSTING_ITEMS_BODY = "cruxible-inbox-posting-items-v1"
+_BATCH_FIELDS = ("run_id", "node_id", "posted_at")
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS incomplete (singleton INTEGER PRIMARY KEY, payload_digest TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS progress (singleton INTEGER PRIMARY KEY, sequence INTEGER NOT NULL);
@@ -101,6 +116,12 @@ CREATE TABLE IF NOT EXISTS postings (
  run_id TEXT NOT NULL, node_id TEXT NOT NULL, item_key TEXT NOT NULL, item_id TEXT NOT NULL,
  created INTEGER, PRIMARY KEY(run_id, node_id, item_key)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS unread (line TEXT PRIMARY KEY, count INTEGER NOT NULL);
+-- One row per posted batch (one terminal of one run): what makes a recovered
+-- delivery count once, and the run's posted and new counts, with no row per
+-- item a run re-sighted.
+CREATE TABLE IF NOT EXISTS posting_batches (
+ run_id TEXT NOT NULL, node_id TEXT NOT NULL, items INTEGER NOT NULL, created INTEGER NOT NULL,
+ PRIMARY KEY(run_id, node_id)) WITHOUT ROWID;
 -- What the activity feed lists: each new item and each decision, by journal
 -- position (a posting batch's items in order), newest first through activity_recent.
 CREATE TABLE IF NOT EXISTS activity (
@@ -307,6 +328,9 @@ class LineInboxStore:
                 if version == 5:
                     # Additive: keep the projection rather than replay the journal.
                     self._add_created_column(conn)
+                elif version == 6:
+                    # Additive: the batch table is created below; nothing replays.
+                    conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
                 elif version != _SCHEMA_VERSION:
                     # Disposable: drop it and replay the journal from the start.
                     for table in _TABLES:
@@ -383,7 +407,35 @@ class LineInboxStore:
         self, conn: sqlite3.Connection, event: dict[str, Any], sequence: int, at: str
     ) -> None:
         kind, data = event["kind"], event["data"]
-        if kind == "posted":
+        if kind == "posted" and "items_digest" in data:
+            items = self._batch_items(data)
+            if conn.execute(
+                "SELECT 1 FROM posting_batches WHERE run_id=? AND node_id=?",
+                (data["run_id"], data["node_id"]),
+            ).fetchone():
+                items = []  # The same run delivered this terminal already.
+            created = 0
+            for ordinal, posting in enumerate(items):
+                if self._apply_posting(conn, posting, batch=True):
+                    created += 1
+                    _note_activity(
+                        conn,
+                        (sequence, ordinal),
+                        at,
+                        "inbox_posted",
+                        {
+                            "item": posting["item_id"],
+                            "line": posting["line"],
+                            "procedure": posting["procedure"],
+                            "run": posting["run_id"],
+                        },
+                    )
+            if items:
+                conn.execute(
+                    "INSERT INTO posting_batches VALUES(?,?,?,?)",
+                    (data["run_id"], data["node_id"], len(items), created),
+                )
+        elif kind == "posted":
             for ordinal, posting in enumerate(data["items"]):
                 if self._apply_posting(conn, posting):
                     _note_activity(
@@ -424,20 +476,53 @@ class LineInboxStore:
         )
         conn.execute("DELETE FROM unread WHERE line=? AND count<=0", (line,))
 
-    def _apply_posting(self, conn: sqlite3.Connection, posting: dict[str, Any]) -> bool:
-        """Apply one posting; ``True`` when it made a new item, not a sighting of one."""
+    def _batch_items(self, data: dict[str, Any]) -> list[dict[str, Any]]:
+        """A batch's items, each with the run, node and instant the batch names."""
+
+        content = self.instance.body_store().read(
+            str(data["items_digest"]),
+            access=BodyAccessContext(principal_id="line-inbox-projection", can_read_body=True),
+        )
+        body = json.loads(content)
+        if (
+            not isinstance(body, dict)
+            or body.get("tag") != POSTING_ITEMS_BODY
+            or canonical_bytes(body) != content
+            or len(body["items"]) != data["count"]
+        ):
+            raise ValueError("invalid Line inbox posting batch")
+        shared: dict[str, Any] = {field: data[field] for field in _BATCH_FIELDS}
+        if "captures" in body:
+            shared["source_capture_digests"] = body["captures"]
+        return [{**item, **shared} for item in body["items"]]
+
+    def _apply_posting(
+        self, conn: sqlite3.Connection, posting: dict[str, Any], *, batch: bool = False
+    ) -> bool:
+        """Apply one posting; ``True`` when it made a new item, not a sighting of one.
+
+        A posting of a batch (``batch``) writes no posting row: its batch's row
+        is what makes a redelivery count once.
+        """
 
         item_id = posting["item_id"]
         row = conn.execute(
             "SELECT envelope,status FROM items WHERE item_id=?", (item_id,)
         ).fetchone()
-        # The posting row keeps what applying it learns: a new item or a sighting.
-        cursor = conn.execute(
-            "INSERT OR IGNORE INTO postings VALUES(?,?,?,?,?)",
-            (posting["run_id"], posting["node_id"], posting["item_key"], item_id, int(row is None)),
-        )
-        if cursor.rowcount == 0:
-            return False  # The same run delivered this item already.
+        if not batch:
+            # The posting row keeps what applying it learns: a new item or a sighting.
+            cursor = conn.execute(
+                "INSERT OR IGNORE INTO postings VALUES(?,?,?,?,?)",
+                (
+                    posting["run_id"],
+                    posting["node_id"],
+                    posting["item_key"],
+                    item_id,
+                    int(row is None),
+                ),
+            )
+            if cursor.rowcount == 0:
+                return False  # The same run delivered this item already.
         sighting = InboxSighting(
             run_id=posting["run_id"],
             posted_at=_instant(posting["posted_at"]),
@@ -633,8 +718,15 @@ class LineInboxStore:
                 ):
                     continue
                 seen = conn.execute(
-                    "SELECT 1 FROM postings WHERE run_id=? AND node_id=? AND item_key=?",
-                    (posting.run_id, posting.node_id, posting.item_key),
+                    "SELECT 1 FROM postings WHERE run_id=? AND node_id=? AND item_key=? "
+                    "UNION ALL SELECT 1 FROM posting_batches WHERE run_id=? AND node_id=?",
+                    (
+                        posting.run_id,
+                        posting.node_id,
+                        posting.item_key,
+                        posting.run_id,
+                        posting.node_id,
+                    ),
                 ).fetchone()
                 if seen is not None:
                     continue
@@ -659,12 +751,43 @@ class LineInboxStore:
                 self._append(
                     conn,
                     "posted",
-                    {"items": fresh},
+                    self._posted_data(fresh),
                     actor=actor,
                     now=now,
                     coordinate=coordinate,
                 )
         return tuple(keys)
+
+    def _posted_data(self, fresh: list[dict[str, Any]]) -> dict[str, Any]:
+        """One terminal's posting: a batch citing its items as a run-free body.
+
+        The items one terminal of one run posts share the run, node and
+        instant; less those, a terminal posting the same items again (an
+        unchanged run re-sighting them) reproduces the body it stored before,
+        and the journal record is the batch alone. Postings that do not share
+        them are journaled inline, as before.
+        """
+
+        shared = {field: fresh[0][field] for field in _BATCH_FIELDS}
+        if any(item[field] != shared[field] for item in fresh for field in _BATCH_FIELDS):
+            return {"items": fresh}
+        # Findings routed from one run all stand on the Captures it decoded:
+        # that list is held once for the batch, not once per item.
+        captures = fresh[0]["source_capture_digests"]
+        common = all(item["source_capture_digests"] == captures for item in fresh)
+        omitted = (*_BATCH_FIELDS, "source_capture_digests") if common else _BATCH_FIELDS
+        body = canonical_bytes(
+            {
+                "tag": POSTING_ITEMS_BODY,
+                **({"captures": captures} if common else {}),
+                "items": [
+                    {key: value for key, value in item.items() if key not in omitted}
+                    for item in fresh
+                ],
+            }
+        )
+        digest = self.instance.body_store().store(body, journal_payload=True).digest
+        return {**shared, "items_digest": digest, "count": len(fresh)}
 
     def record_disposition(
         self,
@@ -839,7 +962,14 @@ class LineInboxStore:
                 "FROM postings WHERE run_id=?",
                 (run_id,),
             ).fetchone()
+            batched = conn.execute(
+                "SELECT COALESCE(SUM(items), 0), COALESCE(SUM(created), 0) "
+                "FROM posting_batches WHERE run_id=?",
+                (run_id,),
+            ).fetchone()
         total, known, new = int(row[0]), int(row[1]), int(row[2])
+        total, known = total + int(batched[0]), known + int(batched[0])
+        new += int(batched[1])
         return total, new if known == total else None
 
     def unread_by_line(self) -> tuple[tuple[str, int], ...]:
