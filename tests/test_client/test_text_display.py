@@ -44,7 +44,7 @@ def test_an_orient_result_prints_the_cli_map() -> None:
             "instance": "inst_demo",
             "generation": 3,
             "coordinate": _COORDINATE.model_dump(mode="json"),
-            "accepted_at": "2026-11-14T00:00:00Z",
+            "proposed_at": "2026-11-14T00:00:00Z",
             "evaluation_time": "2026-11-14T00:00:00Z",
             "kinds": [{"kind": "shop.part", "subjects": 2, "fields": ["status"]}],
             "queries": [],
@@ -57,7 +57,7 @@ def test_an_orient_result_prints_the_cli_map() -> None:
     assert text == render_orient(result.model_dump(mode="json"))
     assert _render_orient is render_orient
     assert text.splitlines() == [
-        "Cruxible inst_demo generation=3 at 0123456789ab accepted 2026-11-14T00:00:00Z",
+        "Cruxible inst_demo generation=3 at 0123456789ab proposed 2026-11-14T00:00:00Z",
         "Kinds (1):",
         "  shop.part  subjects=2  fields=status",
         "Next:",

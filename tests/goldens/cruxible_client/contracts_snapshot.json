@@ -44346,17 +44346,6 @@
     },
     "OrientResult": {
       "fields": {
-        "accepted_at": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "accepted_at",
-          "required": true,
-          "schema": {
-            "format": "date-time",
-            "title": "Accepted At",
-            "type": "string"
-          }
-        },
         "activity": {
           "default": null,
           "default_json_serializable": true,
@@ -45028,6 +45017,17 @@
             ],
             "default": null,
             "title": "Procedures"
+          }
+        },
+        "proposed_at": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "proposed_at",
+          "required": true,
+          "schema": {
+            "format": "date-time",
+            "title": "Proposed At",
+            "type": "string"
           }
         },
         "queries": {
@@ -48708,11 +48708,6 @@
         "additionalProperties": false,
         "description": "One orient answer; which parts are present depends on the request.\n\n- no ``kind``/``section``: ``you``, ``kinds`` (paged by ``limit``/``cursor``),\n  ``artifacts``, ``queries`` and ``attention``;\n- ``kind``: ``kind_detail``;\n- ``section``: that section's rows (``documents``, ``procedures``,\n  ``claim_types``, ``subject_kinds``, ``queries``, ``operations``, or an\n  operational family:\n  ``runs``, ``running``, ``lines``, ``runbooks``, ``captures``,\n  ``capture_contracts``,\n  ``predictions``, ``mandates``), the logical sources runs landed\n  Captures from (``sources``), the principal registry (``principals``),\n  the governed policies in force (``policies``), the accepted generations\n  newest first (``generations``), the Subject graph (``graph``), the\n  pins between live definitions (``pins``) or what just happened, newest\n  first (``activity``), paged.\n  The default map counts the operational families under ``artifacts`` and\n  never inlines their rows.\n\n``next`` is rendered for the requesting surface.",
         "properties": {
-          "accepted_at": {
-            "format": "date-time",
-            "title": "Accepted At",
-            "type": "string"
-          },
           "activity": {
             "anyOf": [
               {
@@ -49146,6 +49141,11 @@
             "default": null,
             "title": "Procedures"
           },
+          "proposed_at": {
+            "format": "date-time",
+            "title": "Proposed At",
+            "type": "string"
+          },
           "queries": {
             "anyOf": [
               {
@@ -49327,18 +49327,18 @@
           "instance",
           "coordinate",
           "generation",
-          "accepted_at",
+          "proposed_at",
           "evaluation_time"
         ],
         "title": "OrientResult",
         "type": "object"
       },
       "required_fields": [
-        "accepted_at",
         "coordinate",
         "evaluation_time",
         "generation",
-        "instance"
+        "instance",
+        "proposed_at"
       ]
     },
     "OrientVocabularyFile": {

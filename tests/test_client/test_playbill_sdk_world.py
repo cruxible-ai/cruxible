@@ -250,7 +250,7 @@ class _WorldClient:
                 instance=instance_id,
                 coordinate=_projection(at or self.coordinate),
                 generation=1,
-                accepted_at=datetime(2026, 9, 7, tzinfo=UTC),
+                proposed_at=datetime(2026, 9, 7, tzinfo=UTC),
                 evaluation_time=datetime(2026, 9, 7, tzinfo=UTC),
                 section="subject_kinds",
                 subject_kinds=tuple(
@@ -264,7 +264,7 @@ class _WorldClient:
             instance=instance_id,
             coordinate=_projection(listing.coordinate),
             generation=1,
-            accepted_at=datetime(2026, 9, 7, tzinfo=UTC),
+            proposed_at=datetime(2026, 9, 7, tzinfo=UTC),
             evaluation_time=datetime(2026, 9, 7, tzinfo=UTC),
             section="claim_types",
             claim_types=tuple(

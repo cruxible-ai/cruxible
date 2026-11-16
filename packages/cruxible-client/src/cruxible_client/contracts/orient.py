@@ -827,7 +827,9 @@ class OrientResult(_StrictOrientModel):
     instance: str
     coordinate: AcceptedCoordinate
     generation: int = Field(ge=0)
-    accepted_at: datetime
+    #: When this generation's change set was proposed (its candidate's
+    #: timestamp); the instant of acceptance is not recorded.
+    proposed_at: datetime
     evaluation_time: datetime
     mirror_url: str | None = Field(default=None, exclude_if=_is_none)
     #: How many accepted generations before the head keep a ready projection

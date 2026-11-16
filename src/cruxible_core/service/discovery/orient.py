@@ -979,7 +979,7 @@ def service_playbill_orient(
         "instance": instance.descriptor.instance_id,
         "coordinate": served,
         "generation": _generation(instance, coordinate),
-        "accepted_at": instance.accepted_evaluation_time(coordinate.git_oid),
+        "proposed_at": instance.accepted_evaluation_time(coordinate.git_oid),
         "evaluation_time": moment,
         "mirror_url": instance.ledger_mirror_url(),
         "retention_generations": instance.retention.generations,

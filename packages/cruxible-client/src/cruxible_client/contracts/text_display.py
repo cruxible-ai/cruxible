@@ -138,7 +138,7 @@ def render_orient(result: Mapping[str, Any]) -> str:
 
     lines = [
         f"Cruxible {result['instance']} generation={result['generation']} "
-        f"at {result['coordinate']['git_oid'][:12]} accepted {result['accepted_at']}"
+        f"at {result['coordinate']['git_oid'][:12]} proposed {result['proposed_at']}"
     ]
     if result.get("mirror_url"):
         lines.append(f"Ledger mirror: {result['mirror_url']}")
