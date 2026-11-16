@@ -299,3 +299,74 @@ def test_a_provider_move_below_graph_write_proposes_and_does_not_activate(
         assert detail is not None
         assert f"someone who can runs cruxible proposal activate {proposal_id}" in detail
         assert instance.accepted_coordinate() == head
+
+
+class _CountingRegistry:
+    """A principal registry that counts how many principal records were visited."""
+
+    def __init__(self, size: int) -> None:
+        from types import SimpleNamespace
+
+        self.visited = 0
+        self._records = [
+            SimpleNamespace(principal_id=f"p{index:04d}", status="active", kind="ordinary")
+            for index in range(size)
+        ]
+
+    @property
+    def principals(self):  # type: ignore[no-untyped-def]
+        for record in self._records:
+            self.visited += 1
+            yield record
+
+
+@pytest.mark.parametrize("size", [10, 1000])
+def test_nothing_outstanding_visits_no_principal(size: int) -> None:
+    """Round 3 (cost): an ordinary candidate with nothing outstanding used to build and
+    sort every ordinary principal; signers are listed only when a refusal or receipt
+    names them."""
+
+    from types import SimpleNamespace
+
+    from cruxible_core.service.authoring.documents import outstanding_approvals
+
+    registry = _CountingRegistry(size)
+    ordinary = SimpleNamespace(
+        approval_requirements=(), members=(SimpleNamespace(artifact_kind="document"),)
+    )
+
+    outstanding = outstanding_approvals(
+        (),
+        ordinary,  # type: ignore[arg-type]
+        creator="owner",
+        principals=registry,  # type: ignore[arg-type]
+        principal_lifecycle=False,
+    )
+
+    assert outstanding.remaining == 0
+    assert registry.visited == 0
+
+
+def test_a_self_approved_write_lands_without_enumerating_principals(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_core.service.authoring import documents
+    from tests.core_support._write_support import KIND, seed_write_surface
+    from tests.test_service.test_write_verbs import _set, _write
+
+    instance, _owner = seed_write_surface(tmp_path)
+    real = documents.outstanding_approvals
+    visits: list[int] = []
+
+    def counted(submissions, candidate, *, principals, **options):  # type: ignore[no-untyped-def]
+        registry = _CountingRegistry(0)
+        registry._records = list(principals.principals)
+        result = real(submissions, candidate, principals=registry, **options)  # type: ignore[arg-type]
+        visits.append(registry.visited)
+        return result
+
+    monkeypatch.setattr(documents, "outstanding_approvals", counted)
+    outcome = _write(instance, _set(f"{KIND}/wi-1", "title", "self-approved"))
+
+    assert outcome.status == "accepted", outcome
+    assert visits and visits == [0] * len(visits)

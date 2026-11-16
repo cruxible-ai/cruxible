@@ -598,13 +598,19 @@ def outstanding_approvals(
         except ApprovalIntegrityError:
             continue
     signers = {approval.signer_id for approval in verified}
-    ordinary = tuple(
-        sorted(
-            principal.principal_id
-            for principal in principals.principals
-            if principal.status == "active" and principal.kind == "ordinary"
+
+    def ordinary(*excluded: str) -> tuple[str, ...]:
+        # Only a refusal or receipt that names signers walks the registry.
+        return tuple(
+            sorted(
+                principal.principal_id
+                for principal in principals.principals
+                if principal.status == "active"
+                and principal.kind == "ordinary"
+                and principal.principal_id not in excluded
+            )
         )
-    )
+
     required = (creator,) if principal_lifecycle and creator not in signers else ()
     if candidate.approval_requirements:
         independent = {
@@ -618,9 +624,7 @@ def outstanding_approvals(
             return OutstandingApprovals(
                 required_signers=required,
                 eligible_needed=needed,
-                eligible_signers=tuple(
-                    item for item in ordinary if item != creator and item not in signers
-                ),
+                eligible_signers=ordinary(creator, *signers),
                 independent=True,
             )
     if (
@@ -628,7 +632,7 @@ def outstanding_approvals(
         and not required
         and any(member.artifact_kind == "compiler-upgrade" for member in candidate.members)
     ):
-        return OutstandingApprovals(eligible_needed=1, eligible_signers=ordinary)
+        return OutstandingApprovals(eligible_needed=1, eligible_signers=ordinary())
     return OutstandingApprovals(required_signers=required)
 
 
