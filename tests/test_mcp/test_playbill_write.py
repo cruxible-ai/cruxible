@@ -134,13 +134,9 @@ def test_write_tools_are_default_governed_write_tools_with_declared_parameters(
     assert tools[tool].outputSchema is not None
 
 
-def _capture(monkeypatch: pytest.MonkeyPatch, method: str, *, result: Any = None) -> list[Any]:
+def _capture(monkeypatch: pytest.MonkeyPatch, method: str, *, result: Any = "outcome") -> list[Any]:
     """Record the typed request the handler sends the daemon client's ``method``."""
 
-    if result is None:
-        result = WriteOutcome(
-            status="accepted", coordinate=GetCoordinate(git_oid="a" * 12, generation=1)
-        )
     captured: list[Any] = []
 
     def call(instance_id: str, *, request: Any) -> Any:
@@ -479,48 +475,22 @@ def test_mcp_set_catalogues_the_workspace_file_it_cites(monkeypatch, tmp_path):
     )
 
 
-def test_a_capped_server_hands_off_the_calls_it_does_not_serve(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize(
+    ("mode", "ceiling"),
+    [("read_only", "read_only"), ("governed_write", "governed_write"), ("admin", None)],
+)
+def test_a_capped_server_sends_its_cap_with_every_daemon_request(
+    monkeypatch: pytest.MonkeyPatch, mode: str, ceiling: str | None
 ) -> None:
-    """gapa-06: under CRUXIBLE_MODE=governed_write the outcome's approve, activate and
-    next named graph_write tools this server refuses; they read as someone else's,
-    exactly as the daemon renders a call the caller's credential cannot run."""
+    """Round 2 of gapa-06: the cap is authority. The daemon client carries it, so
+    the daemon serves a write, a run or a whoami at the lower of the cap and the
+    request's own tier (``test_a_client_ceiling_is_authority_not_wording``)."""
 
-    from cruxible_client.contracts.write import ApprovalNeeded, WriteProposalRef
     from cruxible_core.runtime.permissions import reset_permissions
 
-    approve = 'cruxible_proposal_approve(proposal_id="sha256:ab", signer_id="reviewer")'
-    activate = 'cruxible_proposal_activate(proposal_id="sha256:ab")'
-    awaiting = WriteOutcome(
-        status="awaiting_approval",
-        coordinate=GetCoordinate(git_oid="a" * 12, generation=1),
-        proposal=WriteProposalRef(proposal_id="sha256:ab", state="awaiting_external_approval"),
-        approval=ApprovalNeeded(
-            reason="independent_approval_required",
-            minimum_approvals=1,
-            eligible_approvers=("reviewer",),
-            approve=approve,
-            activate=activate,
-        ),
-        next=approve,
-    )
-    _capture(monkeypatch, "set", result=awaiting)
-    arguments = {"subject": "dev.item/a", "field": "status", "value": "done", "because": "x"}
-
-    monkeypatch.setenv("CRUXIBLE_MODE", "governed_write")
+    monkeypatch.setenv("CRUXIBLE_MODE", mode)
     reset_permissions()
     try:
-        capped = handlers.handle_playbill_set("inst_write", **arguments)
+        assert handlers._permission_ceiling() == ceiling
     finally:
         reset_permissions()
-    monkeypatch.setenv("CRUXIBLE_MODE", "graph_write")
-    try:
-        served = handlers.handle_playbill_set("inst_write", **arguments)
-    finally:
-        reset_permissions()
-
-    assert capped.approval is not None and capped.next is not None
-    assert capped.approval.approve == f"someone who can runs {approve}"
-    assert capped.approval.activate == f"someone who can runs {activate}"
-    assert capped.next == f"someone who can runs {approve}"
-    assert served == awaiting

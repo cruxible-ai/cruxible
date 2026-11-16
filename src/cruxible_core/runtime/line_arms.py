@@ -22,8 +22,10 @@ from cruxible_core.errors import AuthenticationError
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.runtime.permissions import (
     TOOL_PERMISSIONS,
+    PermissionMode,
     clamp_to_capability_ceiling,
     get_capability_ceiling,
+    get_current_mode,
 )
 from cruxible_core.server.actor_identity import (
     LOCAL_OPERATOR_ACTOR_ID,
@@ -59,22 +61,49 @@ def current_arm_principal() -> LineEnablementPrincipal:
             raise credential_unbound_refusal(
                 credential_id=auth.credential_id, credential_label=auth.credential_label
             )
+        record = get_runtime_credential_store().get(auth.credential_id)
         return LineEnablementPrincipal(
             kind="runtime_credential",
             credential_id=auth.credential_id,
             label=auth.credential_label,
+            permission_ceiling=_requested_ceiling(
+                clamp_to_capability_ceiling(
+                    record.permission_mode if record is not None else get_current_mode()
+                )
+            ),
         )
     if not is_server_auth_enabled() and (auth is None or auth.credential_type == "principal_claim"):
         # Auth off: the arm records its provenance. A request that claims a
         # principal arms as that claim, rechecked before every admission; one
         # that claims none arms as the implicit local operator.
+        ceiling = _requested_ceiling(get_capability_ceiling())
         if auth is None:
-            return LineEnablementPrincipal(kind="local_operator", label=LOCAL_OPERATOR_ACTOR_ID)
+            return LineEnablementPrincipal(
+                kind="local_operator", label=LOCAL_OPERATOR_ACTOR_ID, permission_ceiling=ceiling
+            )
         assert auth.principal_id is not None
-        return LineEnablementPrincipal(kind="principal_claim", label=auth.principal_id)
+        return LineEnablementPrincipal(
+            kind="principal_claim", label=auth.principal_id, permission_ceiling=ceiling
+        )
     raise AuthenticationError(
         "Enabling a Line requires a runtime credential the daemon can recheck before each run"
     )
+
+
+def _requested_ceiling(baseline: PermissionMode) -> Any:
+    """This request's tier when a client ceiling lowered it below ``baseline``, else None.
+
+    An MCP server under CRUXIBLE_MODE caps its requests; a Line it enables keeps
+    that cap for every automatic run, as the enabling request had it.
+    """
+
+    current = get_current_mode()
+    return current.name.lower() if current < baseline else None
+
+
+def _capped(mode: PermissionMode, principal: LineEnablementPrincipal) -> PermissionMode:
+    ceiling = principal.permission_ceiling
+    return mode if ceiling is None else min(mode, PermissionMode[ceiling.upper()])
 
 
 def _require_active_principal(instance: Any, principal_id: str) -> None:
@@ -112,7 +141,7 @@ def arm_authority(
                 "authentication_changed",
                 "The daemon now requires authentication; enable again with a runtime credential.",
             )
-        mode = get_capability_ceiling()
+        mode = _capped(get_capability_ceiling(), principal)
         if mode < ARM_PERMISSION:
             raise LineArmAuthorityLost(
                 "permission_insufficient",
@@ -141,7 +170,7 @@ def arm_authority(
             "credential_scope_changed",
             "The enabling credential no longer belongs to this instance; enable again to resume.",
         )
-    mode = clamp_to_capability_ceiling(record.permission_mode)
+    mode = _capped(clamp_to_capability_ceiling(record.permission_mode), principal)
     if mode < ARM_PERMISSION:
         raise LineArmAuthorityLost(
             "permission_insufficient",

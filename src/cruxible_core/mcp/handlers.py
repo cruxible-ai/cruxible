@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import base64
 import os
-import re
 import threading
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
@@ -166,7 +165,6 @@ from cruxible_core.mcp.identity import (
 )
 from cruxible_core.mcp.init import run_mcp_init
 from cruxible_core.mcp.permissions import (
-    TOOL_PERMISSIONS,
     PermissionMode,
     check_permission,
     get_capability_ceiling,
@@ -197,7 +195,7 @@ from cruxible_core.service.procedures.procedure_runs import (
 )
 
 _client_cache: CruxibleClient | None = None
-_client_cache_key: tuple[str | None, str | None, str | None, str | None] | None = None
+_client_cache_key: tuple[str | None, ...] | None = None
 _client_cache_lock = threading.RLock()
 ResultT = TypeVar("ResultT")
 _AUTHORING_INPUT: TypeAdapter[AuthoringInput] = TypeAdapter(AuthoringInput)
@@ -229,7 +227,8 @@ def _identity_and_client() -> tuple[McpIdentity, CruxibleClient]:
     target = resolve_daemon_target()
     token = get_runtime_bearer_token()
     source, principal_id, candidate = local_identity(target=target, token=token)
-    cache_key = (target.server_url, target.server_socket, token, principal_id)
+    ceiling = _permission_ceiling()
+    cache_key = (target.server_url, target.server_socket, token, principal_id, ceiling)
     with _client_cache_lock:
         if _client_cache is None or _client_cache_key != cache_key:
             if _client_cache is not None:
@@ -239,6 +238,7 @@ def _identity_and_client() -> tuple[McpIdentity, CruxibleClient]:
                 socket_path=target.server_socket,
                 token=token,
                 principal_id=principal_id,
+                permission_ceiling=ceiling,
             )
             try:
                 # One /version request per client: a daemon on another contract
@@ -256,6 +256,19 @@ def _identity_and_client() -> tuple[McpIdentity, CruxibleClient]:
         return McpIdentity(source=source, principal_id=principal_id), client
     verified = verified_folder_identity(candidate, target=target, client=client)
     return McpIdentity(source="folder", principal_id=principal_id, folder=verified), client
+
+
+def _permission_ceiling() -> Literal["read_only", "governed_write", "graph_write"] | None:
+    """This server's ``CRUXIBLE_MODE`` cap, sent with every daemon request when below admin.
+
+    The daemon then serves each request at the lower of the cap and the
+    request's own authority, so a tool this server serves can have no effect a
+    hidden tool would (a write's activation, a run's effects): the cap is
+    authority, not only which tools are listed.
+    """
+
+    cap = get_capability_ceiling()
+    return None if cap >= PermissionMode.ADMIN else cast(Any, cap.name.lower())
 
 
 def _get_client() -> CruxibleClient:
@@ -702,10 +715,15 @@ def handle_playbill_whoami(instance_id: str) -> McpWhoAmIResult:
         source = "folder" if _folder_identity() is not None else "none"
     identity = _playbill_whoami(instance_id)
     cap = get_capability_ceiling()
+    # The daemon answers at this server's cap already (`_permission_ceiling`).
     effective = min(PermissionMode[identity.credential_permission_mode.upper()], cap)
-    if identity.can_author and effective < PermissionMode.GOVERNED_WRITE:
-        # The daemon answers for the credential; this server's own cap hides the
-        # authoring tools, so whoami says it cannot author here, and why.
+    refusal = identity.authoring_refusal
+    if cap < PermissionMode.GOVERNED_WRITE and (
+        identity.can_author
+        or (refusal is not None and refusal.code == "cruxible.identity.permission_insufficient")
+    ):
+        # It is this server's cap that stops authoring, so the repair is the
+        # cap's, not a new credential.
         identity = identity.model_copy(
             update={"can_author": False, "authoring_refusal": _mode_cap_refusal(cap)}
         )
@@ -1618,20 +1636,16 @@ def handle_playbill_set(instance_id: str, **fields: Any) -> WriteOutcome:
     if isinstance(request.evidence, FileEvidence | SectionEvidence):
         # Through the workspace write, as cruxible_write: the cited file is read
         # here and catalogued when the catalog did not name it.
-        return _served_calls(
-            write_workspace(
-                as_write_request(request),
-                workspace=mcp_workspace_root(),
-                submit=lambda observed: _daemon_call(
-                    lambda client: client.write(instance_id, request=observed),
-                    operation_name="cruxible_set",
-                ),
-            )
+        return write_workspace(
+            as_write_request(request),
+            workspace=mcp_workspace_root(),
+            submit=lambda observed: _daemon_call(
+                lambda client: client.write(instance_id, request=observed),
+                operation_name="cruxible_set",
+            ),
         )
-    return _served_calls(
-        _daemon_call(
-            lambda client: client.set(instance_id, request=request), operation_name="cruxible_set"
-        )
+    return _daemon_call(
+        lambda client: client.set(instance_id, request=request), operation_name="cruxible_set"
     )
 
 
@@ -1639,11 +1653,8 @@ def handle_playbill_retire(instance_id: str, **fields: Any) -> WriteOutcome:
     """End one live Claim, by ID or by its Subject and field."""
 
     request = _write_request(RetireRequest, "cruxible_retire", fields)
-    return _served_calls(
-        _daemon_call(
-            lambda client: client.retire(instance_id, request=request),
-            operation_name="cruxible_retire",
-        )
+    return _daemon_call(
+        lambda client: client.retire(instance_id, request=request), operation_name="cruxible_retire"
     )
 
 
@@ -1656,57 +1667,18 @@ def handle_playbill_write(instance_id: str, **fields: Any) -> WriteOutcome:
         or isinstance(getattr(c, "evidence", None), FileEvidence | SectionEvidence)
         for c in request.changes
     ):
-        return _served_calls(
-            _daemon_call(
-                lambda client: client.write(instance_id, request=request),
-                operation_name="cruxible_write",
-            )
+        return _daemon_call(
+            lambda client: client.write(instance_id, request=request),
+            operation_name="cruxible_write",
         )
-    return _served_calls(
-        write_workspace(
-            request,
-            workspace=mcp_workspace_root(),
-            submit=lambda observed: _daemon_call(
-                lambda client: client.write(instance_id, request=observed),
-                operation_name="cruxible_write",
-            ),
-        )
+    return write_workspace(
+        request,
+        workspace=mcp_workspace_root(),
+        submit=lambda observed: _daemon_call(
+            lambda client: client.write(instance_id, request=observed),
+            operation_name="cruxible_write",
+        ),
     )
-
-
-_TOOL_CALL = re.compile(r"\b(cruxible_[a-z0-9_]+)\(")
-_HANDED_OFF = "someone who can runs "
-
-
-def _served_calls(outcome: WriteOutcome) -> WriteOutcome:
-    """The outcome's approve, activate and next calls as this server can serve them.
-
-    The daemon names a call the caller's credential cannot run as someone
-    else's ("someone who can runs ..."); a call to a tool this server's own cap
-    (``CRUXIBLE_MODE``) leaves unserved reads the same way, so no next line
-    offers a tool this server refuses.
-    """
-
-    cap = get_capability_ceiling()
-
-    def shown(call: str | None) -> str | None:
-        if call is None or call.startswith(_HANDED_OFF):
-            return call
-        named = _TOOL_CALL.match(call)
-        required = None if named is None else TOOL_PERMISSIONS.get(named.group(1))
-        return call if required is None or required <= cap else _HANDED_OFF + call
-
-    approval = outcome.approval
-    if approval is None and outcome.next is None:
-        return outcome
-    update: dict[str, Any] = {"next": shown(outcome.next)}
-    if approval is not None:
-        update["approval"] = approval.model_copy(
-            update={"approve": shown(approval.approve), "activate": shown(approval.activate)}
-        )
-    shown_outcome = outcome.model_copy(update=update)
-    file_paths = outcome.file_paths
-    return shown_outcome if file_paths is None else shown_outcome.with_file_paths(file_paths)
 
 
 def handle_playbill_query_spec(

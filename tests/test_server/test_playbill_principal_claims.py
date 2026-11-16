@@ -192,6 +192,38 @@ def test_with_auth_on_a_claim_may_only_repeat_the_credentials_principal(
     assert refused.json()["error_code"] == "cruxible.identity.principal_claim_mismatch"
 
 
+def test_a_client_ceiling_lowers_a_credential_and_never_raises_it(
+    daemon: tuple[TestClient, Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from cruxible_client.contracts.principals import EFFECTIVE_PERMISSION_MODE_HEADER
+
+    client, managed = daemon
+    assert _init(client, tmp_path, managed, claim="alice").status_code == 200  # type: ignore[attr-defined]
+    created = get_runtime_credential_store().create_credential(
+        instance_id=INSTANCE,
+        label="alice",
+        permission_mode=PermissionMode.GOVERNED_WRITE,
+    )
+    monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
+    bearer = {"Authorization": f"Bearer {created.token}"}
+
+    def mode(ceiling: str) -> object:
+        return client.get(
+            f"/api/v1/{INSTANCE}/whoami",
+            headers={**bearer, EFFECTIVE_PERMISSION_MODE_HEADER: ceiling},
+        )
+
+    lowered, asked_higher = mode("read_only"), mode("admin")
+
+    assert lowered.status_code == 200, lowered.text  # type: ignore[attr-defined]
+    assert lowered.json()["credential_permission_mode"] == "read_only"  # type: ignore[attr-defined]
+    # A ceiling above the credential is the credential: a client cannot raise itself.
+    assert asked_higher.status_code == 200, asked_higher.text  # type: ignore[attr-defined]
+    assert asked_higher.json()["credential_permission_mode"] == "governed_write"  # type: ignore[attr-defined]
+
+
 def test_the_client_sends_its_configured_principal_and_refuses_a_malformed_one(
     tmp_path: Path,
 ) -> None:
@@ -201,6 +233,14 @@ def test_the_client_sends_its_configured_principal_and_refuses_a_malformed_one(
         assert client._client._client.headers[PRINCIPAL_ID_HEADER] == "alice"
     finally:
         client.close()
+    capped = CruxibleClient(socket_path=socket_path, permission_ceiling="governed_write")
+    try:
+        assert (
+            capped._client._client.headers["X-Cruxible-Effective-Permission-Mode"]
+            == "governed_write"
+        )
+    finally:
+        capped.close()
     with pytest.raises(ClientConfigError, match="CRUXIBLE_PRINCIPAL_ID"):
         CruxibleClient(socket_path=socket_path, principal_id="Not An ID")
 

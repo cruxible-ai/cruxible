@@ -54,6 +54,7 @@ from cruxible_client.contracts.kits import (
     KitStatus,
 )
 from cruxible_client.contracts.principals import (
+    EFFECTIVE_PERMISSION_MODE_HEADER,
     PRINCIPAL_ID_ENV,
     PRINCIPAL_ID_HEADER,
     is_canonical_principal_id,
@@ -198,12 +199,22 @@ class CruxibleClient:
         socket_path: str | None = None,
         token: str | None = None,
         principal_id: str | None = None,
+        permission_ceiling: Literal["read_only", "governed_write", "graph_write"] | None = None,
     ) -> None:
+        """``permission_ceiling`` caps every request this client makes at that tier.
+
+        The daemon serves the lower of it and the request's own authority (a
+        credential's tier, or an auth-off daemon's ceiling), so a client can only
+        ever lower what it may do; an MCP server under ``CRUXIBLE_MODE`` sends its cap.
+        """
+
         if bool(base_url) == bool(socket_path):
             raise ConfigError("Configure exactly one of base_url or socket_path for CruxibleClient")
         headers = {"Authorization": f"Bearer {token}"} if token else {}
         if principal_id is not None:
             headers[PRINCIPAL_ID_HEADER] = validate_principal_id(principal_id)
+        if permission_ceiling is not None:
+            headers[EFFECTIVE_PERMISSION_MODE_HEADER] = permission_ceiling
         self.principal_id = principal_id
         self.socket_path = socket_path
         if socket_path is not None:

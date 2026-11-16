@@ -405,6 +405,35 @@ def test_an_automatic_run_acts_as_the_arming_credential(monkeypatch):
     assert caller_rung == PermissionMode.GOVERNED_WRITE.value - 1
 
 
+def test_an_arm_keeps_the_ceiling_its_enabling_request_was_capped_at(monkeypatch):
+    """Round 2 of gapa-06: a Line enabled through an MCP server under CRUXIBLE_MODE
+    never runs above that cap, though the credential or daemon would allow more."""
+
+    from cruxible_core.runtime.permissions import request_permission_scope
+
+    monkeypatch.setattr(line_arms, "is_server_auth_enabled", lambda: False)
+    monkeypatch.setattr(line_arms, "get_current_auth_context", lambda: None)
+    with request_permission_scope(PermissionMode.GOVERNED_WRITE):
+        capped = line_arms.current_arm_principal()
+    uncapped = line_arms.current_arm_principal()
+
+    assert capped.permission_ceiling == "governed_write"
+    assert uncapped.permission_ceiling is None
+    _, capped_rung = arm_authority(
+        _registry_instance("owner", "active"), capped, now=datetime.now(UTC)
+    )
+    _, uncapped_rung = arm_authority(
+        _registry_instance("owner", "active"), uncapped, now=datetime.now(UTC)
+    )
+    assert capped_rung == PermissionMode.GOVERNED_WRITE.value - 1
+    assert uncapped_rung == PermissionMode.ADMIN.value - 1
+    credential = CREDENTIAL.model_copy(update={"permission_ceiling": "read_only"})
+    _credential_store(monkeypatch, _credential(instance_id="instance"))
+    with pytest.raises(LineArmAuthorityLost) as lost:
+        arm_authority(_registry_instance("owner", "active"), credential, now=datetime.now(UTC))
+    assert lost.value.reason == "permission_insufficient"
+
+
 def _stalled(instance, at):  # type: ignore[no-untyped-def]
     from cruxible_core.consumers.lines import LINE_STALL_AFTER
     from cruxible_core.service.procedures.line_dispatch import line_arm_health

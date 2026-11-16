@@ -38051,6 +38051,23 @@
                 "title": "Label",
                 "type": "string"
               },
+              "permission_ceiling": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "read_only",
+                      "governed_write",
+                      "graph_write"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Permission Ceiling"
+              },
               "tag": {
                 "const": "line-arm-principal-v2",
                 "default": "line-arm-principal-v2",
@@ -38306,6 +38323,31 @@
             "type": "string"
           }
         },
+        "permission_ceiling": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "permission_ceiling",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "enum": [
+                  "read_only",
+                  "governed_write",
+                  "graph_write"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Permission Ceiling"
+          }
+        },
         "tag": {
           "default": "line-arm-principal-v2",
           "default_json_serializable": true,
@@ -38349,6 +38391,23 @@
           "label": {
             "title": "Label",
             "type": "string"
+          },
+          "permission_ceiling": {
+            "anyOf": [
+              {
+                "enum": [
+                  "read_only",
+                  "governed_write",
+                  "graph_write"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Permission Ceiling"
           },
           "tag": {
             "const": "line-arm-principal-v2",

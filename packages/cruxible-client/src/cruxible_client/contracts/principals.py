@@ -23,6 +23,9 @@ _PRINCIPAL_ID_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
 #: it is a claim of identity, not authentication: every process of the same OS
 #: user is equally trusted. With auth on it must equal the credential's principal.
 PRINCIPAL_ID_HEADER = "X-Cruxible-Principal-Id"
+#: The tier a client asks the daemon to cap its requests at: the daemon serves
+#: the lower of this and the request's own authority, so it can only lower it.
+EFFECTIVE_PERMISSION_MODE_HEADER = "X-Cruxible-Effective-Permission-Mode"
 PRINCIPAL_ID_ENV = "CRUXIBLE_PRINCIPAL_ID"
 #: The caller's local Ed25519 private key: the variable `cruxible init` and
 #: `cruxible principal add` write into a principal's settings file, and the one
