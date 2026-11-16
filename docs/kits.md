@@ -540,6 +540,10 @@ authored in one authored change, retire the Claims one Subject at a time
 (`cruxible retire KIND/ID --with-claims --because TEXT`), then preview the
 removal again; or keep the kit. `kit remove` has no option that retires Claims,
 so an instance that has recorded many Claims under a kit in practice keeps it.
+Nor does it retire the automation you authored over the kit: that is yours,
+and it stays until you retire it. A blocked removal prints the refusal and its
+repair first, then the plan as counts per action and kind; add `--detail` to
+list each path.
 
 A blocked removal records nothing: the commit checks the removal at the head
 its preview was pinned to and submits only what passes, and the command exits
@@ -551,7 +555,7 @@ proposal. Below `graph_write` (an MCP server capped by `CRUXIBLE_MODE`, say),
 `kit add` and `kit remove` stay proposed and the result says who can activate
 them.
 
-A removed kit cannot be added back: its retired definitions cannot be revived,
+Removal is one-way. A removed kit cannot be added back: its retired definitions cannot be revived,
 so a later `kit add` of it refuses with a `revival_refused` code (for example
 `cruxible.capture_contract.revival_refused`).
 

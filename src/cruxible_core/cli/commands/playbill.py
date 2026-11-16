@@ -2322,9 +2322,43 @@ def _exit_if_kit_blocked(result: KitChangeResult) -> None:
         raise SystemExit(1)
 
 
+def _echo_kit_refusals(result: KitChangeResult) -> None:
+    if result.detail:
+        click.echo(printable(result.detail))
+    for refusal in result.refusals:
+        click.echo(refusal.code)
+        click.echo(f"Next: {printable(refusal.repair)}")
+
+
+def _kit_plan_counts(result: KitChangeResult) -> list[str]:
+    """One line per plan action: how many paths of each kind (``retire: 120 (...)``)."""
+
+    counts: dict[str, dict[str, int]] = {}
+    for item in result.plan:
+        if item.action == "unchanged":
+            continue
+        kind = _kit_plan_heading((item.identity or item.path).partition(":")[0])
+        by_kind = counts.setdefault(item.action, {})
+        by_kind[kind] = by_kind.get(kind, 0) + 1
+    return [
+        f"  {action}: {sum(by_kind.values()):,} ("
+        + ", ".join(f"{kind} {count:,}" for kind, count in sorted(by_kind.items()))
+        + ")"
+        for action, by_kind in sorted(counts.items())
+    ]
+
+
 def _echo_kit_change(
-    result: KitChangeResult, *, template_on_disk: Path | None = None, source: str | None = None
+    result: KitChangeResult,
+    *,
+    template_on_disk: Path | None = None,
+    source: str | None = None,
+    blocked_plan: Literal["list", "counts"] | None = None,
 ) -> None:
+    """One kit change. ``blocked_plan`` (kit remove) puts a blocked change's refusal
+    and repair first, then its plan as counts per kind, or listed after them."""
+
+    refusal_first = blocked_plan is not None and result.status in {"blocked", "would_block"}
     version = "" if result.version is None else f" {result.version}"
     transition = ""
     if result.transition is not None:
@@ -2349,6 +2383,15 @@ def _echo_kit_change(
             f"Built by {provenance.principal_id or 'an unattributed principal'} on "
             f"{provenance.instance_id} at {provenance.coordinate.git_oid[:12]} (claimed)"
         )
+    if refusal_first:
+        _echo_kit_refusals(result)
+        counts = _kit_plan_counts(result)
+        if counts:
+            click.echo("Plan:")
+            for line in counts:
+                click.echo(line)
+            if blocked_plan == "counts":
+                click.echo("(--detail lists each path)")
     groups: dict[str, list[str]] = {}
     for item in result.plan:
         if item.action == "unchanged":
@@ -2369,15 +2412,13 @@ def _echo_kit_change(
         if notes:
             line += f" ({'; '.join(notes)})"
         groups.setdefault(kind, []).append(line)
-    for kind in sorted(groups):
-        click.echo(f"{kind}:")
-        for line in groups[kind]:
-            click.echo(line)
-    if result.detail:
-        click.echo(printable(result.detail))
-    for refusal in result.refusals:
-        click.echo(refusal.code)
-        click.echo(f"Next: {printable(refusal.repair)}")
+    if not refusal_first or blocked_plan == "list":
+        for kind in sorted(groups):
+            click.echo(f"{kind}:")
+            for line in groups[kind]:
+                click.echo(line)
+    if not refusal_first:
+        _echo_kit_refusals(result)
     _echo_automation_template(
         result.automation_template, on_disk=template_on_disk, reference=source
     )
@@ -2760,14 +2801,26 @@ def kit_status(offline: bool, output_json: bool) -> None:
 
 @kit_group.command("remove")
 @click.argument("kit_id")
+@click.option(
+    "--detail",
+    "show_plan",
+    is_flag=True,
+    help="On a blocked removal, also list each path it would retire or keep.",
+)
 @change_control_options
 @json_option
 @handle_errors
-def remove_kit(kit_id: str, dry_run: bool | None, at: str | None, output_json: bool) -> None:
+def remove_kit(
+    kit_id: str, show_plan: bool, dry_run: bool | None, at: str | None, output_json: bool
+) -> None:
     """Retire every artifact KIT_ID installed (previews by default).
 
     Lands at once when the approval policy requires no approval, otherwise it
-    stops at proposed.
+    stops at proposed. Removal is one-way: a removed kit cannot be added back.
+    Live Claims under its definitions block it until they are retired;
+    automation you authored over the kit is never retired by it. A blocked
+    removal prints the refusal and its repair first, then counts per kind;
+    --detail lists each path.
     """
     request = KitRemoveRequest(kit_id=kit_id, dry_run=dry_run, at=at)
     result = _server_call(
@@ -2777,7 +2830,7 @@ def remove_kit(kit_id: str, dry_run: bool | None, at: str | None, output_json: b
     if output_json:
         _emit_json(result.model_dump(mode="json"))
     else:
-        _echo_kit_change(result)
+        _echo_kit_change(result, blocked_plan="list" if show_plan else "counts")
     _exit_if_kit_blocked(result)
 
 

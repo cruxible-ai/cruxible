@@ -1133,6 +1133,12 @@ def test_removing_a_kit_retires_its_queries_with_the_kinds_they_walk(
     publisher, consumer = worlds
     _author_pair_kinds(publisher)
     consumer.add(publisher.build("1.0.0"))
+    pair_kinds = {"acme.inv", "acme.comp", "acme.occ"}
+
+    def listed() -> set[str]:
+        return {row.kind for row in playbill_api.playbill_orient(consumer.instance_id).kinds or ()}
+
+    assert pair_kinds <= listed()
 
     preview = playbill_api.playbill_kit_remove(
         consumer.instance_id, KitRemoveRequest(kit_id="acme")
@@ -1152,6 +1158,9 @@ def test_removing_a_kit_retires_its_queries_with_the_kinds_they_walk(
     assert _query_state(consumer, "acme.sbom") == "retired"
     assert consumer.claim_type("acme.occ.inventory").lifecycle.state == "live"
     assert _installed(playbill_api.playbill_kit_status(consumer.instance_id)) == ()
+    # Orient stops listing the retired kinds, though the kept endpoint
+    # ClaimTypes still name them.
+    assert not pair_kinds & listed()
 
 
 def _record_seats(world: _World, slug: str) -> None:

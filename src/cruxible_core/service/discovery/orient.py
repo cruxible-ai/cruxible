@@ -197,6 +197,8 @@ class _State:
     #: Each declared kind's identity rule as orient shows it: ``keys: a, b (unique)``
     #: or ``minted``.
     identities: dict[str, str] = dataclass_field(default_factory=dict)
+    #: SubjectKinds that are retired at this coordinate (a removed kit's kinds).
+    retired_kinds: frozenset[str] = frozenset()
     #: Each live ClaimType's ledger path and accepted revision, by predicate.
     placements: dict[str, tuple[str, int]] = dataclass_field(default_factory=dict)
 
@@ -305,6 +307,12 @@ def _read_state(instance: PlaybillInstance, coordinate: AcceptedProjectionCoordi
             str(kind): int(count) for kind, count in connection.execute(LIVE_SUBJECT_COUNTS_SQL)
         }
         identities = {item.kind: kind_identity(item) for item in accepted_subject_kinds(typed)}
+        retired_kinds = frozenset(
+            str(identity).removeprefix("SubjectKind:")
+            for (identity,) in connection.execute(
+                "SELECT identity FROM subject_kinds WHERE lifecycle='retired'"
+            )
+        )
         procedures = tuple(
             OrientProcedure(
                 name=item.identity.removeprefix("Procedure:"),
@@ -339,6 +347,7 @@ def _read_state(instance: PlaybillInstance, coordinate: AcceptedProjectionCoordi
         queries=tuple(sorted(queries, key=lambda item: item.name)),
         operations=accepted_provider_operations(instance, coordinate),
         identities=identities,
+        retired_kinds=retired_kinds,
     )
 
 
@@ -432,9 +441,14 @@ def _with_evidence_counts(
 
 
 def _kind_names(state: _State) -> tuple[str, ...]:
+    """Every kind orient lists: declared, holding live Subjects, or named by a live
+    ClaimType. A retired SubjectKind with no live Subject is not listed, though a
+    ClaimType kept beside it (a pair kind's endpoint) still names it."""
+
     kinds = set(state.subjects_by_kind) | set(state.identities)
     for claim_type in state.claim_types:
         kinds.update(concrete_subject_kinds(claim_type.allowed_subject_kinds))
+    kinds -= {kind for kind in state.retired_kinds if not state.subjects_by_kind.get(kind)}
     return tuple(sorted(kinds, key=lambda item: item.encode("utf-8")))
 
 

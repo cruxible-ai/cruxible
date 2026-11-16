@@ -1010,3 +1010,66 @@ def test_kit_remove_exits_1_only_when_a_commit_was_blocked(
     assert result.exit_code == exit_code, result.output
     assert f"acme 1.0.0: {status}" in result.output
     assert "Refused: cruxible.change_set.incomplete_closure" in result.output
+
+
+def test_a_blocked_kit_remove_prints_its_refusal_first_and_the_plan_as_counts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The retire/keep list of a kit that owns hundreds of paths buried the refusal
+    under it; the refusal and its repair come first, then counts per kind, and
+    --detail lists each path after them (ruling 8)."""
+
+    from cruxible_client.contracts.kits import KitPathPlan, KitRemoveRequest
+
+    refusal = (
+        "Refused: cruxible.change_set.incomplete_closure: 3 live artifact(s) outside this "
+        "change depend on definitions it retires or replaces. Repair: retire the Claims"
+    )
+    plan = (
+        *(
+            KitPathPlan(
+                path=f"claim-types/acme/c{index}.json",
+                action="retire",
+                identity=f"ClaimType:acme.c{index}",
+            )
+            for index in range(40)
+        ),
+        KitPathPlan(
+            path="subject-kinds/acme.account.json",
+            action="retire",
+            identity="SubjectKind:acme.account",
+        ),
+        KitPathPlan(
+            path="capture-contracts/acme.json",
+            action="keep",
+            identity="CaptureContract:acme",
+            detail="Contract versions are immutable and remain accepted",
+        ),
+    )
+
+    class StubClient:
+        def remove_kit(self, instance_id: str, request: KitRemoveRequest) -> KitChangeResult:
+            return KitChangeResult(
+                kit_id="acme", version="1.0.0", status="blocked", plan=plan, detail=refusal
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    commit = ["--commit", "--at", "abcdef123456"]
+
+    brief = CliRunner().invoke(cli, [*BASE, "remove", "acme", *commit])
+    listed = CliRunner().invoke(cli, [*BASE, "remove", "acme", *commit, "--detail"])
+
+    assert brief.exit_code == listed.exit_code == 1, brief.output
+    lines = brief.output.splitlines()
+    start = lines.index("acme 1.0.0: blocked")
+    assert lines[start : start + 5] == [
+        "acme 1.0.0: blocked",
+        refusal,
+        "Plan:",
+        "  keep: 1 (CaptureContract 1)",
+        "  retire: 41 (ClaimType 40, SubjectKind 1)",
+    ]
+    assert "(--detail lists each path)" in brief.output
+    assert "acme.c7" not in brief.output
+    assert listed.output.index(refusal) < listed.output.index("retire: ClaimType:acme.c7")
+    assert "(--detail lists each path)" not in listed.output

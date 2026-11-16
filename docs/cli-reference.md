@@ -1204,7 +1204,7 @@ cruxible kit add KIT [--source TEXT] [--keep IDENTITY]... [--keep-local-edits]
   [--dry-run|--commit] [--at OID] [--json]
 cruxible kit pull REFERENCE --out DIR [--layout] [--json]
 cruxible kit status [--offline] [--json]
-cruxible kit remove ID [--dry-run|--commit] [--at OID] [--json]
+cruxible kit remove ID [--detail] [--dry-run|--commit] [--at OID] [--json]
 ~~~
 
 `KIT` is a kit directory, an OCI image layout directory, or a registry
@@ -1458,10 +1458,15 @@ depends on what it would retire (`Refused: cruxible.change_set.incomplete_closur
 the refusal counts the dependents by kind, names a few, and gives the repair
 (retire the automation you authored over the kit, retire the Claims Subject by
 Subject with `cruxible retire KIND/ID --with-claims`, or keep the kit); there is
-no option that retires Claims. A blocked commit of `kit add` or `kit remove`
-exits 1, and a blocked removal commit records nothing (a blocked preview exits
-0). A removed kit cannot be added back: its retired definitions refuse revival
-(`revival_refused`). Removing a kit that is not installed
+no option that retires Claims, and the removal never retires automation you
+authored over the kit (Lines, Mandates, Triggers, Runbooks): it stays yours. A
+blocked removal prints the refusal and its repair first, then the plan as
+counts per action and kind; `--detail` also lists each path after them. A
+blocked commit of `kit add` or `kit remove` exits 1, and a blocked removal
+commit records nothing (a blocked preview exits 0). Removal is one-way: a
+removed kit cannot be added back, because its retired definitions refuse
+revival (`revival_refused`). After a removal `orient` no longer lists its
+retired SubjectKinds, even where a kept pair-endpoint ClaimType still names one. Removing a kit that is not installed
 refuses with `cruxible.kit.not_installed`, naming the installed kits.
 
 MCP: `cruxible_kit_build` (`providers` names packages staged with
