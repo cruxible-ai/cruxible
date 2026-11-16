@@ -181,6 +181,10 @@ def test_the_shared_kind_carries_the_settled_layout() -> None:
 _INTERNAL_WORDING = re.compile(
     r"\bD-R\d|\bCore serves|\b[Cc]ore's built-?in|workspace\. capability"
 )
+#: Contracts the pinned web provider carries byte for byte: editing one breaks its
+#: install beside the base kit (tests/test_kits/test_base_kit_provider_contracts.py),
+#: so its wording changes only with a new version both publish.
+_CARRIED_BY_A_PROVIDER = frozenset({"contracts/web.fetch.pages.result/v1.json"})
 
 
 def test_every_shipped_description_is_written_for_an_adopter() -> None:
@@ -192,7 +196,7 @@ def test_every_shipped_description_is_written_for_an_adopter() -> None:
     described: dict[str, str] = {}
     for path, content in bundled_base_kit().contents().items():
         description = json.loads(content).get("description")
-        if description is not None:
+        if description is not None and path not in _CARRIED_BY_A_PROVIDER:
             described[path] = description
     for operation in workspace_file_operations():
         described[f"cruxible-builtin#{operation.name}"] = operation.description

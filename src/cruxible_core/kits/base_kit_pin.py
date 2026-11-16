@@ -11,7 +11,7 @@ from cruxible_core.kits import BundledKitPin
 BASE_KIT_PIN = BundledKitPin(
     kit_id="base",
     version="1.0.0",
-    content_digest="sha256:433a7768579f8e9cee55e698b04b79da7ef333cf9c91a7801e17161c837fd02b",
+    content_digest="sha256:07e64748e385c0dc51a69cb154b8c3fb3d57906ab59aba9d1dac93bbf3b60845",
 )
 
 __all__ = ["BASE_KIT_PIN"]

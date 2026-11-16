@@ -1,6 +1,6 @@
 {
   "artifact_format": "cruxible-contract-v1",
-  "description": "One HTML Capture this run fetched, and the form to derive from it: text is its main content as Markdown; json is canonical JSON {url, final_url, title?, text, links}. It reads only the Capture's bytes and contacts nothing.",
+  "description": "A derive over one Capture this run fetched (an HTML document): text is its main content as Markdown; json is canonical JSON {url, final_url, title?, text, links}. Pure: it reads only the Capture's bytes and contacts nothing.",
   "fields": {
     "form": {
       "type": {

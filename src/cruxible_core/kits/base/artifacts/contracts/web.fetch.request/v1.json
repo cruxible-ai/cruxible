@@ -1,6 +1,6 @@
 {
   "artifact_format": "cruxible-contract-v1",
-  "description": "One resource to retrieve with one HTTP GET. query parameters are encoded onto url in order, and the built URL is what the Capture records as requested. A credential is named by reference; its secret stays with the run and is never part of this request.",
+  "description": "One resource to retrieve with one HTTP GET. query parameters are encoded onto url in order, and the built URL is the request its coordinate records. A credential is named by reference; its material stays in the run's secret custody, never in this payload.",
   "fields": {
     "credential_header": {
       "optional": true,
