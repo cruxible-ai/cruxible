@@ -354,7 +354,7 @@ def history_lines(history: Any) -> list[str]:
         period = effective_text(revision.effective_from, revision.effective_until)
         lines.append(
             f"rev {revision.revision}  seq {revision.sequence} at {revision.git_oid}  "
-            f"{revision.accepted}  {_by(revision)}{change}{value}"
+            f"proposed {revision.proposed_at}  {_by(revision)}{change}{value}"
             + (f"  {period}" if period else "")
         )
         if revision.reason is not None:
@@ -395,7 +395,7 @@ def history_lines(history: Any) -> list[str]:
                 if getattr(event, "contended", False):
                     what += "  (contends with a live value)"
             lines.append(
-                f"  seq {event.sequence}  {event.git_oid}  {event.accepted}  "
+                f"  seq {event.sequence}  {event.git_oid}  proposed {event.proposed_at}  "
                 f"{_by(event)}  {what}  [{event.claim}]"
             )
             if event.reason is not None:
@@ -474,7 +474,7 @@ def render_get(
                 + (" (evidence erased)" if evidence_erased else "")
                 + f" status={card['status']} "
                 f"revision={card['revision']}"
-                + (f" accepted={card['accepted']}" if card.get("accepted") else "")
+                + (f" proposed={card['proposed_at']}" if card.get("proposed_at") else "")
             )
             period = effective_text(result.card.effective_from, result.card.effective_until)
             if period:

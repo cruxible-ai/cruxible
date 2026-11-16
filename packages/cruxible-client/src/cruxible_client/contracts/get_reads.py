@@ -257,7 +257,8 @@ class GetClaimCard(_StrictGetModel):
     verdict: str
     status: str
     revision: int
-    accepted: str | None = Field(default=None, exclude_if=_omit_none)
+    #: When the change set holding this revision was proposed (not accepted).
+    proposed_at: str | None = Field(default=None, exclude_if=_omit_none)
     contenders: tuple[GetContender, ...] = ()
     flags: tuple[ReadFlag, ...] = ()
     next: tuple[str, ...] = ()
@@ -902,7 +903,10 @@ class GetRevision(_StrictGetModel):
     # The accepted generation's git oid (12-hex prefix): pass it, or the
     # sequence, back as ``at`` to read at that revision.
     git_oid: str = Field(pattern=r"^[0-9a-f]{12}$")
-    accepted: str
+    #: When the change set was proposed (its candidate's timestamp). Revisions
+    #: are ordered by generation (``sequence``), not by this time; the instant
+    #: of acceptance itself is not recorded.
+    proposed_at: str
     actor: str | None = Field(default=None, exclude_if=_omit_none)
     approved_by: tuple[str, ...] = ()
     lifecycle: str | None = Field(default=None, exclude_if=_omit_none)
@@ -945,7 +949,8 @@ class _GetFieldEvent(_StrictGetModel):
     # The accepted generation's git oid (12-hex prefix): pass it, or the
     # sequence, back as ``at`` to read the Subject as this event left it.
     git_oid: str = Field(pattern=r"^[0-9a-f]{12}$")
-    accepted: str
+    #: When the change set was proposed; events are ordered by ``sequence``.
+    proposed_at: str
     actor: str | None = Field(default=None, exclude_if=_omit_none)
     approved_by: tuple[str, ...] = ()
     reason: GetRevisionReason | None = Field(default=None, exclude_if=_omit_none)

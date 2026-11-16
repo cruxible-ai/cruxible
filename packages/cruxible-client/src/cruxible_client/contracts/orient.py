@@ -488,13 +488,15 @@ class OrientGeneration(_StrictOrientModel):
     rationale, cut at 500 characters (``because_truncated``). ``members``
     counts the change set's members; ``since(generation=sequence-1,
     at=<this generation>)`` lists them. Genesis (sequence 0) carries only its
-    sequence, git oid and acceptance time. Pass ``sequence`` or ``git_oid`` as
-    ``at`` to read state as this generation left it.
+    sequence, git oid and time. ``proposed_at`` is when the change set was
+    proposed (its candidate's timestamp); rows are ordered by ``sequence``, and
+    the instant of acceptance is not recorded. Pass ``sequence`` or ``git_oid``
+    as ``at`` to read state as this generation left it.
     """
 
     sequence: int = Field(ge=0)
     git_oid: str
-    accepted_at: datetime
+    proposed_at: datetime
     changeset_digest: str | None = Field(default=None, exclude_if=_is_none)
     proposal: str | None = Field(default=None, exclude_if=_is_none)
     proposer: str | None = Field(default=None, exclude_if=_is_none)

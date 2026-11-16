@@ -372,7 +372,7 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("OrientResult", "evaluation_time"): "EVALUATION INSTANT",
     ("OrientResult", "generation"): "SETTLEMENT ORDER",
     ("OrientGeneration", "sequence"): "SETTLEMENT ORDER",
-    ("OrientGeneration", "accepted_at"): "ASSERTION TIME",
+    ("OrientGeneration", "proposed_at"): "ASSERTION TIME",
     # The activity feed: each row's own record instant (a journal record's, or a
     # generation's acceptance), the generation a ledger row lists, and the
     # instant a due occurrence is eligible from.
@@ -391,6 +391,9 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("GetCaptureEvidence", "observed_at"): "ASSERTION TIME",
     ("GetAttestationEvidence", "at"): "ASSERTION TIME",
     ("GetRevision", "sequence"): "SETTLEMENT ORDER",
+    # The candidate's timestamp: when the change set was proposed (S4).
+    ("GetRevision", "proposed_at"): "ASSERTION TIME",
+    ("GetClaimCard", "proposed_at"): "ASSERTION TIME",
     ("GetRevision", "effective_from"): "VALIDITY WINDOW",
     ("GetRevision", "effective_until"): "VALIDITY WINDOW",
     ("GetClaimCard", "effective_from"): "VALIDITY WINDOW",
@@ -398,6 +401,7 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("_Shown", "effective_from"): "VALIDITY WINDOW",
     ("_Shown", "effective_until"): "VALIDITY WINDOW",
     ("_GetFieldEvent", "sequence"): "SETTLEMENT ORDER",
+    ("_GetFieldEvent", "proposed_at"): "ASSERTION TIME",
     ("GetCoordinate", "generation"): "SETTLEMENT ORDER",
     ("_RevisionEntry", "sequence"): "SETTLEMENT ORDER",
     # Operational reads: Lines, Captures, predictions, mandates and runs. An

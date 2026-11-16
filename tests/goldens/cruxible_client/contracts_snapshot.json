@@ -47001,13 +47001,8 @@
           },
           "OrientGeneration": {
             "additionalProperties": false,
-            "description": "One accepted generation, newest first: what accepted it and how much it changed.\n\n``changeset_digest`` names the change-set record; ``proposal`` is the\nproposal whose admission it accepted (``get <proposal>`` reads its card and\nchanges), ``proposer`` the actor bound to it, and ``approvals`` the\napproving signers in record order. ``because`` is that admission's\nrationale, cut at 500 characters (``because_truncated``). ``members``\ncounts the change set's members; ``since(generation=sequence-1,\nat=<this generation>)`` lists them. Genesis (sequence 0) carries only its\nsequence, git oid and acceptance time. Pass ``sequence`` or ``git_oid`` as\n``at`` to read state as this generation left it.",
+            "description": "One accepted generation, newest first: what accepted it and how much it changed.\n\n``changeset_digest`` names the change-set record; ``proposal`` is the\nproposal whose admission it accepted (``get <proposal>`` reads its card and\nchanges), ``proposer`` the actor bound to it, and ``approvals`` the\napproving signers in record order. ``because`` is that admission's\nrationale, cut at 500 characters (``because_truncated``). ``members``\ncounts the change set's members; ``since(generation=sequence-1,\nat=<this generation>)`` lists them. Genesis (sequence 0) carries only its\nsequence, git oid and time. ``proposed_at`` is when the change set was\nproposed (its candidate's timestamp); rows are ordered by ``sequence``, and\nthe instant of acceptance is not recorded. Pass ``sequence`` or ``git_oid``\nas ``at`` to read state as this generation left it.",
             "properties": {
-              "accepted_at": {
-                "format": "date-time",
-                "title": "Accepted At",
-                "type": "string"
-              },
               "approvals": {
                 "default": [],
                 "items": {
@@ -47067,6 +47062,11 @@
                 "default": null,
                 "title": "Proposal"
               },
+              "proposed_at": {
+                "format": "date-time",
+                "title": "Proposed At",
+                "type": "string"
+              },
               "proposer": {
                 "anyOf": [
                   {
@@ -47088,7 +47088,7 @@
             "required": [
               "sequence",
               "git_oid",
-              "accepted_at"
+              "proposed_at"
             ],
             "title": "OrientGeneration",
             "type": "object"

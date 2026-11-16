@@ -530,7 +530,7 @@ def read_doc_edits(
                         instance, instance.coordinate_for_oid(record.accepted_coordinate.git_oid)
                     ).generation,
                     git_oid=record.accepted_coordinate.git_oid[:12],
-                    accepted=format_datetime(record.recorded_at) or "",
+                    proposed_at=format_datetime(record.recorded_at) or "",
                     actor=record.actor_context.actor_id,
                     digest=edit.before_digest,
                     value=ShownObject(object=edit.model_dump(mode="json", exclude={"because"})),

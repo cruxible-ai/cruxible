@@ -123,7 +123,7 @@ def test_every_claim_reference_form_reads_the_same_values_first_card(world: dict
     assert (card.predicate, card.predicate_full) == ("status", PREDICATE)
     assert card.value == "ready"
     assert (card.verdict, card.status, card.revision) == ("supported", "accepted", 1)
-    assert card.accepted is not None and card.contenders == () and card.flags == ()
+    assert card.proposed_at is not None and card.contenders == () and card.flags == ()
     assert card.next[0] == f'cruxible_get(ref="{claim}", detail="evidence")'
     # An ordinary supported Claim has nothing notable for `why` to explain:
     # it is not offered as a next step.
@@ -1194,7 +1194,7 @@ def test_a_subject_history_lists_each_field_event_with_what_changed_and_why(
     assert reobserved.value == "Tidy" and reobserved.reason.text == "Looked again."
     stated = [event for event in events[6:] if event.field == "status"][0]
     assert stated.contended is False and stated.reason.text == "First pass."
-    assert all(event.actor == "owner" and event.accepted for event in events)
+    assert all(event.actor == "owner" and event.proposed_at for event in events)
 
 
 def test_a_subject_history_narrows_to_one_field_and_stops_at_the_read_coordinate(

@@ -63,7 +63,7 @@ def test_a_rebound_field_event_is_its_own_history_change() -> None:
         claim=CLAIM,
         sequence=4,
         git_oid="4" * 12,
-        accepted="2026-10-21T00:00:00Z",
+        proposed_at="2026-10-21T00:00:00Z",
         value=42,
         replaced=("CAP-aaaaaaaaaaaa",),
         by=("CAP-bbbbbbbbbbbb",),
@@ -84,7 +84,7 @@ def test_history_names_who_approved_beside_who_accepted() -> None:
     from cruxible_client.contracts.get_reads import GetFieldStated, GetHistory, GetRevision
     from cruxible_client.contracts.get_text import history_lines
 
-    common = {"sequence": 4, "git_oid": "4" * 12, "accepted": "2026-10-21T00:00:00Z"}
+    common = {"sequence": 4, "git_oid": "4" * 12, "proposed_at": "2026-10-21T00:00:00Z"}
     revisions = GetHistory(
         revisions=(
             GetRevision(

@@ -292,7 +292,7 @@ def test_a_subject_history_prints_each_field_s_timeline_with_its_reasons(
             "claim": claim,
             "sequence": sequence,
             "git_oid": str(sequence) * 12,
-            "accepted": f"2026-10-1{sequence}T09:12:00Z",
+            "proposed_at": f"2026-10-1{sequence}T09:12:00Z",
             "actor": "ada",
             "reason": GetChangeSetReason(text=reason, proposal="sha256:" + "p" * 64),
         }
@@ -308,7 +308,7 @@ def test_a_subject_history_prints_each_field_s_timeline_with_its_reasons(
                         revision=1,
                         sequence=1,
                         git_oid="1" * 12,
-                        accepted="2026-10-11T00:00:00Z",
+                        proposed_at="2026-10-11T00:00:00Z",
                         actor="ada",
                         lifecycle="live",
                         digest="sha256:abc",
@@ -350,7 +350,10 @@ def test_a_subject_history_prints_each_field_s_timeline_with_its_reasons(
     assert stub.requests[0].field == "owner"
     lines = printed.output.splitlines()
     owner = lines.index("owner")
-    assert lines[owner + 1].startswith(f"  seq 3  {'3' * 12}  2026-10-13T09:12:00Z  by ada  ")
+    # S4: the time is the change set's proposal, labelled so; rows go by generation.
+    assert lines[owner + 1].startswith(
+        f"  seq 3  {'3' * 12}  proposed 2026-10-13T09:12:00Z  by ada  "
+    )
     assert "changed  grace -> linus" in lines[owner + 1]
     assert lines[owner + 2] == "      reason: Linus took over search."
     assert "stated  grace" in lines[owner + 3]
@@ -381,7 +384,7 @@ def test_history_pages_print_the_next_command_and_long_values_say_they_were_cut(
                         revision=3,
                         sequence=9,
                         git_oid="9" * 12,
-                        accepted="2026-09-01T00:00:00Z",
+                        proposed_at="2026-09-01T00:00:00Z",
                         actor="owner",
                         value="done",
                         digest="sha256:abc",

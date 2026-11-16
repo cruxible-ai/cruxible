@@ -306,7 +306,7 @@ def render_orient(result: Mapping[str, Any]) -> str:
         for row in result["generations"]:
             approvals = ",".join(row.get("approvals", ())) or "-"
             lines.append(
-                f"seq {row['sequence']} at {row['git_oid'][:12]}  {row['accepted_at']}  "
+                f"seq {row['sequence']} at {row['git_oid'][:12]}  proposed {row['proposed_at']}  "
                 f"by {row.get('proposer') or '-'}  approved {approvals}  "
                 f"members={row['members']}"
                 + (f"  {row['proposal']}" if row.get("proposal") else "")

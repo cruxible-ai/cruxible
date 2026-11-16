@@ -4339,7 +4339,9 @@ admission status, contract and role); `--detail proof-full` (MCP `proof_full`)
 is the whole envelope and facts. `--at` takes a git oid, a
 unique 12+ hex prefix of one, or a generation number, so either half of a
 printed coordinate reads back; each history row prints both (`seq N at
-<12 hex>`). An all-digit value of 11 or fewer characters is always a
+<12 hex>`). History rows are ordered by generation; the time each shows is
+`proposed <time>` (JSON `proposed_at`), when its change set was proposed, since
+the instant of acceptance is not recorded. An all-digit value of 11 or fewer characters is always a
 generation, never an oid prefix; twelve or more digits are a prefix. Evidence
 names each Capture by its `CAP-<12 hex>` handle, which `get` and `capture read`
 both accept, labels a copy by origin (`own words (N bytes)`, `own words in FILE (N bytes)`

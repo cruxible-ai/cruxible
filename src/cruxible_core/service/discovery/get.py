@@ -1435,7 +1435,7 @@ def _claim_card(
         verdict=verdict,
         status=status,
         revision=int(row.revision) if row is not None else 1,
-        accepted=accepted,
+        proposed_at=accepted,
         contenders=tuple(
             GetContender(
                 claim=item.claim_id,
@@ -2671,7 +2671,7 @@ def _revision(
         revision=entry.revision,
         sequence=entry.sequence,
         git_oid=generation.git_oid[:12],
-        accepted=accepted,
+        proposed_at=accepted,
         actor=actor,
         approved_by=approved_by,
         lifecycle=shown.lifecycle,
@@ -3041,7 +3041,7 @@ def _field_event(
         "claim": claim_id,
         "sequence": location.sequence,
         "git_oid": generation.git_oid[:12],
-        "accepted": accepted,
+        "proposed_at": accepted,
         "actor": actor,
         "approved_by": approved_by,
         "reason": reasons.reason(generation, versions.path),
