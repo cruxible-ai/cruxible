@@ -81,7 +81,6 @@ from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.subjects import SubjectShell, render_subject, subject_path
 from cruxible_core.exhaust.backends import LocalJournalBackend
 from cruxible_core.exhaust.journal_index import JournalIndex
-from cruxible_core.exhaust.records import journal_payload_bytes
 from cruxible_core.ledger import activation, recovery
 from cruxible_core.procedures.execution import ProcedureExecutor
 from cruxible_core.proposals import settlement
@@ -262,7 +261,20 @@ def _flushing(original: Callable[..., Any]) -> Callable[..., Any]:
 
 @contextmanager
 def _journal_counted() -> Iterator[None]:
-    original = ProcedureExecutor._append_events
+    """Count one terminal's item group: its bodies, its one record and its reservation.
+
+    The group is ``_record_terminal_items``: the run-free bodies it stores in
+    one ``store_many`` and the one ``item_dependencies`` record citing them.
+    The shards its bodies require are derived from their digests when they
+    are built, outside the measured window.
+    """
+
+    from cruxible_core.procedures import execution as execution_module
+    from cruxible_core.storage.cas import digest_bytes
+
+    original = ProcedureExecutor._record_terminal_items
+    build = execution_module.build_terminal_items
+    append_one = LocalJournalBackend.append
     append = LocalJournalBackend.append_many
     flush = activation.flush_acceptance
     read = JournalIndex.read_row
@@ -279,27 +291,35 @@ def _journal_counted() -> Iterator[None]:
         finally:
             _COUNTS.in_acceptance_flush = False
 
+    def building(*args: Any, **kwargs: Any) -> Any:
+        built = build(*args, **kwargs)
+        if _COUNTS.measuring() and _COUNTS.in_item_group:
+            # Derived outside the measured window: the digests the store will name.
+            thread, _COUNTS.thread = _COUNTS.thread, None
+            try:
+                required = {digest_bytes(body).value[:2] for body in built.bodies}
+            finally:
+                _COUNTS.thread = thread
+            _COUNTS.counts["journal_required_shards"] += len(required)
+            _COUNTS.required_shards = required
+        return built
+
     def group(self: Any, *args: Any, **kwargs: Any) -> Any:
         if not _COUNTS.measuring():
             return original(self, *args, **kwargs)
-        payloads = kwargs["payloads"] if "payloads" in kwargs else args[3]
-        # Derived outside the measured window: the digests the store will name.
-        thread, _COUNTS.thread = _COUNTS.thread, None
-        try:
-            required = {
-                self.bodies.digest_bytes(journal_payload_bytes(payload)).value[:2]
-                for payload in payloads
-            }
-        finally:
-            _COUNTS.thread = thread
-        _COUNTS.counts["journal_required_shards"] += len(required)
         _COUNTS.in_item_group = True
-        _COUNTS.required_shards = required
+        _COUNTS.required_shards = set()
         _COUNTS.group_shards = set()
         try:
             return original(self, *args, **kwargs)
         finally:
             _COUNTS.in_item_group = False
+
+    def appended(self: Any, *args: Any, **kwargs: Any) -> Any:
+        if _COUNTS.measuring() and _COUNTS.in_item_group:
+            _COUNTS.counts["journal_appends"] += 1
+            _COUNTS.counts["journal_records"] += 1
+        return append_one(self, *args, **kwargs)
 
     def append_many(self: Any, drafts: Any, **kwargs: Any) -> Any:
         if _COUNTS.measuring() and _COUNTS.in_item_group and drafts:
@@ -308,14 +328,18 @@ def _journal_counted() -> Iterator[None]:
         return append(self, drafts, **kwargs)
 
     activation.flush_acceptance = barrier
-    ProcedureExecutor._append_events = group
+    ProcedureExecutor._record_terminal_items = group
+    execution_module.build_terminal_items = building
+    LocalJournalBackend.append = appended
     LocalJournalBackend.append_many = append_many
     JournalIndex.read_row = read_row
     try:
         yield
     finally:
         activation.flush_acceptance = flush
-        ProcedureExecutor._append_events = original
+        ProcedureExecutor._record_terminal_items = original
+        execution_module.build_terminal_items = build
+        LocalJournalBackend.append = append_one
         LocalJournalBackend.append_many = append
         JournalIndex.read_row = read
 
