@@ -40,24 +40,60 @@ next: cruxible proposal approve sha256:9afd6283… --signer-id reviewer --key <r
 ## Reviewing and approving
 
 `cruxible proposal list --status open` shows what's waiting, and `proposal
-review` shows what one would change and why:
+review` reads one the way a reviewer needs it: each value change as the write
+that made it printed it, what each change cites (with the cited text), and why:
 
 ~~~text
-$ cruxible proposal review sha256:9afd6283…
-...
-Why:
-  Acme catalog 2026.
-Changes (3):
-  set catalog.part/bp-1142 name: bp-1142  [CLM-…]
-  set catalog.part/bp-1142 title: Front brake pads  [CLM-…]
-  create subject subjects/catalog.part/bp-1142.json
+$ cruxible proposal review sha256:b4f34127…
+Proposal: sha256:b4f34127d76cba1e517db95009f2710aad29e0aa330e5a5b75823b374e0486c0
+Candidate: sha256:96ff95d1d40f6ba316cbc1db44deb65e969636831680d70d0aa9ae991c287473
+Why: Acme's 2026 catalog lists the ceramic pads as the successor.
+Required tier: governed_write; activation: snapshot
+Changes: 2 created / 0 revised / 0 retired
+  catalog.part: 2 created / 0 revised / 0 retired
+Values (2):
+  set catalog.part/bp-2210 category: brake-pads  [CLM-f836c274c35fd8336c23418c7c1a972c; verdict supported]
+    cites CAP-4a44b941b725 Principal:owner (own words): the Why text above
+  add catalog.part/bp-2210 replaces: catalog.part/bp-1142  [CLM-6952e393f1cbf0b55c19a8f31b0ba7b0; verdict supported; role observation]
+    cites CAP-a7886657755c doc-catalogs-acme.md#Replaces bp-1142.
+      | Replaces bp-1142.
+Stored fields grouped by kind: --json. Every member's artifact and delta: --detail
 ~~~
+
+A change shows its Claim's role when it isn't normative, up to three
+citations, and a Procedure item's own reason (`because:`). Cited text is cut
+at 600 characters. A citation whose Capture body was erased says `erased by
+WHO at WHEN: WHY`; one whose body is missing or damaged says `unavailable`.
+
+Definitions follow the values, one block each. A Line shows its Procedure,
+authority, bindings, parameters, acquisition, budgets and inbox; a mandate its
+Line, grant, validity, condition and a table of the ClaimTypes it covers with
+the basis for each kind of change; a Runbook its steps; a Trigger its schedule
+and target. Other kinds print one line, and a revision lists the fields it
+changes:
+
+~~~text
+Definitions (1):
+  Runbook catalog.weekly: created
+    Look for duplicate parts once a week.
+    1  action:curation.detect
+~~~
+
+A page shows up to 10 value changes and 20 definitions. A longer proposal
+ends with `More values: --changes-from N` or `More definitions:
+--definitions-from N`, plus counts by kind and field for the values not shown.
+`--json` adds the stored fields grouped by kind, and `--detail` is the full
+review of every member's artifact and delta. When a proposed Claim cites a
+Capture the reader may not read, the summary is withheld: it keeps each
+change's op, Subject and field and each definition's kind, name and action,
+and leaves out values, verdicts, cited text, reasons and definition fields.
 
 An **approval** is a signature over that exact candidate, made with the
 approver's private key on their own machine; only the signature reaches the
-daemon. `proposal approve` shows the same summary and asks before signing.
-When an approval is the one the proposal still needed, and the approver may
-activate, the same command accepts it:
+daemon. `proposal approve` prints the same review, then the approvals still
+required, and asks before signing (`--yes` signs without asking and prints one
+counts line). When an approval is the one the proposal still needed, and the
+approver may activate, the same command accepts it:
 
 ~~~text
 $ cruxible context use --principal reviewer
@@ -93,6 +129,47 @@ readmit` rebases it as a new proposal to review. A stale field proposal from
 A reviewer who decides a change shouldn't land rejects it, saying why
 (`proposal reject ID --reason "…"`); an author drops their own proposal with
 `proposal withdraw ID --reason "…"`.
+
+### A second agent reviews
+
+Under the default policy an author's write lands at once. For a second agent
+to look first, the author writes with `--no-accept`. The proposal needs no
+approval, so it waits as `ready_to_activate`, and `next` lists it:
+
+~~~text
+$ cruxible set catalog.part/bp-2210 title "Ceramic front brake pads" --because "Acme catalog 2026." --no-accept
+awaiting approval (generation 3, bea76b47acab)
+  set catalog.part/bp-2210 title: Ceramic front brake pads  [CLM-54cdb905…; verdict supported]
+  + subject catalog.part/bp-2210
+proposal: sha256:86bd8301… (ready_to_activate)
+awaiting: kept (accept=never)
+next: cruxible proposal activate sha256:86bd8301…
+$ cruxible next
+...
+repair  proposal_awaiting_activation  sha256:86bd8301…  (catalog.part/bp-2210 catalog.part.name; catalog.part/bp-2210 catalog.part.title)  next=cruxible.proposal.activate
+  repair: cruxible proposal activate sha256:86bd8301…
+~~~
+
+The reviewing agent works in its own session, as its own principal (a
+reviewer from `init --reviewer-key-dir`, or one `principal add` registers). It
+runs `proposal review ID`, then either `proposal approve ID`, which signs the
+exact candidate and, since nothing else is required, activates it, or
+`proposal activate ID`, which activates without a signature. It turns the
+change down with `proposal reject`:
+
+~~~text
+$ cruxible context use --principal reviewer
+$ cruxible proposal approve sha256:86bd8301… --yes
+Signing sha256:8d23151f… (sha256:86bd8301…): 3 changes (3 create)
+...
+Approved sha256:8d23151f… as reviewer
+Activated at e6c4614c7c6e28366962c8f125501260b13592fd
+~~~
+
+Under `self_approval_allowed` this split is an instruction to agents, which
+the MCP server's instructions and the bundled skills give: never approve your
+own proposal, even with auth off. Under `independent_approval_required` core
+enforces it.
 
 ## The approval policy
 
@@ -223,10 +300,10 @@ graduation.
 ## Reviewing with Git
 
 The ledger is a Git repository, so review can use the tools you already have.
-`proposal review` shows a bounded, factored summary: findings first, then
-revisions and retirements, with counts by Subject kind and exact template groups.
-Shared values appear once; rows show varying before/after fields. Page groups
-with `--summary-after`, or a group's rows with `--summary-group` and `--rows-after`.
+Beside the reviewer's view above, `proposal review --json` carries the stored
+fields grouped by Subject kind and exact template: shared values appear once,
+and rows show the before and after fields that vary. Page groups with
+`--summary-after`, or a group's rows with `--summary-group` and `--rows-after`.
 The originating Line and its exact digest appear when a Line produced the proposal.
 
 `proposal review --detail` prints the exact commands to diff a proposal against

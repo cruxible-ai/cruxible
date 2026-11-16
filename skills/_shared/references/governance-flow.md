@@ -5,11 +5,17 @@ when daemon auth is off or the local policy allows self-approval. This is an
 instruction to agents, not an auth-off isolation boundary. User authorization
 still defines what work may be proposed or executed.
 
-A proposal is not accepted state. Read its diff, diagnostics and
-`candidate_digest` with `proposal review`; an approver signs that reviewed
-digest. The approval that completes policy may also activate; `--hold` signs
-without activation. A candidate awaiting activation needs activation, not
-another approval. Verify the acceptance receipt's coordinate before reporting
+A proposal is not accepted state. Read its value changes, what each cites,
+its definitions, diagnostics and `candidate_digest` with `proposal review`; an
+approver signs that reviewed digest. The approval that completes policy may
+also activate; `--hold` signs without activation. A candidate awaiting
+activation needs activation, not another approval.
+
+An author who wants a second agent's review under a policy that needs no
+approval writes with `--no-accept` (`accept="never"`): the proposal waits as
+`ready_to_activate` and `next` lists it. The reviewing agent runs `proposal
+review`, then `proposal approve` (it signs, and activates when nothing else is
+required) or `proposal activate`; `proposal reject` turns it down. Verify the acceptance receipt's coordinate before reporting
 a change as accepted.
 
 A changed or stale candidate needs fresh review. Only its author readmits a

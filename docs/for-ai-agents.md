@@ -280,6 +280,12 @@ For MCP-only clients, the same write is one `cruxible_write` call:
 }
 ~~~
 
+A Subject the write creates is part of the same batch: `batch.create(kind,
+key=...)` returns a handle that names it as `subject=` or as a value, and a
+`cx.new_subject(...)` draft works in the same places (`create` changes over
+MCP and in a CLI write file). A key is the value of a kind's one key, or
+`{field: value}` for each key field.
+
 `replace_section(..., expect=digest)` replaces a section only if nobody
 changed it since you read it. Each write accepts in the same call when the
 approval policy and your tier allow it; otherwise the outcome says `awaiting
@@ -394,11 +400,21 @@ A signer outside the MCP process uses the full-profile pair
 `cruxible_proposal_approve_prepare` (the exact statement to sign) and
 `cruxible_proposal_approve_submit` (the public signature).
 
-Review the candidate first: `proposal review` shows what it changes and why,
-with the `git diff` command for the ledger. An agent with no attached
-workspace reads the same branches from the ledger mirror (`mirror_url` in
-`orient --json`). [Review and governance](review-and-governance.md) covers
-both.
+Review the candidate first: `proposal review` (MCP `cruxible_proposal_review`,
+SDK `str()` of the summary) prints each value change with what it cites and
+the cited text, then one block per definition; page long proposals with
+`changes_from` and `definitions_from`. `--detail` gives the `git diff` command
+for the ledger. An agent with no attached workspace reads the same branches
+from the ledger mirror (`mirror_url` in `orient --json`).
+
+The reviewer is a different agent from the author, in its own session and as
+its own principal, even with auth off and a policy that allows self-approval.
+An author who wants that review writes with `--no-accept` (`accept="never"`):
+the proposal waits as `ready_to_activate`, and `next` lists it. The reviewer
+runs `proposal review`, then `proposal approve` (signs, and activates when
+nothing else is required) or `proposal activate`. [Review and
+governance](review-and-governance.md#a-second-agent-reviews) shows both
+sides.
 
 ## Automation
 
