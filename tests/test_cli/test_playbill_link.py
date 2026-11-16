@@ -292,3 +292,57 @@ def test_guides_resolves_a_path_before_a_colliding_catalog_name(
     assert "links" in entries["actual"] and "links" not in entries["guide"]
     unlinked = _run("link", "guide", "--guides", STATUS, "--unlink", "--json")
     assert json.loads(unlinked.stdout)["file"] == "actual"
+
+
+_OVERLAY = "catalog_kind: local\nentries:\n  - name: {name}\n    locator: {locator}\n{extra}"
+
+
+@pytest.mark.parametrize("document", [True, False])
+def test_a_local_overlay_of_the_page_refuses_before_anything_is_sent(
+    served: _Served, tmp_path: Path, document: bool
+) -> None:
+    """The overlay replaces the whole entry on merge, so portable links would be hidden."""
+
+    (tmp_path / "guide.md").write_text("# Guide\nText.\n")
+    fields = (
+        ["--document-id", "guide", "--document-kind", "guidance", "--title", "Guide"]
+        + ["--scope", "project"]
+        if document
+        else []
+    )
+    assert _run("files", "add", "guide.md", *fields, "--root", str(tmp_path)).exit_code == 0
+    extra = (
+        "    document_id: guide\n    document_kind: guidance\n    title: Local\n"
+        "    media_type: text/markdown\n    governance_scope: [project]\n"
+        if document
+        else ""
+    )
+    (tmp_path / ".cruxible" / "files.local.yaml").write_text(
+        _OVERLAY.format(name="doc-guide.md", locator="guide.md", extra=extra)
+    )
+    before = (tmp_path / ".cruxible" / "files.yaml").read_text()
+    result = _run("link", "guide.md", "--guides", STATUS)
+    assert result.exit_code == 1, result.output
+    assert "cruxible.link.file_overlaid" in result.output
+    assert (tmp_path / ".cruxible" / "files.yaml").read_text() == before
+    assert not [item for item in served.requests if item[0:1] == ("propose",)]
+
+
+def test_an_overlay_added_during_the_proposal_is_a_conflict(
+    served: _Served, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "guide.md").write_text("# Guide\nText.\n")
+    assert _run("files", "add", "guide.md", "--root", str(tmp_path)).exit_code == 0
+    before = (tmp_path / ".cruxible" / "files.yaml").read_text()
+    propose = _Served.propose_file_bundle
+
+    def overlay_meanwhile(self: _Served, *args: Any, **kwargs: Any) -> Any:
+        (tmp_path / ".cruxible" / "files.local.yaml").write_text(
+            _OVERLAY.format(name="doc-guide.md", locator="guide.md", extra="")
+        )
+        return propose(self, *args, **kwargs)
+
+    monkeypatch.setattr(_Served, "propose_file_bundle", overlay_meanwhile)
+    result = _run("link", "guide.md", "--guides", STATUS)
+    assert result.exit_code == 1 and "changed this entry meanwhile" in result.output
+    assert (tmp_path / ".cruxible" / "files.yaml").read_text() == before

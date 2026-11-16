@@ -6643,7 +6643,7 @@ def link(
         )
     elif outcome.catalog_conflict:
         click.echo(
-            "files.yaml changed this entry meanwhile, so the links were not recorded there; "
+            "the catalog changed this entry meanwhile, so the links were not recorded there; "
             "run the same link again to record them"
         )
         raise SystemExit(1)

@@ -25,6 +25,7 @@ from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Literal, Protocol
 
+import yaml
 from pydantic import BaseModel, ConfigDict
 
 from cruxible_client import contracts
@@ -45,6 +46,7 @@ from cruxible_client.contracts.file_catalog import (
     FileCatalogEntry,
     FileCompilationBundle,
 )
+from cruxible_client.contracts.workspace_layout import workspace_path
 from cruxible_client.contracts.write import (
     SUBJECT_REF_PATTERN,
     AboutChange,
@@ -68,6 +70,7 @@ LINK_ABOUT_NEEDS_SECTION = "cruxible.link.about_needs_section"
 LINK_GUIDES_NEEDS_PAGE = "cruxible.link.guides_needs_page"
 LINK_FILE_UNREGISTERED = "cruxible.link.file_unregistered"
 LINK_FILE_AMBIGUOUS = "cruxible.link.file_ambiguous"
+LINK_FILE_OVERLAID = "cruxible.link.file_overlaid"
 LINK_ONE_LANE = "cruxible.link.one_lane"
 
 #: A Document a ``link --guides`` declares on an evidence-only catalog entry.
@@ -236,6 +239,30 @@ def _title(path: Path, fallback: str) -> str:
     return fallback
 
 
+def _overlay_entry(root: Path, name: str) -> FileCatalogEntry | None:
+    """``name``'s entry in the local overlay catalog (``.cruxible/files.local.yaml``), if any."""
+
+    path = workspace_path(root, "files.local.yaml")
+    if not path.is_file():
+        return None
+    try:
+        catalog = FileCatalog.model_validate(yaml.safe_load(path.read_bytes()))
+    except (ValueError, OSError, yaml.YAMLError) as exc:
+        raise WriteRefusalError(
+            LINK_FILE_OVERLAID,
+            f".cruxible/files.local.yaml cannot be read: {exc}",
+            repair_line="Repair or remove .cruxible/files.local.yaml, then link again",
+        ) from None
+    return next(
+        (
+            item
+            for item in catalog.entries
+            if isinstance(item, FileCatalogEntry) and item.name == name
+        ),
+        None,
+    )
+
+
 def _guidance_entry(
     files: WorkspaceFiles, file: str, *, root: Path
 ) -> tuple[FileCatalogEntry, Path]:
@@ -332,6 +359,19 @@ def link_guides(
                 "in the portable catalog (.cruxible/files.yaml)",
                 repair_line=f"Register it there: cruxible files add {entry.name} {entry.locator}",
             )
+        overlay = _overlay_entry(root, entry.name)
+        if overlay is not None:
+            # The overlay replaces the whole entry when catalogs merge, links
+            # included: links recorded in the portable entry would be hidden.
+            raise WriteRefusalError(
+                LINK_FILE_OVERLAID,
+                f"{entry.name} is also catalogued in .cruxible/files.local.yaml, whose entry "
+                "replaces the portable one (links included) when the catalogs merge; guidance "
+                "links are recorded in the portable catalog",
+                repair_line=f"Drop {entry.name} from .cruxible/files.local.yaml, then link again",
+            )
+        # The merged entry is the portable one (no overlay names it).
+        entry = original
         current = {link.target_identity: link for link in entry.links if link.relation == "guides"}
         others = tuple(link for link in entry.links if link.relation != "guides")
         if unlink:
@@ -389,7 +429,7 @@ def link_guides(
                 for item in portable
                 if isinstance(item, FileCatalogEntry) and item.name == entry.name
             ]
-            if now == [original]:
+            if now == [original] and _overlay_entry(root, original.name) is None:
                 _write_portable(
                     catalog_path,
                     tuple(revised if item == original else item for item in portable),
@@ -416,6 +456,7 @@ __all__ = [
     "LINK_ABOUT_NEEDS_SECTION",
     "LINK_ABOUT_NEEDS_SUBJECT",
     "LINK_FILE_AMBIGUOUS",
+    "LINK_FILE_OVERLAID",
     "LINK_FILE_UNREGISTERED",
     "LINK_GUIDES_NEEDS_DEFINITION",
     "LINK_GUIDES_NEEDS_PAGE",
