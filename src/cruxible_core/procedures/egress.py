@@ -91,7 +91,7 @@ from cruxible_core.procedures.terminal_dependencies import (
     TAINT_OMITTED_OPTIONAL,
     TAINT_UNPROMOTED_EXHAUST,
     CaptureRootCache,
-    TerminalItemDependencyManifestV1,
+    TerminalItemDependencyManifest,
 )
 
 if TYPE_CHECKING:
@@ -1437,7 +1437,7 @@ class TerminalEgressPreparerProtocol(Protocol):
         *,
         request: TerminalEgressRequestV1,
         admission: ProcedureRunAdmission,
-        manifests: Mapping[str, TerminalItemDependencyManifestV1] | None = None,
+        manifests: Mapping[str, TerminalItemDependencyManifest] | None = None,
         evidence: Mapping[str, str] | None = None,
         derivations: Mapping[str, Collection[str]] | None = None,
         capture_root_cache: CaptureRootCache | None = None,
@@ -1648,7 +1648,7 @@ class InboxEgressSinkProtocol(Protocol):
         self,
         *,
         request: TerminalEgressRequestV1,
-        manifests: Mapping[str, TerminalItemDependencyManifestV1],
+        manifests: Mapping[str, TerminalItemDependencyManifest],
     ) -> TerminalEgressReceiptV1: ...
 
 

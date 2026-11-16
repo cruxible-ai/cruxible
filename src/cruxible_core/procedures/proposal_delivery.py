@@ -155,7 +155,7 @@ from cruxible_core.procedures.egress import (
 from cruxible_core.procedures.nested import ProcedureDelegation, authority_line
 from cruxible_core.procedures.terminal_dependencies import (
     CaptureRootCache,
-    TerminalItemDependencyManifestV1,
+    TerminalItemDependencyManifest,
     capture_root,
     citable_captures,
     witnessed_list_capture,
@@ -442,7 +442,7 @@ def proposal_items(request: TerminalEgressRequestV1) -> tuple[CoreClaimsChange, 
 
 def evidence_by_item(
     request: TerminalEgressRequestV1,
-    manifests: Mapping[str, TerminalItemDependencyManifestV1],
+    manifests: Mapping[str, TerminalItemDependencyManifest],
     *,
     derivations: Mapping[str, Collection[str]] | None = None,
     cache: CaptureRootCache | None = None,
@@ -1494,7 +1494,7 @@ class ProposalTerminalEgressSink:
         *,
         request: TerminalEgressRequestV1,
         admission: ProcedureRunAdmission,
-        manifests: Mapping[str, TerminalItemDependencyManifestV1] | None = None,
+        manifests: Mapping[str, TerminalItemDependencyManifest] | None = None,
         evidence: Mapping[str, str] | None = None,
         journaled: PreparedTerminalEgressV1 | None = None,
         recompiles: str | None = None,
@@ -1520,7 +1520,7 @@ class ProposalTerminalEgressSink:
         *,
         request: TerminalEgressRequestV1,
         admission: ProcedureRunAdmission,
-        manifests: Mapping[str, TerminalItemDependencyManifestV1] | None = None,
+        manifests: Mapping[str, TerminalItemDependencyManifest] | None = None,
         evidence: Mapping[str, str] | None = None,
         journaled: PreparedTerminalEgressV1 | None = None,
         derivations: Mapping[str, Collection[str]] | None = None,

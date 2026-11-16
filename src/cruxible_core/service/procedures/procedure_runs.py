@@ -269,7 +269,7 @@ from cruxible_core.procedures.reference_binding import (
 from cruxible_core.procedures.terminal_dependencies import (
     AcquisitionInputOutcomeV1,
     CaptureRootCache,
-    TerminalItemDependencyManifestV1,
+    TerminalItemDependencyManifest,
 )
 from cruxible_core.providers.operation_index import (
     accepted_capability_side,
@@ -3949,7 +3949,7 @@ class _LineTerminalEgressSink:
         self,
         *,
         request: TerminalEgressRequestV1,
-        manifests: Mapping[str, TerminalItemDependencyManifestV1],
+        manifests: Mapping[str, TerminalItemDependencyManifest],
     ) -> TerminalEgressReceiptV1:
         if self.inbox is None:
             raise TerminalEgressError("post_inbox is delivered only under a Line")
@@ -3981,7 +3981,7 @@ class _LineTerminalEgressSink:
         *,
         request: TerminalEgressRequestV1,
         admission: ProcedureRunAdmission,
-        manifests: Mapping[str, TerminalItemDependencyManifestV1] | None = None,
+        manifests: Mapping[str, TerminalItemDependencyManifest] | None = None,
         derivations: Mapping[str, Collection[str]] | None = None,
         capture_root_cache: CaptureRootCache | None = None,
     ) -> PreparedTerminalEgressV1:

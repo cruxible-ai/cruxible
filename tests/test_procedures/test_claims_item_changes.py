@@ -18,7 +18,7 @@ from typing import Any
 import pytest
 
 from cruxible_core.procedures.claims_units import claims_item_change_digest
-from cruxible_core.procedures.terminal_dependencies import TerminalChildReceiptV1
+from cruxible_core.procedures.terminal_dependencies import TerminalChildReceiptV2
 from cruxible_core.service.procedures.procedure_runs import service_get_playbill_procedure_run
 from tests.support.procedures import procedure_spec
 from tests.test_procedures.test_claims_absence_safety import safety_world
@@ -320,13 +320,11 @@ def test_a_child_receipt_records_its_change_as_digests_only() -> None:
         "child_index": 0,
         "item_key": "00000000.a",
         "manifest_digest": "sha256:" + "1" * 64,
-        "record_digest": "sha256:" + "2" * 64,
-        "sequence": 1,
     }
     # Other terminals' items carry none of the fields, and keep their bytes.
-    plain = TerminalChildReceiptV1.model_validate(base)
+    plain = TerminalChildReceiptV2.model_validate(base)
     assert set(plain.model_dump(mode="json")) == {"tag", *base}
-    receipt = TerminalChildReceiptV1.model_validate(
+    receipt = TerminalChildReceiptV2.model_validate(
         {
             **base,
             "item_identity_digest": "sha256:" + "3" * 64,
@@ -336,7 +334,7 @@ def test_a_child_receipt_records_its_change_as_digests_only() -> None:
     )
     assert receipt.change_digest == digest
     with pytest.raises(ValueError, match="come together"):
-        TerminalChildReceiptV1.model_validate({**base, "change_digest": digest})
+        TerminalChildReceiptV2.model_validate({**base, "change_digest": digest})
 
 
 def test_a_many_valued_units_identity_is_its_object_however_it_is_held() -> None:

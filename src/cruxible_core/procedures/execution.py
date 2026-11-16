@@ -331,12 +331,15 @@ from cruxible_core.procedures.terminal_dependencies import (
     CaptureRootCache,
     DependencyEvidenceFactsV1,
     DependencyToken,
-    TerminalChildReceiptV1,
+    TerminalChildReceiptV2,
     TerminalItemDependencyManifestV1,
-    TerminalItemDerivedFactsV1,
+    TerminalItemDependencyManifestV2,
+    TerminalItemDerivedFactsV2,
     accepted_state_token,
     admitted_capture_token,
     build_terminal_item_manifest,
+    build_terminal_item_manifest_v2,
+    build_terminal_items,
     capture_root,
     citable_captures,
     derive_terminal_item_facts,
@@ -345,9 +348,7 @@ from cruxible_core.procedures.terminal_dependencies import (
     policy_token,
     produced_capture_token,
     receipt_token,
-    render_shared_terminal_dependencies,
     shared_terminal_dependencies,
-    split_item_dependency_payloads,
     terminal_item_key,
     witnessed_list_capture,
 )
@@ -2500,6 +2501,19 @@ def _consumed(state: _RunState) -> dict[str, object]:
     """The run's consumed Captures so far, versioned: an empty set is proven empty."""
 
     return {"consumption": {"v": CONSUMPTION_VERSION, "captures": sorted(state.consumed_captures)}}
+
+
+@dataclass(frozen=True)
+class _TerminalItems:
+    """One terminal's bound items: receipts, values, closures, and their one record."""
+
+    children: tuple[TerminalChildReceiptV2, ...]
+    values: tuple[CanonicalValue, ...]
+    manifests: dict[str, TerminalItemDependencyManifestV2]
+    #: How many items the terminal selected before an inbox cap clipped them.
+    selected: int
+    #: The terminal's grouped ``item_dependencies`` record; None with no items.
+    items_record_digest: str | None
 
 
 @dataclass
@@ -6059,12 +6073,18 @@ class ProcedureExecutor:
         """
 
         inbox_cap = _inbox_cap(node) if isinstance(node, InboxEgressNode) else None
-        children, values, manifests, selected = self._record_terminal_items(
+        bound = self._record_terminal_items(
             node,
             admission=admission,
             state=state,
             records=records,
             limit=None if inbox_cap is None else max(inbox_cap[0] - state.inbox_items, 0),
+        )
+        children, values, manifests, selected = (
+            bound.children,
+            bound.values,
+            bound.manifests,
+            bound.selected,
         )
         truncation = (
             None
@@ -6104,6 +6124,7 @@ class ProcedureExecutor:
             "kind": "claims" if node.node_id in state.claims_items else node.kind,
             **self._diagnostic_report(node.node_id, state),
             "required_rung": required,
+            "items_record_digest": bound.items_record_digest,
             "children": [item.model_dump(mode="json") for item in children],
         }
         if truncation is not None:
@@ -6409,7 +6430,7 @@ class ProcedureExecutor:
         request: TerminalEgressRequestV1,
         *,
         admission: ProcedureRunAdmission,
-        manifests: Mapping[str, TerminalItemDependencyManifestV1],
+        manifests: Mapping[str, TerminalItemDependencyManifestV2],
     ) -> TerminalEgressReceiptV1:
         """Hand the request to the sink; a preparer sink also receives the admission.
 
@@ -6464,9 +6485,9 @@ class ProcedureExecutor:
         *,
         admission: ProcedureRunAdmission,
         rung: EffectiveRungV1,
-        children: tuple[TerminalChildReceiptV1, ...],
+        children: tuple[TerminalChildReceiptV2, ...],
         values: tuple[CanonicalValue, ...],
-        manifests: Mapping[str, TerminalItemDependencyManifestV1] | None = None,
+        manifests: Mapping[str, TerminalItemDependencyManifestV2] | None = None,
         capped_by: EffectiveRungTermV1 | None = None,
         claims_evidence: tuple[ClaimEvidenceReceipt | None, ...] = (),
         claims_changes: tuple[CoreClaimsChange, ...] = (),
@@ -6606,16 +6627,16 @@ class ProcedureExecutor:
         state: _RunState,
         records: list[StoredProcedureJournalRecordV1],
         limit: int | None = None,
-    ) -> tuple[
-        tuple[TerminalChildReceiptV1, ...],
-        tuple[CanonicalValue, ...],
-        dict[str, TerminalItemDependencyManifestV1],
-        int,
-    ]:
+    ) -> _TerminalItems:
         """Derive one manifest per terminal item from the exact closure it consumed.
 
-        ``limit`` keeps the first items only (an inbox cap); the last element is
+        ``limit`` keeps the first items only (an inbox cap); ``selected`` is
         how many items the terminal selected before it.
+
+        The closures are journaled as ONE ``item_dependencies`` record citing
+        run-free bodies (:func:`build_terminal_items`): an item whose closure
+        is unchanged since an earlier run reproduces its body, so it stores
+        nothing new. The loop over items grows with this terminal's items.
         """
 
         base = _node_policy_tokens(node, self.references) | state.control
@@ -6650,12 +6671,8 @@ class ProcedureExecutor:
         outcomes = tuple(
             sorted(state.outcomes.values(), key=lambda item: item.input_name.encode("utf-8"))
         )
-        receipts: list[TerminalChildReceiptV1] = []
-        manifests: dict[str, TerminalItemDependencyManifestV1] = {}
-        folded: list[TerminalItemDerivedFactsV1] = []
-        stamps: list[str] = []
-        item_drafts: list[tuple[str, str]] = []
-        recorded_at: list[datetime] = []
+        manifests: dict[str, TerminalItemDependencyManifestV2] = {}
+        folded: list[TerminalItemDerivedFactsV2] = []
         for index, value in enumerate(values):
             tokens = base | item_tokens[index]
             item_key = terminal_item_key(
@@ -6663,73 +6680,62 @@ class ProcedureExecutor:
                 child_index=index,
                 item=value,
             )
-            manifest = build_terminal_item_manifest(
+            manifest = build_terminal_item_manifest_v2(
                 tokens,
-                run_id=admission.run_id,
                 terminal_node_id=node.node_id,
                 item_key=item_key,
             )
-            derived = derive_terminal_item_facts(
-                tokens,
-                manifest=manifest,
-                child_index=index,
-                facts=state.facts,
-                outcomes=outcomes,
-            )
-            folded.append(derived)
-            stamp = format_datetime(self.clock.now())
-            assert stamp is not None  # a clock reading always renders
-            stamps.append(stamp)
-            # Preserve the per-item clock reads and their order from single appends.
-            recorded_at.append(self.clock.now())
-            item_drafts.append((item_key, derived.manifest_digest))
-            manifests[item_key] = manifest
-        # What every item consumed (a list of Captures they all derive from) is
-        # stored once and cited by digest: each item's record carries only its
-        # own digests, so its size never grows with the run's Capture count.
-        payloads: list[object] = []
-        if folded:
-            shared = shared_terminal_dependencies(tuple(manifests.values()), folded)
-            shared_digest = self.bodies.store(
-                render_shared_terminal_dependencies(shared), journal_payload=True
-            ).digest
-            payloads = list(
-                split_item_dependency_payloads(
-                    tuple(manifests.values()),
-                    folded,
-                    shared=shared,
-                    shared_digest=shared_digest,
-                    deployment_digest=admission.deployment_snapshot_digest,
-                    recorded_at=stamps,
+            folded.append(
+                derive_terminal_item_facts(
+                    tokens,
+                    manifest=manifest,
+                    child_index=index,
+                    facts=state.facts,
+                    outcomes=outcomes,
                 )
             )
-        group = self._append_events(
-            admission,
-            records,
-            "item_dependencies",
-            payloads,
-            recorded_at=recorded_at,
-        )
+            manifests[item_key] = manifest
+        items_record_digest: str | None = None
+        if folded:
+            # What every item consumed (a list of Captures they all derive from)
+            # is stored once; each item's body carries only its own digests, so
+            # its size never grows with the run's Capture count.
+            built = build_terminal_items(
+                tuple(manifests.values()),
+                folded,
+                terminal_node_id=node.node_id,
+                shared=shared_terminal_dependencies(tuple(manifests.values()), folded),
+                digest=lambda content: self.bodies.digest_bytes(content).tagged,
+            )
+            self.bodies.store_many(built.bodies, journal_payload=True)
+            items_record_digest = self._append_event(
+                admission, records, "item_dependencies", built.payload
+            ).record_digest
         # A claims item also records what it changed (D-R37 g): its stable
         # identity, its change's kind and the digest of that canonical change,
         # never the change body. Other terminals' items carry none.
         changes = state.claims_changes.get(node.node_id, ())
         identities = state.claims_identities.get(node.node_id, ())
-        for index, (stored, (item_key, manifest_digest)) in enumerate(zip(group, item_drafts)):
+        receipts: list[TerminalChildReceiptV2] = []
+        for index, facts in enumerate(folded):
             change = changes[index] if index < len(changes) else None
             receipts.append(
-                TerminalChildReceiptV1(
+                TerminalChildReceiptV2(
                     child_index=index,
-                    item_key=item_key,
-                    manifest_digest=manifest_digest,
-                    record_digest=stored.record_digest,
-                    sequence=stored.record.sequence,
+                    item_key=facts.item_key,
+                    manifest_digest=facts.manifest_digest,
                     item_identity_digest=None if change is None else identities[index],
                     change_kind=None if change is None else change.kind,
                     change_digest=None if change is None else claims_item_change_digest(change),
                 )
             )
-        return tuple(receipts), tuple(values), manifests, selected
+        return _TerminalItems(
+            children=tuple(receipts),
+            values=tuple(values),
+            manifests=manifests,
+            selected=selected,
+            items_record_digest=items_record_digest,
+        )
 
     def _planned_external_occurrence(
         self,
@@ -7630,79 +7636,6 @@ class ProcedureExecutor:
                 and self.plan.definition.slots[body.slot].may_truncate
             )
         raise ExecutionError(f"unsupported repeat operation {body.operation!r}")
-
-    def _append_events(
-        self,
-        admission: ProcedureRunAdmission,
-        records: list[StoredProcedureJournalRecordV1],
-        event_kind: JournalEventKindV1,
-        payloads: list[object],
-        *,
-        recorded_at: list[datetime],
-    ) -> tuple[StoredProcedureJournalRecordV1, ...]:
-        """Reserve, publish and append one terminal's item records as a group."""
-        if not payloads:
-            return ()
-        payload_bytes = [journal_payload_bytes(payload) for payload in payloads]
-        reservations = [
-            make_run_reservation(
-                instance_id=admission.instance_id,
-                partition_id=admission.journal_partition_id,
-                event_kind=event_kind,
-                run_id=admission.run_id,
-                admission_binding_digest=admission.admission_binding_digest,
-                body_digest=self.bodies.digest_bytes(content).tagged,
-            )
-            for content in payload_bytes
-        ]
-        with self.material_reservations.locked():
-            group_id = self.material_reservations.reserve_many_locked(reservations)
-            metadata = self.bodies.store_many(payload_bytes, journal_payload=True)
-            head = self.journal.read_head(admission.journal_stream, admission.journal_partition_id)
-            drafts = [
-                ProcedureJournalRecordDraftV1(
-                    stream=admission.journal_stream,
-                    partition_id=admission.journal_partition_id,
-                    event_kind=event_kind,
-                    accepted_coordinate=admission.accepted_coordinate,
-                    procedure_artifact_digest=admission.procedure_artifact_digest,
-                    definition_digest=admission.definition_digest,
-                    run_id=admission.run_id,
-                    line_spec_digest=admission.line_spec_digest,
-                    occurrence_id=admission.occurrence_id,
-                    attempt=admission.attempt,
-                    admission_binding_digest=admission.admission_binding_digest,
-                    payload_digest=item.digest,
-                    actor_context=admission.actor_context,
-                    recorded_at=when,
-                )
-                for item, when in zip(metadata, recorded_at)
-            ]
-            try:
-                group = self.journal.append_many(
-                    drafts,
-                    expected_head=head,
-                    fencing_token=self.fencing_token,
-                )
-            except JournalError as exc:
-                raise ProcedureBoundaryRefused(
-                    _journal_refusal_code(exc),
-                    "Procedure journal append refused.",
-                ) from exc
-            if len(group) != len(reservations) or any(
-                stored.record.payload_digest != reservation.body_digest
-                or stored.record.event_kind != reservation.intended_event_kind
-                or stored.record.run_id != reservation.run_id
-                or stored.record.admission_binding_digest != reservation.admission_binding_digest
-                or stored.record.stream != admission.journal_stream
-                or stored.record.partition_id != admission.journal_partition_id
-                for stored, reservation in zip(group, reservations)
-            ):
-                raise ExecutionError("journal append did not reproduce its material reservations")
-            self.material_reservations.release_locked(group_id)
-        records.extend(group)
-        self.run_index.apply_records(group)
-        return group
 
     def _append_event(
         self,

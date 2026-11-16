@@ -1,6 +1,6 @@
 """Per-terminal-item dependency closure derived from actual run dataflow.
 
-A ``TerminalItemDependencyManifestV1`` is never assembled from a caller-supplied
+A terminal item's dependency manifest is never assembled from a caller-supplied
 evidence list.  The executor threads a :class:`DependencyToken` set alongside
 every runtime alias, propagates it through dataflow, branch, and fanout edges,
 and materializes the manifest from the exact closure one terminal item reached.
@@ -202,18 +202,62 @@ class TerminalItemDependencyManifestV1(_StrictDependencyModel):
         return _sorted_unique(value, label=str(getattr(info, "field_name", "dependency digests")))
 
 
-def terminal_item_manifest_digest(manifest: TerminalItemDependencyManifestV1) -> str:
+class TerminalItemDependencyManifestV2(_StrictDependencyModel):
+    """One terminal item's §8.5.3 closure, bound to no run.
+
+    The v1 manifest names its run, so no item closure could ever be
+    byte-identical to the previous run's and content addressing never applied
+    to it. The v2 manifest is a function of the closure alone: the run binding
+    is the citing journal record's. Its digest is taken under its own domain;
+    a stored v1 digest keeps its v1 rule.
+    """
+
+    tag: Literal["playbill-terminal-item-dependencies-v2"] = (
+        "playbill-terminal-item-dependencies-v2"
+    )
+    terminal_node_id: str
+    item_key: str
+    accepted_state_input_digests: tuple[str, ...] = ()
+    admitted_capture_digests: tuple[str, ...] = ()
+    produced_capture_digests: tuple[str, ...] = ()
+    exhaust_input_digests: tuple[str, ...] = ()
+    receipt_digests: tuple[str, ...] = ()
+    policy_and_law_digests: tuple[str, ...] = ()
+
+    @field_validator("item_key")
+    @classmethod
+    def _item_key(cls, value: str) -> str:
+        if not _ITEM_KEY_RE.fullmatch(value):
+            raise ValueError("terminal item_key is not canonical")
+        return value
+
+    @field_validator(
+        "accepted_state_input_digests",
+        "admitted_capture_digests",
+        "produced_capture_digests",
+        "exhaust_input_digests",
+        "receipt_digests",
+        "policy_and_law_digests",
+    )
+    @classmethod
+    def _digests(cls, value: tuple[str, ...], info: object) -> tuple[str, ...]:
+        return _sorted_unique(value, label=str(getattr(info, "field_name", "dependency digests")))
+
+
+#: A terminal item's closure in either stored shape: v1 (run-bound, still read
+#: and still the shape of a run's return lineage) or v2 (run-free, written for
+#: every terminal item).
+TerminalItemDependencyManifest = TerminalItemDependencyManifestV1 | TerminalItemDependencyManifestV2
+
+
+def terminal_item_manifest_digest(manifest: TerminalItemDependencyManifest) -> str:
     payload = manifest.model_dump(mode="json")
-    payload.pop("tag")
-    return typed_digest(
-        Sha256Value,
-        "playbill-terminal-item-dependencies-v1",
-        payload,
-    ).tagged
+    tag = payload.pop("tag")
+    return typed_digest(Sha256Value, tag, payload).tagged
 
 
 def manifest_dependency_tokens(
-    manifest: TerminalItemDependencyManifestV1,
+    manifest: TerminalItemDependencyManifest,
 ) -> frozenset[DependencyToken]:
     return frozenset(
         DependencyToken(slot, digest)
@@ -246,18 +290,37 @@ def build_terminal_item_manifest(
 ) -> TerminalItemDependencyManifestV1:
     """Materialize the manifest from one item's exact dependency closure."""
 
-    grouped: dict[str, list[str]] = {field: [] for field in _SLOT_FIELDS.values()}
-    for token in tokens:
-        grouped[_SLOT_FIELDS[token.slot]].append(token.digest)
     return TerminalItemDependencyManifestV1(
         run_id=run_id,
         terminal_node_id=terminal_node_id,
         item_key=item_key,
-        **{
-            field: tuple(sorted(set(values), key=lambda item: item.encode("ascii")))
-            for field, values in grouped.items()
-        },  # type: ignore[arg-type]
+        **_slot_digests(tokens),  # type: ignore[arg-type]
     )
+
+
+def build_terminal_item_manifest_v2(
+    tokens: frozenset[DependencyToken],
+    *,
+    terminal_node_id: str,
+    item_key: str,
+) -> TerminalItemDependencyManifestV2:
+    """Materialize one terminal item's run-free manifest from its exact closure."""
+
+    return TerminalItemDependencyManifestV2(
+        terminal_node_id=terminal_node_id,
+        item_key=item_key,
+        **_slot_digests(tokens),  # type: ignore[arg-type]
+    )
+
+
+def _slot_digests(tokens: frozenset[DependencyToken]) -> dict[str, tuple[str, ...]]:
+    grouped: dict[str, list[str]] = {field: [] for field in _SLOT_FIELDS.values()}
+    for token in tokens:
+        grouped[_SLOT_FIELDS[token.slot]].append(token.digest)
+    return {
+        field: tuple(sorted(set(values), key=lambda item: item.encode("ascii")))
+        for field, values in grouped.items()
+    }
 
 
 class TerminalItemSourceCoverageV1(_StrictDependencyModel):
@@ -313,9 +376,49 @@ class TerminalItemDerivedFactsV1(_StrictDependencyModel):
         return self
 
 
-#: The ``item_dependencies`` journal payload that carries the whole closure
-#: inline. Written by 0.5.0 development builds before the shared set; it is
-#: still read (``resolve_item_dependencies``), never written.
+class TerminalItemDerivedFactsV2(_StrictDependencyModel):
+    """The folded facts of one v2 (run-free) manifest: v1's fields less ``run_id``."""
+
+    tag: Literal["playbill-terminal-item-derived-facts-v2"] = (
+        "playbill-terminal-item-derived-facts-v2"
+    )
+    terminal_node_id: str
+    item_key: str
+    child_index: int = Field(ge=0)
+    manifest_digest: str
+    epistemic_grade: EvidenceEpistemicGrade
+    provenance_grade: EvidenceProvenanceGrade
+    selector_privacy: TerminalItemSelectorPrivacyV1
+    taint_labels: tuple[str, ...] = ()
+    source_coverage: tuple[TerminalItemSourceCoverageV1, ...] = ()
+
+    @field_validator("manifest_digest")
+    @classmethod
+    def _manifest(cls, value: str) -> str:
+        return _tagged(value, label="terminal item manifest digest")
+
+    @field_validator("taint_labels")
+    @classmethod
+    def _labels(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if value != tuple(sorted(set(value), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("terminal item taint labels must be sorted and unique")
+        return value
+
+    @model_validator(mode="after")
+    def _coverage(self) -> "TerminalItemDerivedFactsV2":
+        names = tuple(item.input_name for item in self.source_coverage)
+        if names != tuple(sorted(set(names), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("terminal item source coverage must be sorted and unique")
+        return self
+
+
+TerminalItemDerivedFacts = TerminalItemDerivedFactsV1 | TerminalItemDerivedFactsV2
+
+
+#: The per-item ``item_dependencies`` journal payloads of 0.5.0 development
+#: builds: v1 carries the whole closure inline, v2 cites its terminal's shared
+#: set. Both are still read (``resolve_item_dependencies``), never written: a
+#: terminal now journals one grouped record (``TERMINAL_ITEMS_RECORD_V1``).
 ITEM_DEPENDENCIES_RECORD_V1 = "playbill-procedure-item-dependencies-v1"
 ITEM_DEPENDENCIES_RECORD_V2 = "playbill-procedure-item-dependencies-v2"
 
@@ -427,8 +530,8 @@ def _digest_union(left: tuple[str, ...], right: Iterable[str]) -> tuple[str, ...
 
 
 def shared_terminal_dependencies(
-    manifests: Sequence[TerminalItemDependencyManifestV1],
-    derived: Sequence[TerminalItemDerivedFactsV1],
+    manifests: Sequence[TerminalItemDependencyManifest],
+    derived: Sequence[TerminalItemDerivedFacts],
 ) -> TerminalSharedDependenciesV1:
     """The digests and coverage every item holds: one pass over the items' own closures."""
 
@@ -473,58 +576,243 @@ def render_shared_terminal_dependencies(shared: TerminalSharedDependenciesV1) ->
     return canonical_bytes(shared.model_dump(mode="json"))
 
 
-def split_item_dependency_payloads(
-    manifests: Sequence[TerminalItemDependencyManifestV1],
-    derived: Sequence[TerminalItemDerivedFactsV1],
-    *,
-    shared: TerminalSharedDependenciesV1,
-    shared_digest: str,
-    deployment_digest: str | None,
-    recorded_at: Sequence[str],
-) -> list[dict[str, object]]:
-    """Each item's ``item_dependencies`` payload: what it consumed beyond the shared set.
+#: The one ``item_dependencies`` payload a terminal journals for all its items.
+TERMINAL_ITEMS_RECORD_V1 = "playbill-terminal-items-v1"
+#: One item's closure beyond its terminal's shared set: a run-free CAS body.
+ITEM_DEPENDENCIES_BODY_V3 = "playbill-procedure-item-dependencies-v3"
+#: An ordered run of up to ``TERMINAL_ITEM_CHUNK_SIZE`` item entries.
+TERMINAL_ITEM_CHUNK_V1 = "playbill-terminal-item-chunk-v1"
+TERMINAL_ITEM_CHUNK_SIZE = 64
 
-    Every payload is the JSON form of :class:`TerminalItemDependencyRecordV2`,
-    built directly: a settle journals one per item, so this constructs no model
-    per item (the manifests and facts it splits are already validated, and
-    removing digests from a sorted unique tuple keeps it sorted and unique).
-    The shared set's lookups are built once for the terminal, so each item
-    costs what its own closure holds.
+
+@dataclass(frozen=True)
+class TerminalItemsBuildV1:
+    """A terminal's grouped item closures: the bodies to land, then the one payload.
+
+    ``bodies`` holds each distinct body once (the shared set, item bodies,
+    chunks), in the order they may be stored; ``payload`` is the single
+    ``item_dependencies`` record that cites them.
     """
 
-    _tagged(shared_digest, label="shared dependencies digest")
+    bodies: tuple[bytes, ...]
+    payload: dict[str, object]
+
+
+def build_terminal_items(
+    manifests: Sequence[TerminalItemDependencyManifestV2],
+    derived: Sequence[TerminalItemDerivedFactsV2],
+    *,
+    terminal_node_id: str,
+    shared: TerminalSharedDependenciesV1,
+    digest: Callable[[bytes], str],
+) -> TerminalItemsBuildV1:
+    """Group one terminal's item closures into run-free, content-addressed bodies.
+
+    Nothing in a body names the run, its time or a journal position, so an item
+    whose closure did not change reproduces the body it had in an earlier run
+    and content addressing stores nothing new for it. Each item body holds
+    what the item consumed beyond the shared set and its folded facts; a chunk
+    lists up to 64 items as ``(item_key, body digest, manifest digest)``; the
+    payload names the terminal, the shared set and the chunks in order.
+
+    Each body is built directly as JSON: one pass over the items, with the
+    shared set's lookups built once for the terminal (the manifests and facts
+    it splits are already validated, and removing digests from a sorted
+    unique tuple keeps it sorted and unique).
+    """
+
     held = {field: frozenset(getattr(shared.digests, field)) for field in _SLOT_FIELDS.values()}
     common = {item.input_name: frozenset(item.capture_digests) for item in shared.coverage}
     empty: frozenset[str] = frozenset()
-    payloads: list[dict[str, object]] = []
-    for manifest, facts, stamp in zip(manifests, derived, recorded_at, strict=True):
-        body = facts.model_dump(mode="json")
-        body["source_coverage"] = [
+    shared_bytes = render_shared_terminal_dependencies(shared)
+    shared_digest = digest(shared_bytes)
+    bodies: dict[str, bytes] = {shared_digest: shared_bytes}
+    entries: list[list[str]] = []
+    for index, (manifest, facts) in enumerate(zip(manifests, derived, strict=True)):
+        if (
+            manifest.terminal_node_id != terminal_node_id
+            or facts.item_key != manifest.item_key
+            or facts.child_index != index
+        ):
+            raise ValueError("terminal items must be one terminal's items in child order")
+        body = canonical_bytes(
             {
-                **entry,
-                "capture_digests": [
-                    digest
-                    for digest in entry["capture_digests"]
-                    if digest not in common.get(entry["input_name"], empty)
-                ],
-            }
-            for entry in body["source_coverage"]
-        ]
-        payloads.append(
-            {
-                "tag": ITEM_DEPENDENCIES_RECORD_V2,
-                "shared_digest": shared_digest,
+                "tag": ITEM_DEPENDENCIES_BODY_V3,
                 "own": {
-                    field: [
-                        digest for digest in getattr(manifest, field) if digest not in held[field]
-                    ]
+                    field: [value for value in getattr(manifest, field) if value not in held[field]]
                     for field in _SLOT_FIELDS.values()
                 },
-                "derived": body,
-                "audit": {"deployment_digest": deployment_digest, "recorded_at": stamp},
+                "facts": {
+                    "epistemic_grade": facts.epistemic_grade,
+                    "provenance_grade": facts.provenance_grade,
+                    "selector_privacy": facts.selector_privacy,
+                    "taint_labels": list(facts.taint_labels),
+                    "source_coverage": [
+                        {
+                            "input_name": entry.input_name,
+                            "disposition": entry.disposition,
+                            "capture_digests": [
+                                value
+                                for value in entry.capture_digests
+                                if value not in common.get(entry.input_name, empty)
+                            ],
+                        }
+                        for entry in facts.source_coverage
+                    ],
+                },
             }
         )
-    return payloads
+        body_digest = digest(body)
+        bodies.setdefault(body_digest, body)
+        entries.append([manifest.item_key, body_digest, facts.manifest_digest])
+    chunks: list[str] = []
+    for start in range(0, len(entries), TERMINAL_ITEM_CHUNK_SIZE):
+        chunk = canonical_bytes(
+            {
+                "tag": TERMINAL_ITEM_CHUNK_V1,
+                "entries": entries[start : start + TERMINAL_ITEM_CHUNK_SIZE],
+            }
+        )
+        chunk_digest = digest(chunk)
+        bodies.setdefault(chunk_digest, chunk)
+        chunks.append(chunk_digest)
+    return TerminalItemsBuildV1(
+        bodies=tuple(bodies.values()),
+        payload={
+            "tag": TERMINAL_ITEMS_RECORD_V1,
+            "terminal_node_id": terminal_node_id,
+            "shared_digest": shared_digest,
+            "count": len(entries),
+            "chunks": chunks,
+        },
+    )
+
+
+class _ItemFactsBodyV3(_StrictDependencyModel):
+    epistemic_grade: EvidenceEpistemicGrade
+    provenance_grade: EvidenceProvenanceGrade
+    selector_privacy: TerminalItemSelectorPrivacyV1
+    taint_labels: tuple[str, ...] = ()
+    source_coverage: tuple[TerminalItemSourceCoverageV1, ...] = ()
+
+
+class TerminalItemDependencyBodyV3(_StrictDependencyModel):
+    """One item's run-free closure body: what it consumed beyond the shared set."""
+
+    tag: Literal["playbill-procedure-item-dependencies-v3"] = (
+        "playbill-procedure-item-dependencies-v3"
+    )
+    own: TerminalDependencyDigestsV1
+    facts: _ItemFactsBodyV3
+
+
+class TerminalItemChunkV1(_StrictDependencyModel):
+    tag: Literal["playbill-terminal-item-chunk-v1"] = "playbill-terminal-item-chunk-v1"
+    entries: tuple[tuple[str, str, str], ...] = Field(
+        min_length=1, max_length=TERMINAL_ITEM_CHUNK_SIZE
+    )
+
+
+class TerminalItemsRecordV1(_StrictDependencyModel):
+    """The one ``item_dependencies`` payload of a terminal: shared set and chunks."""
+
+    tag: Literal["playbill-terminal-items-v1"] = "playbill-terminal-items-v1"
+    terminal_node_id: str
+    shared_digest: str
+    count: int = Field(ge=1)
+    chunks: tuple[str, ...] = Field(min_length=1)
+
+    @field_validator("shared_digest")
+    @classmethod
+    def _shared(cls, value: str) -> str:
+        return _tagged(value, label="shared dependencies digest")
+
+    @field_validator("chunks")
+    @classmethod
+    def _chunks(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        for item in value:
+            _tagged(item, label="terminal item chunk digest")
+        return value
+
+
+def _canonical_body(read_body: Callable[[str], bytes], digest: str, *, label: str) -> object:
+    content = read_body(digest)
+    value = json.loads(content)
+    if canonical_bytes(value) != content:
+        raise ValueError(f"a {label} is not canonical")
+    return value
+
+
+def resolve_terminal_items(
+    payload: object,
+    read_body: Callable[[str], bytes],
+) -> tuple[tuple[TerminalItemDependencyManifestV2, TerminalItemDerivedFactsV2], ...]:
+    """Every item's exact manifest and facts from a terminal's one grouped record.
+
+    ``read_body`` returns the verified CAS bytes of a digest. Each item's
+    manifest is restored as its own digests joined with the shared set, and
+    must reproduce the manifest digest its chunk entry names.
+    """
+
+    record = TerminalItemsRecordV1.model_validate(payload)
+    shared_value = _canonical_body(read_body, record.shared_digest, label="shared dependency set")
+    shared = TerminalSharedDependenciesV1.model_validate(shared_value)
+    common_coverage = {item.input_name: item.capture_digests for item in shared.coverage}
+    restored: list[tuple[TerminalItemDependencyManifestV2, TerminalItemDerivedFactsV2]] = []
+    bodies: dict[str, TerminalItemDependencyBodyV3] = {}
+    for chunk_digest in record.chunks:
+        chunk = TerminalItemChunkV1.model_validate(
+            _canonical_body(read_body, chunk_digest, label="terminal item chunk")
+        )
+        for item_key, body_digest, manifest_digest in chunk.entries:
+            body = bodies.get(body_digest)
+            if body is None:
+                body = TerminalItemDependencyBodyV3.model_validate(
+                    _canonical_body(read_body, body_digest, label="terminal item body")
+                )
+                bodies[body_digest] = body
+            fields: dict[str, tuple[str, ...]] = {}
+            for field in _SLOT_FIELDS.values():
+                own, common = getattr(body.own, field), getattr(shared.digests, field)
+                if set(own) & set(common):
+                    raise ValueError("an item body restates a shared dependency digest")
+                fields[field] = _digest_union(own, common)
+            manifest = TerminalItemDependencyManifestV2(
+                terminal_node_id=record.terminal_node_id,
+                item_key=item_key,
+                **fields,  # type: ignore[arg-type]
+            )
+            if terminal_item_manifest_digest(manifest) != manifest_digest:
+                raise ValueError("an item body does not reproduce its manifest digest")
+            restored.append(
+                (
+                    manifest,
+                    TerminalItemDerivedFactsV2(
+                        terminal_node_id=record.terminal_node_id,
+                        item_key=item_key,
+                        child_index=len(restored),
+                        manifest_digest=manifest_digest,
+                        epistemic_grade=body.facts.epistemic_grade,
+                        provenance_grade=body.facts.provenance_grade,
+                        selector_privacy=body.facts.selector_privacy,
+                        taint_labels=body.facts.taint_labels,
+                        source_coverage=tuple(
+                            TerminalItemSourceCoverageV1(
+                                input_name=item.input_name,
+                                disposition=item.disposition,
+                                capture_digests=_digest_union(
+                                    item.capture_digests,
+                                    common_coverage.get(item.input_name, ()),
+                                ),
+                            )
+                            for item in body.facts.source_coverage
+                        ),
+                    ),
+                )
+            )
+    if len(restored) != record.count:
+        raise ValueError("a terminal items record's count differs from its chunks")
+    return tuple(restored)
 
 
 def join_item_dependencies(
@@ -594,15 +882,19 @@ def resolve_item_dependencies(
     return join_item_dependencies(record, shared)
 
 
-class TerminalChildReceiptV1(_StrictDependencyModel):
-    """One fanout child's receipt: index order is declared, never completion order."""
+class TerminalChildReceiptV2(_StrictDependencyModel):
+    """One fanout child's receipt: index order is declared, never completion order.
 
-    tag: Literal["playbill-terminal-child-receipt-v1"] = "playbill-terminal-child-receipt-v1"
+    The child names its item and the manifest digest its closure reproduces.
+    The terminal's one grouped ``item_dependencies`` record (whose digest the
+    terminal's record carries once, ``items_record_digest``) holds the closure;
+    v1 children named a per-item record's digest and sequence instead.
+    """
+
+    tag: Literal["playbill-terminal-child-receipt-v2"] = "playbill-terminal-child-receipt-v2"
     child_index: int = Field(ge=0)
     item_key: str
     manifest_digest: str
-    record_digest: str
-    sequence: int = Field(ge=1)
     #: A claims item's change (D-R37 g): its identity, stable across runs
     #: ({node, ClaimType, Subject, unit}), and the kind and digest of the one
     #: canonical change it made. Digests only, never the change body; absent on
@@ -613,10 +905,10 @@ class TerminalChildReceiptV1(_StrictDependencyModel):
     )
     change_digest: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
-    @field_validator("manifest_digest", "record_digest")
+    @field_validator("manifest_digest")
     @classmethod
-    def _digests(cls, value: str, info: object) -> str:
-        return _tagged(value, label=str(getattr(info, "field_name", "child receipt digest")))
+    def _digests(cls, value: str) -> str:
+        return _tagged(value, label="child receipt manifest digest")
 
     @field_validator("item_identity_digest", "change_digest")
     @classmethod
@@ -628,7 +920,7 @@ class TerminalChildReceiptV1(_StrictDependencyModel):
         )
 
     @model_validator(mode="after")
-    def _change(self) -> "TerminalChildReceiptV1":
+    def _change(self) -> "TerminalChildReceiptV2":
         missing = {
             self.item_identity_digest is None,
             self.change_kind is None,
@@ -656,11 +948,11 @@ class AcquisitionInputOutcomeV1(_StrictDependencyModel):
 def derive_terminal_item_facts(
     tokens: frozenset[DependencyToken],
     *,
-    manifest: TerminalItemDependencyManifestV1,
+    manifest: TerminalItemDependencyManifestV2,
     child_index: int,
     facts: dict[str, DependencyEvidenceFactsV1],
     outcomes: tuple[AcquisitionInputOutcomeV1, ...] = (),
-) -> TerminalItemDerivedFactsV1:
+) -> TerminalItemDerivedFactsV2:
     """Fold grade, taint, sensitivity, and coverage over exactly this item's closure."""
 
     epistemic: EvidenceEpistemicGrade = "observed"
@@ -706,8 +998,7 @@ def derive_terminal_item_facts(
                 capture_digests=tuple(sorted(digests or (), key=lambda item: item.encode("ascii"))),
             )
         )
-    return TerminalItemDerivedFactsV1(
-        run_id=manifest.run_id,
+    return TerminalItemDerivedFactsV2(
         terminal_node_id=manifest.terminal_node_id,
         item_key=manifest.item_key,
         child_index=child_index,
@@ -761,7 +1052,7 @@ def _witness_member_set(members: Sequence[str]) -> frozenset[str]:
     return frozenset(members)
 
 
-def citable_captures(manifest: TerminalItemDependencyManifestV1 | None) -> tuple[str, ...]:
+def citable_captures(manifest: TerminalItemDependencyManifest | None) -> tuple[str, ...]:
     """Every Capture in an item's closure: those it produced AND those it was admitted.
 
     The item cites the one root of this whole set (``capture_root``, D-R37
@@ -946,11 +1237,25 @@ __all__ = [
     "TerminalItemDependencyRecordV2",
     "TerminalSharedCoverageV1",
     "TerminalSharedDependenciesV1",
+    "ITEM_DEPENDENCIES_BODY_V3",
+    "TERMINAL_ITEM_CHUNK_SIZE",
+    "TERMINAL_ITEM_CHUNK_V1",
+    "TERMINAL_ITEMS_RECORD_V1",
+    "TerminalItemChunkV1",
+    "TerminalItemDependencyBodyV3",
+    "TerminalItemDependencyManifest",
+    "TerminalItemDependencyManifestV2",
+    "TerminalItemDerivedFacts",
+    "TerminalItemDerivedFactsV2",
+    "TerminalItemsBuildV1",
+    "TerminalItemsRecordV1",
+    "build_terminal_item_manifest_v2",
+    "build_terminal_items",
+    "resolve_terminal_items",
     "join_item_dependencies",
     "render_shared_terminal_dependencies",
     "resolve_item_dependencies",
     "shared_terminal_dependencies",
-    "split_item_dependency_payloads",
     "capture_root",
     "citable_captures",
     "witnessed_list_capture",
@@ -962,7 +1267,7 @@ __all__ = [
     "AliasProvenanceV1",
     "DependencyEvidenceFactsV1",
     "DependencyToken",
-    "TerminalChildReceiptV1",
+    "TerminalChildReceiptV2",
     "TerminalDependencySlotV1",
     "TerminalItemCoverageDispositionV1",
     "TerminalItemDependencyManifestV1",
