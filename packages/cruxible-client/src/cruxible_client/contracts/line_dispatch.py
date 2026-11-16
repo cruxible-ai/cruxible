@@ -181,6 +181,12 @@ class LineEnablementPrincipal(BaseModel):
     kind: Literal["runtime_credential", "principal_claim", "local_operator"]
     credential_id: str | None = None
     label: str
+    #: The tier the enabling request was capped at (a client's requested
+    #: ceiling, such as an MCP server's CRUXIBLE_MODE), when lower than the
+    #: credential's or the daemon's: automatic runs never exceed it.
+    permission_ceiling: Literal["read_only", "governed_write", "graph_write"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @model_validator(mode="after")
     def _credential(self) -> LineEnablementPrincipal:

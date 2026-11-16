@@ -15,8 +15,8 @@ from cruxible_client.contracts.documents import (
     DocumentShell,
 )
 from cruxible_client.contracts.errors import (
-    ProposalAdmissionError,
     ProposalReadmitAlreadyAccepted,
+    ProposalReadmitNotAuthor,
     ProposalReadmitNotStale,
     ProposalReadmitRequiresResubmission,
     ProposalStale,
@@ -112,8 +112,11 @@ def test_readmit_cleanly_rebases_and_response_loss_retry_returns_one_admission(
     )
     _accept(instance, owner, accepted_first)
 
-    with pytest.raises(ProposalAdmissionError, match="source proposal actor"):
+    with pytest.raises(ProposalReadmitNotAuthor) as not_author:
         service_readmit_playbill_proposal(instance, proposal_id=source_id, actor_id="reviewer")
+    assert not_author.value.error_code == "cruxible.proposal.readmit_not_author"
+    assert "only its author 'owner' may readmit" in str(not_author.value)
+    assert not_author.value.repair.operation == "cruxible.proposal.reject"
 
     first = service_readmit_playbill_proposal(
         instance,

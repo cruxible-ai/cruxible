@@ -285,6 +285,7 @@ class ProposalEvidenceStore:
             actor_id=record.actor_id,
             reason=record.reason,
             withdrawn_at=record.withdrawn_at,
+            superseded_by=record.superseded_by,
         )
 
     # -- Procedure item reasons ---------------------------------------------------

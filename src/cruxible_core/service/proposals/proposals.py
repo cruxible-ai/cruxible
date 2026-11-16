@@ -18,6 +18,7 @@ from cruxible_client.contracts.errors import (
     ProposalIntegrityError,
     ProposalNotFoundError,
     ProposalReadmitAlreadyAccepted,
+    ProposalReadmitNotAuthor,
     ProposalReadmitNotStale,
     ProposalReadmitRefused,
     ProposalReadmitRequiresResubmission,
@@ -1206,7 +1207,7 @@ def _readmit(
 ) -> PlaybillProposalReadmitResultV1:
     source = _proposal_result(instance, proposal_id)
     if source.admission.actor_id != actor_id:
-        raise ProposalAdmissionError("only the source proposal actor may readmit it")
+        raise ProposalReadmitNotAuthor(proposal_id, author=source.admission.actor_id)
     from cruxible_core.service.proposals.recompile import recompiled_successor
 
     successor = recompiled_successor(instance, source)

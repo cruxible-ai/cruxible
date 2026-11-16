@@ -3258,6 +3258,12 @@ class Cruxible:
         Subsequent live reads select current head; use at(receipt.accepted_coordinate)
         for exact readback. Explicitly pinned contexts and World snapshots stay fixed.
 
+        Returns an ``ActivationReceipt``, or a ``ProposalRecompiled`` when the
+        approved candidate's base moved and it landed at the head as a new
+        proposal (``proposal_id``) to review. A proposal whose approvals are not
+        in is refused (``cruxible.approval.requirement_unsatisfied``) and left as
+        it is.
+
         Next: ``cx.at(receipt.accepted_coordinate)`` to read exactly what was accepted.
         """
 

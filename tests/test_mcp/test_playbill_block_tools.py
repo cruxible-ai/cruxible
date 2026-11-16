@@ -131,7 +131,7 @@ def test_a_read_only_agent_checks_blocks_but_never_edits_a_page(
 
     assert schemas["cruxible_block_sync"] == {"instance_id", "files", "all_files"}
     assert "cruxible_block_detach" not in schemas
-    assert detach_refused and "GOVERNED_WRITE" in detach_text
+    assert detach_refused and "needs the governed_write tier" in detach_text
     assert page.read_bytes() == before
     reset_permissions()
 

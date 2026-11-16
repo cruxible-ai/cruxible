@@ -228,6 +228,9 @@ _request_mode: contextvars.ContextVar[PermissionMode | None] = contextvars.Conte
 _request_instance_scope: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "cruxible_instance_scope", default=None
 )
+_requested_ceiling: contextvars.ContextVar[PermissionMode | None] = contextvars.ContextVar(
+    "cruxible_requested_ceiling", default=None
+)
 
 
 # ---------------------------------------------------------------------------
@@ -357,6 +360,28 @@ def request_permission_scope(mode: PermissionMode) -> Iterator[None]:
         yield
     finally:
         _request_mode.reset(token)
+
+
+@contextmanager
+def request_ceiling_scope(mode: PermissionMode | None) -> Iterator[None]:
+    """Record the ceiling the client explicitly asked for, for the current request.
+
+    Distinct from the effective mode: a ceiling at or above the request's own
+    tier changes nothing now, but what it asked for is kept by whatever outlives
+    the request (a Line's enablement), so it still binds once the daemon or
+    credential tier rises.
+    """
+    token = _requested_ceiling.set(mode)
+    try:
+        yield
+    finally:
+        _requested_ceiling.reset(token)
+
+
+def get_requested_ceiling() -> PermissionMode | None:
+    """The ceiling this request's client explicitly asked for, if any."""
+
+    return _requested_ceiling.get()
 
 
 @contextmanager

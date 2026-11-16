@@ -2391,7 +2391,8 @@ def _echo_kit_change(
                     f"Next: cruxible proposal approve {result.proposal_id} "
                     "--signer-id ID --key FILE (the approval that completes it activates it)"
                 )
-            else:
+            elif result.detail is None:
+                # Otherwise the detail already names who activates it.
                 click.echo(f"Next: cruxible proposal activate {result.proposal_id}")
     echo_preview_next(result.status, result.coordinate)
 
@@ -3297,24 +3298,30 @@ def approve_proposal(
         if key is None:
             raise click.UsageError(_missing_signing_key_help(instance_id, resolved_signer))
         resolved_id = client.resolve_proposal_selector(instance_id, proposal_id).proposal_id
+        # A signer registered after the proposal's base cannot sign its candidate;
+        # the challenge then lands it at the head and names the landed proposal.
+        challenge = client.prepare_approval(
+            instance_id, resolved_id, signer_id=resolved_signer, include_body=True
+        )
         summary = None
         if shows_summary:
-            page = client.review_proposal(instance_id, resolved_id, groups=False)
+            page = client.review_proposal(instance_id, challenge.proposal_id, groups=False)
             assert isinstance(page, contracts.ProposalReviewSummary)
             summary = page
-        return (
-            resolved_id,
-            client.prepare_approval(
-                instance_id, resolved_id, signer_id=resolved_signer, include_body=True
-            ),
-            key,
-            summary,
-        )
+        return resolved_id, challenge, key, summary
 
     resolved_id, challenge, key, summary = _server_call(
         _resolve_and_prepare,
         command_name="cruxible proposal approve",
     )
+    if challenge.proposal_id != resolved_id:
+        if not output_json:
+            click.echo(
+                f"Landed at the head as {challenge.proposal_id}: the same change set "
+                f"(proposed as {resolved_id}, before {resolved_signer} was registered); "
+                "signing it"
+            )
+        resolved_id = challenge.proposal_id
     review = ProposalReview.model_validate(challenge.review.model_dump(mode="json"))
     if not output_json:
         if full:
@@ -3386,8 +3393,16 @@ def approve_proposal(
         _echo_activation(result)
         return
     click.echo(f"Approved {result.candidate_digest} as {result.signer_id}")
+    if result.readmits is not None:
+        click.echo(_replaces_line(result.proposal_id, result.readmits))
     for line in _approval_outcome_lines(result):
         click.echo(line)
+
+
+def _replaces_line(proposal_id: str, source_id: str) -> str:
+    """A readmission's receipt names the proposal it replaces, which is the one reviewed."""
+
+    return f"{proposal_id} replaces {source_id} (readmitted at the head); act on {proposal_id}"
 
 
 def _landed_same_change_set(result: contracts.ProposalApprovalResult) -> str | None:
@@ -3473,8 +3488,9 @@ def _approval_outcome_lines(receipt: contracts.ApprovalReceipt) -> list[str]:
     if receipt.not_activated == "approvals_remaining":
         count = receipt.approvals_remaining
         return [
-            f"Awaiting {count} more approval{'s' if count != 1 else ''}; the approval "
-            "that completes it activates it"
+            f"Awaiting {count} more approval{'s' if count != 1 else ''}"
+            f"{_awaiting_whom(receipt)}; the approval that completes it activates it",
+            *(f"Next: {step}" for step in _awaiting_approve_steps(receipt)),
         ]
     if receipt.not_activated == "held":
         return [f"Held: not activated. Next: cruxible proposal activate {proposal}"]
@@ -3489,6 +3505,30 @@ def _approval_outcome_lines(receipt: contracts.ApprovalReceipt) -> list[str]:
             f"Next: cruxible proposal readmit {proposal}"
         ]
     return []
+
+
+def _awaiting_whom(receipt: contracts.ApprovalReceipt) -> str:
+    """Whose signatures are outstanding, as the receipt names them."""
+
+    parts = [f"{signer} must sign" for signer in receipt.required_signers]
+    others = receipt.approvals_remaining - len(receipt.required_signers)
+    if others and receipt.eligible_signers:
+        parts.append(f"{others} from: {', '.join(receipt.eligible_signers)}")
+    return f" ({'; '.join(parts)})" if parts else ""
+
+
+def _awaiting_approve_steps(receipt: contracts.ApprovalReceipt) -> list[str]:
+    """The approve command for each outstanding signer the receipt names."""
+
+    proposal = receipt.proposal_id
+    steps = [
+        f"cruxible proposal approve {proposal} --signer-id {signer} --key FILE"
+        for signer in receipt.required_signers
+    ]
+    if receipt.approvals_remaining > len(receipt.required_signers):
+        signer = receipt.eligible_signers[0] if len(receipt.eligible_signers) == 1 else "ID"
+        steps.append(f"cruxible proposal approve {proposal} --signer-id {signer} --key FILE")
+    return steps
 
 
 @proposal_group.command("activate")
@@ -3540,6 +3580,8 @@ def activate_proposal(proposal_id: str, output_brief: bool, output_json: bool) -
 
 
 def _echo_activation(result: contracts.ActivationReceipt) -> None:
+    if result.readmits is not None:
+        click.echo(_replaces_line(result.proposal_id, result.readmits))
     if result.status == "accepted" and result.accepted_coordinate is not None:
         click.echo(f"accepted ({result.accepted_coordinate.git_oid[:12]}) by {result.activated_by}")
         click.echo("next: cruxible next")
@@ -4071,6 +4113,7 @@ def add_principal(
         )
         # The actor's own signature completes a lifecycle candidate, so the
         # approval activates it unless more approvals are required.
+        outcome.approval = approval if isinstance(approval, contracts.ApprovalReceipt) else None
         outcome.activated = (
             isinstance(approval, contracts.ApprovalReceipt)
             and approval.activation is not None
@@ -4151,6 +4194,7 @@ class _PrincipalAddOutcome:
     signer_id: str | None = None
     activated: bool = False
     credential: contracts.RuntimeCredentialResult | None = None
+    approval: contracts.ApprovalReceipt | None = None
 
 
 def _admitted_proposal_id(proposed: contracts.ProposalInspection) -> str | None:
@@ -4193,12 +4237,18 @@ def _principal_add_next_steps(
         ]
     signer = outcome.signer_id or "YOUR_PRINCIPAL_ID"
     steps = []
-    if outcome.signer_id is None:
+    approval = outcome.approval
+    if approval is not None and approval.not_activated == "approvals_remaining":
+        # Signed, but more signatures are required: activating now would refuse.
+        steps.extend(_awaiting_approve_steps(approval))
+    elif outcome.signer_id is None:
         steps.append(
             f"cruxible proposal approve {outcome.proposal_id} --signer-id {signer} "
             "--key YOUR_PRIVATE_KEY"
         )
-    steps.append(f"cruxible proposal activate {outcome.proposal_id}")
+        steps.append(f"cruxible proposal activate {outcome.proposal_id}")
+    else:
+        steps.append(f"cruxible proposal activate {outcome.proposal_id}")
     steps.append(
         f"with daemon auth on: cruxible credential mint --principal-id {principal_id} "
         f"--key-dir {custody} --mode {permission_mode} (writes the token into "
@@ -4301,7 +4351,7 @@ def _principal_successor(
     if output_json:
         _emit_json(result.model_dump(mode="json"))
     else:
-        _echo_proposal(result, result.lint)
+        _echo_proposal(result, result.lint, principal_change=True)
 
 
 @principal_group.command("rotate")
@@ -4398,7 +4448,7 @@ def revoke_principal(
     if output_json:
         _emit_json(result.model_dump(mode="json"))
     else:
-        _echo_proposal(result, result.lint)
+        _echo_proposal(result, result.lint, principal_change=True)
 
 
 @playbill_group.group("claim-type")
@@ -4599,9 +4649,16 @@ def _claim_type_lint_meaning(code: str) -> str:
 
 
 def _echo_proposal(
-    inspection: contracts.ProposalInspection, lint: contracts.ClaimTypeProposalLint | None
+    inspection: contracts.ProposalInspection,
+    lint: contracts.ClaimTypeProposalLint | None,
+    *,
+    principal_change: bool = False,
 ) -> None:
-    """A proposal in a few lines; ``--json`` carries the whole record."""
+    """A proposal in a few lines; ``--json`` carries the whole record.
+
+    A principal change never lands on submit: it needs its proposer's own
+    signature, so its next line is that approval.
+    """
 
     admission = inspection.proposal.get("admission") or {}
     evaluation = inspection.proposal.get("evaluation") or {}
@@ -4622,8 +4679,20 @@ def _echo_proposal(
             f"lint: {warning.code} at {warning.field_path}{contract}"
             + _claim_type_lint_meaning(warning.code)
         )
+    actor = admission.get("actor_id") if isinstance(admission, Mapping) else None
     if inspection.outcome is not None:
         _echo_landing(inspection.outcome)
+    elif (
+        proposal_id
+        and principal_change
+        and verdict == "candidate"
+        and isinstance(actor, str)
+        and not inspection.status.startswith("would")
+    ):
+        click.echo(
+            f"next: cruxible proposal approve {proposal_id} --signer-id {actor} --key FILE "
+            "(a principal change needs its proposer's own signature)"
+        )
     elif proposal_id:
         click.echo(f"next: cruxible get {proposal_id}")
     echo_preview_next(inspection.status, inspection.accepted_coordinate)

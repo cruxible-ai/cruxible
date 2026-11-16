@@ -20,6 +20,7 @@ from cruxible_client.contracts.operator_mac import (
     OPERATOR_TIMESTAMP_HEADER,
 )
 from cruxible_client.contracts.principals import (
+    EFFECTIVE_PERMISSION_MODE_HEADER,
     PRINCIPAL_ID_ENV,
     PRINCIPAL_ID_HEADER,
     is_canonical_principal_id,
@@ -29,6 +30,7 @@ from cruxible_core.errors import PrincipalRefusalCode, PrincipalRefusedError
 from cruxible_core.runtime.permissions import (
     PermissionMode,
     clamp_to_capability_ceiling,
+    request_ceiling_scope,
     request_instance_scope,
     request_permission_scope,
 )
@@ -77,7 +79,6 @@ _REQUEST_CONTEXT: contextvars.ContextVar[Request | None] = contextvars.ContextVa
     default=None,
 )
 
-EFFECTIVE_PERMISSION_MODE_HEADER = "X-Cruxible-Effective-Permission-Mode"
 
 # Methods that mutate state. A cross-site browser write must clear the Origin
 # gate; the no-Origin fail-closed rule below applies only to these.
@@ -564,28 +565,36 @@ async def token_auth_middleware(
             )
         # The runtime bootstrap operator acts as no principal; a claim sent
         # alongside its daemon-wide operations is ignored, not honored.
-    if request.headers.get(EFFECTIVE_PERMISSION_MODE_HEADER) is not None and (
-        resolved_context is None or resolved_context.credential_type != "runtime_credential"
-    ):
+    requested = request.headers.get(EFFECTIVE_PERMISSION_MODE_HEADER)
+    requested_mode = _requested_permission_ceiling(requested)
+    if requested is not None and requested_mode is None:
         return _unauthorized_request_response(request)
 
     effective_mode: PermissionMode | None = None
     if resolved_context is not None and resolved_context.effective_permission_mode is not None:
-        relayed_mode = _relayed_effective_permission_mode(request, resolved_context)
-        if relayed_mode is None:
-            return _unauthorized_request_response(request)
-        effective_mode = clamp_to_capability_ceiling(relayed_mode)
+        # A credential's tier, lowered (never raised) to the ceiling the client asked for.
+        effective_mode = clamp_to_capability_ceiling(
+            resolved_context.effective_permission_mode
+            if requested_mode is None
+            else min(requested_mode, resolved_context.effective_permission_mode)
+        )
         resolved_context = replace(
             resolved_context,
             effective_permission_mode=effective_mode,
         )
+    elif requested_mode is not None:
+        # Auth off (or a principal claim): the request otherwise runs at the
+        # daemon's ceiling; a client capped lower (an MCP server under
+        # CRUXIBLE_MODE) asks for its own cap and gets the lower of the two.
+        effective_mode = clamp_to_capability_ceiling(requested_mode)
 
-    with _auth_context_scope(resolved_context, request):
+    with _auth_context_scope(resolved_context, request), request_ceiling_scope(requested_mode):
         if effective_mode is not None:
-            assert resolved_context is not None
             with (
                 request_permission_scope(effective_mode),
-                request_instance_scope(resolved_context.instance_scope),
+                request_instance_scope(
+                    None if resolved_context is None else resolved_context.instance_scope
+                ),
             ):
                 return await _call_next_with_request_log(
                     request,
@@ -599,23 +608,18 @@ async def token_auth_middleware(
         )
 
 
-def _relayed_effective_permission_mode(
-    request: Request,
-    context: ResolvedAuthContext,
-) -> PermissionMode | None:
-    raw_mode = request.headers.get(EFFECTIVE_PERMISSION_MODE_HEADER)
+def _requested_permission_ceiling(raw_mode: str | None) -> PermissionMode | None:
+    """The tier a client asks to be capped at (it can only lower its authority).
+
+    None when absent or not a tier name; a malformed header refuses the request.
+    """
+
     if raw_mode is None:
-        return context.effective_permission_mode
-    if context.credential_type != "runtime_credential":
         return None
     try:
-        relayed_mode = PermissionMode[raw_mode.strip().upper()]
+        return PermissionMode[raw_mode.strip().upper()]
     except KeyError:
         return None
-    credential_mode = context.effective_permission_mode
-    if credential_mode is None or relayed_mode > credential_mode:
-        return None
-    return relayed_mode
 
 
 async def _call_next_with_request_log(

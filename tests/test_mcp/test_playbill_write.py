@@ -473,3 +473,24 @@ def test_mcp_set_catalogues_the_workspace_file_it_cites(monkeypatch, tmp_path):
     assert outcome.catalogued == (
         CataloguedFile(file="app/forms.py", name="doc-app-forms.py", written=True),
     )
+
+
+@pytest.mark.parametrize(
+    ("mode", "ceiling"),
+    [("read_only", "read_only"), ("governed_write", "governed_write"), ("admin", None)],
+)
+def test_a_capped_server_sends_its_cap_with_every_daemon_request(
+    monkeypatch: pytest.MonkeyPatch, mode: str, ceiling: str | None
+) -> None:
+    """Round 2 of gapa-06: the cap is authority. The daemon client carries it, so
+    the daemon serves a write, a run or a whoami at the lower of the cap and the
+    request's own tier (``test_a_client_ceiling_is_authority_not_wording``)."""
+
+    from cruxible_core.runtime.permissions import reset_permissions
+
+    monkeypatch.setenv("CRUXIBLE_MODE", mode)
+    reset_permissions()
+    try:
+        assert handlers._permission_ceiling() == ceiling
+    finally:
+        reset_permissions()

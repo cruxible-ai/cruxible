@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import difflib
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any, Literal
 
 from pydantic import (
@@ -35,6 +35,7 @@ from cruxible_client.contracts.declared_blocks import (
 from cruxible_client.contracts.documents import parse_document
 from cruxible_client.contracts.errors import (
     ApprovalIntegrityError,
+    ApprovalSignerAfterBase,
     ProposalIntegrityError,
     ProposalReviewOptionsInvalid,
 )
@@ -704,33 +705,55 @@ def service_prepare_playbill_approval(
     proposal_id: str,
     signer_id: str,
     access: BodyAccessContext,
+    land: Callable[[], None] | None = None,
 ) -> ApprovalChallenge:
-    """Return the exact public statement a client signer may choose to approve."""
+    """Return the exact public statement a client signer may choose to approve.
+
+    A signer is checked against the principal registry of the coordinate it
+    signs at: the candidate's parent. A principal registered after a proposal's
+    base is absent there, so it cannot sign that candidate. When it is active at
+    the head and the caller may submit approvals (``land``, which checks the
+    caller), the proposal lands at the head first, exactly as an approval of a
+    moved proposal lands it, and the challenge is for the landed candidate,
+    whose parent registry holds the signer. ``challenge.proposal_id`` then
+    names the landed proposal; sign and submit that one.
+    """
+
+    from cruxible_core.service.authoring.documents import (
+        land_for_signer,
+        refuse_accepted,
+    )
 
     review = service_review_playbill_proposal(
         instance, proposal_id=proposal_id, access=access, detail=True
     )
     assert isinstance(review, ProposalReview)
+    head_root = instance.accepted_coordinate().semantic_root
+    if review.parent_semantic_root != head_root:
+        # Nothing to sign for: an accepted proposal's change is already in state.
+        refuse_accepted(instance, review.proposal_id, review.candidate_digest)
     generation = instance.generation_for_semantic_root(review.parent_semantic_root)
-    principal = generation.principals.require_active(signer_id)
-    if principal.kind == "daemon":
-        raise ApprovalIntegrityError("daemon identity cannot provide client approval")
-    principal_lifecycle = all(
-        member.artifact_kind == "principal-lifecycle" for member in review.complete_members
-    )
-    creator_principal_id = str(review.provenance["actor_id"])
-    if (
-        not principal_lifecycle
-        and review.candidate.approval_requirements
-        and signer_id == creator_principal_id
+    if review.parent_semantic_root != head_root and not _active_in(
+        generation.principals, signer_id
     ):
-        raise ApprovalIntegrityError(
-            "cruxible.approval.creator_forbidden: independent_approval_required mode needs "
-            "an active ordinary approver other than the candidate creator, whose "
-            "approval activates it"
-        )
-    if not principal_lifecycle and principal.kind == "recovery":
-        raise ApprovalIntegrityError("recovery principal cannot approve ordinary Documents")
+        head_principals = instance.generation_for_semantic_root(head_root).principals
+        if _active_in(head_principals, signer_id):
+            # Everything that would refuse this signer on the landed candidate is
+            # checked first, against the head registry it would sign under: a
+            # refused challenge changes nothing (no landing, no supersession).
+            _refuse_ineligible_signer(head_principals.require_active(signer_id), review)
+            author = str(review.provenance["actor_id"])
+            if land is None:
+                raise ApprovalSignerAfterBase(
+                    review.proposal_id, signer_id=signer_id, author=author
+                )
+            land()
+            landed = land_for_signer(instance, review.proposal_id)
+            return service_prepare_playbill_approval(
+                instance, proposal_id=landed, signer_id=signer_id, access=access
+            )
+    principal = generation.principals.require_active(signer_id)
+    _refuse_ineligible_signer(principal, review)
     return ApprovalChallenge(
         proposal_id=proposal_id,
         signer_principal=principal,
@@ -741,6 +764,40 @@ def service_prepare_playbill_approval(
             payload_digest=review.candidate_digest,
         ),
         review=review,
+    )
+
+
+def _refuse_ineligible_signer(principal: PrincipalRecord, review: ProposalReview) -> None:
+    """Refuse a signer whose approval of this candidate would never count.
+
+    The daemon never approves; an ordinary candidate's creator does not approve
+    under independent approval; a recovery principal approves only principal
+    changes.
+    """
+
+    if principal.kind == "daemon":
+        raise ApprovalIntegrityError("daemon identity cannot provide client approval")
+    principal_lifecycle = all(
+        member.artifact_kind == "principal-lifecycle" for member in review.complete_members
+    )
+    if (
+        not principal_lifecycle
+        and review.candidate.approval_requirements
+        and principal.principal_id == str(review.provenance["actor_id"])
+    ):
+        raise ApprovalIntegrityError(
+            "cruxible.approval.creator_forbidden: independent_approval_required mode needs "
+            "an active ordinary approver other than the candidate creator, whose "
+            "approval activates it"
+        )
+    if not principal_lifecycle and principal.kind == "recovery":
+        raise ApprovalIntegrityError("recovery principal cannot approve ordinary Documents")
+
+
+def _active_in(principals: Any, principal_id: str) -> bool:
+    return any(
+        record.principal_id == principal_id and record.status == "active"
+        for record in principals.principals
     )
 
 

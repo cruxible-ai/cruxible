@@ -171,12 +171,16 @@ def test_a_lower_tier_refuses_init_and_read_only_refuses_submit(
     with pytest.raises(PermissionDeniedError, match="requires ADMIN"):
         handlers.handle_init("owner")
     is_error, text = _call("cruxible_init", {})
-    assert is_error and "requires transport tier ADMIN" in text
+    assert is_error and text.startswith(
+        "cruxible.mcp.mode_insufficient: tool 'cruxible_init' needs the admin tier; "
+        "this MCP server runs at governed_write (CRUXIBLE_MODE)"
+    )
+    assert "Repair: set CRUXIBLE_MODE=admin (or higher)" in text
 
     monkeypatch.setenv("CRUXIBLE_MODE", "read_only")
     reset_permissions()
     is_error, text = _call("cruxible_authoring_submit_file", {"path": "x.json"})
-    assert is_error and "requires transport tier GOVERNED_WRITE" in text
+    assert is_error and "needs the governed_write tier; this MCP server runs at read_only" in text
     reset_permissions()
 
 

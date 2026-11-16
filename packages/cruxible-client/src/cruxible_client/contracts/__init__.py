@@ -1133,6 +1133,9 @@ class ActivationReceipt(BaseModel):
     status: Literal["accepted", "lost_cas"]
     accepted_coordinate: AcceptedCoordinate | None
     workspace_advertisement: WorkspaceAdvertisement
+    #: The proposal this one re-admitted at the head, when it is a readmission
+    #: (a moved proposal an approval or activation landed): the one reviewed.
+    readmits: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 #: Why an approval did not activate its candidate: the signer held activation
@@ -1162,6 +1165,13 @@ class ApprovalReceipt(BaseModel):
     not_activated: ApprovalNotActivated | None = None
     approvals_remaining: int = Field(default=0, ge=0)
     git_workspace_note: GitWorkspaceNote | None = None
+    #: The proposal this one re-admitted at the head, when it is a readmission
+    #: (a moved proposal an approval landed): the one the signer reviewed.
+    readmits: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    #: While approvals remain: who must each still sign (a principal change's
+    #: proposer), and who may give the rest.
+    required_signers: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
+    eligible_signers: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
 
 
 ProposalActivationResult = ActivationReceipt | ProposalRecompiled

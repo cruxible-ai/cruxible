@@ -271,11 +271,28 @@ class ProposalWithdrawnError(ProposalAdmissionError):
         actor_id: str,
         reason: str,
         withdrawn_at: str,
+        superseded_by: str | None = None,
     ) -> None:
         self.proposal_id = proposal_id
         self.actor_id = actor_id
         self.reason = reason
         self.withdrawn_at = withdrawn_at
+        self.superseded_by = superseded_by
+        if superseded_by is not None:
+            # Superseded, not abandoned: the same work goes on under the successor
+            # (a landing at the head, or a later run of the same Line).
+            from cruxible_client.contracts.repairs import RepairOperation
+
+            self.repair = RepairOperation(
+                operation="cruxible.proposal.activate", arguments={"proposal_id": superseded_by}
+            )
+            super().__init__(
+                f"{self.error_code}: proposal {proposal_id} was superseded by {superseded_by} "
+                f"at {withdrawn_at} ({reason}); act on {superseded_by} instead: "
+                f"`cruxible proposal activate {superseded_by}` once its approvals are in "
+                f"(`cruxible proposal approve {superseded_by}` while they are not)."
+            )
+            return
         super().__init__(
             f"{self.error_code}: proposal {proposal_id} was withdrawn by {actor_id!r} at "
             f"{withdrawn_at} ({reason}); a withdrawal is terminal, so author the change "
@@ -398,6 +415,55 @@ class ProposalReadmitAlreadyAccepted(ProposalAdmissionError):
             f"{self.error_code}: proposal {proposal_id} is not stale work: {how}, so "
             "its change is in accepted state; run `cruxible next` for what "
             "still needs you"
+        )
+
+
+class ProposalReadmitNotAuthor(ProposalAdmissionError):
+    """Readmission refused: only the proposal's author readmits it.
+
+    A readmission re-admits the author's change under the author's name, so
+    another principal may not do it for them. A reviewer who will not approve
+    the stale change rejects it with a reason, so the author learns why.
+    """
+
+    error_code = "cruxible.proposal.readmit_not_author"
+
+    def __init__(self, proposal_id: str, *, author: str) -> None:
+        from cruxible_client.contracts.repairs import RepairOperation
+
+        self.proposal_id = proposal_id
+        self.author = author
+        self.repair = RepairOperation(
+            operation="cruxible.proposal.reject", arguments={"proposal_id": proposal_id}
+        )
+        super().__init__(
+            f"{self.error_code}: only its author {author!r} may readmit proposal "
+            f"{proposal_id}; ask them to, or reject it with `cruxible proposal reject "
+            f"{proposal_id} --reason TEXT` so they learn why"
+        )
+
+
+class ProposalAlreadyAccepted(ProposalAdmissionError):
+    """Approval or activation refused: the proposal is already accepted.
+
+    Acting again on an accepted proposal settles nothing: its change is in
+    accepted state at the generation named here. The refusal says so instead of
+    calling it stale, whose readmit and withdraw repairs would all refuse.
+    """
+
+    error_code = "cruxible.proposal.already_accepted"
+
+    def __init__(self, proposal_id: str, *, git_oid: str, generation: int) -> None:
+        from cruxible_client.contracts.repairs import RepairOperation
+
+        self.proposal_id = proposal_id
+        self.git_oid = git_oid
+        self.generation = generation
+        self.repair = RepairOperation(operation="cruxible.get", arguments={"ref": proposal_id})
+        super().__init__(
+            f"{self.error_code}: proposal {proposal_id} is already accepted at "
+            f"{git_oid} (generation {generation}); there is nothing left to approve or "
+            f"activate. Read it with `cruxible get {proposal_id}`"
         )
 
 
@@ -567,6 +633,92 @@ class ProposalEvaluationIntegrityError(ProposalIntegrityError):
 
 class ApprovalIntegrityError(CruxibleError):
     """An approval statement, signer, signature, or required quorum was refused."""
+
+
+class ApprovalSignerAfterBase(ApprovalIntegrityError):
+    """A signer registered after a proposal's base cannot sign its candidate as it stands.
+
+    Signatures are checked against the principal registry of the coordinate
+    they sign at, the candidate's parent, where this principal is absent. An
+    approver whose tier may submit approvals lands the proposal at the head by
+    approving it; otherwise its author readmits it.
+    """
+
+    error_code = "cruxible.approval.signer_after_base"
+
+    def __init__(self, proposal_id: str, *, signer_id: str, author: str) -> None:
+        from cruxible_client.contracts.repairs import RepairOperation
+
+        self.proposal_id = proposal_id
+        self.signer_id = signer_id
+        self.author = author
+        self.repair = RepairOperation(
+            operation="cruxible.proposal.readmit", arguments={"proposal_id": proposal_id}
+        )
+        super().__init__(
+            f"{self.error_code}: {signer_id} was registered after proposal {proposal_id}'s "
+            "base, so it cannot sign that candidate as it stands. An approver who may "
+            f"submit approvals (graph_write) lands it at the head by approving it "
+            f"(`cruxible proposal approve {proposal_id} --signer-id {signer_id}`); otherwise "
+            f"its author {author!r} runs `cruxible proposal readmit {proposal_id} --commit "
+            "--at OID` and you approve the new proposal"
+        )
+
+
+class ApprovalRequirementUnmet(ApprovalIntegrityError):
+    """Activation refused: the candidate's approval requirement is not met yet.
+
+    Activation never changes a proposal that may not settle: it refuses before
+    anything is landed, readmitted or withdrawn, and names whose signatures are
+    outstanding: ``required_signers`` must each sign (a principal change needs its
+    proposer's own signature); the rest come from ``eligible_signers``.
+    """
+
+    error_code = "cruxible.approval.requirement_unsatisfied"
+
+    def __init__(
+        self,
+        proposal_id: str,
+        *,
+        remaining: int,
+        required_signers: tuple[str, ...] = (),
+        eligible_signers: tuple[str, ...] = (),
+        independent: bool = True,
+    ) -> None:
+        from cruxible_client.contracts.repairs import RepairOperation
+
+        self.proposal_id = proposal_id
+        self.remaining = remaining
+        self.required_signers = required_signers
+        self.eligible_signers = eligible_signers
+        self.independent = independent
+        self.repair = RepairOperation(
+            operation="cruxible.proposal.approve", arguments={"proposal_id": proposal_id}
+        )
+        plural = "s" if remaining != 1 else ""
+        needs = []
+        if required_signers:
+            needs.append(
+                f"{', '.join(required_signers)} must sign (a principal change needs its "
+                "proposer's own signature)"
+            )
+        others = remaining - len(required_signers)
+        if others:
+            who = ", ".join(eligible_signers) if eligible_signers else "none registered yet"
+            rule = (
+                "an independent approver (independent_approval_required mode needs an "
+                "active ordinary approver other than the candidate creator)"
+                if independent
+                else "any active ordinary principal (a compiler upgrade needs one signature)"
+            )
+            needs.append(f"{others} from {rule}: {who}")
+        signer = (required_signers or eligible_signers or ("ID",))[0]
+        super().__init__(
+            f"{self.error_code}: proposal {proposal_id} needs {remaining} more approval{plural} "
+            f"before it can be activated: {'; '.join(needs)}. Nothing was changed. Next: "
+            f"`cruxible proposal approve {proposal_id} --signer-id {signer} --key FILE`; the "
+            "approval that completes it activates it"
+        )
 
 
 class PrincipalIntegrityError(CruxibleError):
@@ -745,6 +897,8 @@ class ProjectionIntegrityError(ProjectionError):
 __all__ = [
     "CanonicalEncodingError",
     "ApprovalIntegrityError",
+    "ApprovalRequirementUnmet",
+    "ApprovalSignerAfterBase",
     "ClaimNotFoundError",
     "DocumentFormatError",
     "DocumentNotFoundError",
@@ -764,7 +918,9 @@ __all__ = [
     "PrincipalIntegrityError",
     "ProposalActivationRequestInvalid",
     "ProposalAdmissionError",
+    "ProposalAlreadyAccepted",
     "ProposalReadmitAlreadyAccepted",
+    "ProposalReadmitNotAuthor",
     "ProposalReadmitNotStale",
     "ProposalReadmitRequiresResubmission",
     "ProposalContentUnavailable",

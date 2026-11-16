@@ -11,6 +11,7 @@ from cruxible_client.contracts.approval_policy import (
     render_approval_policy,
 )
 from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.errors import ApprovalRequirementUnmet
 from cruxible_client.contracts.procedure_mandates import (
     procedure_mandate_path,
     render_procedure_mandate,
@@ -24,10 +25,13 @@ from cruxible_client.contracts.recompilation import ProposalRecompiled
 from cruxible_core.service.authoring.documents import (
     service_activate_playbill_proposal,
     service_inspect_playbill_proposal,
+    service_submit_playbill_approval,
 )
 from cruxible_core.service.proposals.proposals import _proposal_result
 from cruxible_core.service.proposals.recompile import recompile_proposal
 from tests.core_support._knowledge_loop_support import accept_proposal
+from tests.core_support._support import client_material
+from tests.test_ledger.test_activation import _sign
 from tests.test_procedures import test_procedure_source_runs as fixtures
 from tests.test_procedures.test_procedure_proposal_delivery import proposal_world, run_line
 from tests.test_procedures.test_procedure_settlement_delivery import (
@@ -129,9 +133,30 @@ def test_eight_distinct_product_proposals_recompile_lazily(
         source = _proposal_result(instance, proposal_id)
         oracle = recompile_proposal(instance, source, preview=True)
         assert oracle is not None and oracle.proposal.candidate is not None
-        result = service_activate_playbill_proposal(
-            instance, proposal_id=proposal_id, activated_by="owner"
-        )
+        if required:
+            # Activation changes nothing about a proposal whose approval is not in
+            # (gapa-04); the reviewer's approval is what lowers it at the head.
+            admissions = instance.proposal_evidence().list_admissions()
+            with pytest.raises(ApprovalRequirementUnmet):
+                service_activate_playbill_proposal(
+                    instance, proposal_id=proposal_id, activated_by="owner"
+                )
+            assert instance.proposal_evidence().list_admissions() == admissions
+            assert source.candidate is not None
+            result = service_submit_playbill_approval(
+                instance,
+                proposal_id=proposal_id,
+                attestation=_sign(
+                    client_material(instance.root.parent, instance),
+                    source.candidate.candidate_digest,
+                    source.candidate.candidate.parent_semantic_root,
+                ).attestation,
+                authenticated_submitter="reviewer",
+            )
+        else:
+            result = service_activate_playbill_proposal(
+                instance, proposal_id=proposal_id, activated_by="owner"
+            )
         assert result.proposal_id != proposal_id
         if required:
             assert isinstance(result, ProposalRecompiled) and result.status == "pending_review"

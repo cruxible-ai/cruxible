@@ -93,6 +93,7 @@ from cruxible_client.contracts.kits import (
     KitRemoveRequest,
     KitStatus,
 )
+from cruxible_client.contracts.principals import AuthoringRefusal
 from cruxible_client.contracts.provider_installation import (
     ProviderCatalog,
     ProviderInstallRequest,
@@ -103,7 +104,7 @@ from cruxible_client.contracts.provider_installation import (
     ProviderRetireResult,
 )
 from cruxible_client.contracts.query.definitions import QueryDefinitionSpec
-from cruxible_client.contracts.repairs import RepairOperation
+from cruxible_client.contracts.repairs import RepairOperation, hand_edit_repair
 from cruxible_client.contracts.runbooks import RunbookPreview, RunbookRunResult
 from cruxible_client.contracts.temporal import parse_datetime
 from cruxible_client.contracts.types import PrincipalRecord
@@ -163,7 +164,11 @@ from cruxible_core.mcp.identity import (
     verified_folder_identity,
 )
 from cruxible_core.mcp.init import run_mcp_init
-from cruxible_core.mcp.permissions import check_permission
+from cruxible_core.mcp.permissions import (
+    PermissionMode,
+    check_permission,
+    get_capability_ceiling,
+)
 from cruxible_core.mcp.results import (
     McpConsoleResult,
     McpInitResult,
@@ -190,7 +195,7 @@ from cruxible_core.service.procedures.procedure_runs import (
 )
 
 _client_cache: CruxibleClient | None = None
-_client_cache_key: tuple[str | None, str | None, str | None, str | None] | None = None
+_client_cache_key: tuple[str | None, ...] | None = None
 _client_cache_lock = threading.RLock()
 ResultT = TypeVar("ResultT")
 _AUTHORING_INPUT: TypeAdapter[AuthoringInput] = TypeAdapter(AuthoringInput)
@@ -222,7 +227,8 @@ def _identity_and_client() -> tuple[McpIdentity, CruxibleClient]:
     target = resolve_daemon_target()
     token = get_runtime_bearer_token()
     source, principal_id, candidate = local_identity(target=target, token=token)
-    cache_key = (target.server_url, target.server_socket, token, principal_id)
+    ceiling = _permission_ceiling()
+    cache_key = (target.server_url, target.server_socket, token, principal_id, ceiling)
     with _client_cache_lock:
         if _client_cache is None or _client_cache_key != cache_key:
             if _client_cache is not None:
@@ -232,6 +238,7 @@ def _identity_and_client() -> tuple[McpIdentity, CruxibleClient]:
                 socket_path=target.server_socket,
                 token=token,
                 principal_id=principal_id,
+                permission_ceiling=ceiling,
             )
             try:
                 # One /version request per client: a daemon on another contract
@@ -249,6 +256,19 @@ def _identity_and_client() -> tuple[McpIdentity, CruxibleClient]:
         return McpIdentity(source=source, principal_id=principal_id), client
     verified = verified_folder_identity(candidate, target=target, client=client)
     return McpIdentity(source="folder", principal_id=principal_id, folder=verified), client
+
+
+def _permission_ceiling() -> Literal["read_only", "governed_write", "graph_write"] | None:
+    """This server's ``CRUXIBLE_MODE`` cap, sent with every daemon request when below admin.
+
+    The daemon then serves each request at the lower of the cap and the
+    request's own authority, so a tool this server serves can have no effect a
+    hidden tool would (a write's activation, a run's effects): the cap is
+    authority, not only which tools are listed.
+    """
+
+    cap = get_capability_ceiling()
+    return None if cap >= PermissionMode.ADMIN else cast(Any, cap.name.lower())
 
 
 def _get_client() -> CruxibleClient:
@@ -608,8 +628,10 @@ def handle_playbill_approve(
         forbidden_roots=mcp_custody_forbidden_roots(),
     )
     attestation = key_signer.sign(statement)
+    # A signer registered after the proposal's base: the challenge landed it at
+    # the head, and the landed proposal is the one this signature is for.
     result = handle_playbill_submit_approval(
-        instance_id, proposal_id, attestation.model_dump(mode="json"), hold=hold
+        instance_id, challenge.proposal_id, attestation.model_dump(mode="json"), hold=hold
     )
     if (
         isinstance(result, contracts.ProposalRecompiled)
@@ -693,12 +715,48 @@ def handle_playbill_whoami(instance_id: str) -> McpWhoAmIResult:
     else:
         # A folder record that cannot be used refuses here, before whoami answers.
         source = "folder" if _folder_identity() is not None else "none"
+    identity = _playbill_whoami(instance_id)
+    cap = get_capability_ceiling()
+    # The daemon answers at this server's cap already (`_permission_ceiling`).
+    effective = min(PermissionMode[identity.credential_permission_mode.upper()], cap)
+    refusal = identity.authoring_refusal
+    if cap < PermissionMode.GOVERNED_WRITE and (
+        identity.can_author
+        or (refusal is not None and refusal.code == "cruxible.identity.permission_insufficient")
+    ):
+        # It is this server's cap that stops authoring, so the repair is the
+        # cap's, not a new credential.
+        identity = identity.model_copy(
+            update={"can_author": False, "authoring_refusal": _mode_cap_refusal(cap)}
+        )
     return McpWhoAmIResult(
         instance_id=instance_id,
         adapter_version=__version__,
         daemon_version=_daemon_version(),
-        identity=_playbill_whoami(instance_id),
+        identity=identity,
         identity_source=source,
+        mode_cap=cast(Any, cap.name.lower()),
+        effective_permission_mode=cast(Any, effective.name.lower()),
+    )
+
+
+def _mode_cap_refusal(cap: PermissionMode) -> AuthoringRefusal:
+    """Why a server capped below governed_write cannot author, and how to lift the cap."""
+
+    code: Literal["cruxible.identity.permission_insufficient"] = (
+        "cruxible.identity.permission_insufficient"
+    )
+    change = (
+        "set CRUXIBLE_MODE=governed_write (or higher) in this MCP server's environment "
+        "(the env block of the MCP client config) and restart it"
+    )
+    return AuthoringRefusal(
+        code=code,
+        detail=(
+            f"this MCP server runs at {cap.name.lower()} (CRUXIBLE_MODE), and authoring "
+            f"needs governed_write; repair: {change}"
+        ),
+        repair=hand_edit_repair(code, required_change=change),
     )
 
 
