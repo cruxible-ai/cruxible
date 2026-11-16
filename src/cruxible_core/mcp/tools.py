@@ -408,6 +408,13 @@ def register_tools(
 
             registered_fn = run_in_worker
         server.tool(description=tool_description(fn.__name__))(registered_fn)
+        # S6: a tool's arguments are exactly its parameters; an unknown one
+        # refuses instead of being dropped. The advertised schema is left as
+        # generated: the refusal names the real arguments, and a root
+        # ``additionalProperties`` on every tool would cost catalog tokens.
+        arg_model = getattr(server, "_tool_manager").get_tool(fn.__name__).fn_metadata.arg_model
+        arg_model.model_config["extra"] = "forbid"
+        arg_model.model_rebuild(force=True)
         registered.append(fn.__name__)
         return fn
 

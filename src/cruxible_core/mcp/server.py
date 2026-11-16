@@ -45,6 +45,28 @@ from cruxible_core.server.config import resolve_server_settings
 
 #: A tool this server's own tier cap (``CRUXIBLE_MODE``) leaves unserved.
 MODE_INSUFFICIENT_CODE = "cruxible.mcp.mode_insufficient"
+#: A call naming an argument the tool does not take (S6).
+ARGUMENT_UNKNOWN_CODE = "cruxible.mcp.argument_unknown"
+
+
+def unknown_argument_message(name: str, arg_model: Any, arguments: Mapping[str, Any]) -> str | None:
+    """The refusal for a call naming arguments ``name`` does not take, or None (S6).
+
+    It names each unknown argument and lists every argument the tool takes, so
+    the caller can repair the call in one step; nothing is silently dropped.
+    """
+
+    accepted = [field.alias or key for key, field in arg_model.model_fields.items()]
+    unknown = sorted(set(arguments) - set(accepted))
+    if not unknown:
+        return None
+    named = ", ".join(repr(item) for item in unknown)
+    plural = "arguments" if len(unknown) > 1 else "argument"
+    return (
+        f"{ARGUMENT_UNKNOWN_CODE}: tool '{name}' takes no {plural} {named}; "
+        f"its arguments: {', '.join(accepted) or '(none)'}"
+    )
+
 
 BASE_INSTRUCTIONS = """\
 Cruxible holds typed shared state and evidence. Start with cruxible_orient's small
@@ -171,6 +193,9 @@ def _install_tool_curation(
             )
         tool = manager.get_tool(name)
         if tool is not None and isinstance(arguments, dict):
+            refused = unknown_argument_message(name, tool.fn_metadata.arg_model, arguments)
+            if refused is not None:
+                raise ToolError(refused)
             arguments = fill_tool_arguments(tool.fn_metadata.arg_model, arguments)
         try:
             return await inner_call_tool(
