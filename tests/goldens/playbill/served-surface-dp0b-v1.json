@@ -2,8 +2,8 @@
   "format": "playbill-served-surface-v1",
   "succession": {
     "ratified_by": "maintainer",
-    "register_entry": "2026-11-16:duplicates-top-level",
-    "surface_digest": "sha256:91e8b7ca4700e5ef1ff4cb6bbcd7d3df260e8303438ad5b88211349e41a574c1"
+    "register_entry": "2026-11-16:repin-principal-preflight",
+    "surface_digest": "sha256:c61a99c82ebc56f63e33c12b39855a38db9a4dc21ef14888cfc96ba0b4163656"
   },
   "surface": {
     "cli_leaves": [
@@ -2168,7 +2168,8 @@
           "head",
           "observe_blocks",
           "query",
-          "read_block_sync_backing"
+          "read_block_sync_backing",
+          "whoami"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_block_detach",
         "input_schema_digest": "sha256:41df891b9cb6d6447844e9c09ef2296e2140985292b7cc5a4ed9cab918f0d5ab",
@@ -2183,7 +2184,8 @@
           "head",
           "observe_blocks",
           "query",
-          "read_block_sync_backing"
+          "read_block_sync_backing",
+          "whoami"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_block_repin",
         "input_schema_digest": "sha256:cfe4a03761d1cb614d19e4b5ad1baab98770be01da2fff32d5e786db1c5de4ec",
@@ -2199,7 +2201,8 @@
           "head",
           "observe_blocks",
           "query",
-          "read_block_sync_backing"
+          "read_block_sync_backing",
+          "whoami"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_block_sync",
         "input_schema_digest": "sha256:9daa3058512a08c60c90ac85da1becc621e51d429397be01fcd2033df94e8897",
