@@ -5086,7 +5086,11 @@ class ProcedureExecutor:
                 )
                 if self.capture_observations is not None:
                     built[field] = self._held_or_new(
-                        built[field], deferred, reserved_store, request=request_identity
+                        built[field],
+                        deferred,
+                        reserved_store,
+                        request=request_identity,
+                        pending=state.pending_reuse_keys,
                     )
                     if built[field].capture_digest in deferred.reused:
                         reused.add(field)
@@ -5361,6 +5365,7 @@ class ProcedureExecutor:
         reserved_store: ReservedCaptureStore,
         *,
         request: str,
+        pending: dict[str, str],
     ) -> Any:
         """The held Capture an identical re-fetch reproduces, else this new one, stored.
 
@@ -5384,7 +5389,9 @@ class ProcedureExecutor:
             if reserved_store.store(content).digest != item.capture_digest:
                 raise ExecutionError("Capture envelope CAS digest did not reproduce")
             if key is not None:
-                self.capture_observations.remember(key, item.capture_digest)
+                # Reusable only once its production is durable (F-008): named
+                # when this run journals producing it, never before.
+                pending[item.capture_digest] = key
             return item
         digest, envelope = held
         deferred.reused.add(digest)
@@ -6141,6 +6148,9 @@ class ProcedureExecutor:
                 invocation_receipt_digest=invocation_receipt_digest,
                 member_request_digest=member_request_digest,
             )
+            key = state.pending_reuse_keys.pop(digest, None)
+            if key is not None and self.capture_observations is not None:
+                self.capture_observations.remember(key, digest)
         state.source_capture_associations.append(
             ProcedureSourceCaptureAssociation(
                 occurrence_path=occurrence_path,

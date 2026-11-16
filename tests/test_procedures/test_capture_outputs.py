@@ -799,3 +799,45 @@ def test_a_singleton_capture_is_reused_only_for_the_exact_request_it_answered(
     first = fetch(None, 0)
     assert fetch("refunds", 1) != first
     assert fetch(None, 2) == first
+
+
+def test_a_capture_never_recorded_produced_is_not_reused(tmp_path: Path) -> None:
+    """F-008: the first fetch built doc.right but omitted it as stale, so no run
+    recorded producing it; the next identical-byte fetch is fresh and records
+    producing its own Capture rather than reusing the unproven one."""
+
+    from datetime import timedelta
+
+    from cruxible_core.service.procedures.procedure_runs import (
+        LineRunRequest,
+        service_run_playbill_line,
+    )
+    from tests.support.operation_world import NOW, Operator, actor
+    from tests.test_procedures.test_b2_operations import Clock
+
+    instance = _paired_world(
+        tmp_path, acquisition={"doc.right": {"max_age": "PT1M", "on_stale": "omit"}}
+    )
+
+    def run(right_observed_at: str, minute: int) -> Any:
+        state = service_run_playbill_line(
+            instance,
+            path_identity_digest=LINE_NAME,
+            request=LineRunRequest(line=LINE_NAME),
+            actor_context=actor(),
+            caller_rung=2,
+            daemon_clock=Clock(NOW + timedelta(minutes=minute)),
+            provider_runtime_operator=Operator(  # type: ignore[arg-type]
+                Invoker(output=_paired_output(right_observed_at=right_observed_at))
+            ),
+        )
+        assert state.status == "succeeded", state.terminal
+        return state
+
+    first = run("2026-10-29T11:00:00Z", 0)
+    assert [item["field"] for item in _journal(instance, first.run_id, "produced_capture")] == [
+        "left"
+    ]
+    second = run("2026-10-29T12:01:00Z", 1)
+    produced = _journal(instance, second.run_id, "produced_capture")
+    assert [item["field"] for item in produced] == ["right"]  # left is reused
