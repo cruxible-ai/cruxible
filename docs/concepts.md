@@ -225,13 +225,14 @@ with a reason (`was-rescinded`, `was-wrong` or `superseded`). For example, the C
 2019 Civic, and what it rests on, a line of the supplier's catalog:
 
 ~~~text
-$ cruxible get CLM-abbe35eeffed479c1b18674c93880802
+$ cruxible get CLM-af7c0e5f9b324647c0fd64c6e0d22361
 catalog.part/bp-2210  fits = catalog.vehicle/honda-civic-2019
-CLM-abbe35eeffed479c1b18674c93880802  verdict=supported status=accepted revision=1
+CLM-af7c0e5f9b324647c0fd64c6e0d22361  verdict=supported status=accepted revision=1 accepted=2026-11-16T05:18:33.937786Z
+...
 
-$ cruxible get CLM-abbe35eeffed479c1b18674c93880802 --detail evidence
+$ cruxible get CLM-af7c0e5f9b324647c0fd64c6e0d22361 --detail evidence
 value: catalog.vehicle/honda-civic-2019
-capture CAP-a0a989ec8fe7  CaptureContract:cruxible.foreign-source.catalog v1  source=catalog  ...  evidence: admitted
+capture CAP-e3c05a8a2b6a  CaptureContract:cruxible.foreign-source.catalog v1  source=supplier/acme-2026.txt  ...  evidence: admitted
 rationale: Acme's 2026 catalog lists bp-2210 for the 2019 Civic.
 ~~~
 
