@@ -426,8 +426,8 @@ def test_a_layout_5_projection_gains_the_split_in_place_with_earlier_postings_un
     assert store.posted_by_run("RUN-1") == (1, None)
     assert store.posted_by_run("RUN-2") == (1, 0)
     connection = sqlite3.connect(store.path)
-    # Layout 5 moves in place to 7 (the column, then the posting batches table).
-    assert connection.execute("PRAGMA user_version").fetchone()[0] == 7
+    # Layout 5 moves in place to 8 (the columns, then the batch and group tables).
+    assert connection.execute("PRAGMA user_version").fetchone()[0] == 8
     connection.close()
 
 
@@ -468,7 +468,7 @@ def test_an_upgrade_stopped_before_its_version_moves_leaves_layout_5_and_reopens
 
     def stopped_before_the_version(*_args: object) -> int:
         action, first, second = _args[:3]
-        if action == sqlite3.SQLITE_PRAGMA and first == "user_version" and second == "7":
+        if action == sqlite3.SQLITE_PRAGMA and first == "user_version" and second == "8":
             return sqlite3.SQLITE_DENY
         return sqlite3.SQLITE_OK
 
@@ -547,3 +547,62 @@ def test_a_terminal_reposting_the_same_items_journals_one_batch_and_no_item_row(
         conn.close()
     entries, _cursor = store.page(line=None, status=None, limit=10, cursor=None)
     assert {entry.envelope.occurrences for entry in entries} == {2}
+
+
+def test_a_resighted_batch_writes_one_group_row_and_no_item_row_at_two_sizes(
+    tmp_path: Path,
+) -> None:
+    """Open question 3: a re-sighting is one row for its group; items are not rewritten.
+
+    Each item's occurrences, window and last sighting as read come from its
+    group's sightings since it joined.
+    """
+
+    import sqlite3
+
+    for size in (3, 30):
+        (tmp_path / str(size)).mkdir()
+        _instance, store, write = _world(tmp_path / str(size))
+        items = [{"cve": f"CVE-{index}"} for index in range(size)]
+
+        def post(run_id: str, at: datetime) -> None:
+            store.post(
+                [
+                    _posting(item, run_id=run_id, item_key=f"item-{index}", at=at)
+                    for index, item in enumerate(items)
+                ],
+                **write,  # type: ignore[arg-type]
+            )
+
+        post("RUN-1", NOW)
+
+        def stored() -> list[tuple[object, ...]]:
+            conn = sqlite3.connect(store.path)
+            try:
+                return conn.execute(
+                    "SELECT item_id,last_seen,envelope,group_base FROM items ORDER BY item_id"
+                ).fetchall()
+            finally:
+                conn.close()
+
+        before = stored()
+        post("RUN-2", NOW + timedelta(hours=1))
+        post("RUN-3", NOW + timedelta(hours=2))
+        assert stored() == before  # no item row rewritten
+        conn = sqlite3.connect(store.path)
+        try:
+            assert conn.execute("SELECT occurrences FROM inbox_groups").fetchall() == [(3,)]
+        finally:
+            conn.close()
+        entries, _cursor = store.page(line=None, status=None, limit=size, cursor=None)
+        assert len(entries) == size
+        for entry in entries:
+            envelope = entry.envelope
+            assert envelope.occurrences == 3
+            assert envelope.last_sighting.run_id == "RUN-3"
+            assert [item.run_id for item in envelope.recent_sightings][:3] == [
+                "RUN-3",
+                "RUN-2",
+                "RUN-1",
+            ]
+            assert store.get(envelope.item_id).envelope == envelope

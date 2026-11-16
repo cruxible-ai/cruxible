@@ -82,12 +82,16 @@ _PREVIEW: TypeAdapter[ShownValue] = TypeAdapter(ShownValue)
 #: projection gains the column in place, its earlier rows unknown (NULL).
 #: 7: a terminal's posting is one batch (``posting_batches``) citing a run-free
 #: body of its items; a layout-6 projection gains the table in place.
-_SCHEMA_VERSION = 7
+#: 8: a batch is one sighting of its group (``inbox_groups``); an item names its
+#: group and is not rewritten when the group is sighted again. Gained in place.
+_SCHEMA_VERSION = 8
 _TABLES = (
     "progress",
     "items",
     "postings",
     "posting_batches",
+    "inbox_groups",
+    "group_status",
     "unread",
     "dispositions",
     "incomplete",
@@ -102,7 +106,8 @@ CREATE TABLE IF NOT EXISTS incomplete (singleton INTEGER PRIMARY KEY, payload_di
 CREATE TABLE IF NOT EXISTS progress (singleton INTEGER PRIMARY KEY, sequence INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS items (
  item_id TEXT PRIMARY KEY, line TEXT NOT NULL, status TEXT NOT NULL, last_seen TEXT NOT NULL,
- envelope TEXT NOT NULL, preview TEXT NOT NULL, payload TEXT NOT NULL);
+ envelope TEXT NOT NULL, preview TEXT NOT NULL, payload TEXT NOT NULL,
+ group_digest TEXT, group_base INTEGER);
 CREATE TABLE IF NOT EXISTS dispositions (
  item_id TEXT NOT NULL, ordinal INTEGER NOT NULL, record TEXT NOT NULL,
  PRIMARY KEY(item_id, ordinal)) WITHOUT ROWID;
@@ -110,6 +115,9 @@ CREATE INDEX IF NOT EXISTS items_recent ON items(last_seen, item_id);
 CREATE INDEX IF NOT EXISTS items_status ON items(status, last_seen, item_id);
 CREATE INDEX IF NOT EXISTS items_line ON items(line, last_seen, item_id);
 CREATE INDEX IF NOT EXISTS items_line_status ON items(line, status, last_seen, item_id);
+CREATE INDEX IF NOT EXISTS items_group ON items(group_digest, item_id);
+CREATE INDEX IF NOT EXISTS items_ungrouped ON items(group_digest, last_seen, item_id);
+CREATE INDEX IF NOT EXISTS items_group_status ON items(group_digest, status, item_id);
 -- created: 1 when the posting made a new item, 0 for a re-sighting, NULL when
 -- the projection recorded it before it kept the difference.
 CREATE TABLE IF NOT EXISTS postings (
@@ -119,6 +127,25 @@ CREATE TABLE IF NOT EXISTS unread (line TEXT PRIMARY KEY, count INTEGER NOT NULL
 -- One row per posted batch (one terminal of one run): what makes a recovered
 -- delivery count once, and the run's posted and new counts, with no row per
 -- item a run re-sighted.
+-- One group per distinct batch of items (its run-free items body): each batch
+-- is one sighting of its group, kept here once (its count, newest instant and
+-- bounded window), never once per item. An item names the group it was last
+-- posted in and the group's count when it joined; its envelope as read adds
+-- the group's sightings since (``_effective``).
+CREATE TABLE IF NOT EXISTS inbox_groups (
+ group_digest TEXT PRIMARY KEY, line TEXT NOT NULL, last_seen TEXT NOT NULL,
+ occurrences INTEGER NOT NULL, recent TEXT NOT NULL) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS groups_recent ON inbox_groups(last_seen, group_digest);
+CREATE INDEX IF NOT EXISTS groups_line ON inbox_groups(line, last_seen, group_digest);
+-- How many of each group's items hold each status, with the group's newest
+-- instant: a status-filtered page walks only groups holding that status.
+CREATE TABLE IF NOT EXISTS group_status (
+ group_digest TEXT NOT NULL, status TEXT NOT NULL, line TEXT NOT NULL,
+ members INTEGER NOT NULL, last_seen TEXT NOT NULL,
+ PRIMARY KEY(group_digest, status)) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS group_status_recent ON group_status(status, last_seen, group_digest);
+CREATE INDEX IF NOT EXISTS group_status_line
+ ON group_status(line, status, last_seen, group_digest);
 CREATE TABLE IF NOT EXISTS posting_batches (
  run_id TEXT NOT NULL, node_id TEXT NOT NULL, items INTEGER NOT NULL, created INTEGER NOT NULL,
  PRIMARY KEY(run_id, node_id)) WITHOUT ROWID;
@@ -259,22 +286,22 @@ def inbox_root(instance: PlaybillInstance) -> Path:
     return instance.root / instance.descriptor.storage.exhaust / "line-inbox"
 
 
-def _encode_cursor(last_seen: str, item_id: str) -> str:
-    return base64.urlsafe_b64encode(canonical_bytes([last_seen, item_id])).decode("ascii")
+def _encode_cursor(last_seen: str, group: str, item_id: str) -> str:
+    return base64.urlsafe_b64encode(canonical_bytes([last_seen, group, item_id])).decode("ascii")
 
 
-def decode_inbox_cursor(cursor: str) -> tuple[str, str]:
+def decode_inbox_cursor(cursor: str) -> tuple[str, str, str]:
     try:
         value = json.loads(base64.urlsafe_b64decode(cursor.encode("ascii")))
     except (ValueError, binascii.Error, UnicodeError) as exc:
         raise ValueError("inbox cursor is not one this list returned") from exc
     if (
         not isinstance(value, list)
-        or len(value) != 2
+        or len(value) != 3
         or not all(isinstance(item, str) for item in value)
     ):
         raise ValueError("inbox cursor is not one this list returned")
-    return value[0], value[1]
+    return value[0], value[1], value[2]
 
 
 class LineInboxStore:
@@ -328,8 +355,9 @@ class LineInboxStore:
                 if version == 5:
                     # Additive: keep the projection rather than replay the journal.
                     self._add_created_column(conn)
-                elif version == 6:
-                    # Additive: the batch table is created below; nothing replays.
+                elif version in (6, 7):
+                    # Additive: the group columns; new tables are created below.
+                    self._add_group_columns(conn)
                     conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
                 elif version != _SCHEMA_VERSION:
                     # Disposable: drop it and replay the journal from the start.
@@ -395,11 +423,22 @@ class LineInboxStore:
             columns = {row[1] for row in conn.execute("PRAGMA table_info(postings)")}
             if "created" not in columns:
                 conn.execute("ALTER TABLE postings ADD COLUMN created INTEGER")
+            LineInboxStore._add_group_columns(conn)
             conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
         except BaseException:
             conn.rollback()
             raise
         conn.commit()
+
+    @staticmethod
+    def _add_group_columns(conn: sqlite3.Connection) -> None:
+        """An item's group and the group's count when it joined (idempotent)."""
+
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(items)")}
+        if columns and "group_digest" not in columns:
+            conn.execute("ALTER TABLE items ADD COLUMN group_digest TEXT")
+        if columns and "group_base" not in columns:
+            conn.execute("ALTER TABLE items ADD COLUMN group_base INTEGER")
 
     # -- projection --------------------------------------------------------
 
@@ -415,8 +454,27 @@ class LineInboxStore:
             ).fetchone():
                 items = []  # The same run delivered this terminal already.
             created = 0
+            group = str(data["items_digest"])
+            held = self._group(conn, group)
+            joined = (0 if held is None else held[0]) + 1
+            if items:
+                # The batch is one sighting of its group: one row, not one per
+                # item. The newest sightings are kept by the group's own count
+                # (``n``): an item reads those after the count it joined at.
+                window = [
+                    {"n": joined, "run_id": data["run_id"], "posted_at": data["posted_at"]},
+                    *([] if held is None else held[1]),
+                ][:INBOX_RECENT_SIGHTINGS]
+                seen = format_datetime(max(_instant(item["posted_at"]) for item in window))
+                conn.execute(
+                    "INSERT OR REPLACE INTO inbox_groups VALUES(?,?,?,?,?)",
+                    (group, items[0]["line"], seen, joined, json.dumps(window, sort_keys=True)),
+                )
+                conn.execute(
+                    "UPDATE group_status SET last_seen=? WHERE group_digest=?", (seen, group)
+                )
             for ordinal, posting in enumerate(items):
-                if self._apply_posting(conn, posting, batch=True):
+                if self._apply_posting(conn, posting, batch=True, group=(group, joined)):
                     created += 1
                     _note_activity(
                         conn,
@@ -435,6 +493,7 @@ class LineInboxStore:
                     "INSERT INTO posting_batches VALUES(?,?,?,?)",
                     (data["run_id"], data["node_id"], len(items), created),
                 )
+
         elif kind == "posted":
             for ordinal, posting in enumerate(data["items"]):
                 if self._apply_posting(conn, posting):
@@ -496,16 +555,139 @@ class LineInboxStore:
             shared["source_capture_digests"] = body["captures"]
         return [{**item, **shared} for item in body["items"]]
 
+    @staticmethod
+    def _group(conn: sqlite3.Connection, digest: str) -> tuple[int, list[dict[str, Any]]] | None:
+        row = conn.execute(
+            "SELECT occurrences,recent FROM inbox_groups WHERE group_digest=?", (digest,)
+        ).fetchone()
+        return None if row is None else (int(row[0]), json.loads(row[1]))
+
+    def _effective(
+        self, conn: sqlite3.Connection, envelope: str, group: str | None, base: int | None
+    ) -> InboxItemEnvelope:
+        """An item's envelope as read: its stored one, plus its group's sightings since it joined.
+
+        Each such sighting stands on the Captures the item's own joining
+        sighting did (the group is one items body, Captures included). An item
+        with no sighting since it joined reads its stored envelope, and the
+        group's window is not decoded.
+        """
+
+        current = InboxItemEnvelope.model_validate_json(envelope)
+        if group is None or base is None:
+            return current
+        counted = conn.execute(
+            "SELECT occurrences FROM inbox_groups WHERE group_digest=?", (group,)
+        ).fetchone()
+        since = 0 if counted is None else int(counted[0]) - base
+        if since <= 0:
+            return current
+        held = self._group(conn, group)
+        assert held is not None
+        captures = current.recent_sightings[0].source_capture_digests
+        sightings = [
+            InboxSighting(
+                run_id=item["run_id"],
+                posted_at=_instant(item["posted_at"]),
+                source_capture_digests=captures,
+            )
+            for item in held[1]
+            if int(item["n"]) > base
+        ]
+        recent = sorted((*current.recent_sightings, *sightings), key=_sighting_order, reverse=True)[
+            :INBOX_RECENT_SIGHTINGS
+        ]
+        first = min((current.first_sighting, *sightings), key=_sighting_order)
+        return InboxItemEnvelope.model_validate(
+            {
+                **current.model_dump(),
+                "occurrences": current.occurrences + since,
+                "first_sighting": first.model_dump(),
+                "recent_sightings": [item.model_dump() for item in recent],
+                "recurred_since_disposition": current.recurred_since_disposition
+                + (since if current.disposition is not None else 0),
+            }
+        )
+
+    @staticmethod
+    def _count_status(conn: sqlite3.Connection, group: str | None, status: str, delta: int) -> None:
+        """Move one item of ``group`` into (+1) or out of (-1) ``status``'s count."""
+
+        if group is None:
+            return
+        seen = conn.execute(
+            "SELECT last_seen,line FROM inbox_groups WHERE group_digest=?", (group,)
+        ).fetchone()
+        conn.execute(
+            "INSERT INTO group_status VALUES(?,?,?,?,?) ON CONFLICT(group_digest,status) "
+            "DO UPDATE SET members=members+excluded.members",
+            (
+                group,
+                status,
+                "" if seen is None else seen[1],
+                delta,
+                "" if seen is None else seen[0],
+            ),
+        )
+        conn.execute(
+            "DELETE FROM group_status WHERE group_digest=? AND status=? AND members<=0",
+            (group, status),
+        )
+
+    def _read_envelope(self, conn: sqlite3.Connection, item_id: str) -> InboxItemEnvelope | None:
+        row = conn.execute(
+            "SELECT envelope,group_digest,group_base FROM items WHERE item_id=?", (item_id,)
+        ).fetchone()
+        return None if row is None else self._effective(conn, row[0], row[1], row[2])
+
+    def _fold(self, conn: sqlite3.Connection, item_id: str) -> None:
+        """Write an item's group sightings into its own envelope (before it changes)."""
+
+        row = conn.execute(
+            "SELECT envelope,group_digest,group_base FROM items WHERE item_id=?", (item_id,)
+        ).fetchone()
+        if row is None or row[1] is None:
+            return
+        held = self._group(conn, row[1])
+        effective = self._effective(conn, row[0], row[1], row[2])
+        conn.execute(
+            "UPDATE items SET envelope=?,last_seen=?,group_base=? WHERE item_id=?",
+            (
+                effective.model_dump_json(),
+                format_datetime(effective.last_sighting.posted_at),
+                row[2] if held is None else held[0],
+                item_id,
+            ),
+        )
+
     def _apply_posting(
-        self, conn: sqlite3.Connection, posting: dict[str, Any], *, batch: bool = False
+        self,
+        conn: sqlite3.Connection,
+        posting: dict[str, Any],
+        *,
+        batch: bool = False,
+        group: tuple[str, int] | None = None,
     ) -> bool:
         """Apply one posting; ``True`` when it made a new item, not a sighting of one.
 
         A posting of a batch (``batch``) writes no posting row: its batch's row
-        is what makes a redelivery count once.
+        is what makes a redelivery count once. An item already in the batch's
+        ``group`` is not touched: the group's one sighting row counts it. An
+        item new to the group has its earlier sightings folded in first, then
+        joins the group.
         """
 
         item_id = posting["item_id"]
+        if group is not None:
+            member = conn.execute(
+                "SELECT group_digest,status FROM items WHERE item_id=?", (item_id,)
+            ).fetchone()
+            if member is not None and member[0] == group[0]:
+                return False  # sighted through its group's one row
+            if member is not None:
+                self._fold(conn, item_id)
+                self._count_status(conn, member[0], member[1], -1)
+                self._count_status(conn, group[0], member[1], 1)
         row = conn.execute(
             "SELECT envelope,status FROM items WHERE item_id=?", (item_id,)
         ).fetchone()
@@ -544,7 +726,8 @@ class LineInboxStore:
                 payload_bytes=len(canonical_bytes(posting["payload"])),
             )
             conn.execute(
-                "INSERT INTO items VALUES(?,?,?,?,?,?,?)",
+                "INSERT INTO items(item_id,line,status,last_seen,envelope,preview,payload) "
+                "VALUES(?,?,?,?,?,?,?)",
                 (
                     item_id,
                     envelope.line,
@@ -557,6 +740,12 @@ class LineInboxStore:
                 ),
             )
             self._bump_unread(conn, envelope.line, 1)
+            if group is not None:
+                conn.execute(
+                    "UPDATE items SET group_digest=?,group_base=? WHERE item_id=?",
+                    (*group, item_id),
+                )
+                self._count_status(conn, group[0], "unread", 1)
             return True
         current = InboxItemEnvelope.model_validate_json(row["envelope"])
         # A sighting may land out of order (a recovered run); the first and the
@@ -579,10 +768,12 @@ class LineInboxStore:
             }
         )
         conn.execute(
-            "UPDATE items SET last_seen=?,envelope=? WHERE item_id=?",
+            "UPDATE items SET last_seen=?,envelope=?,group_digest=?,group_base=? WHERE item_id=?",
             (
                 format_datetime(updated.last_sighting.posted_at),
                 updated.model_dump_json(),
+                None if group is None else group[0],
+                None if group is None else group[1],
                 item_id,
             ),
         )
@@ -596,6 +787,7 @@ class LineInboxStore:
 
         item_id = data["item_id"]
         disposition = _DISPOSITION.validate_python(data["disposition"])
+        self._fold(conn, item_id)
         row = conn.execute(
             "SELECT envelope,status FROM items WHERE item_id=?", (item_id,)
         ).fetchone()
@@ -619,6 +811,16 @@ class LineInboxStore:
             "UPDATE items SET status=?,envelope=? WHERE item_id=?",
             (disposition.disposition, updated.model_dump_json(), item_id),
         )
+        member = conn.execute(
+            "SELECT group_digest FROM items WHERE item_id=?", (item_id,)
+        ).fetchone()
+        if (
+            member is not None
+            and member[0] is not None
+            and row["status"] != disposition.disposition
+        ):
+            self._count_status(conn, member[0], row["status"], -1)
+            self._count_status(conn, member[0], disposition.disposition, 1)
         if row["status"] == "unread":
             self._bump_unread(conn, current.line, -1)
         return current.line
@@ -801,10 +1003,9 @@ class LineInboxStore:
         """Record one disposition; a repeat of the item's current decision records nothing."""
 
         with self.locked(create=True) as conn:
-            row = conn.execute("SELECT envelope FROM items WHERE item_id=?", (item_id,)).fetchone()
-            if row is None:
+            current = self._read_envelope(conn, item_id)
+            if current is None:
                 raise InboxItemNotFound(item_id)
-            current = InboxItemEnvelope.model_validate_json(row["envelope"])
             if current.status != "unread" and _same_decision(current.disposition, disposition):
                 return current, False
             self._append(
@@ -815,8 +1016,9 @@ class LineInboxStore:
                 now=now,
                 coordinate=coordinate,
             )
-            row = conn.execute("SELECT envelope FROM items WHERE item_id=?", (item_id,)).fetchone()
-            return InboxItemEnvelope.model_validate_json(row["envelope"]), True
+            updated = self._read_envelope(conn, item_id)
+            assert updated is not None
+            return updated, True
 
     # -- reads -------------------------------------------------------------
 
@@ -842,16 +1044,18 @@ class LineInboxStore:
 
         with self.locked() as conn:
             row = conn.execute(
-                "SELECT envelope,payload FROM items WHERE item_id=?", (item_id,)
+                "SELECT envelope,payload,group_digest,group_base FROM items WHERE item_id=?",
+                (item_id,),
             ).fetchone()
             if row is None:
                 raise InboxItemNotFound(item_id)
+            envelope = self._effective(conn, row[0], row[2], row[3])
             recent = conn.execute(
                 "SELECT record FROM dispositions WHERE item_id=? ORDER BY ordinal DESC LIMIT ?",
                 (item_id, INBOX_RECENT_DISPOSITIONS),
             ).fetchall()
         return StoredInboxItem(
-            envelope=InboxItemEnvelope.model_validate_json(row["envelope"]),
+            envelope=envelope,
             payload=json.loads(row["payload"]),
             recent_dispositions=tuple(_DISPOSITION.validate_json(item[0]) for item in recent),
         )
@@ -873,33 +1077,86 @@ class LineInboxStore:
         clauses: list[str] = []
         params: list[object] = []
         if line is not None:
-            clauses.append("line=?")
+            clauses.append("i.line=?")
             params.append(line)
         if status is not None:
-            clauses.append("status=?")
+            clauses.append("i.status=?")
             params.append(status)
+        bound: tuple[str, str, str] | None = None
         if cursor is not None:
-            last_seen, item_id = decode_inbox_cursor(cursor)
-            clauses.append("(last_seen<? OR (last_seen=? AND item_id<?))")
-            params.extend((last_seen, last_seen, item_id))
-        where = f"WHERE {' AND '.join(clauses)} " if clauses else ""
-        with self.locked() as conn:
-            rows = conn.execute(
-                "SELECT item_id,last_seen,envelope,preview FROM items "
-                f"{where}ORDER BY last_seen DESC, item_id DESC LIMIT ?",
-                (*params, limit + 1),
-            ).fetchall()
-        more = len(rows) > limit
-        rows = rows[:limit]
-        items = tuple(
-            InboxPageEntry(
-                envelope=InboxItemEnvelope.model_validate_json(row["envelope"]),
-                preview=_PREVIEW.validate_json(row["preview"]),
-            )
-            for row in rows
+            bound = decode_inbox_cursor(cursor)
+        # Two keyed streams, merged on (seen, group, item): an item outside any
+        # group is ordered by its own last sighting; one in a group by the
+        # group's (its sightings since it joined are the group's), its group,
+        # then its id. Each stream walks its index and reads at most a page.
+        streams = (
+            (
+                "i.last_seen",
+                "''",
+                "items i INDEXED BY items_ungrouped",
+                "i.group_digest IS NULL",
+            ),
+            (
+                "g.last_seen",
+                "g.group_digest",
+                f"inbox_groups g INDEXED BY {'groups_recent' if line is None else 'groups_line'} "
+                "CROSS JOIN items i INDEXED BY items_group ON i.group_digest=g.group_digest",
+                "1" if line is None else "g.line=?",
+            ),
         )
+        if status is not None:
+            # Only groups holding an item of this status are walked.
+            streams = (
+                streams[0],
+                (
+                    "gs.last_seen",
+                    "gs.group_digest",
+                    "group_status gs INDEXED BY "
+                    f"{'group_status_recent' if line is None else 'group_status_line'} "
+                    "CROSS JOIN items i INDEXED BY items_group_status "
+                    "ON i.group_digest=gs.group_digest AND i.status=gs.status",
+                    "gs.status=?" if line is None else "gs.line=? AND gs.status=?",
+                ),
+            )
+        rows: list[Any] = []
+        with self.locked() as conn:
+            for seen, member, source, kind in streams:
+                where = [kind, *clauses]
+                leads: dict[str, list[object]] = {
+                    "gs.status=?": [status],
+                    "gs.line=? AND gs.status=?": [line, status],
+                    "g.line=?": [line],
+                }
+                lead = leads.get(kind, [])
+                args = lead + list(params)
+                if bound is not None:
+                    where.append(f"({seen},{member},i.item_id)<(?,?,?)")
+                    args.extend(bound)
+                rows.extend(
+                    conn.execute(
+                        f"SELECT i.item_id,{seen} AS seen,{member} AS member,i.envelope,"
+                        f"i.preview,i.group_digest,i.group_base FROM {source} "
+                        f"WHERE {' AND '.join(where)} "
+                        f"ORDER BY {seen} DESC, {member} DESC, i.item_id DESC LIMIT ?",
+                        (*args, limit + 1),
+                    ).fetchall()
+                )
+            rows.sort(key=lambda row: (row["seen"], row["member"], row["item_id"]), reverse=True)
+            more = len(rows) > limit
+            rows = rows[:limit]
+            items = tuple(
+                InboxPageEntry(
+                    envelope=self._effective(
+                        conn, row["envelope"], row["group_digest"], row["group_base"]
+                    ),
+                    preview=_PREVIEW.validate_json(row["preview"]),
+                )
+                for row in rows
+            )
         next_cursor = (
-            _encode_cursor(rows[-1]["last_seen"], rows[-1]["item_id"]) if more and rows else None
+            _encode_cursor(rows[-1]["seen"], rows[-1]["member"], rows[-1]["item_id"])
+            if more and rows
+            else None
         )
         return items, next_cursor
 
