@@ -1376,7 +1376,11 @@ approval and the request's tier may activate (`graph_write`), like value
 writes; otherwise they stop at proposed for the ordinary `cruxible proposal
 approve`, which activates them. Below `graph_write` (a capped MCP server, say)
 the result's detail says `Not activated: ... Next: someone who can runs
-cruxible proposal activate ID`. `add`
+cruxible proposal activate ID`. A kit proposal waiting for an independent
+approver goes stale when other writes land first, and it is not rebased: run
+the same `kit add` (or `kit remove`) again for a fresh proposal at the head,
+then have it approved. The refusal an approval or readmit of the stale one
+gets names that command as its repair. `add`
 records a `kit_receipt` Document, `documents/kit-<id>.json`, with each path's
 release digest, installed digest and content digest, and the bundled packages.
 

@@ -208,7 +208,9 @@ base 1.0.0 content sha256:433a7768…; up to date
   proposal sha256:… (cruxible proposal approve sha256:… --signer-id ID --key
   FILE, as a second principal)`). Until it is approved, the capabilities are
   absent, and `kit status` lists the pending add with its proposal and the
-  approve command.
+  approve command. If other writes land before the approval, the kit proposal
+  is stale and is not rebased: run `cruxible kit add base` again for a fresh
+  proposal and have that approved (the refusal names this repair).
 - **Upgrading.** The base kit changes only with a Cruxible release. A newer
   release may bundle a newer version; `kit status` compares the installed one
   with the bundled one (no registry is asked), and says when the installed
@@ -368,7 +370,7 @@ The result is one of:
 | Status | Meaning | Next |
 |---|---|---|
 | `accepted` | The change set landed: the approval policy required no approval. | Nothing. |
-| `proposed` | It awaits approval. | `cruxible proposal approve`; the approval that completes it activates it. |
+| `proposed` | It awaits approval. | `cruxible proposal approve`; the approval that completes it activates it. If other writes land first, run the same `kit add` again (the stale proposal is not rebased; its refusal names this repair). |
 | `awaiting_providers` | A provider installation the kit needs awaits approval. | Approve that installation; its activation proposes the definitions on their own, as you (`kit status` shows the resume). |
 | `blocked` | Something in current state stops it; the detail says what. | Fix the cause, or choose another release. |
 
