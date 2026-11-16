@@ -11,16 +11,17 @@ item inherit evidence it did not consume.
 
 from __future__ import annotations
 
+import json
 import re
 from collections import deque
-from collections.abc import Collection, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from cruxible_client.contracts.canonical import Sha256Value, typed_digest
+from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
 from cruxible_client.contracts.claim_verdicts import (
     EvidenceEpistemicGrade,
     EvidenceProvenanceGrade,
@@ -310,6 +311,276 @@ class TerminalItemDerivedFactsV1(_StrictDependencyModel):
         if names != tuple(sorted(set(names), key=lambda item: item.encode("utf-8"))):
             raise ValueError("terminal item source coverage must be sorted and unique")
         return self
+
+
+#: The ``item_dependencies`` journal payload that carries the whole closure
+#: inline. Written by 0.5.0 development builds before the shared set; it is
+#: still read (``resolve_item_dependencies``), never written.
+ITEM_DEPENDENCIES_RECORD_V1 = "playbill-procedure-item-dependencies-v1"
+ITEM_DEPENDENCIES_RECORD_V2 = "playbill-procedure-item-dependencies-v2"
+
+
+class TerminalDependencyDigestsV1(_StrictDependencyModel):
+    """One closure's digests by slot, without the item they belong to.
+
+    The six slots of :class:`TerminalItemDependencyManifestV1`; every tuple is
+    sorted and unique.
+    """
+
+    accepted_state_input_digests: tuple[str, ...] = ()
+    admitted_capture_digests: tuple[str, ...] = ()
+    produced_capture_digests: tuple[str, ...] = ()
+    exhaust_input_digests: tuple[str, ...] = ()
+    receipt_digests: tuple[str, ...] = ()
+    policy_and_law_digests: tuple[str, ...] = ()
+
+    @field_validator(
+        "accepted_state_input_digests",
+        "admitted_capture_digests",
+        "produced_capture_digests",
+        "exhaust_input_digests",
+        "receipt_digests",
+        "policy_and_law_digests",
+    )
+    @classmethod
+    def _digests(cls, value: tuple[str, ...], info: object) -> tuple[str, ...]:
+        return _sorted_unique(value, label=str(getattr(info, "field_name", "dependency digests")))
+
+
+class TerminalSharedCoverageV1(_StrictDependencyModel):
+    """The Captures of one acquisition input that every item of a terminal consumed."""
+
+    input_name: str
+    capture_digests: tuple[str, ...]
+
+    @field_validator("capture_digests")
+    @classmethod
+    def _digests(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        return _sorted_unique(value, label="shared coverage capture digests")
+
+
+class TerminalSharedDependenciesV1(_StrictDependencyModel):
+    """What every item of one terminal consumed: stored once, cited by each item's record.
+
+    A terminal whose items all derive from one list of Captures would
+    otherwise restate that list in every item's record; the shared part is
+    content-addressed instead, so an item's record grows with what that item
+    alone consumed, never with the run's Capture count.
+    """
+
+    tag: Literal["playbill-terminal-shared-dependencies-v1"] = (
+        "playbill-terminal-shared-dependencies-v1"
+    )
+    digests: TerminalDependencyDigestsV1
+    coverage: tuple[TerminalSharedCoverageV1, ...] = ()
+
+    @model_validator(mode="after")
+    def _coverage(self) -> "TerminalSharedDependenciesV1":
+        names = tuple(item.input_name for item in self.coverage)
+        if names != tuple(sorted(set(names), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("shared coverage must be sorted and unique")
+        return self
+
+
+class TerminalItemDependencyAuditV1(_StrictDependencyModel):
+    deployment_digest: str | None = None
+    recorded_at: str
+
+
+class TerminalItemDependencyRecordV1(_StrictDependencyModel):
+    """The inline ``item_dependencies`` payload: the whole closure in every item's record."""
+
+    tag: Literal["playbill-procedure-item-dependencies-v1"] = (
+        "playbill-procedure-item-dependencies-v1"
+    )
+    manifest: TerminalItemDependencyManifestV1
+    derived: TerminalItemDerivedFactsV1
+    audit: TerminalItemDependencyAuditV1
+
+
+class TerminalItemDependencyRecordV2(_StrictDependencyModel):
+    """One terminal item's ``item_dependencies`` payload, citing its terminal's shared set.
+
+    ``own`` is the item's closure less the shared digests, and ``derived`` is
+    its folded facts with each coverage entry less the shared Captures of
+    that input. :func:`join_item_dependencies` restores the item's exact
+    manifest and facts; the manifest digest is computed as it always was,
+    over the whole closure, and must equal ``derived.manifest_digest``.
+    """
+
+    tag: Literal["playbill-procedure-item-dependencies-v2"] = (
+        "playbill-procedure-item-dependencies-v2"
+    )
+    shared_digest: str
+    own: TerminalDependencyDigestsV1
+    derived: TerminalItemDerivedFactsV1
+    audit: TerminalItemDependencyAuditV1
+
+    @field_validator("shared_digest")
+    @classmethod
+    def _shared(cls, value: str) -> str:
+        return _tagged(value, label="shared dependencies digest")
+
+
+def _digest_union(left: tuple[str, ...], right: Iterable[str]) -> tuple[str, ...]:
+    return tuple(sorted({*left, *right}, key=lambda item: item.encode("ascii")))
+
+
+def shared_terminal_dependencies(
+    manifests: Sequence[TerminalItemDependencyManifestV1],
+    derived: Sequence[TerminalItemDerivedFactsV1],
+) -> TerminalSharedDependenciesV1:
+    """The digests and coverage every item holds: one pass over the items' own closures."""
+
+    shared: dict[str, set[str]] | None = None
+    for manifest in manifests:
+        if shared is None:
+            shared = {field: set(getattr(manifest, field)) for field in _SLOT_FIELDS.values()}
+        else:
+            for field, values in shared.items():
+                values.intersection_update(getattr(manifest, field))
+    coverage: dict[str, set[str]] | None = None
+    for facts in derived:
+        entries = {item.input_name: item.capture_digests for item in facts.source_coverage}
+        if coverage is None:
+            coverage = {name: set(digests) for name, digests in entries.items()}
+        else:
+            for name, digests in coverage.items():
+                digests.intersection_update(entries.get(name, ()))
+    return TerminalSharedDependenciesV1(
+        digests=TerminalDependencyDigestsV1(
+            **{
+                field: tuple(sorted(values, key=lambda item: item.encode("ascii")))
+                for field, values in (shared or {}).items()
+            }
+        ),
+        coverage=tuple(
+            TerminalSharedCoverageV1(
+                input_name=name,
+                capture_digests=tuple(sorted(digests, key=lambda item: item.encode("ascii"))),
+            )
+            for name, digests in sorted(
+                (coverage or {}).items(), key=lambda item: item[0].encode("utf-8")
+            )
+            if digests
+        ),
+    )
+
+
+def render_shared_terminal_dependencies(shared: TerminalSharedDependenciesV1) -> bytes:
+    """The exact CAS bytes an item record's ``shared_digest`` names."""
+
+    return canonical_bytes(shared.model_dump(mode="json"))
+
+
+def split_item_dependencies(
+    manifest: TerminalItemDependencyManifestV1,
+    derived: TerminalItemDerivedFactsV1,
+    *,
+    shared: TerminalSharedDependenciesV1,
+    shared_digest: str,
+    audit: TerminalItemDependencyAuditV1,
+) -> TerminalItemDependencyRecordV2:
+    """One item's record: what it consumed beyond its terminal's shared set."""
+
+    # Sets, so each item costs what its own closure holds, never closure x shared.
+    common = {item.input_name: set(item.capture_digests) for item in shared.coverage}
+    held = {field: set(getattr(shared.digests, field)) for field in _SLOT_FIELDS.values()}
+    return TerminalItemDependencyRecordV2(
+        shared_digest=shared_digest,
+        own=TerminalDependencyDigestsV1(
+            **{
+                field: tuple(
+                    digest for digest in getattr(manifest, field) if digest not in held[field]
+                )
+                for field in _SLOT_FIELDS.values()
+            }
+        ),
+        derived=derived.model_copy(
+            update={
+                "source_coverage": tuple(
+                    item.model_copy(
+                        update={
+                            "capture_digests": tuple(
+                                digest
+                                for digest in item.capture_digests
+                                if digest not in common.get(item.input_name, ())
+                            )
+                        }
+                    )
+                    for item in derived.source_coverage
+                )
+            }
+        ),
+        audit=audit,
+    )
+
+
+def join_item_dependencies(
+    record: TerminalItemDependencyRecordV2,
+    shared: TerminalSharedDependenciesV1,
+) -> tuple[TerminalItemDependencyManifestV1, TerminalItemDerivedFactsV1]:
+    """Restore one item's exact manifest and facts; refuse a record the digest disowns."""
+
+    derived = record.derived
+    fields: dict[str, tuple[str, ...]] = {}
+    for field in _SLOT_FIELDS.values():
+        own, common = getattr(record.own, field), getattr(shared.digests, field)
+        if set(own) & set(common):
+            raise ValueError("an item record restates a shared dependency digest")
+        fields[field] = _digest_union(own, common)
+    manifest = TerminalItemDependencyManifestV1(
+        run_id=derived.run_id,
+        terminal_node_id=derived.terminal_node_id,
+        item_key=derived.item_key,
+        **fields,  # type: ignore[arg-type]
+    )
+    if terminal_item_manifest_digest(manifest) != derived.manifest_digest:
+        raise ValueError("an item record does not reproduce its manifest digest")
+    common_coverage = {item.input_name: item.capture_digests for item in shared.coverage}
+    restored = derived.model_copy(
+        update={
+            "source_coverage": tuple(
+                TerminalItemSourceCoverageV1(
+                    input_name=item.input_name,
+                    disposition=item.disposition,
+                    capture_digests=_digest_union(
+                        item.capture_digests, common_coverage.get(item.input_name, ())
+                    ),
+                )
+                for item in derived.source_coverage
+            )
+        }
+    )
+    return manifest, restored
+
+
+def resolve_item_dependencies(
+    payload: object,
+    read_body: Callable[[str], bytes],
+) -> tuple[TerminalItemDependencyManifestV1, TerminalItemDerivedFactsV1]:
+    """One ``item_dependencies`` payload's exact manifest and facts, either shape.
+
+    ``read_body`` returns the verified CAS bytes of a digest (the shared set a
+    v2 record cites). A v1 record carries its whole closure inline.
+    """
+
+    if not isinstance(payload, Mapping):
+        raise ValueError("an item_dependencies payload must be an object")
+    tag = payload.get("tag")
+    if tag == ITEM_DEPENDENCIES_RECORD_V1:
+        inline = TerminalItemDependencyRecordV1.model_validate(payload)
+        if terminal_item_manifest_digest(inline.manifest) != inline.derived.manifest_digest:
+            raise ValueError("an item record does not reproduce its manifest digest")
+        return inline.manifest, inline.derived
+    if tag != ITEM_DEPENDENCIES_RECORD_V2:
+        raise ValueError(f"unknown item_dependencies payload {tag!r}")
+    record = TerminalItemDependencyRecordV2.model_validate(payload)
+    content = read_body(record.shared_digest)
+    shared = TerminalSharedDependenciesV1.model_validate(json.loads(content))
+    if render_shared_terminal_dependencies(shared) != content:
+        raise ValueError("a shared dependency set is not canonical")
+    return join_item_dependencies(record, shared)
 
 
 class TerminalChildReceiptV1(_StrictDependencyModel):
@@ -655,7 +926,20 @@ def capture_root(
 
 
 __all__ = [
+    "ITEM_DEPENDENCIES_RECORD_V1",
+    "ITEM_DEPENDENCIES_RECORD_V2",
     "CaptureRootCache",
+    "TerminalDependencyDigestsV1",
+    "TerminalItemDependencyAuditV1",
+    "TerminalItemDependencyRecordV1",
+    "TerminalItemDependencyRecordV2",
+    "TerminalSharedCoverageV1",
+    "TerminalSharedDependenciesV1",
+    "join_item_dependencies",
+    "render_shared_terminal_dependencies",
+    "resolve_item_dependencies",
+    "shared_terminal_dependencies",
+    "split_item_dependencies",
     "capture_root",
     "citable_captures",
     "witnessed_list_capture",

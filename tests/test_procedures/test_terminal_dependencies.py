@@ -311,3 +311,100 @@ def test_two_unrelated_tops_have_no_root_whatever_the_chain_beneath() -> None:
     # A cycle (impossible for digest-fixed inputs) never yields an unproven root.
     a, b = digests[0], digests[1]
     assert capture_root((a, b), {a: (b,), b: (a,)}) in {a, b}
+
+
+def _closures(captures: int, items: int):  # type: ignore[no-untyped-def]
+    """``items`` closures over one shared list of ``captures``, each with one own Capture."""
+
+    from cruxible_core.procedures.terminal_dependencies import (
+        produced_capture_token,
+        receipt_token,
+    )
+
+    shared = [f"sha256:{index:064x}" for index in range(captures)]
+    own = [f"sha256:{'f' * 56}{index:08x}" for index in range(items)]
+    tokens = [
+        frozenset(
+            {
+                *(produced_capture_token(digest) for digest in shared),
+                *(receipt_token(digest) for digest in shared),
+                produced_capture_token(own[index]),
+                policy_token(_digest("c")),
+            }
+        )
+        for index in range(items)
+    ]
+    facts = {
+        digest: DependencyEvidenceFactsV1(
+            epistemic_grade="observed",
+            provenance_grade="daemon-fetched",
+            acquisition_input_name="doc.pages",
+        )
+        for digest in (*shared, *own)
+    }
+    outcomes = (
+        AcquisitionInputOutcomeV1(
+            input_name="doc.pages",
+            disposition="acquired",
+            capture_digests=tuple(sorted((*shared, *own))),
+        ),
+    )
+    manifests, derived = [], []
+    for index, closure in enumerate(tokens):
+        manifest = build_terminal_item_manifest(
+            closure, run_id="run-1", terminal_node_id="egress", item_key=f"{index:08d}.item"
+        )
+        manifests.append(manifest)
+        derived.append(
+            derive_terminal_item_facts(
+                closure, manifest=manifest, child_index=index, facts=facts, outcomes=outcomes
+            )
+        )
+    return manifests, derived
+
+
+def test_an_item_record_cites_its_terminals_shared_set_and_restores_exactly() -> None:
+    from cruxible_client.contracts.canonical import canonical_bytes
+    from cruxible_core.procedures.terminal_dependencies import (
+        TerminalItemDependencyAuditV1,
+        render_shared_terminal_dependencies,
+        resolve_item_dependencies,
+        shared_terminal_dependencies,
+        split_item_dependencies,
+    )
+
+    manifests, derived = _closures(captures=5, items=3)
+    shared = shared_terminal_dependencies(manifests, derived)
+    content = render_shared_terminal_dependencies(shared)
+    assert len(shared.digests.produced_capture_digests) == 5  # the own Captures are not shared
+    assert shared.coverage[0].input_name == "doc.pages"
+    shared_digest = _digest("e")
+    audit = TerminalItemDependencyAuditV1(recorded_at="2026-11-15T00:00:00Z")
+    for manifest, facts in zip(manifests, derived, strict=True):
+        record = split_item_dependencies(
+            manifest, facts, shared=shared, shared_digest=shared_digest, audit=audit
+        )
+        assert len(record.own.produced_capture_digests) == 1 and not record.own.receipt_digests
+        assert len(record.derived.source_coverage[0].capture_digests) == 1
+        payload = record.model_dump(mode="json")
+        restored = resolve_item_dependencies(payload, {shared_digest: content}.__getitem__)
+        # The manifest digest is the one rule it always was, over the whole closure.
+        assert restored == (manifest, facts)
+        assert terminal_item_manifest_digest(restored[0]) == facts.manifest_digest
+        # A record the shared set does not reproduce is refused.
+        tampered = {**payload, "own": {**payload["own"], "produced_capture_digests": []}}
+        with pytest.raises(ValueError, match="manifest digest"):
+            resolve_item_dependencies(tampered, {shared_digest: content}.__getitem__)
+    # The inline shape written before the shared set still resolves.
+    v1 = {
+        "tag": "playbill-procedure-item-dependencies-v1",
+        "manifest": manifests[0].model_dump(mode="json"),
+        "derived": derived[0].model_dump(mode="json"),
+        "audit": {"deployment_digest": None, "recorded_at": "2026-11-15T00:00:00Z"},
+    }
+    assert resolve_item_dependencies(v1, {}.__getitem__) == (manifests[0], derived[0])
+    with pytest.raises(ValueError, match="canonical"):
+        resolve_item_dependencies(
+            payload,
+            {shared_digest: canonical_bytes(shared.model_dump(mode="json")) + b" "}.__getitem__,
+        )

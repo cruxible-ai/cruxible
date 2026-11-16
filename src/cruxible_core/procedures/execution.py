@@ -331,7 +331,9 @@ from cruxible_core.procedures.terminal_dependencies import (
     DependencyEvidenceFactsV1,
     DependencyToken,
     TerminalChildReceiptV1,
+    TerminalItemDependencyAuditV1,
     TerminalItemDependencyManifestV1,
+    TerminalItemDerivedFactsV1,
     accepted_state_token,
     admitted_capture_token,
     build_terminal_item_manifest,
@@ -343,6 +345,9 @@ from cruxible_core.procedures.terminal_dependencies import (
     policy_token,
     produced_capture_token,
     receipt_token,
+    render_shared_terminal_dependencies,
+    shared_terminal_dependencies,
+    split_item_dependencies,
     terminal_item_key,
     witnessed_list_capture,
 )
@@ -6531,7 +6536,8 @@ class ProcedureExecutor:
         )
         receipts: list[TerminalChildReceiptV1] = []
         manifests: dict[str, TerminalItemDependencyManifestV1] = {}
-        payloads: list[object] = []
+        folded: list[TerminalItemDerivedFactsV1] = []
+        audits: list[TerminalItemDependencyAuditV1] = []
         item_drafts: list[tuple[str, str]] = []
         recorded_at: list[datetime] = []
         for index, value in enumerate(values):
@@ -6554,21 +6560,37 @@ class ProcedureExecutor:
                 facts=state.facts,
                 outcomes=outcomes,
             )
-            payloads.append(
-                {
-                    "tag": "playbill-procedure-item-dependencies-v1",
-                    "manifest": manifest.model_dump(mode="json"),
-                    "derived": derived.model_dump(mode="json"),
-                    "audit": {
-                        "deployment_digest": admission.deployment_snapshot_digest,
-                        "recorded_at": format_datetime(self.clock.now()),
-                    },
-                }
+            folded.append(derived)
+            stamp = format_datetime(self.clock.now())
+            assert stamp is not None  # a clock reading always renders
+            audits.append(
+                TerminalItemDependencyAuditV1(
+                    deployment_digest=admission.deployment_snapshot_digest, recorded_at=stamp
+                )
             )
             # Preserve the per-item clock reads and their order from single appends.
             recorded_at.append(self.clock.now())
             item_drafts.append((item_key, derived.manifest_digest))
             manifests[item_key] = manifest
+        # What every item consumed (a list of Captures they all derive from) is
+        # stored once and cited by digest: each item's record carries only its
+        # own digests, so its size never grows with the run's Capture count.
+        payloads: list[object] = []
+        if folded:
+            shared = shared_terminal_dependencies(tuple(manifests.values()), folded)
+            shared_digest = self.bodies.store(
+                render_shared_terminal_dependencies(shared), journal_payload=True
+            ).digest
+            payloads = [
+                split_item_dependencies(
+                    manifest,
+                    derived,
+                    shared=shared,
+                    shared_digest=shared_digest,
+                    audit=audit,
+                ).model_dump(mode="json")
+                for manifest, derived, audit in zip(manifests.values(), folded, audits, strict=True)
+            ]
         group = self._append_events(
             admission,
             records,

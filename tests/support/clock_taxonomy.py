@@ -458,6 +458,7 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("ProcedureJournalCoordinate", "sequence"): "SETTLEMENT ORDER",
     ("ProcedureJournalRecordDraftV1", "recorded_at"): "ASSERTION TIME",
     ("ProcedureJournalRecordV1", "recorded_at"): "ASSERTION TIME",
+    ("TerminalItemDependencyAuditV1", "recorded_at"): "ASSERTION TIME",
     ("ProcedureJournalRecordV1", "sequence"): "SETTLEMENT ORDER",
     ("ProcedureMandateAuthoringPayload", "expires_at"): "VALIDITY WINDOW",
     ("ProcedureMandateAuthoringPayload", "valid_from"): "VALIDITY WINDOW",
