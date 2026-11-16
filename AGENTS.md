@@ -221,8 +221,9 @@ CaptureContracts), `documents/`, `query/` (named queries), `procedures/`
 `workspace.file`), `triggers/`, `governance/` (principals, approval policy,
 genesis seeds), `curation/`, `coverage/` and `floor/`. `consumers/` runs the
 daemon's background workers (floor delivery, the `next` findings worker, and
-enabled Lines), driven by Triggers and accepted generations; curation
-detection runs as the `curation.detect` internal action.
+enabled Lines), driven by Triggers and accepted generations. Curation is not
+served in 0.5.0: `curation/` is dormant in the tree, and authoring a Trigger
+or Runbook step aimed at `curation.detect` refuses as not served.
 
 ### Two write lanes
 
