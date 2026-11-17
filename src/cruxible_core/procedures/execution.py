@@ -1387,7 +1387,7 @@ class CaptureObservationsProtocol(Protocol):
     def held_capture(self, content_key: str, *, commitment_digest: str) -> tuple[str, Any] | None:
         """The held Capture (digest, envelope) of these contents, when it may be reused."""
 
-    def remember(self, content_key: str, capture_digest: str, *, proof: str) -> None:
+    def remember(self, content_key: str, capture_digest: str, *, proofs: tuple[str, ...]) -> None:
         """Name the new Capture these contents' next identical re-fetch reuses.
 
         ``proof`` is the payload body of the record journaling its production.
@@ -2825,6 +2825,14 @@ class _RunState:
     #: Each Capture this run stored new, by its reuse key: named reusable only
     #: once its ``produced_capture`` is journaled (F-008).
     pending_reuse_keys: dict[str, str] = dataclass_field(default_factory=dict)
+    #: The journal payloads proving each provider invocation this run made, by
+    #: its receipt digest: its completion and the source request and read
+    #: records journaled for it (``pending_source_proofs``, since the last
+    #: completion). With the admission and production payloads they are what a
+    #: verifier resolves a Capture's producer receipt from (review 2e #5).
+    invocation_proofs: dict[str, tuple[str, ...]] = dataclass_field(default_factory=dict)
+    pending_source_proofs: list[str] = dataclass_field(default_factory=list)
+    admission_proof: str | None = None
     #: Each fetched Capture's logical source: part of its rows' identity.
     capture_sources: dict[str, str] = dataclass_field(default_factory=dict)
     #: Each extracted Capture's rows by locator, per (Capture, extract spec):
@@ -4563,8 +4571,10 @@ class ProcedureExecutor:
                 request=executed.model_dump(mode="json"),
             )
             into.member_requests[key] = derived.request_digest
-            self._append_event(
-                admission, records, "source_request_derived", derived.model_dump(mode="json")
+            state.pending_source_proofs.append(
+                self._append_event(
+                    admission, records, "source_request_derived", derived.model_dump(mode="json")
+                ).record.payload_digest
             )
             try:
                 read = reader.read(
@@ -4587,14 +4597,16 @@ class ProcedureExecutor:
                 drop(f"{relative_path!r} cannot be read: {exc}")
                 continue
             remaining -= read.receipt.byte_length
-            self._append_event(
-                admission,
-                records,
-                "source_read",
-                {
-                    "receipt": read.receipt.model_dump(mode="json"),
-                    "receipt_digest": source_read_receipt_digest(read.receipt),
-                },
+            state.pending_source_proofs.append(
+                self._append_event(
+                    admission,
+                    records,
+                    "source_read",
+                    {
+                        "receipt": read.receipt.model_dump(mode="json"),
+                        "receipt_digest": source_read_receipt_digest(read.receipt),
+                    },
+                ).record.payload_digest
             )
             try:
                 output, receipt, receipt_digest = self._invoke_provider_v4(
@@ -4824,11 +4836,13 @@ class ProcedureExecutor:
                     else workspace_request.model_dump(mode="json")
                 ),
             )
-            self._append_event(
-                admission,
-                records,
-                "source_request_derived",
-                derived_request.model_dump(mode="json"),
+            state.pending_source_proofs.append(
+                self._append_event(
+                    admission,
+                    records,
+                    "source_request_derived",
+                    derived_request.model_dump(mode="json"),
+                ).record.payload_digest
             )
             source_read_receipt: SourceReadReceipt | None = None
             provider_payload = resolved_request
@@ -4858,14 +4872,16 @@ class ProcedureExecutor:
                     ) from exc
                 provider_payload = workspace_read.provider_input
                 source_read_receipt = workspace_read.receipt
-                self._append_event(
-                    admission,
-                    records,
-                    "source_read",
-                    {
-                        "receipt": source_read_receipt.model_dump(mode="json"),
-                        "receipt_digest": source_read_receipt_digest(source_read_receipt),
-                    },
+                state.pending_source_proofs.append(
+                    self._append_event(
+                        admission,
+                        records,
+                        "source_read",
+                        {
+                            "receipt": source_read_receipt.model_dump(mode="json"),
+                            "receipt_digest": source_read_receipt_digest(source_read_receipt),
+                        },
+                    ).record.payload_digest
                 )
             try:
                 output, invocation_receipt, invocation_receipt_digest = self._invoke_provider_v4(
@@ -6205,8 +6221,9 @@ class ProcedureExecutor:
                 member_request_digest=member_request_digest,
             )
             key = state.pending_reuse_keys.pop(digest, None)
-            if key is not None and self.capture_observations is not None:
-                self.capture_observations.remember(key, digest, proof=proof)
+            closure = self._reuse_proof(state, records, invocation_receipt_digest, proof)
+            if key is not None and closure and self.capture_observations is not None:
+                self.capture_observations.remember(key, digest, proofs=closure)
         state.source_capture_associations.append(
             ProcedureSourceCaptureAssociation(
                 occurrence_path=occurrence_path,
@@ -6222,6 +6239,35 @@ class ProcedureExecutor:
                 policy_token(acquisition.envelope.capture_contract_digest),
             }
         )
+
+    @staticmethod
+    def _reuse_proof(
+        state: _RunState,
+        records: list[StoredProcedureJournalRecordV1],
+        invocation_receipt_digest: str,
+        production: str,
+    ) -> tuple[str, ...]:
+        """Every journal payload a verifier resolves this Capture's production from.
+
+        The run's admission, the invocation's completion and its source request
+        and read records, and the production record (review 2e #5). Empty when
+        any is unknown to this run (a resumed run): the Capture is then not
+        named reusable, and an identical re-fetch stores and proves its own.
+        """
+
+        if state.admission_proof is None:
+            state.admission_proof = next(
+                (
+                    item.record.payload_digest
+                    for item in records
+                    if item.record.event_kind == "admission_bound"
+                ),
+                None,
+            )
+        invocation = state.invocation_proofs.get(invocation_receipt_digest)
+        if state.admission_proof is None or invocation is None:
+            return ()
+        return (state.admission_proof, *invocation, production)
 
     def _produced_capture(
         self,
@@ -7901,12 +7947,14 @@ class ProcedureExecutor:
             receipt=receipt,
             receipt_digest=receipt_digest,
         )
-        self._append_event(
+        completion = self._append_event(
             admission,
             records,
             "provider_invocation_completed",
             completed.model_dump(mode="json"),
-        )
+        ).record.payload_digest
+        state.invocation_proofs[receipt_digest] = (completion, *state.pending_source_proofs)
+        state.pending_source_proofs.clear()
         state.provider_invocations_completed += 1
         state.invocation_receipt_digests.append(receipt_digest)
         if outcome.status != "ok":

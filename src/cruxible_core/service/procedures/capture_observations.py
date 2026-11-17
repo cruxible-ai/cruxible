@@ -56,13 +56,18 @@ class InstanceCaptureObservations:
         found = store.capture_envelopes.capture_for_content_key(content_key)
         if found is None:
             return None
-        digest, proof = found
+        digest, proofs = found
         # Named only once its run journaled producing it (F-008): reusable only
-        # while that production record's body is not recorded missing, corrupt
-        # or erased (a journal payload lands with its record, so only damage
-        # is logged for it): one indexed answer, never a read of the producing
-        # run's records.
-        if _proof_lost(store, proof) or not _proof_shown(store, proof):
+        # while every journal payload its production is verified from (the
+        # run's admission, the invocation's completion and source records, the
+        # production record; review 2e #5) is neither recorded missing, corrupt
+        # or erased nor unreadable: one indexed answer, a few bodies read once
+        # per process, never a read of the producing run's records. A row
+        # naming fewer (an earlier build's) is never reused: the run fetches
+        # anew and names its own.
+        if len(proofs) < 3 or any(
+            _proof_lost(store, proof) or not _proof_shown(store, proof) for proof in proofs
+        ):
             return None
         if body_present(store, digest) is False or body_present(store, commitment_digest) is False:
             return None
@@ -75,11 +80,11 @@ class InstanceCaptureObservations:
             return None
         return digest, envelope
 
-    def remember(self, content_key: str, capture_digest: str, *, proof: str) -> None:
+    def remember(self, content_key: str, capture_digest: str, *, proofs: tuple[str, ...]) -> None:
         """Name the new Capture these contents' next identical re-fetch reuses."""
 
         self.instance.body_store().capture_envelopes.remember_content_key(
-            content_key, capture_digest, proof=proof
+            content_key, capture_digest, proofs=proofs
         )
 
     def observe_rows(

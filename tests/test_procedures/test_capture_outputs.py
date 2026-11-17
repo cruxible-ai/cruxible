@@ -843,10 +843,17 @@ def test_a_capture_never_recorded_produced_is_not_reused(tmp_path: Path) -> None
     assert [item["field"] for item in produced] == ["right"]  # left is reused
 
 
-def test_a_capture_whose_production_proof_is_lost_is_fetched_anew(tmp_path: Path) -> None:
-    """Review 2d #3: the record proving the held Capture's production is gone
-    (unlogged, as a journal payload's loss can be); the identical re-fetch never
-    reuses it, records producing a new Capture, and the next re-fetch reuses that."""
+@pytest.mark.parametrize(
+    "lost", ["produced_capture", "provider_invocation_completed", "admission_bound"]
+)
+def test_a_capture_whose_production_proof_is_lost_is_fetched_anew(
+    tmp_path: Path, lost: str
+) -> None:
+    """Review 2d #3 and 2e #5: a record the held Capture's production is
+    verified from is gone (unlogged, as a journal payload's loss can be): its
+    production, its invocation's completion (the producer receipt) or its
+    run's admission. The identical re-fetch never reuses it, records producing
+    a new Capture, and the next re-fetch reuses that."""
 
     from datetime import timedelta
 
@@ -877,9 +884,9 @@ def test_a_capture_whose_production_proof_is_lost_is_fetched_anew(tmp_path: Path
     proofs = [
         stored.record.payload_digest
         for stored in _records_for_run(instance, first.run_id)
-        if stored.record.event_kind == "produced_capture"
+        if stored.record.event_kind == lost
     ]
-    assert len(proofs) == 2
+    assert len(proofs) == (2 if lost == "produced_capture" else 1)
     for digest in proofs:
         instance.body_store()._path(digest).unlink()  # noqa: SLF001
     second = run(1)
