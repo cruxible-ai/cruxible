@@ -803,6 +803,113 @@ def test_an_absence_is_reconfirmed_per_claim_by_every_complete_run(tmp_path: Pat
     assert len(records) == 3  # one per complete run
 
 
+def test_a_recheck_association_is_the_latest_of_its_claim_version(tmp_path: Path) -> None:
+    """Review 2e #1-#2: a per-Claim re-check of an extracted Claim in other
+    bytes associates that Capture's content with exactly the Claim version it
+    checked; only the latest re-check is current (a return to an earlier one is
+    re-checked again, so the terminal's skip gate is false for it), and a
+    historical read uses the association applicable at its instant."""
+
+    from datetime import UTC, datetime, timedelta
+
+    from cruxible_client.contracts.claims import claim_artifact_digest, claim_path, parse_claim
+    from cruxible_client.contracts.temporal import format_datetime
+    from cruxible_core.evidence.claim_reobservations import (
+        ClaimReobservationStore,
+        ObservedContent,
+        ReobservationReader,
+        cited_content_keys,
+        claim_reobservation_keys,
+    )
+    from cruxible_core.service.procedures.capture_observations import (
+        InstanceCaptureObservations,
+    )
+
+    instance = pages_world(tmp_path)
+    install(instance, list_spec(), line="test.kev-pages-line")
+    first = run_pages(instance, Pages(split(catalog())), line="test.kev-pages-line")
+    claim_id = _by(proposed(instance, first))[(_cve(WATCHED[0]), LISTED_IN)].identity.name
+    activate(instance, first)
+    head = instance.accepted_coordinate()
+    claim = parse_claim(
+        instance.tree_at(head.git_oid)[claim_path(claim_id)], path=claim_path(claim_id)
+    )
+    cited = claim.backing.procedure_evidence.value.capture_digest
+    (cited_key,) = cited_content_keys(instance, coordinate=head, capture_digests=(cited,))
+    contract = cited_key.contract_digest
+    version = claim_artifact_digest(claim).tagged
+    store = ClaimReobservationStore(instance)
+    # After the run's own records, which the instance's live clock stamped.
+    start = datetime.now(UTC).replace(microsecond=0) + timedelta(hours=1)
+
+    def digest(label: str) -> str:
+        return "sha256:" + hashlib.sha256(label.encode()).hexdigest()
+
+    def recheck(minute: int, capture: str, *, of: str = version) -> None:
+        at = start + timedelta(minutes=minute)
+        instance.recording_clock = lambda: at
+        payload = {
+            "tag": "cruxible-claim-reobservation-v1",
+            "claim_id": claim_id,
+            "capture_digest": digest(capture),
+            "contract_digest": contract,
+            "observed_content_digest": cited_key.observed_content_digest,
+            "capture_content_digest": digest("content-" + capture),
+            "observed_at": format_datetime(at),
+            "claim_artifact_digest": of,
+            "latest": format_datetime(at),
+        }
+        with store._locked(create=True) as conn:  # noqa: SLF001
+            journal, bodies, journal_head = store._writer_head()  # noqa: SLF001
+            stored = store._append(  # noqa: SLF001
+                journal, bodies, journal_head, payload, accepted=head, actor_id="o", now=at
+            )
+            store._apply(conn, payload, stored.record.sequence, stored.record.recorded_at)  # noqa: SLF001
+            conn.commit()
+
+    def fetched(minute: int, capture: str) -> None:
+        at = start + timedelta(minutes=minute)
+        instance.recording_clock = lambda: at
+        store.observe(
+            (ObservedContent(contract, digest("content-" + capture), digest(capture)),),
+            earliest=at,
+            latest=at,
+            run_id=f"RUN-{minute}",
+            node_id="pages",
+            actor_id="o",
+        )
+
+    def fresh(minute: int) -> int:
+        at = start + timedelta(minutes=minute)
+        keys = claim_reobservation_keys(
+            instance, coordinate=head, claim=claim, captures=claim.backing.capture_digests
+        )
+        reading = ReobservationReader(instance).latest(claim_id, keys, at)
+        return max(
+            (int((item.observed_at - start).total_seconds() // 60) for item in reading.evidence),
+            default=-1,
+        )
+
+    port = InstanceCaptureObservations(instance)
+    recheck(10, "B")
+    fetched(12, "B")
+    recheck(20, "D")
+    assert not port.rechecked(claim_id, version, digest("B"))  # B is re-checked again
+    assert port.rechecked(claim_id, version, digest("D"))
+    fetched(30, "B")
+    assert fresh(40) == 20  # B's fetch is not this version's current association
+    assert fresh(15) == 12  # at 15, B was: its fetch at 12 counts
+    recheck(30, "B")
+    assert fresh(40) == 30
+    fetched(35, "B")
+    assert fresh(40) == 35
+    # Another version's re-check never becomes this version's association.
+    recheck(50, "E", of=digest("an-earlier-version"))
+    fetched(55, "E")
+    assert fresh(60) == 35
+    assert port.rechecked(claim_id, version, digest("B"))
+
+
 def _cas_files(root: Path) -> dict[str, int]:
     return {
         str(path): path.stat().st_size

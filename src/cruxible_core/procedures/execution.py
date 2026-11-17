@@ -1415,8 +1415,8 @@ class CaptureObservationsProtocol(Protocol):
     def map_rows(self, map_digest: str) -> Mapping[str, str]:
         """One stored row map by record locator (a read-only view, never a copy)."""
 
-    def rechecked(self, claim_id: str, capture_digest: str) -> bool:
-        """Whether a per-Claim record already re-checked the Claim in this Capture."""
+    def rechecked(self, claim_id: str, version: str, capture_digest: str) -> bool:
+        """Whether this Claim version's latest per-Claim re-check is in this Capture."""
 
     def observe(
         self,

@@ -1100,20 +1100,27 @@ def _observed_same_row(value: Any, held_claim: ClaimArtifact, *, state: Any, exe
 
 
 def _already_rechecked(held_claim: ClaimArtifact, value: Any, *, executor: Any) -> bool:
-    """Whether a per-Claim record already re-checked the live Claim in this Capture.
+    """Whether this Claim version's latest per-Claim re-check is in this Capture.
 
     Its row changed elsewhere, so the row observation does not cover it; once
-    it was recorded per Claim, that Capture's later identical fetches refresh
-    it through the Capture's content (``claim_keys_on``). Restating it again
-    prepares no effect and retains nothing run-varying (review 2d #7).
+    a per-Claim record re-checked this exact version in this Capture, the
+    Capture's later identical fetches refresh it through the Capture's content
+    (``claim_keys_on``), so restating it again prepares nothing (review 2d
+    #7). Only the latest re-check is that association: a return to an earlier
+    re-checked Capture, or a successor version, is re-checked again (review
+    2e #1-#2).
     """
+
+    from cruxible_client.contracts.claims import claim_artifact_digest
 
     port = getattr(executor, "capture_observations", None)
     capture = getattr(value, "capture_digest", None)
     return (
         port is not None
         and isinstance(capture, str)
-        and port.rechecked(held_claim.identity.name, capture)
+        and port.rechecked(
+            held_claim.identity.name, claim_artifact_digest(held_claim).tagged, capture
+        )
     )
 
 
