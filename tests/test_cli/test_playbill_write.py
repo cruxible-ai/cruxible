@@ -691,6 +691,54 @@ def test_rebind_re_cites_a_claim_on_its_new_text_by_catalog_name(
     assert both.exit_code == 2 and "pass one of file" in both.output
 
 
+def test_write_rebinds_every_claim_citing_an_edited_file_in_one_change_set(
+    served: _ServiceClient, tmp_path: Path
+) -> None:
+    """A `write` file of rebind changes is observed on the CLI's side, as a set's evidence."""
+
+    workspace = tmp_path / "ws"
+    claims = []
+    for subject, value, anchor in ((WI1, 5, "measured five"), (f"{KIND}/wi-2", 6, "six")):
+        outcome = service_playbill_write(
+            served.instance,
+            request=WriteRequest.model_validate(
+                {
+                    "because": "Counted.",
+                    "changes": [
+                        {
+                            "op": "set",
+                            "subject": subject,
+                            "field": "measured",
+                            "value": value,
+                            "evidence": report_evidence(workspace, anchor),
+                        }
+                    ],
+                }
+            ),
+            caller=caller(),
+        )
+        claims.append(outcome.changes[0].claim)
+    (workspace / "reports.md").write_text(
+        "# Reports\n\nfive, counted again\n\nsix, counted again\n", encoding="utf-8"
+    )
+    anchors = ("repo.reports#five, counted again", "reports.md#six, counted again")
+    payload = {
+        "because": "Re-counted.",
+        "changes": [
+            {"op": "rebind", "target": claim, "evidence": {"kind": "file", "file": anchor}}
+            for claim, anchor in zip(claims, anchors, strict=True)
+        ],
+    }
+    result = CliRunner().invoke(
+        cli, [*PREFIX, "write", "-", "--workspace-root", str(workspace)], input=json.dumps(payload)
+    )
+    assert result.exit_code == 0, result.output
+    assert result.stdout.startswith("accepted"), result.output
+    (request,) = [item for item in served.requests if isinstance(item, WriteRequest)]
+    assert [change.op for change in request.changes] == ["rebind", "rebind"]
+    assert all(change.evidence.observation is not None for change in request.changes)  # type: ignore[union-attr]
+
+
 def test_rebind_from_capture_moves_every_citing_claim_in_one_change(
     served: _ServiceClient,
 ) -> None:

@@ -490,6 +490,11 @@ quickstart and concepts pages.
   naming its author and the command that remakes it, and publishes nothing.
 - **Withdrawing or rejecting an accepted proposal says it is accepted**
   (`cruxible.proposal.already_accepted`, with its git oid and generation).
+- **One `write` re-cites every Claim an edited section drifted.** A `write`
+  file (CLI or MCP `cruxible_write`) holding `rebind` changes refused
+  `cruxible.write.file_evidence_unobserved`; the rebind's new text is now read
+  on the writer's side as a `set`'s evidence is, so N drifted Claims land as
+  one proposal.
 - **CLI `proposal approve` with no principal refuses as every proposal act
   does** (`cruxible.identity.principal_unconfigured` or `credential_unbound`),
   adding that `--principal-id ID --key FILE` signs as that principal.
