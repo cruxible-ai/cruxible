@@ -4571,11 +4571,7 @@ class ProcedureExecutor:
                 request=executed.model_dump(mode="json"),
             )
             into.member_requests[key] = derived.request_digest
-            state.pending_source_proofs.append(
-                self._append_event(
-                    admission, records, "source_request_derived", derived.model_dump(mode="json")
-                ).record.payload_digest
-            )
+            self._append_source_request(admission, records, state, derived.model_dump(mode="json"))
             try:
                 read = reader.read(
                     executed,
@@ -4836,13 +4832,8 @@ class ProcedureExecutor:
                     else workspace_request.model_dump(mode="json")
                 ),
             )
-            state.pending_source_proofs.append(
-                self._append_event(
-                    admission,
-                    records,
-                    "source_request_derived",
-                    derived_request.model_dump(mode="json"),
-                ).record.payload_digest
+            self._append_source_request(
+                admission, records, state, derived_request.model_dump(mode="json")
             )
             source_read_receipt: SourceReadReceipt | None = None
             provider_payload = resolved_request
@@ -6239,6 +6230,27 @@ class ProcedureExecutor:
                 policy_token(acquisition.envelope.capture_contract_digest),
             }
         )
+
+    def _append_source_request(
+        self,
+        admission: ProcedureRunAdmission,
+        records: list[StoredProcedureJournalRecordV1],
+        state: _RunState,
+        payload: dict[str, Any],
+    ) -> None:
+        """Journal one derived Source request; name it and the request body it
+        cites (split out run-free) among the invocation's production proofs:
+        a verifier joins the two to read the source (review 2f #3)."""
+
+        split = split_derived_source_request(
+            payload,
+            store=lambda content: self.bodies.store(content, journal_payload=True).digest,
+        )
+        stored = self._append_event(admission, records, "source_request_derived", split)
+        state.pending_source_proofs.append(stored.record.payload_digest)
+        nested = split.get("request_body_digest")
+        if isinstance(nested, str):
+            state.pending_source_proofs.append(nested)
 
     @staticmethod
     def _reuse_proof(
