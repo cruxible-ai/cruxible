@@ -117,7 +117,13 @@ def service_land_authoring_submit(
     data["outcome"] = outcome.model_dump(mode="json")
     from cruxible_core.service.discovery.kit_owners import kit_retirement_warnings
 
-    warned = kit_retirement_warnings(coordinator.instance, status.candidate_digest)
+    # Only an admitted proposal has candidate evidence to read; a refused
+    # preflight's candidate digest names nothing stored.
+    warned = (
+        kit_retirement_warnings(coordinator.instance, status.candidate_digest)
+        if status.proposal_id is not None
+        else ()
+    )
     if warned:
         data["warnings"] = list(warned)
     data["status"] = status.model_dump(mode="json")

@@ -107,7 +107,12 @@ def kit_retirement_warnings(
 
     if candidate_digest is None:
         return ()
-    candidate = instance.proposal_evidence().read_candidate(candidate_digest)
+    try:
+        candidate = instance.proposal_evidence().read_candidate(candidate_digest)
+    except CruxibleError:
+        # Advisory only: a candidate whose evidence cannot be read warns of
+        # nothing here; reading the proposal itself reports why.
+        return ()
     retired = [
         member.path
         for member in getattr(candidate, "members", ())
