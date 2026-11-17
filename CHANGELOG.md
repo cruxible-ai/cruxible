@@ -490,6 +490,15 @@ quickstart and concepts pages.
   naming its author and the command that remakes it, and publishes nothing.
 - **Withdrawing or rejecting an accepted proposal says it is accepted**
   (`cruxible.proposal.already_accepted`, with its git oid and generation).
+- **A change set landed at the head keeps its reason.** A write approved or
+  activated after the head moved landed by its own bytes with no rationale, so
+  `get --detail history` and the successor's review showed no `reason:` for
+  it. The landed proposal now carries its source's `--because`.
+- **History and review name a re-cite one way.** `get SUBJECT --detail history
+  --field F` no longer prints the Subject's own `rev 1` line above the field.
+  A same-value `set` on new evidence prints `reobserve ... (value unchanged)`
+  in the write outcome and review (history: `reobserved`), and `rebind` is
+  used only when a held citation was replaced (history: `rebound`).
 - **One `write` re-cites every Claim an edited section drifted.** A `write`
   file (CLI or MCP `cruxible_write`) holding `rebind` changes refused
   `cruxible.write.file_evidence_unobserved`; the rebind's new text is now read

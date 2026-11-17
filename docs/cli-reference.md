@@ -4440,7 +4440,8 @@ or none when no single admission accepted it. A Subject's history is its
 fields' events: its shell's own revisions, then one page of changes to its
 fields grouped by field, each field's value timeline (`changed  grace ->
 linus`, `stated ... (contends with a live value)` for a competing value in a
-single-value field); `--field FIELD` narrows them to one field. Locating a page
+single-value field); `--field FIELD` narrows them to that field's events, without the
+shell's revisions. Locating a page
 reads the Subject's own Claims and revisions; only the page's revisions are
 read. A body over 64 KiB needs `--range`. A summary cuts a string
 value over 500 characters, says how long it is, and names the read that shows

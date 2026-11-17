@@ -2807,7 +2807,10 @@ def _history(
                 surface=surface,
                 reasons=reasons,
             )
-            for entry in (newest_first if resolved.kind == "subject" else ())
+            # A Subject's shell revisions, unless the read names one field.
+            for entry in (
+                newest_first if resolved.kind == "subject" and request.field is None else ()
+            )
         )
         if resolved.kind == "subject":
             return _subject_events(

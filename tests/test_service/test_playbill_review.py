@@ -513,9 +513,45 @@ def test_change_lines_print_claims_as_the_write_verbs_do() -> None:
         "  set app.service/payments owner: ada -> grace  [CLM-1]",
         "  retire app.service/payments owner: grace  [CLM-1]",
         # A settle fallback re-citing a re-read file: the value did not move.
-        "  refresh evidence app.service/payments owner: true (value unchanged)  [CLM-1]",
+        "  reobserve app.service/payments owner: true (value unchanged)  [CLM-1]",
         "  set app.service/payments owner: app.library/libfoo  [CLM-1]",
         "  set app.service/payments owner: grace -> none  [CLM-1]",
         "  set app.service/payments owner: none of ada  [CLM-1]",
         "  add subject subjects/app.service/x.json  (generated successor)",
     ]
+
+
+def test_a_same_value_revision_is_a_rebind_only_when_it_leaves_a_citation_out() -> None:
+    """Review reads a re-cite as history does: rebound vs reobserved (coldsdk-12)."""
+
+    from cruxible_core.service.proposals.review_view import claim_change_row
+
+    def claim(*citations: str) -> dict[str, object]:
+        return {
+            "statement": {
+                "subject": {"artifact_path": "subjects/acme/widget.json"},
+                "predicate": "acme.price",
+                "object": {"kind": "literal", "value": 42},
+                "role": "observation",
+            },
+            "backing": {
+                "citations": [
+                    {"citation_id": f"cit:{item}", "capture_digest": f"sha256:{item}"}
+                    for item in citations
+                ]
+            },
+        }
+
+    def op(old: dict[str, object], new: dict[str, object]) -> str:
+        return claim_change_row(
+            path="claims/CL/CLM-1.json",
+            disposition="replace",
+            old=old,
+            new=new,
+            verdict="supported",
+            cardinality=lambda _predicate: "one",
+            base_oid="0" * 40,
+        )[3]
+
+    assert op(claim("a"), claim("a", "b")) == "set"  # evidence added: reobserved
+    assert op(claim("a"), claim("b")) == "rebind"  # a held citation replaced: rebound

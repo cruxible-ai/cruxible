@@ -1010,9 +1010,10 @@ class GetSubjectHistory(_StrictGetModel):
     """A Subject's history: its shell's revisions, and one page of its field events.
 
     ``revisions`` are the Subject shell's own (created, pins, retired), all of
-    them. ``events`` are its fields' changes, newest first, one page: each
-    revision of each Claim about the Subject, with what it did and why. Group
-    them by ``field`` for each field's value timeline.
+    them, or none when the read names a ``field``. ``events`` are its fields'
+    changes, newest first, one page: each revision of each Claim about the
+    Subject, with what it did and why. Group them by ``field`` for each field's
+    value timeline.
     """
 
     kind: Literal["subject"] = "subject"

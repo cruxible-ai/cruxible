@@ -455,6 +455,9 @@ def change_outcome_line(
         line = f"note {where} about {about}  [{change.note}]"
     elif change.before is None:
         line = f"set {target}: {_value_text(change.after)}"
+    elif change.before == change.after and not change.already_live:
+        # The same value on new evidence: history calls this revision reobserved.
+        line = f"reobserve {target}: {_value_text(change.after)} (value unchanged)"
     else:
         line = f"set {target}: {_value_text(change.before)} -> {_value_text(change.after)}"
     details = [item for item in (change.claim,) if item]

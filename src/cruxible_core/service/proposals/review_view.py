@@ -109,6 +109,25 @@ def _live(artifact: Mapping[str, Any] | None) -> bool:
     return artifact is not None and artifact.get("lifecycle", {}).get("state", "live") == "live"
 
 
+def _citation_ids(artifact: Mapping[str, Any] | None) -> set[str]:
+    backing = (artifact or {}).get("backing") or {}
+    return {
+        str(item["citation_id"])
+        for item in backing.get("citations", ())
+        if isinstance(item, Mapping) and isinstance(item.get("citation_id"), str)
+    }
+
+
+def drops_citation(old: Mapping[str, Any] | None, new: Mapping[str, Any] | None) -> bool:
+    """Whether a same-value revision left out a citation its predecessor held (a re-bind).
+
+    One that only adds evidence is a re-observation: a ``set`` of the same value,
+    as the write outcome and history (``reobserved``) show it.
+    """
+
+    return not _citation_ids(old) <= _citation_ids(new)
+
+
 def claim_change_row(
     *,
     path: str,
@@ -137,7 +156,12 @@ def claim_change_row(
         else:
             shown_before = summary_value(before_value, read_whole=whole_value_read(claim, base_oid))
         verdict = None
-    elif disposition == "replace" and canonical_json(before_value) == canonical_json(after_value):
+    elif (
+        disposition == "replace"
+        and canonical_json(before_value) == canonical_json(after_value)
+        and drops_citation(old, new)
+    ):
+        # A re-bind, as history reads one: the same value with a held citation left out.
         op, shown_after, shown_before = "rebind", summary_value(after_value), None
     elif disposition == "replace":
         op = "set"
@@ -505,6 +529,7 @@ __all__ = [
     "claim_change_row",
     "claim_type_cardinality",
     "definition_row",
+    "drops_citation",
     "review_change",
     "subject_change_row",
     "subject_revision_row",
