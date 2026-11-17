@@ -170,9 +170,13 @@ serves, and `cruxible_floor_export mode=write` pulls it elsewhere.
 holding `<signer_id>.ed25519`, the layout `cruxible principal add
 --key-dir` and `cruxible init --key-dir` write. Set it in the MCP
 server's environment; no tool argument can name a key path. The tool signs as
-`signer_id`, or as the directory's only key when `signer_id` is omitted, and
-passing the reviewed `candidate_digest` makes it refuse a candidate that
-changed since review. Unset, the tool refuses and says how to configure it.
+`signer_id`, else as the principal the server acts as, else as the directory's
+only key, and passing the reviewed `candidate_digest` makes it refuse a
+candidate that changed since review. A server started with a principal's
+`cruxible.env` (`CRUXIBLE_PRINCIPAL_ID` and `CRUXIBLE_PRINCIPAL_KEY`) needs no
+key directory: the key is found by the lookup the CLI and the SDK use (see
+`principal add` in the [CLI reference](cli-reference.md)), never another
+principal's. With no key found, the tool refuses and says how to configure it.
 Set `CRUXIBLE_PRINCIPAL_ID` beside it: the key directory makes the
 environment the identity source, so with no principal ID the server's
 requests name no principal, and submitting the approval refuses
@@ -267,7 +271,7 @@ template is an authoring preview performed as the caller's principal.
 | `cruxible_proposal_review` | A proposal as a reviewer reads it: each value change as a write prints it, with its role, the Captures it cites and their text, then one block per definition (Line, mandate, Runbook, Trigger); page with `changes_from` / `definitions_from` (the `changes_next` / `definitions_next` a page returns); `groups=true` adds the stored fields grouped by kind, `detail=true` the full review; a Procedure proposal's item reasons page with `item_reasons_after` / `item_reasons_limit` | `READ_ONLY` |
 | `cruxible_proposal_approve_prepare` | Return the exact approval challenge | `READ_ONLY` |
 | `cruxible_proposal_approve_submit` | Submit a public signed attestation; activates a candidate it completes unless `hold` | `GRAPH_WRITE` |
-| `cruxible_proposal_approve` | Challenge, sign with a local key from `CRUXIBLE_MCP_KEY_DIR`, and submit in one call; the approval that completes the candidate activates it unless `hold` | `GRAPH_WRITE` |
+| `cruxible_proposal_approve` | Challenge, sign with the signer's local key (`CRUXIBLE_PRINCIPAL_KEY` or `CRUXIBLE_MCP_KEY_DIR`), and submit in one call; the approval that completes the candidate activates it unless `hold` | `GRAPH_WRITE` |
 | `cruxible_proposal_activate` | Activate by compare-and-set; returns the activation receipt (the daemon delivers the floor) | `GRAPH_WRITE` |
 | `cruxible_proposal_list` | List one page of open and terminal proposal evidence (`limit`, `cursor`) | `READ_ONLY` |
 | `cruxible_proposal_readmit` | Recompile retained inputs at head, or readmit exact bytes | `GOVERNED_WRITE` |
@@ -275,8 +279,8 @@ template is an authoring preview performed as the caller's principal.
 | `cruxible_proposal_reject` | Reject another actor's open proposal as its reviewer, with a recorded reason | `GRAPH_WRITE` |
 
 MCP never accepts a private key as a tool argument. `cruxible_proposal_approve`
-signs client-side, in the MCP server process, with a key from
-`CRUXIBLE_MCP_KEY_DIR`; a signer elsewhere uses `cruxible_proposal_approve_prepare`
+signs client-side, in the MCP server process, with a key its environment
+names; a signer elsewhere uses `cruxible_proposal_approve_prepare`
 and `cruxible_proposal_approve_submit`. Only the public attestation reaches the
 daemon.
 

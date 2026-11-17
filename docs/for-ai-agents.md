@@ -57,10 +57,9 @@ First setup on one machine, in order:
 5. An agent started in the project acts as its owner with no configuration:
    init's `.cruxible/identity.json` names the owner (see
    [MCP tools](mcp-tools.md#instances-and-the-adapter-environment)). Give a
-   session that should be another principal its own: `CRUXIBLE_PRINCIPAL_ID`, plus
-   `CRUXIBLE_MCP_KEY_DIR` (the key directory, for `cruxible_proposal_approve`)
-   and `CRUXIBLE_PRINCIPAL_KEY` (the key file, for `cruxible_claim_attest`),
-   copied from that principal's `cruxible.env`. Add more principals with
+   session that should be another principal its own: `CRUXIBLE_PRINCIPAL_ID` and
+   `CRUXIBLE_PRINCIPAL_KEY` (the key file, for `cruxible_proposal_approve` and
+   `cruxible_claim_attest`), copied from that principal's `cruxible.env`. Add more principals with
    `cruxible principal add NAME --key-dir DIR`.
 
 The agent plugin's README (`plugins/README.md`) walks the same path through to
@@ -402,7 +401,8 @@ kind of change costs.
 
 Approval signs locally and sends only the public signature. `cruxible proposal
 approve` and `cruxible_proposal_approve` do it in one call; the MCP tool signs
-with a key from the server's `CRUXIBLE_MCP_KEY_DIR`, and passing the reviewed
+with the acting principal's key (`CRUXIBLE_PRINCIPAL_KEY` or
+`CRUXIBLE_MCP_KEY_DIR` in the server's environment), and passing the reviewed
 `candidate_digest` makes it refuse a candidate that changed since you read it.
 A signer outside the MCP process uses the full-profile pair
 `cruxible_proposal_approve_prepare` (the exact statement to sign) and

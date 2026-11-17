@@ -69,7 +69,7 @@ class CompilerUpgradeSigningKey(BaseModel):
 
     signer_id: str
     private_key_path: str
-    source: Literal["option", "environment", "remembered_settings", "default_key_dir"]
+    source: Literal["option", "environment", "remembered_settings", "folder", "default_key_dir"]
 
 
 class CompilerUpgradeResult(BaseModel):

@@ -516,3 +516,67 @@ def test_a_bare_init_owner_attests_a_claim_with_no_extra_variables(
     payload = json.loads(result.stdout[result.stdout.index("{") :])
     assert payload["tag"] == "playbill-claim-attestation-append-result-v1"
     assert len(instance.claim_attestation_evidence_store().events()) == 1
+
+
+def _init_awaiting_reviewer(daemon: Path) -> tuple[str, str]:
+    """An instance whose base kit awaits the reviewer: (proposal ID, init's stdout)."""
+
+    made = _run(
+        "init",
+        "--principal-id",
+        "owner",
+        "--reviewer-key-dir",
+        str(daemon / "rev"),
+        "--require-independent-approval",
+    )
+    assert made.exit_code == 0, made.output
+    (line,) = [item for item in made.stdout.splitlines() if item.startswith("Base kit: ")]
+    proposal = line.split("proposal ", 1)[1].split(" ", 1)[0]
+    # The printed approve form names the reviewer init created, and no key.
+    assert f"(cruxible proposal approve {proposal} --signer-id reviewer, " in line
+    return proposal, made.stdout
+
+
+def test_a_process_naming_the_reviewer_signs_with_the_reviewers_remembered_key(
+    daemon: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """sec N2, coldcli-01: `CRUXIBLE_PRINCIPAL_ID=reviewer cruxible proposal approve ID --yes`
+    found no key, because a process naming its principal loaded nothing."""
+
+    proposal, _ = _init_awaiting_reviewer(daemon)
+    monkeypatch.setenv("CRUXIBLE_PRINCIPAL_ID", "reviewer")
+
+    result = _run("proposal", "approve", proposal, "--yes")
+
+    assert result.exit_code == 0, result.output
+    key = daemon / "rev" / "reviewer.ed25519"
+    settings = daemon / "rev" / "cruxible.env"
+    assert f"Signing key for reviewer: {key} (from remembered settings {settings})" in result.stderr
+    assert _whoami()["actor_id"] == "reviewer"
+    shown = json.loads(_run("context", "show", "--json").stdout)
+    assert shown["principal_source"] == "environment"
+
+
+def test_the_printed_signer_form_signs_with_that_signers_key_never_the_owners(
+    daemon: Path,
+) -> None:
+    """sec N3: `--signer-id reviewer` from the owner's shell signed with the owner's key
+    "for reviewer" and died in SigningKeyError with no repair."""
+
+    proposal, _ = _init_awaiting_reviewer(daemon)
+    assert _whoami()["actor_id"] == "owner"
+
+    # A signer whose key is nowhere here is refused with the repair, before any signing.
+    missing = _run("proposal", "approve", proposal, "--signer-id", "ghost", "--yes")
+    assert missing.exit_code == 2, missing.output
+    assert "no signing key for principal ghost here" in missing.output
+    assert "cruxible context use --principal ghost" in missing.output
+    assert "--key FILE" in missing.output
+    assert "SigningKeyError" not in missing.output and "owner.ed25519" not in missing.output
+
+    result = _run("proposal", "approve", proposal, "--signer-id", "reviewer", "--yes")
+
+    assert result.exit_code == 0, result.output
+    key = daemon / "rev" / "reviewer.ed25519"
+    settings = daemon / "rev" / "cruxible.env"
+    assert f"Signing key for reviewer: {key} (from remembered settings {settings})" in result.stderr

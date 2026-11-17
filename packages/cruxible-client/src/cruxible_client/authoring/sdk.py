@@ -35,7 +35,11 @@ from cruxible_client.authoring.context import (
     resolve_context,
 )
 from cruxible_client.authoring.doc_writes import write_workspace
-from cruxible_client.authoring.principal_settings import remembered_principal_settings
+from cruxible_client.authoring.principal_settings import (
+    principal_key,
+    principal_key_missing,
+    remembered_principal_settings,
+)
 from cruxible_client.authoring.procedures import Sequence as ProcedureSequence
 from cruxible_client.authoring.procedures import procedure_record_constructor
 from cruxible_client.authoring.sdk_types import (
@@ -77,7 +81,7 @@ from cruxible_client.authoring.selectors import (
     FileSelector,
     WorkspaceFiles,
 )
-from cruxible_client.authoring.signing import ApprovalSigner
+from cruxible_client.authoring.signing import ApprovalSigner, LocalEd25519ApprovalSigner
 from cruxible_client.authoring.source_map import (
     DiagnosticSourceMap,
     capture_keyword_sites,
@@ -2640,7 +2644,7 @@ class Proposal:
 
     Read it with ``cx.get(proposal_id)``: status, verdict, changes, and for a refused
     proposal every refusal with its repair. Next: ``proposal.review()``, then
-    ``proposal.approve(signer=..., reviewed=...)`` and ``proposal.activate()``.
+    ``proposal.approve(signer=cx.signer(), reviewed=...)`` and ``proposal.activate()``.
     """
 
     def __init__(self, cx: Cruxible, proposal_id: str) -> None:
@@ -2653,7 +2657,7 @@ class Proposal:
         ``print(review)`` shows what ``cruxible proposal review`` prints: the value
         changes with what each cites, and the definitions; ``review.details`` is
         the full candidate review.
-        Next: ``proposal.approve(signer=..., reviewed=review)``.
+        Next: ``proposal.approve(signer=cx.signer(), reviewed=review)``.
         """
         return review_proposal(self._playbill, self.proposal_id)
 
@@ -4960,6 +4964,63 @@ class Cruxible:
         """
 
         return self._client.whoami(self._instance_id)
+
+    def signer(
+        self, principal_id: str | None = None, *, key: str | Path | None = None
+    ) -> LocalEd25519ApprovalSigner:
+        """The local approval signer of one principal (default: who this connection acts as).
+
+        The key is found as the CLI and the MCP server find it: ``key``, else
+        ``CRUXIBLE_PRINCIPAL_KEY`` unless ``CRUXIBLE_PRINCIPAL_ID`` names another
+        principal, else the settings `cruxible init` or `cruxible principal add`
+        remembered for that principal on this instance, else the folder's
+        identity record when it names it. It is checked against the principal's
+        registered public key and must sit outside the workspace. Never another
+        principal's key: with none found it raises ``SigningKeyError`` naming
+        the repair.
+
+        Next: ``cx.proposal(ID).approve(signer=cx.signer("reviewer"), reviewed=review)``.
+        """
+
+        from cruxible_client.authoring.attestations import principal_records
+        from cruxible_client.contracts.errors import SigningKeyError
+
+        who = principal_id if principal_id is not None else self.whoami().actor_id
+        if who is None:
+            raise SigningKeyError(
+                "this connection acts as no principal, so it has no signer of its own; "
+                "repair: pass the principal, as cx.signer('reviewer')"
+            )
+        who = who.removeprefix("Principal:")
+        found = principal_key(
+            who,
+            instance_id=self._instance_id,
+            server_url=self._client.base_url,
+            server_socket=self._client.socket_path,
+            explicit=key,
+            folder=self._workspace,
+        )
+        if found is None:
+            raise SigningKeyError(principal_key_missing(who, client="sdk"))
+        record = next(
+            (
+                item
+                for item in principal_records(self._client, self._instance_id)
+                if item.principal_id == who
+            ),
+            None,
+        )
+        if record is None:
+            raise SigningKeyError(
+                f"{who} is not a registered principal of {self._instance_id}; "
+                "cx.orient(section='principals') lists them"
+            )
+        return LocalEd25519ApprovalSigner.open(
+            signer_id=who,
+            private_key_path=found.private_key_path,
+            expected_public_key=record.public_key,
+            forbidden_roots=() if self._workspace is None else (self._workspace,),
+        )
 
     def kits(self) -> KitStatus:
         """The kits installed here, their versions, providers and pending adds.

@@ -251,8 +251,8 @@ def test_sdk_rows_render_sdk_calls_not_cli_commands() -> None:
     }
     assert commands["cruxible.line.enable"] == 'cx.line("hourly").enable()'
     assert commands["cruxible.proposal.approve"] == (
-        'cx.proposal("PRP-0001").approve(signer=SIGNER, reviewed=cx.proposal("PRP-0001").review())'
-        "  # SIGNER: reviewer's ApprovalSigner"
+        'cx.proposal("PRP-0001").approve(signer=cx.signer("reviewer"), '
+        'reviewed=cx.proposal("PRP-0001").review())'
     )
     for command in commands.values():
         assert command is None or not command.startswith("cruxible ")

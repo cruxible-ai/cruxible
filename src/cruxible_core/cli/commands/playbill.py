@@ -59,6 +59,7 @@ from cruxible_client.authoring.files import (
 )
 from cruxible_client.authoring.folder_identity import write_folder_identity
 from cruxible_client.authoring.inputs import AuthoringInput, ClaimInput
+from cruxible_client.authoring.principal_settings import principal_key, principal_key_missing
 from cruxible_client.authoring.sdk_types import SourceSelectionError
 from cruxible_client.authoring.selectors import WorkspaceFiles, catalog_file_paths
 from cruxible_client.authoring.signing import sign_runtime_credential_mint
@@ -1394,10 +1395,11 @@ def init_playbill(
         if kit.status == "accepted":
             click.echo(f"Base kit: {kit.kit_id} {kit.version} installed")
         else:
+            approver = "reviewer" if reviewer is not None else _SIGNER_PLACEHOLDER
             click.echo(
                 f"Base kit: {kit.kit_id} {kit.version} awaits approval, proposal "
                 f"{kit.proposal_id} (cruxible proposal approve {kit.proposal_id} "
-                "--signer-id ID --key FILE, as a second principal)"
+                f"--signer-id {approver}, as a second principal)"
             )
     if result.workspace_advertisement.failure_code is not None:
         click.echo(f"Workspace ref failure: {result.workspace_advertisement.failure_code}")
@@ -2458,7 +2460,8 @@ def _echo_kit_change(
             if result.approval_required:
                 click.echo(
                     f"Next: cruxible proposal approve {result.proposal_id} "
-                    "--signer-id ID --key FILE (the approval that completes it activates it)"
+                    f"--signer-id {_SIGNER_PLACEHOLDER} (the approval that completes it "
+                    "activates it)"
                 )
             elif result.detail is None:
                 # Otherwise the detail already names who activates it.
@@ -2799,8 +2802,8 @@ def kit_status(offline: bool, output_json: bool) -> None:
             click.echo(f"  {printable(resume.detail)}")
         if resume.proposal_open and resume.proposal_id is not None:
             click.echo(
-                f"  next: cruxible proposal approve {resume.proposal_id} --signer-id ID "
-                "--key FILE (the approval that completes it activates it)"
+                f"  next: cruxible proposal approve {resume.proposal_id} --signer-id "
+                f"{_SIGNER_PLACEHOLDER} (the approval that completes it activates it)"
             )
     for kit in result.kits:
         available = ""
@@ -3686,17 +3689,29 @@ def _awaiting_whom(receipt: contracts.ApprovalReceipt) -> str:
 
 
 def _awaiting_approve_steps(receipt: contracts.ApprovalReceipt) -> list[str]:
-    """The approve command for each outstanding signer the receipt names."""
+    """The approve command for each outstanding signer the receipt names.
+
+    It names the signer and no key: the signer's key is found by the one
+    lookup (its remembered settings here), or the refusal names the repair.
+    """
 
     proposal = receipt.proposal_id
     steps = [
-        f"cruxible proposal approve {proposal} --signer-id {signer} --key FILE"
+        f"cruxible proposal approve {proposal} --signer-id {signer}"
         for signer in receipt.required_signers
     ]
     if receipt.approvals_remaining > len(receipt.required_signers):
-        signer = receipt.eligible_signers[0] if len(receipt.eligible_signers) == 1 else "ID"
-        steps.append(f"cruxible proposal approve {proposal} --signer-id {signer} --key FILE")
+        signer = (
+            receipt.eligible_signers[0]
+            if len(receipt.eligible_signers) == 1
+            else _SIGNER_PLACEHOLDER
+        )
+        steps.append(f"cruxible proposal approve {proposal} --signer-id {signer}")
     return steps
+
+
+#: A signer only the caller can name, as every suggested command shows it.
+_SIGNER_PLACEHOLDER = "'<SIGNER_ID>'"
 
 
 @proposal_group.command("activate")
@@ -4403,17 +4418,14 @@ def _principal_add_next_steps(
         return [
             "the registration proposal was not admitted; inspect it with `cruxible proposal list`"
         ]
-    signer = outcome.signer_id or "YOUR_PRINCIPAL_ID"
+    signer = outcome.signer_id or _SIGNER_PLACEHOLDER
     steps = []
     approval = outcome.approval
     if approval is not None and approval.not_activated == "approvals_remaining":
         # Signed, but more signatures are required: activating now would refuse.
         steps.extend(_awaiting_approve_steps(approval))
     elif outcome.signer_id is None:
-        steps.append(
-            f"cruxible proposal approve {outcome.proposal_id} --signer-id {signer} "
-            "--key YOUR_PRIVATE_KEY"
-        )
+        steps.append(f"cruxible proposal approve {outcome.proposal_id} --signer-id {signer}")
         steps.append(f"cruxible proposal activate {outcome.proposal_id}")
     else:
         steps.append(f"cruxible proposal activate {outcome.proposal_id}")
@@ -4916,7 +4928,7 @@ def _echo_proposal(
         and not inspection.status.startswith("would")
     ):
         click.echo(
-            f"next: cruxible proposal approve {proposal_id} --signer-id {actor} --key FILE "
+            f"next: cruxible proposal approve {proposal_id} --signer-id {actor} "
             "(a principal change needs its proposer's own signature)"
         )
     elif proposal_id:
@@ -7634,55 +7646,63 @@ def propose_compiler_upgrade(
 def _signing_key(
     explicit: str | None, *, instance_id: str, signer_id: str
 ) -> CompilerUpgradeSigningKey | None:
-    """The caller's signing key: `--key`, its environment, else the default key directory.
+    """The key that signs as ``signer_id``, by the lookup every client shares.
 
-    `cruxible init` keeps the owner's key under the default key directory, and
-    the CLI's remembered settings export it as CRUXIBLE_PRINCIPAL_KEY, so a
-    fresh install needs no flag. The path stays on this client.
+    `--key`; CRUXIBLE_PRINCIPAL_KEY unless the process acts as another
+    principal; the signer's remembered settings; the folder record when it
+    names the signer; the default key directory `cruxible init` uses. Never
+    another principal's key: `--signer-id reviewer` from the owner's shell
+    finds the reviewer's remembered key or refuses with the repair. The path
+    stays on this client.
     """
-    if explicit:
-        ctx = click.get_current_context()
-        source = ctx.get_parameter_source("private_key_path")
-        if source is not click.core.ParameterSource.ENVIRONMENT:
-            kind: Literal["option", "environment", "remembered_settings", "default_key_dir"] = (
-                "option"
-            )
-        elif _root_ctx_obj().get("principal_source") == "remembered":
-            kind = "remembered_settings"
-        else:
-            kind = "environment"
-        return CompilerUpgradeSigningKey(
-            signer_id=signer_id,
-            private_key_path=str(Path(explicit).expanduser()),
-            source=kind,
-        )
-    default = default_key_dir(instance_id, signer_id) / f"{signer_id}.ed25519"
-    if default.is_file():
-        return CompilerUpgradeSigningKey(
-            signer_id=signer_id, private_key_path=str(default), source="default_key_dir"
-        )
-    return None
 
-
-def _missing_signing_key_help(instance_id: str, signer_id: str) -> str:
-    """Name where a fresh install keeps the key, and the commands that load or make one."""
-
-    default = default_key_dir(instance_id, signer_id) / f"{signer_id}.ed25519"
-    return (
-        f"no signing key for principal {signer_id}: pass --key PATH (or set "
-        f"CRUXIBLE_PRINCIPAL_KEY). `cruxible init` keeps the owner's key at {default}, "
-        f"and none is there. `cruxible context use --principal {signer_id}` loads a "
-        "principal's remembered settings, key included; settings written elsewhere load "
-        "with `set -a; . DIR/cruxible.env; set +a`; `cruxible principal add ID --key-dir "
-        "DIR` creates a new principal and its key"
+    obj = _root_ctx_obj()
+    from_option = (
+        bool(explicit)
+        and click.get_current_context().get_parameter_source("private_key_path")
+        is not click.core.ParameterSource.ENVIRONMENT
+    )
+    workspace = obj.get("playbill_workspace")
+    found = principal_key(
+        signer_id,
+        instance_id=instance_id,
+        server_url=obj.get("server_url"),
+        server_socket=obj.get("server_socket"),
+        explicit=explicit if from_option else None,
+        folder=(
+            Path(str(workspace))
+            if workspace is not None and obj.get("target_instance_source") == "workspace"
+            else None
+        ),
+    )
+    if found is None:
+        return None
+    source = found.source
+    settings = found.settings_path
+    if source == "environment" and obj.get("principal_key_source") is not None:
+        # The CLI exported it from the acting principal's settings or folder record.
+        source = obj["principal_key_source"]
+        settings = obj.get("principal_settings")
+    obj["signing_key_settings"] = None if settings is None else str(settings)
+    return CompilerUpgradeSigningKey(
+        signer_id=signer_id, private_key_path=str(found.private_key_path), source=source
     )
 
 
+def _missing_signing_key_help(instance_id: str, signer_id: str) -> str:
+    """No key signs as the signer here: the repairs, never another principal's key."""
+
+    del instance_id
+    return principal_key_missing(signer_id, client="cli")
+
+
 def _signing_key_line(key: CompilerUpgradeSigningKey) -> str:
+    settings = _root_ctx_obj().get("signing_key_settings")
     where = {
         "option": "--key",
         "environment": "CRUXIBLE_PRINCIPAL_KEY",
-        "remembered_settings": f"remembered settings {_root_ctx_obj().get('principal_settings')}",
+        "remembered_settings": "remembered settings" + (f" {settings}" if settings else ""),
+        "folder": "the folder's identity record",
         "default_key_dir": "the default key directory",
     }[key.source]
     return f"Signing key for {key.signer_id}: {key.private_key_path} (from {where})"
@@ -7728,7 +7748,7 @@ def _land_compiler_upgrade(
                 "not activated: the approval policy needs an ordinary principal other than "
                 "the proposer; that principal's `cruxible proposal approve` activates it"
             ),
-            next=f"cruxible proposal approve {proposal_id} --signer-id APPROVER --key THEIR_KEY",
+            next=f"cruxible proposal approve {proposal_id} --signer-id {_SIGNER_PLACEHOLDER}",
         )
     elif key is None or signer_id is None:
         stop = CompilerUpgradeProposed(

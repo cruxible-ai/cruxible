@@ -2,8 +2,8 @@
   "format": "playbill-served-surface-v1",
   "succession": {
     "ratified_by": "maintainer",
-    "register_entry": "2026-11-16:int-050-gate",
-    "surface_digest": "sha256:9feb2a5871c45c5db34e37c77472fc074a79bdd0da76f99f2171146bd74d4a56"
+    "register_entry": "2026-11-17:fb-cosign",
+    "surface_digest": "sha256:5e68edabcc94f2184cc75dd3413ab14d71d0edbdf77a29edd2152925d4dbed9a"
   },
   "surface": {
     "cli_leaves": [
@@ -2681,7 +2681,7 @@
           "submit_approval"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_approve",
-        "input_schema_digest": "sha256:2eb49c3d3661904141d4f36210a4add5e4bf19177980c48d0635e6499b3ee2fe",
+        "input_schema_digest": "sha256:2993841d615ed740891604b0a5427a50b52efc7c715525fe1666cf8ff0e2b136",
         "name": "cruxible_proposal_approve",
         "output_schema_digest": "sha256:360b623a7d83042dbfeea9897f936de694f86514603f3b3be9703dec050c3087",
         "permission": "GRAPH_WRITE"

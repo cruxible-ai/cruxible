@@ -21,6 +21,7 @@ from pathlib import Path
 
 from cruxible_client.authoring.principal_settings import (
     PrincipalSettings,
+    default_key_dir,
     read_principal_settings,
 )
 from cruxible_client.contracts.principals import PRINCIPAL_KEY_ENV
@@ -35,23 +36,6 @@ PRINCIPAL_TOKEN_ENV = _TOKEN_ENV
 
 def principal_settings_path(key_dir: Path) -> Path:
     return key_dir.expanduser().resolve() / PRINCIPAL_SETTINGS_FILE
-
-
-def default_key_dir(
-    instance_id: str, principal_id: str, environ: Mapping[str, str] | None = None
-) -> Path:
-    """Where `cruxible init` keeps a principal's key when no --key-dir is given.
-
-    A per-user config path (``$XDG_CONFIG_HOME/cruxible``, else
-    ``~/.config/cruxible``), one directory per instance and principal: outside
-    every workspace and outside the daemon state root, so custody never lands
-    beside the bytes it signs for.
-    """
-
-    env = os.environ if environ is None else environ
-    raw = env.get("XDG_CONFIG_HOME")
-    base = Path(raw).expanduser() if raw else Path.home() / ".config"
-    return (base / "cruxible" / "keys" / instance_id / principal_id).resolve()
 
 
 def _transport_lines(obj: Mapping[str, object]) -> list[str]:

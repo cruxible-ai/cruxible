@@ -2004,9 +2004,7 @@ def test_independent_approval_leaves_the_write_awaiting_the_named_approvers(
     assert approval.reason == "independent_approval_required"
     assert approval.eligible_approvers == ("reviewer",)
     pid = outcome.proposal.proposal_id
-    assert approval.approve == (
-        f"cruxible proposal approve {pid} --signer-id reviewer --key <reviewer.ed25519>"
-    )
+    assert approval.approve == f"cruxible proposal approve {pid} --signer-id reviewer"
     assert approval.activate == f"cruxible proposal activate {pid}"
     assert outcome.next == approval.approve
     assert _values(instance, WI1, "status") == []
@@ -2022,7 +2020,7 @@ def test_independent_approval_leaves_the_write_awaiting_the_named_approvers(
         ),
         (
             "sdk",
-            'cx.proposal("{pid}").approve(signer=<reviewer signer>, '
+            'cx.proposal("{pid}").approve(signer=cx.signer("reviewer"), '
             'reviewed=cx.proposal("{pid}").review())',
             'cx.proposal("{pid}").activate()',
         ),

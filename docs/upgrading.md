@@ -192,10 +192,12 @@ beside it (which exports `CRUXIBLE_PRINCIPAL_KEY`), and the CLI remembers those
 settings and loads them itself. So after `cruxible init`, `compiler upgrade`
 and `proposal approve` find the key with no flag, and say where they found it.
 They look, in order, at `--key`, `CRUXIBLE_PRINCIPAL_KEY` (your remembered
-settings set it), then that default directory. A principal added with
+settings set it; skipped when the process acts as another principal), the
+settings remembered for the signer, the folder's identity record when it names
+the signer, then that default directory. A principal added with
 `cruxible principal add ID --key-dir DIR` keeps its key and settings in `DIR`;
 `cruxible context use --principal ID` makes the CLI act as it. When no key is
-found, the refusal names the default path it checked and these commands.
+found, the refusal names these commands and `--key`.
 
 After activation, new generations are accepted under the new compiler and
 authoring that needs it is accepted. Earlier generations keep their original

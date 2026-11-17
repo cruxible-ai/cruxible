@@ -961,7 +961,7 @@ def test_kit_status_shows_a_pending_kit_and_the_command_that_approves_it(
     assert "No kits installed." not in result.output
     assert f"base 1.0.0: kit add proposed (as owner); proposal {proposal}\n" in result.output
     assert (
-        f"  next: cruxible proposal approve {proposal} --signer-id ID --key FILE "
+        f"  next: cruxible proposal approve {proposal} --signer-id '<SIGNER_ID>' "
         "(the approval that completes it activates it)\n" in result.output
     )
     # A proposal no longer open names no next step.

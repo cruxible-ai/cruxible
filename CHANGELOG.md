@@ -493,6 +493,23 @@ quickstart and concepts pages.
 - **CLI `proposal approve` with no principal refuses as every proposal act
   does** (`cruxible.identity.principal_unconfigured` or `credential_unbound`),
   adding that `--principal-id ID --key FILE` signs as that principal.
+- **One lookup for the key that signs as a principal, on the CLI, the SDK and
+  the MCP server.** `--key`; `CRUXIBLE_PRINCIPAL_KEY`, unless
+  `CRUXIBLE_PRINCIPAL_ID` names another principal; the settings remembered for
+  that principal on this instance; the folder's identity record when it names
+  it; the default key directory. It is never another principal's key.
+  `CRUXIBLE_PRINCIPAL_ID=reviewer cruxible proposal approve ID --yes` and
+  `--signer-id reviewer` now sign wherever the reviewer's settings are
+  remembered (the first found no key; the second signed with the owner's key
+  and failed in `SigningKeyError`). With no key the refusal names the repair
+  of the client that printed it. `next` lines that name a signer print
+  `--signer-id ID` with no `--key FILE`.
+- **MCP `cruxible_proposal_approve` reads `CRUXIBLE_PRINCIPAL_KEY`** as a
+  principal's `cruxible.env` sets it, beside `CRUXIBLE_MCP_KEY_DIR`, and signs
+  as `CRUXIBLE_PRINCIPAL_ID` by default.
+- **SDK `cx.signer(ID)`** opens a principal's approval signer from the same
+  lookup (`cx.signer()` for the connection's own principal); the SDK's `next`
+  spells `approve(signer=cx.signer("reviewer"), ...)`.
 
 ## [0.3.2] - 2026-08-06
 

@@ -38,6 +38,6 @@ For teams, use authenticated credentials and separate principals: author
 governed_write, reviewer graph_write, operator admin. The reviewer owns its
 signing key. Configure the adapter's credential/tier/key directory outside the
 plugin; never ship keys or tokens. `cruxible_proposal_approve` signs with
-`CRUXIBLE_MCP_KEY_DIR` and the reviewed digest. Host initialization, credential
+the reviewer's local key (`CRUXIBLE_PRINCIPAL_KEY` or `CRUXIBLE_MCP_KEY_DIR`) and the reviewed digest. Host initialization, credential
 provisioning and changing approval policy are separately authorized operator
 work, not consequences of installing this plugin.
