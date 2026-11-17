@@ -666,14 +666,18 @@ class GetNoteCard(_StrictGetModel):
 
     #: ``Note:NOTE-<32 hex>``
     note: str
-    #: The catalogued workspace source (files.yaml name).
-    file: str
-    section: tuple[str, ...]
+    #: The catalogued workspace source (files.yaml name); absent when withheld.
+    file: str | None = Field(default=None, exclude_if=_omit_none)
+    #: The heading path; empty when withheld.
+    section: tuple[str, ...] = ()
     #: ``kind/id`` of each Subject the section is about.
     about: tuple[str, ...]
     #: The section's bytes when linked: a Capture handle get and read_capture accept.
     capture: str
     lifecycle: str
+    #: C14: the section's Capture is withheld from this reader, so its file and
+    #: heading path are left out (the note, its Subjects and Capture handle stay).
+    withheld: BodyRestricted | None = Field(default=None, exclude_if=_omit_none)
     next: tuple[str, ...] = ()
 
 

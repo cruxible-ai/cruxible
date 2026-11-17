@@ -527,7 +527,9 @@ quickstart and concepts pages.
   the handle `link` and `backlinks` print, answered `ref_not_found`; it now
   answers a note card (file, section, the Subjects it is about, the Capture of
   its bytes) on the CLI, MCP `cruxible_get` and SDK `get`, with `history` and
-  `proof` too.
+  `proof` too. A reader the section's Capture is withheld from sees the note,
+  its Subjects and the Capture handle without the file, heading path or section
+  digest, with a `withheld` notice, as `backlinks` does.
 
 ## [0.3.2] - 2026-08-06
 

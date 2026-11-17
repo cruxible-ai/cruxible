@@ -1031,6 +1031,26 @@ def test_r6_a_real_restricted_note_keeps_its_section_from_a_read_only_reader(
     assert all(link.file is None and link.section is None for link in reader.links)
     assert holder.withheld is None and {link.file for link in holder.links} == {SOURCE}
 
+    # get NOTE-...: the card and proof follow the same rule, in either reader order
+    # (nothing a first read caches leaks to the second).
+    handle = next(link.source for link in reader.links if link.relation == "about")
+    for order in ((READER, KEY), (KEY, READER)):
+        for access in order:
+            card = json.loads(_get(instance, handle, access))["card"]
+            proof = json.loads(_get(instance, handle, access, "proof"))["proof"]
+            if access is READER:
+                assert "file" not in card and card["section"] == []
+                assert card["withheld"]["capture_kinds"] == [sealed.identity.qualified]
+                assert card["about"] == [f"{KIND}/wi-1"] and card["capture"].startswith("CAP-")
+                envelope = proof["envelope"]
+                assert not {"source_id", "section", "section_digest"} & set(envelope)
+                assert proof["withheld"]["capture_kinds"] == [sealed.identity.qualified]
+                assert envelope["capture_digest"] and envelope["identity"]["name"] == handle
+            else:
+                assert card["file"] == SOURCE and card["section"] == ["Reason"]
+                assert "withheld" not in card and "withheld" not in proof
+                assert proof["envelope"]["section"] == ["Reason"]
+
 
 class _FakeEnvelopes:
     """The envelope index's two authorization reads, counted, over in-memory metadata."""

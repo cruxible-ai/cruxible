@@ -28,6 +28,7 @@ from cruxible_client.contracts import AcceptedCoordinate as ClientCoordinate
 from cruxible_client.contracts.approval_policy import ApprovalPolicy
 from cruxible_client.contracts.artifacts import ArtifactIdentity, parse_artifact_identity
 from cruxible_client.contracts.capabilities import capability_ref_for_identity
+from cruxible_client.contracts.capture_reads import BodyRestricted
 from cruxible_client.contracts.captures import (
     CaptureContractAny as CaptureContract,
 )
@@ -2236,14 +2237,39 @@ def _capability_card(
     )
 
 
+def _note_withheld(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    capture_digest: str,
+    access: BodyAccessContext,
+) -> BodyRestricted | None:
+    """The C14 notice when the note's section Capture is withheld from ``access``.
+
+    The backlinks read's rule: decided from the Capture's kind version (maintained
+    metadata) before anything of the Capture is read.
+    """
+
+    from cruxible_core.service.evidence.body_access import capture_access_resolver
+
+    withheld, notice = capture_access_resolver(instance, coordinate).withheld(
+        (capture_digest,), access
+    )
+    return notice if capture_digest in withheld else None
+
+
 def _note_card(
     instance: PlaybillInstance,
     coordinate: AcceptedProjectionCoordinate,
     resolved: ResolvedRef,
     *,
     surface: ReadSurface,
+    access: BodyAccessContext,
 ) -> GetNoteCard:
-    """One note: its section, the Subjects it is about and the Capture of its bytes."""
+    """One note: its section, the Subjects it is about and the Capture of its bytes.
+
+    A reader the section's Capture is withheld from sees the note, its Subjects
+    and the Capture handle, not the file or heading path (C14), as backlinks.
+    """
 
     from cruxible_client.contracts.notes import Note
     from cruxible_client.contracts.write import capture_handle
@@ -2252,15 +2278,17 @@ def _note_card(
         note = cast(Note, projection.typed.source(resolved.identity))
     about = tuple(item.name for item in note.about)
     handle = capture_handle(note.capture_digest)
+    withheld = _note_withheld(instance, coordinate, note.capture_digest, access)
     return GetNoteCard(
         note=resolved.display,
-        file=note.source_id,
-        section=tuple(note.section),
+        file=None if withheld else note.source_id,
+        section=() if withheld else tuple(note.section),
         about=about,
         capture=handle,
         lifecycle=note.lifecycle.state,
+        withheld=withheld,
         next=(
-            *(_render_backlinks(surface, about[0], at=None),),
+            _render_backlinks(surface, about[0], at=None),
             _render_get(surface, handle, "summary"),
         ),
     )
@@ -3557,12 +3585,22 @@ def _proof(
             source = projection.typed.source(resolved.identity)
             row = projection.typed.envelope(resolved.identity)
         assert source is not None
-        return {
+        envelope = source.model_dump(mode="json")
+        proof: dict[str, Any] = {
             "coordinate": at.model_dump(mode="json"),
             "path": row.path if row else None,
             "artifact_digest": row.artifact_digest if row else None,
-            "envelope": None if source is None else source.model_dump(mode="json"),
+            "envelope": envelope,
         }
+        if resolved.kind == "note":
+            notice = _note_withheld(instance, coordinate, envelope["capture_digest"], access)
+            if notice is not None:
+                # C14, as backlinks: the section's file, heading path and digest go;
+                # the identity, Subjects, Capture commitment and lifecycle stay.
+                for name in ("source_id", "section", "section_digest"):
+                    envelope.pop(name, None)
+                proof["withheld"] = notice.model_dump(mode="json")
+        return proof
     # Proposals are operational: the status entry and the retained records.
     # C14: their candidate law evidence quotes Captures; withheld ones are
     # filtered, every digest and commitment kept.
@@ -3784,7 +3822,7 @@ def service_playbill_get(
 
             card = runbook_card(instance, coordinate, resolved.identity, render=render)
         elif resolved.kind == "note":
-            card = _note_card(instance, coordinate, resolved, surface=surface)
+            card = _note_card(instance, coordinate, resolved, surface=surface, access=access)
         elif resolved.kind == "capture":
             card = capture_card(
                 instance,
