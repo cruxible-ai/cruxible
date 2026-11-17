@@ -13,7 +13,7 @@ import json
 import os
 import shlex
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
@@ -187,6 +187,9 @@ class PrincipalKey:
     source: PrincipalKeySource
     #: The remembered ``cruxible.env`` naming the key, when that is the source.
     settings_path: Path | None = None
+    #: The bearer token of that same settings file, from the one read that
+    #: verified its principal, instance and endpoint; never read again.
+    token: str | None = field(default=None, repr=False)
 
 
 def principal_key(
@@ -238,6 +241,7 @@ def principal_key(
             Path(settings.private_key_path),
             "remembered_settings",
             settings_path=settings.path,
+            token=settings.token,
         )
     if folder is not None and server_url is None:
         # Lazy: the folder record's module imports the signer.

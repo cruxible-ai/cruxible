@@ -608,3 +608,50 @@ def test_a_key_the_cli_loaded_for_the_named_actor_is_never_another_signers(
     assert f"Signing key for reviewer: {key} (from remembered settings {settings})" in result.stderr
     # The named actor is still the actor.
     assert _whoami("--principal-id", "owner")["actor_id"] == "owner"
+
+
+def test_a_named_principals_token_is_never_read_from_the_settings_a_second_time(
+    daemon: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review F-012: the CLI took the key from the lookup's verified read of the
+    settings file and read the file again for the token. It now uses the token the
+    lookup returned with the key, so it supplies a credential only from that record."""
+
+    import os
+
+    from cruxible_client.authoring.principal_settings import PrincipalKey
+    from cruxible_core.cli import main
+
+    _init_awaiting_reviewer(daemon)
+    key = daemon / "rev" / "reviewer.ed25519"
+    monkeypatch.setattr(
+        main,
+        "principal_key",
+        lambda *_args, **_kwargs: PrincipalKey(
+            "reviewer",
+            key,
+            "remembered_settings",
+            settings_path=daemon / "rev" / "cruxible.env",
+            token="tok-verified",
+        ),
+    )
+    monkeypatch.setattr(
+        main,
+        "read_principal_settings",
+        lambda path: pytest.fail(f"the settings file {path} was read a second time"),
+    )
+    seen: dict[str, str | None] = {}
+    get_client = _common._get_client
+
+    def recording() -> CruxibleClient:
+        seen["token"] = os.environ.get("CRUXIBLE_SERVER_BEARER_TOKEN")
+        seen["key"] = os.environ.get("CRUXIBLE_PRINCIPAL_KEY")
+        return get_client()
+
+    monkeypatch.setattr(_common, "_get_client", recording)
+
+    result = _run("--principal-id", "reviewer", "whoami", "--json")
+
+    assert result.exit_code == 0, result.output
+    assert seen == {"token": "tok-verified", "key": str(key)}
+    assert "CRUXIBLE_SERVER_BEARER_TOKEN" not in os.environ

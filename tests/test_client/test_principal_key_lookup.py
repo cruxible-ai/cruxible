@@ -251,3 +251,36 @@ def test_opening_a_signer_reads_nothing_from_the_daemon(
     # A principal named explicitly needs no whoami either.
     cx._client.whoami = lambda instance: pytest.fail("no identity read")  # type: ignore[attr-defined]
     assert cx.signer("reviewer").signer_id == "reviewer"
+
+
+def test_the_key_and_the_token_come_from_one_verified_read_of_the_settings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review F-012: the lookup verified the settings and returned the key path, and
+    the CLI read the file again for the token. A file replaced between the reads gave
+    one principal's key with a credential written for another principal or daemon."""
+
+    from cruxible_client.authoring import principal_settings
+
+    socket = tmp_path / "daemon.sock"
+    settings = _settings(tmp_path / "rev", "reviewer", socket)
+    settings.write_text(settings.read_text() + "export CRUXIBLE_SERVER_BEARER_TOKEN=tok-reviewer\n")
+    reads: list[Path] = []
+    read = principal_settings.read_principal_settings
+
+    def once(path: Path) -> Any:
+        reads.append(path)
+        loaded = read(path)
+        # Replaced right after the verified read, as a concurrent writer would.
+        path.write_text(
+            path.read_text().replace("tok-reviewer", "tok-other").replace("=reviewer", "=owner")
+        )
+        return loaded
+
+    monkeypatch.setattr(principal_settings, "read_principal_settings", once)
+
+    found = _lookup(tmp_path, "reviewer", remembered=_remembered(socket, reviewer=settings))
+
+    assert (found.source, found.token) == ("remembered_settings", "tok-reviewer")
+    assert reads == [settings]
+    assert "tok-reviewer" not in repr(found)

@@ -1560,13 +1560,10 @@ def _load_named_principal_key(
         PRINCIPAL_ID_ENV: principal_id,
         PRINCIPAL_KEY_ENV: str(key.private_key_path),
     }
-    if key.settings_path is not None and not os.environ.get(PRINCIPAL_TOKEN_ENV):
-        try:
-            token = read_principal_settings(key.settings_path).token
-        except (OSError, ValueError):
-            token = None
-        if token is not None:
-            environment[PRINCIPAL_TOKEN_ENV] = token
+    if key.token is not None and not os.environ.get(PRINCIPAL_TOKEN_ENV):
+        # From the one read that verified the settings name this principal on
+        # this instance and endpoint: the file is never read a second time.
+        environment[PRINCIPAL_TOKEN_ENV] = key.token
     previous = {name: os.environ.get(name) for name in environment}
 
     def restore() -> None:
