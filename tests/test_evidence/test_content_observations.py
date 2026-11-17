@@ -408,3 +408,35 @@ def test_a_journal_from_an_unreleased_transition_build_refuses_with_re_initialis
             pass
     with pytest.raises(ClaimReobservationJournalCorrupt, match="re-initialise"):
         store.observed_after(0)
+
+
+def test_a_source_returning_to_a_known_set_names_its_keys_to_next(tmp_path: Path) -> None:
+    """Review 2d #4: B -> A -> B. The return to B is a switch of the source's
+    set: the follower names B's members, so a stale reader subscribed while A
+    held them is reached."""
+
+    from cruxible_core.evidence.claim_reobservations import RowMap
+
+    instance, _owner = _freshness_world(tmp_path, stale_after=_HOUR)
+    _claim, cited, key = _cited(instance)
+    store = ClaimReobservationStore(instance)
+    spec = "sha256:" + "5" * 64
+    row_b = (("/0", "sha256:" + "6" * 64), ("/1", "sha256:" + "8" * 64))
+    row_a = (("/0", "sha256:" + "7" * 64), ("/1", "sha256:" + "8" * 64))
+    sequences = []
+    for index, rows in enumerate((row_b, row_a, row_b)):
+        at = _START + timedelta(hours=1 + index)
+        instance.recording_clock = lambda at=at: at
+        sequences.append(
+            store.observe_rows(
+                (RowMap(cited, spec, key.contract_digest, rows),),
+                earliest=at - timedelta(minutes=1),
+                latest=at,
+                run_id=f"RUN-{index}",
+                node_id="extract",
+                actor_id="o",
+            )
+        )
+    _lineages, keys, _sets = store.observed_after(sequences[1])
+    assert (key.contract_digest, "sha256:" + "8" * 64) in keys
+    assert (key.contract_digest, "sha256:" + "6" * 64) in keys

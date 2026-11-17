@@ -86,7 +86,7 @@ ROW_MAP_BODY = "cruxible-row-map-v1"
 #: The row maps of one extract step's Captures (run-free).
 ROW_MAPS_BODY = "cruxible-row-maps-v1"
 _ACCESS = BodyAccessContext(principal_id="claim-reobservation", can_read_body=True)
-_SCHEMA_VERSION = 13
+_SCHEMA_VERSION = 14
 REOBSERVATION_DIRECTORY = "claim-reobservations"
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 # ``reobservations`` keeps the full history (audit, historical verification).
@@ -171,6 +171,7 @@ CREATE TABLE IF NOT EXISTS capture_maps (
  PRIMARY KEY(capture_digest, spec_digest, map_digest)
 ) STRICT, WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS seen_maps (digest TEXT PRIMARY KEY) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS switches (sequence INTEGER PRIMARY KEY) STRICT;
 """
 # Content observations (ruling 1a) and row observations (2026-11-16), as maintained heads.
 #
@@ -441,6 +442,7 @@ class ClaimReobservationStore:
                         "capture_rows",
                         "capture_maps",
                         "seen_maps",
+                        "switches",
                         "transitions",
                         "transition_exceptions",
                     ):
@@ -710,6 +712,9 @@ class ClaimReobservationStore:
             [(row[0], row[1], source) for row in rows],
         )
         conn.execute("INSERT OR REPLACE INTO source_heads VALUES (?,?)", (source, set_digest))
+        # A source switching sets moved its members' heads: the follower
+        # names their keys for this record (review 2d #4).
+        conn.execute("INSERT OR IGNORE INTO switches VALUES (?)", (sequence,))
 
     # -- admission ----------------------------------------------------------
 
@@ -1391,8 +1396,9 @@ class ClaimReobservationStore:
         """What the records after ``sequence`` (through ``through``) re-observed.
 
         The lineages a per-Claim record names; the keys of each observed set
-        first recorded in that range (a new set: its members, paid once, as
-        its projection rows are); and every observed set recorded in it. A
+        first recorded in that range, or that a source switched to (members
+        whose heads moved, B -> A -> B included: a change, paid as the switch's
+        projection rows are); and every observed set recorded in it. A
         repeated set is reached by its digest alone, never by expanding its
         members again (review 2c #6): a follower reaches the Claims whose
         freshness read a key or a set holding it. One payload read per
@@ -1424,12 +1430,16 @@ class ClaimReobservationStore:
                         "SELECT MIN(sequence) FROM observation_points WHERE set_digest=?",
                         (set_digest,),
                     ).fetchone()
+                    switched = conn.execute(
+                        "SELECT 1 FROM switches WHERE sequence=?", (stored.record.sequence,)
+                    ).fetchone()
                     if (
                         first is not None
                         and first[0] is not None
                         and int(first[0]) < int(stored.record.sequence)
+                        and switched is None
                     ):
-                        continue  # a repeated set: its digest reaches its readers
+                        continue  # the same set again: its digest reaches its readers
                     rows_tag = tag == ROW_OBSERVATION_TAG
                     body = _shared_body(
                         self.instance,
