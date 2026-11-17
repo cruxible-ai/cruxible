@@ -707,6 +707,45 @@ linked (+1 since)  INB-877f3d1e627e  Line:catalog.acme-notices  x2  2026-11-16T0
 An item you linked to a proposal comes back unread if that proposal is
 rejected or withdrawn, since your decision no longer stands.
 
+### Posting one item per Query row
+
+A Line can also post what accepted state already shows, one item per row of a
+Query: say, each incident whose post-mortem is overdue. The inbox step's
+`for_each` is the read's `rows`, and `item(...)` reads the current row:
+
+~~~python
+from cruxible_client.authoring.procedures import Sequence, item
+
+procedure = Sequence("oncall.postmortem-overdue")
+overdue = procedure.read("overdue", query="oncall.postmortem_overdue")
+procedure.inbox(
+    "oncall.overdue-postmortem@1",
+    for_each=overdue["rows"],
+    fields={
+        "incident": item("subject"),          # subject<oncall.incident>
+        "service": item("bindings", "service"),  # the Query's service binding
+        "due": item("postmortem_due"),        # a declared column
+    },
+    dedupe_key=("incident",),
+)
+~~~
+
+A row offers exactly this:
+
+| Reference | Value |
+|---|---|
+| `$item.<column>` | A column the Query declares (a projection field), typed by its row Contract. An absent value is left out of the row. |
+| `$item.subject` | The row's Subject, as `<kind>/<id>`: a value for a `subject<kind>` field. |
+| `$item.bindings.<name>` | The Subject the row bound to that Query binding, as `<kind>/<id>`; left out when an optional binding bound nothing. |
+
+A column with the same name as `subject` or `bindings` takes its place. Any
+other `$item` reference is refused when the Procedure is authored
+(`item_reference_unresolved`), and the refusal lists what the row offers. To
+read another value, such as a Claim of the row's Subject, declare it as a
+column of the Query. A filter or dedupe step over the rows keeps them whole, so
+its `rows` offer the same. A claims step whose `for_each` is a read's `rows`
+reads rows the same way.
+
 ## Recovering missed work
 
 A daemon that was down didn't run what was due meanwhile, and it never runs

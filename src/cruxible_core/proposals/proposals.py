@@ -2058,16 +2058,21 @@ def _procedure_member(context: _MemberContext) -> _MemberVerdict:
     from cruxible_core.procedures.claims_typing import tree_claims_lookup, validate_claims_templates
 
     if procedure.lifecycle.state == "live":
+        from cruxible_core.procedures.query_rows import validate_row_references
+
+        lookup = tree_claims_lookup(context.candidate_tree)
         try:
-            validate_claims_templates(
-                procedure.definition, tree_claims_lookup(context.candidate_tree)
-            )
+            # A newer check than any recorded acceptance law: it judges new
+            # proposals only, never a member replayed under its recorded law.
+            if context.historical_law_coordinate is None and not context.rechecking:
+                validate_row_references(procedure.definition, lookup)
+            validate_claims_templates(procedure.definition, lookup)
         except ValueError as exc:
             return _MemberVerdict(
                 diagnostics=(
                     _diagnostic(
                         getattr(exc, "code", "cruxible.procedure.claims_type_invalid"),
-                        str(exc),
+                        " ".join(filter(None, (str(exc), getattr(exc, "repair", None)))),
                         path=context.path,
                     ),
                 )

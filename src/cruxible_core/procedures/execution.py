@@ -316,6 +316,11 @@ from cruxible_core.procedures.ports import (
     AcquisitionRules,
     bound_operation,
 )
+from cruxible_core.procedures.query_rows import (
+    ROW_PRESERVING_TRANSFORMS,
+    offered_value,
+    query_row_items,
+)
 from cruxible_core.procedures.reference_binding import (
     ProcedureExecutionPlan,
     execution_plan,
@@ -2509,6 +2514,9 @@ class _RunState:
     parameters: CanonicalValue
     provenance: dict[str, AliasProvenanceV1] = dataclass_field(default_factory=dict)
     facts: dict[str, DependencyEvidenceFactsV1] = dataclass_field(default_factory=dict)
+    #: Per filter/dedupe alias: the rows it was given and each kept record's
+    #: position in them, so a Query row's offers follow it.
+    row_inputs: dict[str, tuple[object, tuple[int, ...]]] = dataclass_field(default_factory=dict)
     outcomes: dict[str, AcquisitionInputOutcomeV1] = dataclass_field(default_factory=dict)
     control: frozenset[DependencyToken] = frozenset()
     return_tokens: frozenset[DependencyToken] = frozenset()
@@ -5358,6 +5366,7 @@ class ProcedureExecutor:
         outputs: dict[str, CanonicalValue],
         state: _RunState,
         rows_in: list[int | None] | None = None,
+        kept: list[int] | None = None,
     ) -> tuple[CanonicalValue, bool]:
         """One closed transform over ``outputs``: its value, and whether it is complete.
 
@@ -5388,6 +5397,7 @@ class ProcedureExecutor:
                 parameters=state.parameters if isinstance(state.parameters, dict) else None,
                 enums=self.enum_resolver,
                 keys=self.key_rules,
+                kept=kept,
             )
         except TransformInputInvalid as exc:
             raise _RunRefusal(
@@ -5405,6 +5415,7 @@ class ProcedureExecutor:
         """One closed transform over records: typed, three-valued, completeness carried."""
 
         rows_in: list[int | None] = []
+        kept: list[int] = []
         value, complete = self._apply_closed(
             node.node_id,
             node.transform_kind,
@@ -5412,9 +5423,13 @@ class ProcedureExecutor:
             outputs=state.outputs,
             state=state,
             rows_in=rows_in,
+            kept=kept,
         )
         aliases = _referenced_aliases(node.spec)
         state.outputs[node.as_] = value
+        if node.transform_kind in ROW_PRESERVING_TRANSFORMS:
+            # Which input row each kept record is, beside the value (query_rows).
+            state.row_inputs[node.as_] = (getattr(node.spec, "input", None), tuple(kept))
         record_summary(
             state.node_summaries,
             node.node_id,
@@ -8344,6 +8359,10 @@ def _fan_out_list(
             details={"field": field, "reason": "items_not_a_list"},
         )
     values = [normalize_canonical(item) for item in resolved]
+    # A Query read's rows also offer each row's Subject and bindings (query_rows).
+    offered = query_row_items(template, state.outputs, values, getattr(state, "row_inputs", None))
+    if offered is not None:
+        values = cast(list[CanonicalValue], offered)
     alias = _template_alias(template)
     provenance = None if alias is None else state.provenance.get(alias)
     if provenance is None:
@@ -8737,7 +8756,9 @@ def _resolve_reference(
     if value.startswith("$item."):
         if item is None:
             raise ExecutionError("$item is unavailable outside item transforms")
-        return _resolve_path(item, tuple(value[6:].split(".")), reference=value)
+        path = tuple(value[6:].split("."))
+        offered, root = offered_value(item, path)
+        return _resolve_path(root if offered else item, path, reference=value)
     return value
 
 
