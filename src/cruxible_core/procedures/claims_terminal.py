@@ -1077,7 +1077,7 @@ def _observed_same_row(value: Any, held_claim: ClaimArtifact, *, state: Any, exe
 
     held = held_claim.backing.procedure_evidence
     port = getattr(executor, "capture_observations", None)
-    rows: dict[tuple[str, str, str], str] = getattr(state, "extracted_rows", {})
+    rows: dict[tuple[str, str], dict[str, str]] = getattr(state, "row_maps", {})
     if (
         not isinstance(value, ExtractedBasis)
         or held is None
@@ -1086,9 +1086,13 @@ def _observed_same_row(value: Any, held_claim: ClaimArtifact, *, state: Any, exe
         or not _observed_now(state, value.capture_digest)
     ):
         return False
-    current = rows.get((value.capture_digest, value.extract_spec_digest, value.record_locator))
+    current = rows.get((value.capture_digest, value.extract_spec_digest), {}).get(
+        value.record_locator
+    )
     cited = held.value
-    known = rows.get((cited.capture_digest, cited.extract_spec_digest, cited.record_locator))
+    known = rows.get((cited.capture_digest, cited.extract_spec_digest), {}).get(
+        cited.record_locator
+    )
     if known is None:
         known = port.row_of(cited.capture_digest, cited.extract_spec_digest, cited.record_locator)
     return current is not None and known == current

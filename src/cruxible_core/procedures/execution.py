@@ -6,7 +6,7 @@ import base64
 import hashlib
 import json
 import time
-from collections import Counter
+from collections import Counter, OrderedDict
 from collections.abc import Collection, Iterable, Iterator, Mapping, Sequence
 from contextlib import nullcontext
 from dataclasses import dataclass
@@ -2786,9 +2786,9 @@ class _RunState:
     pending_reuse_keys: dict[str, str] = dataclass_field(default_factory=dict)
     #: Each fetched Capture's logical source: part of its rows' identity.
     capture_sources: dict[str, str] = dataclass_field(default_factory=dict)
-    #: Each extracted record's row, by (Capture, extract spec digest, locator):
+    #: Each extracted Capture's rows by locator, per (Capture, extract spec):
     #: an item whose Claim's own row this run observed restates nothing.
-    extracted_rows: dict[tuple[str, str, str], str] = dataclass_field(default_factory=dict)
+    row_maps: dict[tuple[str, str], dict[str, str]] = dataclass_field(default_factory=dict)
     #: Which aliases hold incomplete values, and the control lineage's state.
     completeness: Completeness = dataclass_field(default_factory=Completeness)
     #: Acquiring calls whose Capture list dropped a failed member (D-R37 a4).
@@ -5513,7 +5513,13 @@ class ProcedureExecutor:
                 details=exc.details or None,
             ) from exc
         self._bind_extract(node, outcome, state=state)
-        self._observe_rows(node, ((capture_digest, outcome),), state=state, admission=admission)
+        self._observe_rows(
+            node,
+            ((capture_digest, outcome),),
+            state=state,
+            admission=admission,
+            selection=only_keys,
+        )
 
     def _extract_inputs(
         self, node: ExtractNode, capture_digest: str, *, state: _RunState
@@ -5620,6 +5626,7 @@ class ProcedureExecutor:
             tuple(zip(cast(Sequence[str], members), outcomes, strict=True)),
             state=state,
             admission=admission,
+            selection=only_keys,
         )
 
     def _observe_rows(
@@ -5629,6 +5636,7 @@ class ProcedureExecutor:
         *,
         state: _RunState,
         admission: ProcedureRunAdmission | None,
+        selection: object = None,
     ) -> None:
         """Publish the step's whole extracted row set as one observation (2026-11-16 a).
 
@@ -5637,38 +5645,26 @@ class ProcedureExecutor:
         same rows in new bytes are the same set (a head update, no per-Claim
         write). Published only when every Capture read was fetched by this run
         (an admitted Capture was not observed now), with the acquiring calls'
-        span (ruling 1b). Remembers each record's row for the claims terminal.
-        The loop is over the step's own records, once per run.
+        span (ruling 1b). A Capture's rows under one spec and selection are an
+        immutable derivation, computed once per process (``_row_map_of``): an
+        unchanged step hashes no row (review 2c #6).
         """
 
-        from cruxible_core.evidence.claim_reobservations import RowMap, row_digest
-        from cruxible_core.procedures.extract import _Record, held_wire, wire_value
-
         spec = extract_spec_digest(node)
-        maps: list[RowMap] = []
+        selected = (
+            "*"
+            if selection is None
+            else typed_digest(
+                Sha256Value,
+                "cruxible-extract-selection-v1",
+                {"keys": normalize_canonical(selection)},
+            ).tagged
+        )
+        maps = []
         for capture, outcome in parts:
-            contract = state.capture_contracts.get(capture, "")
-            source = state.capture_sources.get(capture, "")
-            rows = []
-            for item in outcome.held:
-                if not isinstance(item, _Record):
-                    continue
-                row = row_digest(
-                    contract,
-                    source,
-                    {name: wire_value(value) for name, value in item.key.items()},
-                    # A field's value and state, never where in the document
-                    # it sat: the same rows reordered are the same rows.
-                    {
-                        name: {
-                            part: held for part, held in held_wire(value).items() if part != "at"
-                        }
-                        for name, value in item.fields.items()
-                    },
-                )
-                state.extracted_rows[(capture, spec, item.locator)] = row
-                rows.append((item.locator, row))
-            maps.append(RowMap(capture, spec, contract, tuple(sorted(rows))))
+            row_map, rows = _row_map_of(state, capture, spec, selected, outcome)
+            state.row_maps[(capture, spec)] = rows
+            maps.append(row_map)
         spans = [_capture_span(state, capture) for capture, _outcome in parts]
         if (
             self.capture_observations is None
@@ -8610,6 +8606,53 @@ def _extract_only_keys(node: ExtractNode, *, state: _RunState) -> list[dict[str,
             node_id=node.node_id,
         )
     return cast(list[dict[str, object]], resolved)
+
+
+#: Each (Capture, extract spec, selection)'s rows: an immutable derivation of
+#: immutable inputs, computed once per process.
+_ROW_MAPS: OrderedDict[tuple[str, str, str], tuple[Any, dict[str, str]]] = OrderedDict()
+_ROW_MAPS_CAPACITY = 256
+
+
+def _row_map_of(
+    state: _RunState, capture: str, spec: str, selected: str, outcome: ExtractOutcome
+) -> tuple[Any, dict[str, str]]:
+    """One Capture's extracted records as rows (a ``RowMap``) and by locator.
+
+    The rows of the same Capture under the same spec and selection never
+    change, so a later run reuses them: the loop over records runs once.
+    """
+
+    from cruxible_core.evidence.claim_reobservations import RowMap, row_digest
+    from cruxible_core.procedures.extract import _Record, held_wire, wire_value
+
+    key = (capture, spec, selected)
+    held = _ROW_MAPS.get(key)
+    if held is not None:
+        _ROW_MAPS.move_to_end(key)
+        return held
+    contract = state.capture_contracts.get(capture, "")
+    source = state.capture_sources.get(capture, "")
+    rows: dict[str, str] = {}
+    for item in outcome.held:
+        if not isinstance(item, _Record):
+            continue
+        rows[item.locator] = row_digest(
+            contract,
+            source,
+            {name: wire_value(value) for name, value in item.key.items()},
+            # A field's value and state, never where in the document it sat:
+            # the same rows reordered are the same rows.
+            {
+                name: {part: held for part, held in held_wire(value).items() if part != "at"}
+                for name, value in item.fields.items()
+            },
+        )
+    found = (RowMap(capture, spec, contract, tuple(sorted(rows.items()))), rows)
+    _ROW_MAPS[key] = found
+    while len(_ROW_MAPS) > _ROW_MAPS_CAPACITY:
+        _ROW_MAPS.popitem(last=False)
+    return found
 
 
 def _observation_latest(

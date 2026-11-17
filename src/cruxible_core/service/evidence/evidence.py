@@ -184,6 +184,9 @@ class VerdictReads:
     reobservation_keys: dict[str, tuple[ReobservationKey, ...]] = dataclass_field(
         default_factory=dict
     )
+    # The observed sets holding those keys when read (each source's head set):
+    # a repeated observation of one is a change to that lineage's freshness.
+    reobservation_sets: dict[str, tuple[str, ...]] = dataclass_field(default_factory=dict)
     # The body-store objects each Capture's availability consulted, with the
     # identity each read used; None when no identity stands for that answer.
     # A landing of any of them is a change to that Capture's availability.
@@ -203,6 +206,8 @@ class VerdictReads:
                 self.inconsistent = True
         for claim_id, keys in other.reobservation_keys.items():
             self.reobservation_keys.setdefault(claim_id, keys)
+        for claim_id, sets in other.reobservation_sets.items():
+            self.reobservation_sets.setdefault(claim_id, sets)
         self.inconsistent = self.inconsistent or other.inconsistent
         self.note_bodies(other.body_identities if other.bodies_complete else None)
         for digest, bodies in other.capture_bodies.items():
@@ -450,7 +455,11 @@ class ClaimVerdictReadContext:
             self._recording.law_paths.add(path)
 
     def note_reobservations(
-        self, claim_id: str, sequence: int, keys: tuple[ReobservationKey, ...] = ()
+        self,
+        claim_id: str,
+        sequence: int,
+        keys: tuple[ReobservationKey, ...] = (),
+        sets: tuple[str, ...] = (),
     ) -> None:
         """Attribute the re-observation record set one Claim lineage's verdict read."""
 
@@ -458,6 +467,7 @@ class ClaimVerdictReadContext:
             if self._recording.used_reobservations.setdefault(claim_id, sequence) != sequence:
                 self._recording.inconsistent = True
             self._recording.reobservation_keys.setdefault(claim_id, keys)
+            self._recording.reobservation_sets.setdefault(claim_id, sets)
 
     def note_capture(
         self,
@@ -1317,7 +1327,9 @@ def service_evaluate_playbill_claim_verdict(
         captures=captures,
         at=evaluation_time,
     )
-    read_context.note_reobservations(accepted.claim.identity.name, reading.sequence, reading.keys)
+    read_context.note_reobservations(
+        accepted.claim.identity.name, reading.sequence, reading.keys, reading.sets
+    )
     reobservations = reading.evidence
     if time_boundaries is not None:
         time_boundaries |= set(reading.boundaries)

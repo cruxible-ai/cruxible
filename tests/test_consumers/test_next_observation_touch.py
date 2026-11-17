@@ -70,7 +70,7 @@ def _touch(monkeypatch: pytest.MonkeyPatch, current: int) -> int:
     monkeypatch.setattr(
         claim_reobservations.ClaimReobservationStore,
         "observed_after",
-        lambda self, sequence, through=None: (frozenset(), frozenset({_KEY})),
+        lambda self, sequence, through=None: (frozenset(), frozenset({_KEY}), frozenset()),
     )
     monkeypatch.setattr(claim_reobservations.ClaimReobservationStore, "__init__", _no_init)
     connection = _state(current, stale=2)

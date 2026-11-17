@@ -313,6 +313,20 @@ def _ordered(conn: sqlite3.Connection, sequence: int, recorded_at: datetime) -> 
     return recorded_us
 
 
+#: Records only unshipped dev/rc builds wrote (ruling 2026-11-16 (3)): an
+#: instance holding one is re-initialised, not migrated.
+_RETIRED_TAGS = frozenset({"cruxible-content-transition-v1"})
+
+
+def _refuse_retired_tag(tag: object) -> None:
+    if tag in _RETIRED_TAGS:
+        raise ClaimReobservationJournalCorrupt(
+            f"the re-observation journal holds a {tag} record, which only an unreleased "
+            "development build wrote and this build does not read; re-initialise this "
+            "instance (cruxible init) to use this build"
+        )
+
+
 def _shared_body(instance: PlaybillInstance, digest: str, *, tag: str) -> dict[str, Any]:
     """One content or row observation's canonical body."""
 
@@ -347,6 +361,9 @@ class RowMap:
 
 
 _ROW_MAPS: dict[str, dict[str, tuple[str, str]]] = {}
+#: A row observation's stored bodies, by the identity of the immutable row
+#: maps it covered (with them, so an identity is never reused while held).
+_ROW_BODIES: dict[tuple[Any, ...], tuple[tuple[Any, ...], str, str]] = {}
 _ROW_MAPS_CAPACITY = 256
 
 
@@ -1195,39 +1212,57 @@ class ClaimReobservationStore:
 
         if not maps or is_previewing():
             return None
-        bodies = self.instance.body_store()
-        rows = sorted({(item.contract_digest, row) for item in maps for _locator, row in item.rows})
-        if not rows:
-            return None
-        set_body = canonical_bytes(
-            {
-                "tag": OBSERVED_ROWS_BODY,
-                **({} if lineage is None else {"lineage": dict(lineage)}),
-                "rows": [list(row) for row in rows],
-            }
-        )
-        map_digests = sorted(
-            bodies.store(
-                canonical_bytes(
-                    {
-                        "tag": ROW_MAP_BODY,
-                        "capture": item.capture_digest,
-                        "spec": item.spec_digest,
-                        "contract": item.contract_digest,
-                        "rows": [list(row) for row in item.rows],
-                    }
-                ),
-                journal_payload=True,
+        lineage_key = () if lineage is None else tuple(sorted(lineage.items()))
+        cache_key = (self.root, tuple(id(item) for item in maps), lineage_key)
+        cached = _ROW_BODIES.get(cache_key)
+        if cached is not None and all(
+            held is item for held, item in zip(cached[0], maps, strict=True)
+        ):
+            # The same immutable row maps (``execution._row_map_of``) as an
+            # earlier run in this process: their bodies are stored, their
+            # digests known, and nothing is encoded or hashed again (2c #6).
+            _held, set_digest, maps_digest = cached
+        else:
+            bodies = self.instance.body_store()
+            rows = sorted(
+                {(item.contract_digest, row) for item in maps for _locator, row in item.rows}
+            )
+            if not rows:
+                return None
+            set_body = canonical_bytes(
+                {
+                    "tag": OBSERVED_ROWS_BODY,
+                    **({} if lineage is None else {"lineage": dict(lineage)}),
+                    "rows": [list(row) for row in rows],
+                }
+            )
+            map_digests = sorted(
+                bodies.store(
+                    canonical_bytes(
+                        {
+                            "tag": ROW_MAP_BODY,
+                            "capture": item.capture_digest,
+                            "spec": item.spec_digest,
+                            "contract": item.contract_digest,
+                            "rows": [list(row) for row in item.rows],
+                        }
+                    ),
+                    journal_payload=True,
+                ).digest
+                for item in maps
+            )
+            maps_digest = bodies.store(
+                canonical_bytes({"tag": ROW_MAPS_BODY, "maps": map_digests}), journal_payload=True
             ).digest
-            for item in maps
-        )
-        maps_digest = bodies.store(
-            canonical_bytes({"tag": ROW_MAPS_BODY, "maps": map_digests}), journal_payload=True
-        ).digest
+            set_digest = bodies.store(set_body, journal_payload=True).digest
+            with _LOCK:
+                _ROW_BODIES[cache_key] = (tuple(maps), set_digest, maps_digest)
+                while len(_ROW_BODIES) > _ROW_MAPS_CAPACITY:
+                    _ROW_BODIES.pop(next(iter(_ROW_BODIES)))
         return self._append_shared(
             {
                 "tag": ROW_OBSERVATION_TAG,
-                "set_digest": bodies.store(set_body, journal_payload=True).digest,
+                "set_digest": set_digest,
                 "maps_digest": maps_digest,
                 "earliest": format_datetime(earliest.astimezone(UTC)),
                 "latest": format_datetime(latest.astimezone(UTC)),
@@ -1387,47 +1422,64 @@ class ClaimReobservationStore:
 
     def observed_after(
         self, sequence: int, *, through: int | None = None
-    ) -> tuple[frozenset[str], frozenset[tuple[str, str]]]:
+    ) -> tuple[frozenset[str], frozenset[tuple[str, str]], frozenset[str]]:
         """What the records after ``sequence`` (through ``through``) re-observed.
 
-        The lineages a per-Claim record names, and the (contract, content)
-        keys a content or row observation covers: a follower reaches
-        the Claims whose freshness read a key through what it recorded for it,
-        never by visiting every Claim citing the content. One payload read per
-        record, and one body read per record keyed by content.
+        The lineages a per-Claim record names; the keys of each observed set
+        first recorded in that range (a new set: its members, paid once, as
+        its projection rows are); and every observed set recorded in it. A
+        repeated set is reached by its digest alone, never by expanding its
+        members again (review 2c #6): a follower reaches the Claims whose
+        freshness read a key or a set holding it. One payload read per
+        record, one seek per observation and one body read per new set.
         """
 
         journal = self._journal(create=False)
         if journal is None:
-            return frozenset(), frozenset()
+            return frozenset(), frozenset(), frozenset()
         claims: set[str] = set()
         keys: set[tuple[str, str]] = set()
-        for stored in journal.select_records(
-            self.stream, partition_id=_PARTITION, first_sequence=sequence + 1
-        ):
-            if through is not None and stored.record.sequence > through:
-                break
-            payload = parse_journal_payload(
-                self.instance.body_store().read(stored.record.payload_digest, access=_ACCESS)
-            )
-            if not isinstance(payload, dict):
-                raise ValueError("invalid Claim re-observation record")
-            tag = payload.get("tag")
-            if tag == CONTENT_OBSERVATION_TAG:
-                body = _shared_body(
-                    self.instance, str(payload["set_digest"]), tag=OBSERVED_CONTENTS_BODY
+        sets: set[str] = set()
+        with self._locked() as conn:
+            for stored in journal.select_records(
+                self.stream, partition_id=_PARTITION, first_sequence=sequence + 1
+            ):
+                if through is not None and stored.record.sequence > through:
+                    break
+                payload = parse_journal_payload(
+                    self.instance.body_store().read(stored.record.payload_digest, access=_ACCESS)
                 )
-                keys.update((str(item[0]), str(item[1])) for item in body["contents"])
-            elif tag == ROW_OBSERVATION_TAG:
-                body = _shared_body(
-                    self.instance, str(payload["set_digest"]), tag=OBSERVED_ROWS_BODY
-                )
-                keys.update((str(item[0]), str(item[1])) for item in body["rows"])
-            elif tag == _EVENT_TAG:
-                claims.add(str(payload["claim_id"]))
-            else:
-                raise ValueError("invalid Claim re-observation record")
-        return frozenset(claims), frozenset(keys)
+                if not isinstance(payload, dict):
+                    raise ValueError("invalid Claim re-observation record")
+                tag = payload.get("tag")
+                if tag in _SHARED_TAGS:
+                    set_digest = str(payload["set_digest"])
+                    sets.add(set_digest)
+                    first = conn.execute(
+                        "SELECT MIN(sequence) FROM observation_points WHERE set_digest=?",
+                        (set_digest,),
+                    ).fetchone()
+                    if (
+                        first is not None
+                        and first[0] is not None
+                        and int(first[0]) < int(stored.record.sequence)
+                    ):
+                        continue  # a repeated set: its digest reaches its readers
+                    rows_tag = tag == ROW_OBSERVATION_TAG
+                    body = _shared_body(
+                        self.instance,
+                        set_digest,
+                        tag=OBSERVED_ROWS_BODY if rows_tag else OBSERVED_CONTENTS_BODY,
+                    )
+                    keys.update(
+                        (str(item[0]), str(item[1]))
+                        for item in body["rows" if rows_tag else "contents"]
+                    )
+                elif tag == _EVENT_TAG:
+                    claims.add(str(payload["claim_id"]))
+                else:
+                    _refuse_retired_tag(tag)
+        return frozenset(claims), frozenset(keys), frozenset(sets)
 
     def history(self, claim_id: str) -> tuple[ReobservationRecord, ...]:
         """Every re-observation ever recorded for one lineage, in capture order.
@@ -1523,6 +1575,10 @@ class ReobservationReading:
     sequence: int = 0
     #: The cited keys the read looked up: what ``sequence`` is taken over.
     keys: tuple["ReobservationKey", ...] = ()
+    #: The observed sets currently holding those keys (each source's head set):
+    #: a repeated observation of one reaches this lineage's stale facts with no
+    #: expansion of the set's members (review 2c #6).
+    sets: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -1843,6 +1899,7 @@ class ReobservationReader:
         pair: tuple[str, str],
         window: "_Window",
         boundaries: set[datetime] | None = None,
+        sets: set[str] | None = None,
     ) -> _Point | None:
         """The observation of one key with the greatest earliest instant the window admits.
 
@@ -1866,6 +1923,8 @@ class ReobservationReader:
             if head is None:
                 continue
             set_digest = str(head[0])
+            if sets is not None:
+                sets.add(set_digest)
             capture = self._capture(conn, pair, set_digest)
             found = []
             peak = self._peak(conn, set_digest, window.through)
@@ -2004,6 +2063,7 @@ class ReobservationReader:
                 return ReobservationReading()
             window = self._window(conn, at_us=at_us, through=through) if shared else None
             found: dict[tuple[str, str], _Point | None] = {}
+            held_sets: set[str] = set()
             for key in keys:
                 pair = (key.contract_digest, key.observed_content_digest)
                 if pair not in found:
@@ -2027,7 +2087,7 @@ class ReobservationReader:
                                 capture_digest=str(hit[0]),
                             )
                     if window is not None:
-                        point = self._key_point(conn, pair, window, boundaries)
+                        point = self._key_point(conn, pair, window, boundaries, held_sets)
                         if point is not None and (best is None or point.rank() > best.rank()):
                             best = point
                         sequence = max(sequence, self._key_sequence(conn, pair, through))
@@ -2060,6 +2120,7 @@ class ReobservationReader:
             ),
             boundaries=tuple(sorted(boundaries)),
             sequence=sequence,
+            sets=tuple(sorted(held_sets)),
         )
 
 

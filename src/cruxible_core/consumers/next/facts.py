@@ -100,7 +100,7 @@ if TYPE_CHECKING:
 #: number is part of the schema text, so a new one rebuilds the state (R5).
 #: 17: a current Claim's facts end at its freshness expiry less next's lead, and
 #: a content observation derives only the Claims it changes (built at 16: rebuild).
-FORMAT = 18  # Only stale readers keep an observation edge (review 2b F-007)
+FORMAT = 19  # A stale reader's edges name its keys' observed sets (review 2c #6)
 #: (<TEXT>, <CLAIM_ID>), and a due dispatch names its Line. A state built at 15 stores
 #: rows with the old commands and ids, so it must rebuild once. (15: subject-end entries
 #: per (end, pair) key; live key-object index.)
@@ -640,6 +640,12 @@ def _claim_facts(
             reads.update(
                 f"observed:{key.contract_digest}|{key.observed_content_digest}"
                 for key in recording.reobservation_keys.get(claim.identity.name, ())
+            )
+            # A repeated observation of a set holding them reaches this Claim
+            # by the set alone (review 2c #6): no expansion of its members.
+            reads.update(
+                f"observedset:{digest}"
+                for digest in recording.reobservation_sets.get(claim.identity.name, ())
             )
     lower, upper = (
         invariance_interval(boundaries, evaluation_time=at) if verdict is not None else (None, None)
@@ -1284,7 +1290,7 @@ def _touched(
         landed |= consulting
     reobs = heads.reobs
     if heads.reobs != cursors.reobs:
-        lineages, observed = ClaimReobservationStore(instance).observed_after(
+        lineages, observed, observed_sets = ClaimReobservationStore(instance).observed_after(
             cursors.reobs, through=heads.reobs
         )
         claims.update(f"Claim:{claim_id}" for claim_id in lineages)
@@ -1301,7 +1307,12 @@ def _touched(
             for row in _rows(
                 connection,
                 "SELECT claim_id FROM fact_reads WHERE read_key IN ({marks})",
-                tuple(sorted(f"observed:{contract}|{content}" for contract, content in observed)),
+                tuple(
+                    sorted(
+                        {f"observed:{contract}|{content}" for contract, content in observed}
+                        | {f"observedset:{digest}" for digest in observed_sets}
+                    )
+                ),
             )
         )
     fired_at: datetime | None = None

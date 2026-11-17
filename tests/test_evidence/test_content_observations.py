@@ -12,8 +12,11 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
+
 from cruxible_client.contracts.claims import claim_citation_references
 from cruxible_core.evidence.claim_reobservations import (
+    ClaimReobservationJournalCorrupt,
     ClaimReobservationStore,
     ObservedContent,
     ReobservationReader,
@@ -342,3 +345,107 @@ def test_a_later_selection_of_the_same_captures_records_maps_its_rows_too(
     reader = ReobservationReader(instance)
     for locator, row in rows.items():
         assert reader.row_of(cited, spec, locator) == (key.contract_digest, row)
+
+
+def test_an_unchanged_extract_step_hashes_no_row_and_follows_by_its_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review 2c #6: the same Capture's rows are derived once per process, and a
+    repeated row set reaches next by its digest, its members never expanded,
+    at 12 and 120 rows."""
+
+    from types import SimpleNamespace
+
+    from cruxible_core.evidence import claim_reobservations
+    from cruxible_core.procedures import execution
+    from cruxible_core.procedures.extract import _Record
+
+    hashed = [0]
+    original = claim_reobservations.row_digest
+
+    def counted(*args, **kwargs):  # type: ignore[no-untyped-def]
+        hashed[0] += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(claim_reobservations, "row_digest", counted)
+    work = {}
+    for size in (12, 120):
+        root = tmp_path / str(size)
+        root.mkdir()
+        instance, _owner = _freshness_world(root, stale_after=_HOUR)
+        _claim, cited, key = _cited(instance)
+        store = ClaimReobservationStore(instance)
+        state = SimpleNamespace(
+            capture_contracts={cited: key.contract_digest}, capture_sources={cited: "source"}
+        )
+        outcome = SimpleNamespace(
+            held=[
+                _Record(locator=f"/{index}", key={"id": index}, fields={}) for index in range(size)
+            ]
+        )
+        sequences = []
+        hashed[0] = 0
+        counts = []
+        for run in range(2):
+            row_map, _rows = execution._row_map_of(  # noqa: SLF001
+                state, cited, "sha256:" + "5" * 64, "*", outcome
+            )
+            counts.append(hashed[0])
+            at = _START + timedelta(hours=1 + run)
+            instance.recording_clock = lambda at=at: at
+            sequences.append(
+                store.observe_rows(
+                    (row_map,),
+                    earliest=at - timedelta(minutes=1),
+                    latest=at,
+                    run_id=f"RUN-{run}",
+                    node_id="extract",
+                    actor_id="o",
+                )
+            )
+        _lineages, keys, sets = store.observed_after(sequences[0])
+        work[size] = (counts[1] - counts[0], len(keys), len(sets))
+    assert work[12] == work[120] == (0, 0, 1), work
+
+
+def test_a_journal_from_an_unreleased_transition_build_refuses_with_re_initialise(
+    tmp_path: Path,
+) -> None:
+    """Review 2c #1, ruling 2026-11-16 (3): a transition record only unreleased
+    builds wrote is not migrated; the projection refuses, naming the repair."""
+
+    from cruxible_client.contracts.projection import AcceptedCoordinate
+    from cruxible_core.evidence.claim_reobservations import _FENCE, _PARTITION
+    from cruxible_core.exhaust.writer import ProcedureExhaustWriter
+    from cruxible_core.governance.actor_context import GovernedActorContext
+
+    instance, _owner = _freshness_world(tmp_path, stale_after=_HOUR)
+    store = ClaimReobservationStore(instance)
+    journal = store._journal(create=True)  # noqa: SLF001
+    assert journal is not None
+    head = journal.read_head(store.stream, _PARTITION)
+    journal.activate_writer(store.stream, _PARTITION, fencing_token=_FENCE, expected_head=head)
+    ProcedureExhaustWriter(
+        journal=journal, bodies=instance.body_store(), fencing_token=_FENCE
+    ).append(
+        stream=store.stream,
+        partition_id=_PARTITION,
+        event_kind="claim_reobservation",
+        accepted_coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+        definition_digest=store.stream.identity_digest,
+        actor_context=GovernedActorContext(
+            actor_type="service_account",
+            actor_id="o",
+            org_id=instance.descriptor.instance_id,
+            operation_id="op_test",
+            timestamp=_START,
+        ),
+        recorded_at=_START,
+        payload={"tag": "cruxible-content-transition-v1", "transitions_digest": _OTHER},
+        expected_head=head,
+    )
+    with pytest.raises(ClaimReobservationJournalCorrupt, match="re-initialise"):
+        with store._locked():  # noqa: SLF001
+            pass
+    with pytest.raises(ClaimReobservationJournalCorrupt, match="re-initialise"):
+        store.observed_after(0)
