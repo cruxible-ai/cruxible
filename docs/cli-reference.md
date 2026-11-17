@@ -2704,8 +2704,9 @@ observation under its replayability and age policy.
 
 `get Procedure:NAME` names the unsupported nodes behind its `runnable` answer
 before anything runs. Runs append replay-verifiable journal records, and
-`cruxible get ProcedureRun:RUN-…` reads a run's state, outcomes and terminal
-detail from those records. `--at FILE` binds the run to an accepted coordinate:
+`cruxible get ProcedureRun:RUN-…` reads a run's state from those records: its
+nodes, outcome counts by kind and one line per terminal (`--detail proof` holds
+every outcome and terminal detail). `--at FILE` binds the run to an accepted coordinate:
 it runs only while the Procedure is still current there.
 
 ### Measurements and readings

@@ -804,3 +804,58 @@ def test_a_review_prints_a_multi_line_why_as_lines_not_escapes() -> None:
     cut = _review_summary(rationale={"value": "One.\nTwo", "truncated": True})
     assert "  Two..." in str(cut).splitlines()
     assert "Why: Seen in the notes." in str(_review_summary()).splitlines()
+
+
+def test_a_run_card_prints_counts_and_one_line_per_terminal_not_every_outcome() -> None:
+    """coldcli-06: `get RUN-...` printed 120-380 KB of outcomes; its proof keeps them."""
+
+    from cruxible_client.contracts.get_reads import GetResult
+    from cruxible_client.contracts.get_text import render_get
+
+    outcomes = [
+        {"sequence": index + 1, "event_kind": kind, "payload_digest": "sha256:" + "a" * 64}
+        for index, kind in enumerate(["claim_written"] * 180 + ["capture_landed"])
+    ]
+    result = GetResult.model_validate(
+        {
+            "ref": "ProcedureRun:RUN-1",
+            "kind": "procedure_run",
+            "detail": "summary",
+            "coordinate": {"git_oid": _OID[:12], "generation": 3},
+            "evaluation_time": "2026-11-15T00:00:00Z",
+            "card": {
+                "run": "RUN-1",
+                "procedure": "Procedure:security.osv-query",
+                "status": "succeeded",
+                "nodes_done": 2,
+                "nodes_total": 2,
+                "started_at": "2026-11-15T00:00:00Z",
+                "nodes": [
+                    {"node": "affected", "kind": "extract", "verdict": "succeeded", "sequence": 3}
+                ],
+                "result": {"rows": ["r" * 50] * 40},
+                "outcomes": outcomes,
+                "terminal_egress": [
+                    {
+                        "node_id": "write",
+                        "kind": "claims",
+                        "verdict": "delivered",
+                        "required_authority": "settle",
+                        "settle_outcome": "settled",
+                        "accepted_git_oid": "b" * 40,
+                        "proposal_id": "sha256:" + "c" * 64,
+                        "candidate_digest": "sha256:" + "d" * 64,
+                    }
+                ],
+                "next": ["cruxible get ProcedureRun:RUN-1 --detail proof"],
+            },
+        }
+    )
+    text = render_get(result)
+    assert text is not None
+    assert "outcomes: 181 (capture_landed 1, claim_written 180)" in text.splitlines()
+    assert "terminals:" in text and "  write  claims  delivered  settled bbbbbbbbbbbb" in text
+    assert "payload_digest" not in text and "sha256:" + "a" * 64 not in text
+    result_line = next(line for line in text.splitlines() if line.startswith("result: "))
+    assert len(result_line) < 260
+    assert text.splitlines()[-1] == "next: cruxible get ProcedureRun:RUN-1 --detail proof"

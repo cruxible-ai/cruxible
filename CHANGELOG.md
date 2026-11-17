@@ -494,6 +494,10 @@ quickstart and concepts pages.
   activated after the head moved landed by its own bytes with no rationale, so
   `get --detail history` and the successor's review showed no `reason:` for
   it. The landed proposal now carries its source's `--because`.
+- **`get RUN-...` prints a short card.** A finished run's text listed every
+  outcome and terminal detail (120-380 KB on a security kit run). It now
+  prints the nodes block, outcome counts by kind, one line per terminal and a
+  cut result; `--detail proof` (and `--json`) keep everything.
 - **History and review name a re-cite one way.** `get SUBJECT --detail history
   --field F` no longer prints the Subject's own `rev 1` line above the field.
   A same-value `set` on new evidence prints `reobserve ... (value unchanged)`
