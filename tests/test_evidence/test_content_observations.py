@@ -309,15 +309,18 @@ def test_a_later_selection_of_the_same_captures_records_maps_its_rows_too(
 def test_an_unchanged_extract_step_hashes_no_row_and_follows_by_its_set(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Review 2c #6: the same Capture's rows are derived once per process, and a
-    repeated row set reaches next by its digest, its members never expanded,
-    at 12 and 120 rows."""
+    """Review 2c #6 and 2d #6: a known extraction is found by one seek, never
+    derived again, whatever the working set (12 or 300 Captures, beyond any
+    fixed cache), and a repeated row set reaches next by its digest."""
 
     from types import SimpleNamespace
 
     from cruxible_core.evidence import claim_reobservations
     from cruxible_core.procedures import execution
     from cruxible_core.procedures.extract import _Record
+    from cruxible_core.service.procedures.capture_observations import (
+        InstanceCaptureObservations,
+    )
 
     hashed = [0]
     original = claim_reobservations.row_digest
@@ -328,33 +331,40 @@ def test_an_unchanged_extract_step_hashes_no_row_and_follows_by_its_set(
 
     monkeypatch.setattr(claim_reobservations, "row_digest", counted)
     work = {}
-    for size in (12, 120):
+    for size in (12, 300):
         root = tmp_path / str(size)
         root.mkdir()
         instance, _owner = _freshness_world(root, stale_after=_HOUR)
-        _claim, cited, key = _cited(instance)
+        _claim, _cited_capture, key = _cited(instance)
         store = ClaimReobservationStore(instance)
+        port = InstanceCaptureObservations(instance)
+        captures = [f"sha256:{index:064x}" for index in range(size)]
         state = SimpleNamespace(
-            capture_contracts={cited: key.contract_digest}, capture_sources={cited: "source"}
+            capture_contracts=dict.fromkeys(captures, key.contract_digest),
+            capture_sources=dict.fromkeys(captures, "source"),
         )
-        outcome = SimpleNamespace(
-            held=[
-                _Record(locator=f"/{index}", key={"id": index}, fields={}) for index in range(size)
-            ]
-        )
-        sequences = []
-        hashed[0] = 0
-        counts = []
-        for run in range(2):
-            row_map, _rows = execution._row_map_of(  # noqa: SLF001
-                state, cited, "sha256:" + "5" * 64, "*", outcome
+        outcomes = {
+            capture: SimpleNamespace(
+                held=[_Record(locator="/0", key={"id": index}, fields={})], typing_key="t"
             )
+            for index, capture in enumerate(captures)
+        }
+        sequences = []
+        counts = []
+        for run in range(3):
+            hashed[0] = 0
+            maps = [
+                execution._row_map_of(  # noqa: SLF001
+                    state, capture, "sha256:" + "5" * 64, "*|t", outcomes[capture], port
+                )[0]
+                for capture in captures
+            ]
             counts.append(hashed[0])
             at = _START + timedelta(hours=1 + run)
             instance.recording_clock = lambda at=at: at
             sequences.append(
                 store.observe_rows(
-                    (row_map,),
+                    tuple(maps),
                     earliest=at - timedelta(minutes=1),
                     latest=at,
                     run_id=f"RUN-{run}",
@@ -362,9 +372,9 @@ def test_an_unchanged_extract_step_hashes_no_row_and_follows_by_its_set(
                     actor_id="o",
                 )
             )
-        _lineages, keys, sets = store.observed_after(sequences[0])
-        work[size] = (counts[1] - counts[0], len(keys), len(sets))
-    assert work[12] == work[120] == (0, 0, 1), work
+        _lineages, keys, sets = store.observed_after(sequences[1])
+        work[size] = (counts[1:], len(keys), len(sets))
+    assert work[12] == work[300] == ([0, 0], 0, 1), work
 
 
 def test_a_journal_from_an_unreleased_transition_build_refuses_with_re_initialise(

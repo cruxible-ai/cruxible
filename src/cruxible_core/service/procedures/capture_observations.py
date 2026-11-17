@@ -103,6 +103,12 @@ class InstanceCaptureObservations:
             lineage=lineage,
         )
 
+    def extraction_map(self, extraction: str) -> str | None:
+        return ReobservationReader.of(self.instance).extraction_map(extraction)
+
+    def map_rows(self, map_digest: str) -> dict[str, str]:
+        return ReobservationReader.of(self.instance).map_rows(map_digest)
+
     def rechecked(self, claim_id: str, capture_digest: str) -> bool:
         return ReobservationReader.of(self.instance).recorded(claim_id, capture_digest)
 

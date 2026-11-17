@@ -28,6 +28,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.captures import (
     CaptureEnvelopeAny,
     observed_content,
@@ -86,7 +87,7 @@ ROW_MAP_BODY = "cruxible-row-map-v1"
 #: The row maps of one extract step's Captures (run-free).
 ROW_MAPS_BODY = "cruxible-row-maps-v1"
 _ACCESS = BodyAccessContext(principal_id="claim-reobservation", can_read_body=True)
-_SCHEMA_VERSION = 14
+_SCHEMA_VERSION = 15
 REOBSERVATION_DIRECTORY = "claim-reobservations"
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 # ``reobservations`` keeps the full history (audit, historical verification).
@@ -168,7 +169,13 @@ CREATE TABLE IF NOT EXISTS key_heads (
 ) STRICT, WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS capture_maps (
  capture_digest TEXT NOT NULL, spec_digest TEXT NOT NULL, map_digest TEXT NOT NULL,
+ extraction TEXT NOT NULL,
  PRIMARY KEY(capture_digest, spec_digest, map_digest)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS capture_maps_by_extraction ON capture_maps (extraction);
+CREATE TABLE IF NOT EXISTS row_sets (
+ maps_digest TEXT NOT NULL, lineage TEXT NOT NULL, set_digest TEXT NOT NULL,
+ PRIMARY KEY(maps_digest, lineage)
 ) STRICT, WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS seen_maps (digest TEXT PRIMARY KEY) STRICT, WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS switches (sequence INTEGER PRIMARY KEY) STRICT;
@@ -358,13 +365,17 @@ class RowMap:
     spec_digest: str
     contract_digest: str
     rows: tuple[tuple[str, str], ...]
+    #: The extraction this map is (Capture, spec, selection, typing): how a
+    #: later identical extraction finds the stored map without deriving it.
+    extraction: str = ""
+    #: The stored map body's digest when the extraction is already known (its
+    #: ``rows`` are then not carried: the body holds them).
+    digest: str = ""
 
 
+#: Row map bodies by digest: immutable artifacts, parsed once per process
+#: (the cost model's content-id cache: grows only with distinct maps).
 _ROW_MAPS: dict[str, dict[str, tuple[str, str]]] = {}
-#: A row observation's stored bodies, by the identity of the immutable row
-#: maps it covered (with them, so an identity is never reused while held).
-_ROW_BODIES: dict[tuple[Any, ...], tuple[tuple[Any, ...], str, str]] = {}
-_ROW_MAPS_CAPACITY = 256
 
 
 def _row_map(instance: PlaybillInstance, digest: str) -> dict[str, tuple[str, str]]:
@@ -376,8 +387,6 @@ def _row_map(instance: PlaybillInstance, digest: str) -> dict[str, tuple[str, st
         contract = str(body["contract"])
         held = {str(locator): (contract, str(row)) for locator, row in body["rows"]}
         with _LOCK:
-            if len(_ROW_MAPS) >= _ROW_MAPS_CAPACITY:
-                _ROW_MAPS.pop(next(iter(_ROW_MAPS)))
             _ROW_MAPS[digest] = held
     return held
 
@@ -442,6 +451,7 @@ class ClaimReobservationStore:
                         "capture_rows",
                         "capture_maps",
                         "seen_maps",
+                        "row_sets",
                         "switches",
                         "transitions",
                         "transition_exceptions",
@@ -599,6 +609,27 @@ class ClaimReobservationStore:
             procedure = str(lineage.get("procedure", "")) if isinstance(lineage, dict) else ""
         else:
             procedure = str(head[0])
+        maps_digest = payload.get("maps_digest")
+        if (
+            rows_tag
+            and isinstance(maps_digest, str)
+            and conn.execute(
+                "SELECT 1 FROM row_sets WHERE maps_digest=? AND set_digest=?",
+                (maps_digest, set_digest),
+            ).fetchone()
+            is None
+        ):
+            # The extraction's maps hold this set: a later identical extraction
+            # finds it by one seek (the set body read once per new pairing).
+            held = _shared_body(self.instance, set_digest, tag=OBSERVED_ROWS_BODY).get("lineage")
+            conn.execute(
+                "INSERT OR IGNORE INTO row_sets VALUES (?,?,?)",
+                (
+                    maps_digest,
+                    canonical_bytes(held if isinstance(held, dict) else {}).decode(),
+                    set_digest,
+                ),
+            )
         source = f"{procedure}\x1f{payload.get('node_id', '')}"
         last = conn.execute(
             "SELECT set_digest FROM source_heads WHERE source=?", (source,)
@@ -651,8 +682,8 @@ class ClaimReobservationStore:
             # One row per Capture's map: a record's row is read from the map
             # body (an immutable artifact, parsed once per process).
             conn.execute(
-                "INSERT OR IGNORE INTO capture_maps VALUES (?,?,?)",
-                (capture, str(body["spec"]), str(map_digest)),
+                "INSERT OR IGNORE INTO capture_maps VALUES (?,?,?,?)",
+                (capture, str(body["spec"]), str(map_digest), str(body.get("extraction", ""))),
             )
             conn.execute("INSERT OR IGNORE INTO seen_maps VALUES (?)", (map_digest,))
         conn.execute("INSERT OR IGNORE INTO seen_maps VALUES (?)", (digest,))
@@ -1229,53 +1260,59 @@ class ClaimReobservationStore:
 
         if not maps or is_previewing():
             return None
-        lineage_key = () if lineage is None else tuple(sorted(lineage.items()))
-        cache_key = (self.root, tuple(id(item) for item in maps), lineage_key)
-        cached = _ROW_BODIES.get(cache_key)
-        if cached is not None and all(
-            held is item for held, item in zip(cached[0], maps, strict=True)
-        ):
-            # The same immutable row maps (``execution._row_map_of``) as an
-            # earlier run in this process: their bodies are stored, their
-            # digests known, and nothing is encoded or hashed again (2c #6).
-            _held, set_digest, maps_digest = cached
-        else:
-            bodies = self.instance.body_store()
+        bodies = self.instance.body_store()
+        lineage_key = canonical_bytes({} if lineage is None else dict(lineage)).decode()
+        map_digests = sorted(
+            item.digest
+            or bodies.store(
+                canonical_bytes(
+                    {
+                        "tag": ROW_MAP_BODY,
+                        "capture": item.capture_digest,
+                        "spec": item.spec_digest,
+                        "contract": item.contract_digest,
+                        "extraction": item.extraction,
+                        "rows": [list(row) for row in item.rows],
+                    }
+                ),
+                journal_payload=True,
+            ).digest
+            for item in maps
+        )
+        # One digest per Capture: the maps body is the extraction's identity,
+        # so the set it holds is one seek when every map is known (2d #6).
+        maps_digest = bodies.store(
+            canonical_bytes({"tag": ROW_MAPS_BODY, "maps": map_digests}), journal_payload=True
+        ).digest
+        set_digest = (
+            ReobservationReader.of(self.instance).row_set(maps_digest, lineage_key)
+            if all(item.digest for item in maps)
+            else None
+        )
+        if set_digest is None:
             rows = sorted(
-                {(item.contract_digest, row) for item in maps for _locator, row in item.rows}
+                {
+                    (contract, row)
+                    for item in maps
+                    for contract, row in (
+                        _row_map(self.instance, item.digest).values()
+                        if item.digest
+                        else ((item.contract_digest, row) for _locator, row in item.rows)
+                    )
+                }
             )
             if not rows:
                 return None
-            set_body = canonical_bytes(
-                {
-                    "tag": OBSERVED_ROWS_BODY,
-                    **({} if lineage is None else {"lineage": dict(lineage)}),
-                    "rows": [list(row) for row in rows],
-                }
-            )
-            map_digests = sorted(
-                bodies.store(
-                    canonical_bytes(
-                        {
-                            "tag": ROW_MAP_BODY,
-                            "capture": item.capture_digest,
-                            "spec": item.spec_digest,
-                            "contract": item.contract_digest,
-                            "rows": [list(row) for row in item.rows],
-                        }
-                    ),
-                    journal_payload=True,
-                ).digest
-                for item in maps
-            )
-            maps_digest = bodies.store(
-                canonical_bytes({"tag": ROW_MAPS_BODY, "maps": map_digests}), journal_payload=True
+            set_digest = bodies.store(
+                canonical_bytes(
+                    {
+                        "tag": OBSERVED_ROWS_BODY,
+                        **({} if lineage is None else {"lineage": dict(lineage)}),
+                        "rows": [list(row) for row in rows],
+                    }
+                ),
+                journal_payload=True,
             ).digest
-            set_digest = bodies.store(set_body, journal_payload=True).digest
-            with _LOCK:
-                _ROW_BODIES[cache_key] = (tuple(maps), set_digest, maps_digest)
-                while len(_ROW_BODIES) > _ROW_MAPS_CAPACITY:
-                    _ROW_BODIES.pop(next(iter(_ROW_BODIES)))
         return self._append_shared(
             {
                 "tag": ROW_OBSERVATION_TAG,
@@ -1784,6 +1821,43 @@ class ReobservationReader:
                 (claim_id, _through()),
             ).fetchone()
         return None if row is None else str(row[0])
+
+    def extraction_map(self, extraction: str) -> str | None:
+        """The stored row map of one known extraction (one seek), if any."""
+
+        self._guard_fork()
+        with self._lock:
+            conn = self._connection()
+            if conn is None:
+                return None
+            self.probes += 1
+            row = conn.execute(
+                "SELECT map_digest FROM capture_maps WHERE extraction=? LIMIT 1", (extraction,)
+            ).fetchone()
+        return None if row is None else str(row[0])
+
+    def row_set(self, maps_digest: str, lineage: str) -> str | None:
+        """The row set an extraction's maps hold under one lineage (one seek), if known."""
+
+        self._guard_fork()
+        with self._lock:
+            conn = self._connection()
+            if conn is None:
+                return None
+            self.probes += 1
+            row = conn.execute(
+                "SELECT set_digest FROM row_sets WHERE maps_digest=? AND lineage=?",
+                (maps_digest, lineage),
+            ).fetchone()
+        return None if row is None else str(row[0])
+
+    def map_rows(self, map_digest: str) -> dict[str, str]:
+        """One stored row map by record locator (its body parsed once per process)."""
+
+        return {
+            locator: row
+            for locator, (_contract, row) in _row_map(self.instance, map_digest).items()
+        }
 
     def row_of(self, capture_digest: str, spec_digest: str, locator: str) -> tuple[str, str] | None:
         """The (contract, row) one extracted record of a Capture is: one seek, or None

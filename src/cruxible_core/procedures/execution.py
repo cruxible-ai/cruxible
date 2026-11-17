@@ -6,7 +6,7 @@ import base64
 import hashlib
 import json
 import time
-from collections import Counter, OrderedDict
+from collections import Counter
 from collections.abc import Collection, Iterable, Iterator, Mapping, Sequence
 from contextlib import nullcontext
 from dataclasses import dataclass
@@ -1367,6 +1367,12 @@ class CaptureObservationsProtocol(Protocol):
 
     def row_of(self, capture_digest: str, spec_digest: str, locator: str) -> str | None:
         """The row one extracted record of a Capture was observed as, if any."""
+
+    def extraction_map(self, extraction: str) -> str | None:
+        """The stored row map of one known extraction, if any."""
+
+    def map_rows(self, map_digest: str) -> dict[str, str]:
+        """One stored row map by record locator."""
 
     def rechecked(self, claim_id: str, capture_digest: str) -> bool:
         """Whether a per-Claim record already re-checked the Claim in this Capture."""
@@ -5660,7 +5666,12 @@ class ProcedureExecutor:
         maps = []
         for capture, outcome in parts:
             row_map, rows = _row_map_of(
-                state, capture, spec, f"{selected}|{outcome.typing_key}", outcome
+                state,
+                capture,
+                spec,
+                f"{selected}|{outcome.typing_key}",
+                outcome,
+                self.capture_observations,
             )
             state.row_maps[(capture, spec)] = rows
             maps.append(row_map)
@@ -8609,30 +8620,37 @@ def _extract_only_keys(node: ExtractNode, *, state: _RunState) -> list[dict[str,
     return cast(list[dict[str, object]], resolved)
 
 
-#: Each (Capture, extract spec, selection)'s rows: an immutable derivation of
-#: immutable inputs, computed once per process.
-_ROW_MAPS: OrderedDict[tuple[str, str, str], tuple[Any, dict[str, str]]] = OrderedDict()
-_ROW_MAPS_CAPACITY = 256
-
-
 def _row_map_of(
-    state: _RunState, capture: str, spec: str, selected: str, outcome: ExtractOutcome
+    state: _RunState,
+    capture: str,
+    spec: str,
+    selected: str,
+    outcome: ExtractOutcome,
+    port: Any = None,
 ) -> tuple[Any, dict[str, str]]:
     """One Capture's extracted records as rows (a ``RowMap``) and by locator.
 
-    The rows of the same Capture under the same spec and selection never
-    change, so a later run reuses them: the loop over records runs once.
+    The extraction (Capture, spec, selection with its typing) is immutable:
+    once its map is stored, a later run finds it by one seek on the
+    projection (``extraction_map``) and derives nothing, whatever the working
+    set (review 2d #6). Only a new extraction loops over its records.
     """
 
     from cruxible_core.evidence.claim_reobservations import RowMap, row_digest
     from cruxible_core.procedures.extract import _Record, held_wire, wire_value
 
-    key = (capture, spec, selected)
-    held = _ROW_MAPS.get(key)
-    if held is not None:
-        _ROW_MAPS.move_to_end(key)
-        return held
+    extraction = typed_digest(
+        Sha256Value,
+        "cruxible-extraction-v1",
+        {"capture": capture, "spec": spec, "selected": selected},
+    ).tagged
     contract = state.capture_contracts.get(capture, "")
+    known = None if port is None else port.extraction_map(extraction)
+    if known is not None:
+        return (
+            RowMap(capture, spec, contract, (), extraction=extraction, digest=known),
+            port.map_rows(known),
+        )
     source = state.capture_sources.get(capture, "")
     rows: dict[str, str] = {}
     for item in outcome.held:
@@ -8649,11 +8667,7 @@ def _row_map_of(
                 for name, value in item.fields.items()
             },
         )
-    found = (RowMap(capture, spec, contract, tuple(sorted(rows.items()))), rows)
-    _ROW_MAPS[key] = found
-    while len(_ROW_MAPS) > _ROW_MAPS_CAPACITY:
-        _ROW_MAPS.popitem(last=False)
-    return found
+    return RowMap(capture, spec, contract, tuple(sorted(rows.items())), extraction=extraction), rows
 
 
 def _observation_calls(
