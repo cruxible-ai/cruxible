@@ -2445,18 +2445,26 @@ def _add_required_kit(requirement: KitRequirement) -> RepairOperation:
     )
 
 
-def _pending_kit_proposal(instance: PlaybillInstance, kit_id: str) -> str | None:
-    """The open proposal that adds ``kit_id`` here, when its add stopped at one.
+def _pending_kit_proposal(instance: PlaybillInstance, requirement: KitRequirement) -> str | None:
+    """The open proposal whose approval installs a required kit, when one is recorded.
 
+    Only a recorded add of a release that meets the requirement counts:
+    approving an older release would land it and leave the dependent blocked.
     Read only on the refusal path: that kit's one resume row by key, then one
-    indexed proposal lookup. No other kit's row is read.
+    indexed proposal lookup. An ordinary `kit add` that stopped at its
+    proposal keeps no such row and no index names an open proposal by kit, so
+    it is not looked for (that would be a scan of open proposals): the
+    refusal then gives the ordinary repair, adding the required kit.
     """
 
     from cruxible_core.service.kit_resume import proposed_kit_proposal
     from cruxible_core.service.proposals.proposals import proposal_is_open
 
-    proposal_id = proposed_kit_proposal(instance, kit_id)
-    if proposal_id is None or not proposal_is_open(instance, proposal_id):
+    recorded = proposed_kit_proposal(instance, requirement.kit_id)
+    if recorded is None:
+        return None
+    version, proposal_id = recorded
+    if not requirement.met_by(version) or not proposal_is_open(instance, proposal_id):
         return None
     return proposal_id
 
@@ -2477,7 +2485,7 @@ def _required_receipts(
         receipt = installed.get(requirement.kit_id)
         version = None if receipt is None else receipt.version
         if not requirement.met_by(version):
-            pending = _pending_kit_proposal(instance, requirement.kit_id)
+            pending = _pending_kit_proposal(instance, requirement)
             raise RequestRefusedError(
                 KIT_REQUIRES_MISSING,
                 requires_missing_message(

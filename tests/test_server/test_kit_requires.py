@@ -182,6 +182,40 @@ def test_add_while_the_required_kit_awaits_approval_says_to_approve_it_first(
         {"proposal_id": proposed.proposal_id},
     )
 
+    # Review F-016: a pending release below the minimum is not what to approve.
+    # Approving base 1.0.0 would land it and leave a kit that needs 2.0.0 blocked.
+    from cruxible_core.service.kits import _pending_kit_proposal
+
+    at_minimum = KitRequirement(kit_id="base", min_version="1.0.0")
+    above = KitRequirement(kit_id="base", min_version="2.0.0")
+    assert _pending_kit_proposal(world, at_minimum) == proposed.proposal_id
+    assert _pending_kit_proposal(world, above) is None
+
+
+def test_an_ordinary_pending_kit_add_is_not_searched_for(
+    tmp_path: Path, dependent: KitBundle
+) -> None:
+    """Review F-016: an ordinary `kit add` that stops at its proposal keeps no resume
+    row, and no index names an open proposal by kit. Rather than scan open proposals,
+    the refusal for a kit that requires it gives the ordinary repair."""
+
+    world = _instance(tmp_path / "world")
+    proposed = service_add_kit(
+        world,
+        KitAddRequest(bundle=_base(), dry_run=False),
+        actor_id="owner",
+        timestamp=STAMP,
+        may_activate=False,
+    )
+    assert proposed.status == "proposed" and proposed.proposal_id is not None
+
+    with pytest.raises(RequestRefusedError) as refused:
+        _add(world, dependent)
+
+    assert refused.value.error_code == "cruxible.kit.requires_missing"
+    assert "awaits approval" not in str(refused.value)
+    assert refused.value.repair.operation == "cruxible.kit.add"  # type: ignore[attr-defined]
+
 
 @pytest.mark.parametrize("others", [2, 40])
 def test_the_pending_kit_check_reads_one_resume_row_whatever_else_is_recorded(
@@ -216,8 +250,8 @@ def test_the_pending_kit_check_reads_one_resume_row_whatever_else_is_recorded(
 
     monkeypatch.setattr(kit_resume, "_rows", counting)
 
-    assert _pending_kit_proposal(world, "base") is None
-    assert kit_resume.proposed_kit_proposal(world, "kit-1") == f"sha256:{1:064x}"
+    assert _pending_kit_proposal(world, KitRequirement(kit_id="base", min_version="1.0.0")) is None
+    assert kit_resume.proposed_kit_proposal(world, "kit-1") == ("1.0.0", f"sha256:{1:064x}")
     # One keyed query each, at most one row, and no wait row, at either size.
     assert fetched == [0, 1]
 
