@@ -1143,6 +1143,10 @@ class KitChangeResult(_Strict):
         "would_block",
     ]
     proposal_id: str | None = None
+    #: A blocked change whose proposal was admitted and stays open (accepted state
+    #: moved before it could land): withdraw it, or preview the kit again. False
+    #: for a refusal, whose ``proposal_id`` (if any) names only the refused record.
+    proposal_open: bool = Field(default=False, exclude_if=lambda value: not value)
     approval_required: bool = False
     #: From the installed version to this release's (None for a removal).
     transition: KitTransition | None = None

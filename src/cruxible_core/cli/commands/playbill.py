@@ -2452,8 +2452,14 @@ def _echo_kit_change(
             and item.consequence == "takes_over_outside_definition"
         ):
             click.echo(f"Next: rerun cruxible kit add with --keep {item.identity} to keep yours.")
-    if result.proposal_id and result.status != "blocked":
-        # A blocked change records nothing to act on (--json keeps the id).
+    if result.proposal_id and result.status == "blocked" and result.proposal_open:
+        # Admitted, then accepted state moved before it could land: it stays open.
+        click.echo(
+            f"Proposal: {result.proposal_id} (open; withdraw it: cruxible proposal withdraw "
+            f"{result.proposal_id} --reason '<TEXT>')"
+        )
+    elif result.proposal_id and result.status != "blocked":
+        # A refused change leaves nothing to act on (--json keeps the refused record's id).
         click.echo(f"Proposal: {result.proposal_id}")
         if result.status == "proposed":
             if result.approval_required:

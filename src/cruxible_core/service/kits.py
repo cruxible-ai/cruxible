@@ -2107,6 +2107,7 @@ def _submit(
                 status="blocked",
                 plan=plan,
                 proposal_id=admitted.proposal_id,
+                proposal_open=True,
                 detail="Accepted state moved during kit add; preview the kit again.",
                 coordinate=mode.coordinate,
                 **described,  # type: ignore[arg-type]

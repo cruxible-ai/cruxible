@@ -1015,6 +1015,38 @@ def test_kit_remove_exits_1_only_when_a_commit_was_blocked(
     assert "Proposal:" not in result.output
 
 
+def test_a_blocked_kit_change_names_a_proposal_it_left_open(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review F-006: accepted state moved after admission, so the proposal stays open;
+    the blocked answer names it and how to withdraw it."""
+
+    from cruxible_client.contracts.kits import KitRemoveRequest
+
+    proposal = "sha256:" + "f" * 64
+
+    class StubClient:
+        def remove_kit(self, instance_id: str, request: KitRemoveRequest) -> KitChangeResult:
+            return KitChangeResult(
+                kit_id="acme",
+                version="1.0.0",
+                status="blocked",
+                proposal_id=proposal,
+                proposal_open=True,
+                detail="Accepted state moved during kit add; preview the kit again.",
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+
+    result = CliRunner().invoke(cli, [*BASE, "remove", "acme", "--commit", "--at", "abcdef123456"])
+
+    assert result.exit_code == 1, result.output
+    assert (
+        f"Proposal: {proposal} (open; withdraw it: cruxible proposal withdraw {proposal} "
+        "--reason '<TEXT>')" in result.output
+    )
+
+
 def test_a_blocked_kit_remove_prints_its_refusal_first_and_the_plan_as_counts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

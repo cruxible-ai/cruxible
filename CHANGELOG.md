@@ -507,7 +507,9 @@ quickstart and concepts pages.
   blocked before anything is installed or proposed, with one line counting its
   retired definitions per kind, instead of one revival refusal per definition and a
   `Proposal:` line. A refusal that repeats prints once with its count, a
-  blocked kit change prints no `Proposal:` line (`--json` keeps the id), and the
+  refused kit change prints no `Proposal:` line (`--json` keeps the id), one
+  left open because accepted state moved after admission names it and how to
+  withdraw it (`proposal_open`), and the
   plan says `re-adds a retired definition` rather than `you retired`.
 - **`vocabulary export` keeps what a field means in sight.** It left out
   `evidence_requirement: captured` and `permitted_roles` whenever lowering
