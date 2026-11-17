@@ -503,6 +503,10 @@ quickstart and concepts pages.
   from the journal instead of applying new records under reused sequences or
   refusing `orient`, `next`, `get` and `query` with
   `cruxible.claim.reobservation_journal_corrupt`.
+- **`next` follows a new typing of a cited Capture.** A row map recorded
+  after `next` stored a Claim's facts can withdraw the Claim's row evidence;
+  the Claims citing that Capture are now derived again, so `next` and a direct
+  read agree.
 - **A re-observation record whose stored payload was lost no longer fails
   reads.** The record is skipped as unavailable evidence when the projection
   is rebuilt (after an upgrade, for one), and every other record is served.

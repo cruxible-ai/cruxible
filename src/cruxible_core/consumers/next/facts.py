@@ -1295,10 +1295,18 @@ def _touched(
         landed |= consulting
     reobs = heads.reobs
     if heads.reobs != cursors.reobs:
-        lineages, observed, observed_sets = ClaimReobservationStore(instance).observed_after(
-            cursors.reobs, through=heads.reobs
-        )
+        store = ClaimReobservationStore(instance)
+        lineages, observed, observed_sets = store.observed_after(cursors.reobs, through=heads.reobs)
         claims.update(f"Claim:{claim_id}" for claim_id in lineages)
+        # A new row map of a Capture changes which row its extracted records
+        # are (none, when its maps disagree): it can withdraw the row evidence
+        # of a supported, current Claim, which keeps no ``observed:`` edge. An
+        # extracted record's Capture is a backing Capture of its Claim, so the
+        # Claims citing that Capture are derived again: bounded by them, and
+        # only when a map not recorded before lands.
+        keys.update(
+            f"backing:{capture}" for capture in store.maps_after(cursors.reobs, through=heads.reobs)
+        )
         # Keyed by what the Claims depend on (content, row or enumeration),
         # and only where the observation changes a stored fact: the facts
         # writer keeps an ``observed:`` edge only for a Claim whose stored

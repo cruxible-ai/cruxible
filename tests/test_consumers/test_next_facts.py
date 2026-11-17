@@ -534,6 +534,82 @@ def test_a_reobservation_journal_lost_then_restored_is_followed_without_a_repair
     followed()
 
 
+def test_a_typing_map_recorded_after_a_claims_facts_derives_the_claim_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review finding 1: the worker stores a supported, current Claim's facts
+    (its extracted record is row X, observed again recently). A second typing
+    of the cited Capture then maps the record to row Y: the maps disagree, the
+    direct reader withdraws the row evidence, and the worker derives the
+    Claim again, so next serves what a rebuild does."""
+
+    from cruxible_core.evidence import claim_reobservations
+    from cruxible_core.evidence.claim_reobservations import ReobservationKey, RowMap
+    from tests.test_evidence.test_content_observations import _OTHER, _cited
+    from tests.test_evidence.test_content_observations import (
+        _freshness_world as _hour_world,
+    )
+
+    instance, _owner = _hour_world(tmp_path, stale_after=3_600_000_000)
+    claim, cited, key = _cited(instance)
+    store = ClaimReobservationStore(instance)
+    spec = "sha256:" + "5" * 64
+    row_x, row_y = "sha256:" + "6" * 64, "sha256:" + "7" * 64
+    start = datetime(2026, 8, 16, 21, 0, tzinfo=UTC)
+
+    def observe(minute: int, capture: str, row: str, typing: str) -> None:
+        instance.recording_clock = lambda: start + timedelta(minutes=minute)
+        store.observe_rows(
+            (RowMap(capture, spec, key.contract_digest, (("/0", row),), extraction=typing),),
+            earliest=start + timedelta(minutes=minute),
+            latest=start + timedelta(minutes=minute),
+            run_id=f"RUN-{minute}",
+            node_id="extract",
+            actor_id="o",
+        )
+
+    # The Claim depends on its extracted record's row, as ``claim_keys_on``
+    # names it for a Claim produced from an extracted record.
+    depends = (ReobservationKey(cited, key.contract_digest, "", row_record=(cited, spec, "/0")),)
+    real_keys = claim_reobservations.claim_reobservation_keys
+    monkeypatch.setattr(
+        claim_reobservations,
+        "claim_reobservation_keys",
+        lambda instance, **kwargs: (
+            depends if kwargs["claim"].identity == claim.identity else real_keys(instance, **kwargs)
+        ),
+    )
+    at = start + timedelta(minutes=40)
+    identity = claim.identity.qualified
+
+    def stored_verdict() -> str:
+        _catch_up(instance, at)
+        tables = _assert_rebuilt(instance, at)
+        return str(next(row for row in tables["claim_facts"] if row[0] == identity)[_VERDICT])
+
+    observe(1, cited, row_x, "t1")
+    observe(20, _OTHER, row_x, "t1")
+    assert stored_verdict() == "supported"
+    # The worker is caught up; only now is the conflicting map recorded.
+    observe(30, cited, row_y, "t2")
+    with _counted() as work:
+        _catch_up(instance, at)
+    # Reached through the Capture: the Claims citing it, each once.
+    assert work.claims[identity] == 1
+    citing = {
+        item.identity.qualified
+        for item in _all_claims(instance)
+        if cited in item.backing.capture_digests
+    }
+    assert set(work.claims) <= citing
+    assert stored_verdict() != "supported"
+    # The same maps again are no new map: nothing is derived.
+    observe(35, cited, row_y, "t2")
+    with _counted() as work:
+        _catch_up(instance, at)
+    assert identity not in work.claims
+
+
 def test_a_journal_tail_lost_in_place_and_regrown_before_a_pass_rebuilds_the_facts(
     tmp_path: Path,
 ) -> None:

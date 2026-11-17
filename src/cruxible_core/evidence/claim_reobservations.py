@@ -201,6 +201,7 @@ CREATE TABLE IF NOT EXISTS capture_maps (
  PRIMARY KEY(capture_digest, spec_digest, map_digest)
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS capture_maps_by_extraction ON capture_maps (extraction);
+CREATE INDEX IF NOT EXISTS capture_maps_by_sequence ON capture_maps (sequence);
 CREATE TABLE IF NOT EXISTS row_sets (
  maps_digest TEXT NOT NULL, lineage TEXT NOT NULL, set_digest TEXT NOT NULL,
  PRIMARY KEY(maps_digest, lineage)
@@ -2101,6 +2102,27 @@ class ClaimReobservationStore:
                 else:
                     _refuse_retired_tag(tag)
         return frozenset(claims), frozenset(keys), frozenset(sets)
+
+    def maps_after(self, sequence: int, *, through: int | None = None) -> frozenset[str]:
+        """The Captures a row map was first recorded for after ``sequence`` (through
+        ``through``): one range read on the maps' sequence index.
+
+        A new map of a Capture can change which row its extracted records are
+        (none, when its maps then disagree), so it changes what the Claims
+        produced from that Capture read, whatever their stored verdict.
+        """
+
+        if not self.root.is_dir():
+            return frozenset()
+        with self._locked() as conn:
+            return frozenset(
+                str(row[0])
+                for row in conn.execute(
+                    "SELECT DISTINCT capture_digest FROM capture_maps "
+                    "WHERE sequence>? AND sequence<=?",
+                    (sequence, _NEVER if through is None else through),
+                )
+            )
 
     def history(self, claim_id: str) -> tuple[ReobservationRecord, ...]:
         """Every re-observation ever recorded for one lineage, in capture order.
