@@ -523,6 +523,11 @@ quickstart and concepts pages.
   (public names); a Document its title and links (`guides ClaimType:...`); a
   note its section and the Subjects it is about. The review cache rebuilds once
   (format 5).
+- **A note's handle reads with `get`.** `get NOTE-...` (or `Note:NOTE-...`),
+  the handle `link` and `backlinks` print, answered `ref_not_found`; it now
+  answers a note card (file, section, the Subjects it is about, the Capture of
+  its bytes) on the CLI, MCP `cruxible_get` and SDK `get`, with `history` and
+  `proof` too.
 
 ## [0.3.2] - 2026-08-06
 

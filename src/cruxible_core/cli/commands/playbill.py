@@ -7026,7 +7026,7 @@ def get_by_ref(
     or Provider:NAME/BUILD, Contract:/Capability:<name>[@N], an artifact
     path, a proposal id or prefix, or an operational reference: Line:<name> (or
     the Line identity digest next names), CAP-<12+ hex> or Capture:<digest>,
-    ResolutionContract:<name>, Mandate:<name>.
+    ResolutionContract:<name>, Mandate:<name>, or a note's NOTE-<32 hex>.
     """
 
     from cruxible_client.contracts.get_reads import ByteRange, GetRequest

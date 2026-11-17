@@ -98,6 +98,7 @@ from cruxible_client.contracts.get_reads import (
     GetKindEnd,
     GetLineRuns,
     GetNone,
+    GetNoteCard,
     GetPairEnd,
     GetPairs,
     GetPendingProposal,
@@ -254,6 +255,7 @@ _TYPED_PREFIXES: Mapping[str, GetRefKind] = {
     "ProcedureRuntimePolicy": "procedure_runtime_policy",
     "Provider": "provider",
     "Runbook": "runbook",
+    "Note": "note",
 }
 # The projection's artifact kind for each reference kind, and back.
 _PROJECTION_KIND: Mapping[GetRefKind, str] = {
@@ -275,6 +277,7 @@ _PROJECTION_KIND: Mapping[GetRefKind, str] = {
     "contract": "contract",
     "capability": "capability",
     "runbook": "runbook",
+    "note": "note",
 }
 _REF_KIND = {value: key for key, value in _PROJECTION_KIND.items()}
 _QUALIFIER: Mapping[GetRefKind, str] = {
@@ -296,6 +299,7 @@ _QUALIFIER: Mapping[GetRefKind, str] = {
     "contract": "Contract",
     "capability": "Capability",
     "runbook": "Runbook",
+    "note": "Note",
 }
 _NAMED_KINDS: tuple[GetRefKind, ...] = (
     "document",
@@ -330,6 +334,7 @@ _DISPLAY_PREFIX: Mapping[GetRefKind, str] = {
     "contract": "Contract",
     "capability": "Capability",
     "runbook": "Runbook",
+    "note": "Note",
 }
 # The orient section that lists each operational kind, named by a refusal
 # that has no nearer candidate to offer.
@@ -572,6 +577,9 @@ def _resolve_get_ref_as_written(
                 raise _not_found("artifact at path", value, (), surface=surface)
         if value.startswith("CLM-"):
             return _resolve_typed(projection, "claim", value, ref=value, surface=surface)
+        if value.startswith("NOTE-"):
+            # The handle link and backlinks print for a note.
+            return _resolve_typed(projection, "note", value, ref=value, surface=surface)
         if "/" in value:
             return _resolve_typed(
                 projection,
@@ -855,6 +863,7 @@ def _resolve_typed(
         "approval_policy": "ApprovalPolicy",
         "procedure_runtime_policy": "ProcedureRuntimePolicy",
         "runbook": "Runbook",
+        "note": "Note",
     }[kind]
     candidates = tuple(
         item if kind == "subject" else f"{_DISPLAY_PREFIX[kind]}:{item}"
@@ -2227,6 +2236,36 @@ def _capability_card(
     )
 
 
+def _note_card(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    resolved: ResolvedRef,
+    *,
+    surface: ReadSurface,
+) -> GetNoteCard:
+    """One note: its section, the Subjects it is about and the Capture of its bytes."""
+
+    from cruxible_client.contracts.notes import Note
+    from cruxible_client.contracts.write import capture_handle
+
+    with instance.bind_accepted_projection(coordinate) as projection:
+        note = cast(Note, projection.typed.source(resolved.identity))
+    about = tuple(item.name for item in note.about)
+    handle = capture_handle(note.capture_digest)
+    return GetNoteCard(
+        note=resolved.display,
+        file=note.source_id,
+        section=tuple(note.section),
+        about=about,
+        capture=handle,
+        lifecycle=note.lifecycle.state,
+        next=(
+            *(_render_backlinks(surface, about[0], at=None),),
+            _render_get(surface, handle, "summary"),
+        ),
+    )
+
+
 def _capture_contract_card(
     instance: PlaybillInstance,
     coordinate: AcceptedProjectionCoordinate,
@@ -3512,6 +3551,7 @@ def _proof(
         "contract",
         "capability",
         "runbook",
+        "note",
     }:
         with instance.bind_accepted_projection(coordinate) as projection:
             source = projection.typed.source(resolved.identity)
@@ -3743,6 +3783,8 @@ def service_playbill_get(
             from cruxible_core.service.discovery.runbook_reads import runbook_card
 
             card = runbook_card(instance, coordinate, resolved.identity, render=render)
+        elif resolved.kind == "note":
+            card = _note_card(instance, coordinate, resolved, surface=surface)
         elif resolved.kind == "capture":
             card = capture_card(
                 instance,

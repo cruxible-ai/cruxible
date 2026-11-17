@@ -1339,7 +1339,8 @@ def register_tools(
                     "CaptureContract:<name>, Contract:/Capability:<name>[@N], "
                     "an artifact path, a proposal id or prefix, or an operational reference: "
                     "Line:<name> (or the Line identity digest next names), CAP-<12+ hex> or "
-                    "Capture:<digest>, ResolutionContract:<name>, Mandate:<name>."
+                    "Capture:<digest>, ResolutionContract:<name>, Mandate:<name>, or a "
+                    "note's NOTE-<32 hex>."
                 )
             ),
         ],

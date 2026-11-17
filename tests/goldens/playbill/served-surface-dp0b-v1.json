@@ -3,7 +3,7 @@
   "succession": {
     "ratified_by": "maintainer",
     "register_entry": "2026-11-17:fb-kit",
-    "surface_digest": "sha256:e448bc03a539ca32f1ed89d96deb59f72c5f6f9501d869859f4a8fd8169c177a"
+    "surface_digest": "sha256:49047864ba4a297f78129872c820ee54881729dfa235cb04ea2b29a1b0971af5"
   },
   "surface": {
     "cli_leaves": [
@@ -1312,7 +1312,7 @@
         "request_model": "cruxible_client.contracts.get_reads.GetRequest",
         "request_schema_digest": "sha256:225e6febd38c1cf6ba12bcfa91d6783eedb37004f415c445b11064471d1101b3",
         "response_model": "cruxible_client.contracts.get_reads.GetResult",
-        "response_schema_digest": "sha256:615819c082c19671cad587a434a72ae5de9f5d6a5d8110cf58595ddbf0673904"
+        "response_schema_digest": "sha256:8eb76e03d66e81e44f6b80600dc734a2154037517d61f8faac5469c65d34cf1c"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.get_batch",
@@ -1324,7 +1324,7 @@
         "request_model": "cruxible_client.contracts.get_reads.GetBatchRequest",
         "request_schema_digest": "sha256:69a1ae48ed31c6179f0291b15f74e053f4413a1e2442674e02e75c9ccfd35f09",
         "response_model": "cruxible_client.contracts.get_reads.GetBatchResult",
-        "response_schema_digest": "sha256:f1688e3a0f56a8641cfa046c3c1627e8aa6bb1d23bc79d3c5cc4c34bc78de3a2"
+        "response_schema_digest": "sha256:a4b423ae790577f0a4d17193d3f8a84cc0bfcd77762536307a48f0f4ce91bf21"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.head",
@@ -2390,9 +2390,9 @@
           "get"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_get",
-        "input_schema_digest": "sha256:3bf2d49daa21f34ea696d8f23040827c29d81243e20b4f4aa53fffa95ec1e38e",
+        "input_schema_digest": "sha256:0e24c520708673d1f1be0bd4621e6e7896ba449f64cffe73203cde607744bb12",
         "name": "cruxible_get",
-        "output_schema_digest": "sha256:776668280d3218a211daa94d8df70d7c806bd7707f53acd6000180857d94fd39",
+        "output_schema_digest": "sha256:42d46fdb28165b9961839bdb5171abdeb8eba655a5abf345c75dbaa2378f14df",
         "permission": "READ_ONLY"
       },
       {
