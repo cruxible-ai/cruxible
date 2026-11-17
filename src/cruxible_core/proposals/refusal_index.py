@@ -356,6 +356,9 @@ class RefusalIndex:
         self.proposals_keyed = 0
         self.line_probes = 0
         self.settled_counted = 0
+        self.checkpoints = 0
+        # Whether a settle count committed since the log was last folded in.
+        self._settled_unfolded = False
 
     # -- connections ------------------------------------------------------
 
@@ -930,9 +933,44 @@ class RefusalIndex:
                     connection.execute("ROLLBACK")
                 raise
             self.settled_counted += len(deliveries)
+            self._settled_unfolded = True
             return True
 
         return bool(self._step(instance, "advance_settled", advance, wait=wait))
+
+    def checkpoint_settled(self) -> bool:
+        """Fold the write-ahead log into the index file and truncate it, never waiting.
+
+        Run once counting has caught up, not per page: each page's commit
+        already pays the log's sync, and this adds the index file's sync once
+        per catch-up, so the log a settle count left does not stay on disk
+        between runs. A no-op unless a count committed since the last fold.
+        Skips (False) when the index is in use, no writer is open, or a reader
+        holds the log; the next caught-up step retries.
+        """
+
+        if not self._settled_unfolded or is_previewing() or history_reads_detached():
+            return False
+        if not self._lock.acquire(blocking=False):
+            return False
+        try:
+            connection = self._connection
+            if connection is None:
+                return False
+            try:
+                connection.execute("PRAGMA busy_timeout=0")
+                row = connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+            except sqlite3.Error:
+                return False
+            finally:
+                with suppress(sqlite3.Error):
+                    connection.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
+            self.checkpoints += 1
+            folded = row is not None and row[0] == 0
+            self._settled_unfolded = not folded
+            return folded
+        finally:
+            self._lock.release()
 
     def _step(
         self,

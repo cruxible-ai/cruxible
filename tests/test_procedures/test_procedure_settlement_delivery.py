@@ -2019,6 +2019,46 @@ def test_a_restart_or_a_discarded_index_loses_no_count(tmp_path: Path) -> None:
     assert row.detail["latest_run_id"] == second.run_id
 
 
+def test_a_settle_count_that_catches_up_leaves_no_write_ahead_log(tmp_path: Path) -> None:
+    """The refusal index's log is folded in once counting catches up, not left per run;
+    a backlog checkpoints once at its last page, not per page."""
+
+    from cruxible_core.service.procedures.settled_refusals import (
+        catch_up_settled_refusals,
+        count_settled_refusals_step,
+    )
+
+    instance, root, line = _retired_then_resettle(tmp_path)
+    index = instance.refusal_index()
+    index.catch_up(instance)
+    second = run_settle(instance, root, line, now=fixtures.NOW + timedelta(minutes=10))
+    assert _egress(second).settle_outcome == "settled", second.terminal
+    wal = Path(str(index.path) + "-wal")
+
+    before = (index.settled_counted, index.checkpoints)
+    catch_up_settled_refusals(instance, steps=8, wait=True)
+    assert index.settled_counted > before[0]
+    assert index.checkpoints == before[1] + 1
+    assert wal.stat().st_size == 0
+    (row,) = _next_rows(instance, "line_settled_prior_refusals")
+    assert row.detail["settled_items_matching_refusals"] == 1
+
+    # A backlog counted a page at a time checkpoints once, when it catches up.
+    index.close()
+    for suffix in ("", "-wal", "-shm"):
+        Path(str(index.path) + suffix).unlink(missing_ok=True)
+    index.catch_up(instance)
+    checkpoints, steps = index.checkpoints, 0
+    while True:
+        step = count_settled_refusals_step(instance, wait=True, limit=1)
+        steps += 1
+        if not step.more:
+            break
+    assert steps > 1
+    assert index.checkpoints == checkpoints + 1
+    assert wal.stat().st_size == 0
+
+
 def test_contention_only_delays_the_row(tmp_path: Path) -> None:
     """A busy index skips the post step at once; the next read counts what was left."""
 
