@@ -313,7 +313,8 @@ def test_under_independent_approval_creation_succeeds_and_the_kit_awaits_approva
     landed = service_kit_status(instance)
     (installed,) = landed.kits
     assert (installed.kit_id, installed.source) == ("base", "bundled")
-    assert [resume.proposal_open for resume in landed.resumes] == [False]
+    # The proposal landed: kit status no longer lists a pending kit add (B2).
+    assert landed.resumes == ()
 
 
 def test_an_older_bundled_base_kit_shows_behind_and_kit_add_base_previews_the_upgrade(

@@ -493,6 +493,11 @@ quickstart and concepts pages.
 - **CLI `proposal approve` with no principal refuses as every proposal act
   does** (`cruxible.identity.principal_unconfigured` or `credential_unbound`),
   adding that `--principal-id ID --key FILE` signs as that principal.
+- **`kit status` stops saying `kit add proposed` once the proposal closes.**
+  A kit add that stopped at its proposal (the base kit under independent
+  approval, or a resumed kit add) was listed as proposed after it was accepted,
+  rejected or the kit was removed; it is now listed only while its proposal is
+  open, on the CLI (`--offline` too), SDK and MCP alike.
 
 ## [0.3.2] - 2026-08-06
 

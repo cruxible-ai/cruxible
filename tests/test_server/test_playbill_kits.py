@@ -2930,3 +2930,21 @@ def test_a_kit_removal_is_read_from_its_recorded_transition_then_its_rationale(
     assert author_repair(source).operation == (  # type: ignore[arg-type]
         "cruxible.kit.remove" if removal else "cruxible.kit.add"
     )
+
+
+def test_kit_status_drops_a_kit_add_once_its_proposal_lands(
+    strict_worlds: tuple[_World, _World],
+) -> None:
+    """B2/coldcli-02: kit status kept saying "kit add proposed" after the proposal landed."""
+
+    _publisher, consumer = strict_worlds
+    # Under independent approval creation's base kit add stopped at its proposal.
+    (base,) = playbill_api.playbill_kit_status(consumer.instance_id).resumes
+    assert base.kit_id == "base" and base.state == "proposed" and base.proposal_open
+    assert base.proposal_id is not None
+
+    consumer.approve(base.proposal_id)
+
+    status = playbill_api.playbill_kit_status(consumer.instance_id)
+    assert status.resumes == ()
+    assert [kit.kit_id for kit in status.kits] == ["base"]

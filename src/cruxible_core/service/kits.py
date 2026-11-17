@@ -3454,21 +3454,23 @@ def service_kit_status(instance: PlaybillInstance) -> KitStatus:
 def _pending_resumes(
     instance: PlaybillInstance, resumes: tuple[KitResumeStatus, ...]
 ) -> tuple[KitResumeStatus, ...]:
-    """Each resume row, a proposed one marked when its proposal is still open.
+    """Each resume row still pending: a proposed row only while its proposal is open.
 
-    One indexed proposal lookup per proposed row (at most one row per kit).
+    A proposed row whose proposal closed (accepted, rejected or withdrawn) has
+    nothing left to say: the kit is installed, removed or never landed, which the
+    installed kits answer. One indexed proposal lookup per proposed row (at most
+    one row per kit).
     """
 
     from cruxible_core.service.proposals.proposals import proposal_is_open
 
-    return tuple(
-        resume.model_copy(update={"proposal_open": True})
-        if resume.state == "proposed"
-        and resume.proposal_id is not None
-        and proposal_is_open(instance, resume.proposal_id)
-        else resume
-        for resume in resumes
-    )
+    pending = []
+    for resume in resumes:
+        if resume.state != "proposed":
+            pending.append(resume)
+        elif resume.proposal_id is not None and proposal_is_open(instance, resume.proposal_id):
+            pending.append(resume.model_copy(update={"proposal_open": True}))
+    return tuple(pending)
 
 
 def _bundled_comparison(kit: InstalledKit) -> InstalledKit:

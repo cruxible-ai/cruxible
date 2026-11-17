@@ -1232,8 +1232,9 @@ class InstalledKit(_Strict):
 
 
 #: A recorded kit add waiting on its provider installs: ``waiting`` (an install
-#: has not activated yet), ``proposed`` (the definitions were proposed, or
-#: landed, once they did), ``blocked`` (proposing them refused; ``detail`` says why).
+#: has not activated yet), ``proposed`` (the definitions were proposed once they
+#: did; kit status lists it only while that proposal is open), ``blocked``
+#: (proposing them refused; ``detail`` says why).
 KitResumeState = Literal["waiting", "proposed", "blocked"]
 
 

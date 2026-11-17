@@ -97,6 +97,8 @@ def test_the_activation_that_lands_the_last_install_proposes_the_definitions(
         assert f"procedures/{PROCEDURE}.json" not in _tree(consumer)
         consumer.approve(resumed.proposal_id)
         assert f"procedures/{PROCEDURE}.json" in _tree(consumer)
+        # Its proposal landed: kit status no longer says "kit add proposed".
+        assert _resumes(consumer, kit_id="acme") == ()
     finally:
         for _ in opened:
             pass
@@ -146,8 +148,8 @@ def test_a_recorded_resume_lands_blocks_or_closes_against_the_head_it_runs_on(
         # pass finds the satisfied row and proposes; no approval needed, so it lands.
         record()
         assert kit_resume.resume_pending_kits(instance) == ("acme",)
-        (landed,) = _resumes(consumer)
-        assert landed.state == "proposed"
+        # It landed, so its proposal is closed and kit status shows no pending row.
+        assert _resumes(consumer) == ()
         assert f"procedures/{PROCEDURE}.json" in _tree(consumer)
 
         # The kit is already in place (as after a manual kit add): unchanged, row gone.
