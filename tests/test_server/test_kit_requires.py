@@ -183,6 +183,45 @@ def test_add_while_the_required_kit_awaits_approval_says_to_approve_it_first(
     )
 
 
+@pytest.mark.parametrize("others", [2, 40])
+def test_the_pending_kit_check_reads_one_resume_row_whatever_else_is_recorded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, others: int
+) -> None:
+    """Review F-004: the check built every kit's resume status and every wait row to
+    find one kit's. It reads that kit's row by key: the same work at both sizes."""
+
+    from cruxible_core.service import kit_resume
+    from cruxible_core.service.kits import _pending_kit_proposal
+
+    world = _instance(tmp_path / "world")
+    with kit_resume.retained_records(world, write=True) as connection:
+        assert connection is not None
+        connection.executemany(
+            "INSERT INTO kit_resumes (kit_id,version,request_digest,actor_id,recorded_at,"
+            "recorded_head,state,proposal_id,detail,source) "
+            "VALUES (?,'1.0.0','sha256:x','owner','t','h','proposed',?,NULL,NULL)",
+            [(f"kit-{n}", f"sha256:{n:064x}") for n in range(others)],
+        )
+        connection.executemany(
+            "INSERT INTO kit_resume_waits (provider_path,kit_id,provider_id) VALUES (?,?,?)",
+            [(f"providers/p{n}.json", f"kit-{n}", f"p{n}") for n in range(others)],
+        )
+    fetched: list[int] = []
+    rows = kit_resume._rows
+
+    def counting(*args: object, **kwargs: object) -> list:  # type: ignore[type-arg]
+        found = rows(*args, **kwargs)  # type: ignore[arg-type]
+        fetched.append(len(found))
+        return found
+
+    monkeypatch.setattr(kit_resume, "_rows", counting)
+
+    assert _pending_kit_proposal(world, "base") is None
+    assert kit_resume.proposed_kit_proposal(world, "kit-1") == f"sha256:{1:064x}"
+    # One keyed query each, at most one row, and no wait row, at either size.
+    assert fetched == [0, 1]
+
+
 def test_a_kit_that_requires_nothing_keeps_its_bytes_and_digest() -> None:
     manifest = KitManifest(
         kit_id="acme",

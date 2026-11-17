@@ -2418,17 +2418,17 @@ def _add_required_kit(requirement: KitRequirement) -> RepairOperation:
 def _pending_kit_proposal(instance: PlaybillInstance, kit_id: str) -> str | None:
     """The open proposal that adds ``kit_id`` here, when its add stopped at one.
 
-    Read only on the refusal path: the kit's one recorded add, then one indexed
-    proposal lookup.
+    Read only on the refusal path: that kit's one resume row by key, then one
+    indexed proposal lookup. No other kit's row is read.
     """
 
-    from cruxible_core.service.kit_resume import kit_resume_statuses
+    from cruxible_core.service.kit_resume import proposed_kit_proposal
     from cruxible_core.service.proposals.proposals import proposal_is_open
 
-    for resume in kit_resume_statuses(instance):
-        if resume.kit_id == kit_id and resume.state == "proposed" and resume.proposal_id:
-            return resume.proposal_id if proposal_is_open(instance, resume.proposal_id) else None
-    return None
+    proposal_id = proposed_kit_proposal(instance, kit_id)
+    if proposal_id is None or not proposal_is_open(instance, proposal_id):
+        return None
+    return proposal_id
 
 
 def _required_receipts(
