@@ -26,6 +26,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 from cruxible_client.contracts.canonical import canonical_bytes
@@ -413,6 +414,9 @@ class RowMap:
 #: Row map bodies by digest: immutable artifacts, parsed once per process
 #: (the cost model's content-id cache: grows only with distinct maps).
 _ROW_MAPS: dict[str, dict[str, tuple[str, str]]] = {}
+#: The same maps as read-only locator -> row views, built once per map: a
+#: known extraction hands the run this view, never a copy (review 2e #4).
+_ROW_VIEWS: dict[str, Mapping[str, str]] = {}
 
 
 def _row_map(instance: PlaybillInstance, digest: str) -> dict[str, tuple[str, str]]:
@@ -1540,15 +1544,17 @@ class ClaimReobservationStore:
         )
         # One digest per Capture: the maps body is the extraction's identity,
         # so the set it holds is one seek when every map is known (2d #6).
-        maps_digest = bodies.store(
-            canonical_bytes({"tag": ROW_MAPS_BODY, "maps": map_digests}), journal_payload=True
-        ).digest
+        # A known maps body (its set recorded) is only hashed, never stored again.
+        maps_body = canonical_bytes({"tag": ROW_MAPS_BODY, "maps": map_digests})
+        maps_digest = bodies.digest_bytes(maps_body).tagged
         set_digest = (
             ReobservationReader.of(self.instance).row_set(maps_digest, lineage_key)
             if all(item.digest for item in maps)
             else None
         )
         if set_digest is None:
+            if bodies.store(maps_body, journal_payload=True).digest != maps_digest:
+                raise ValueError("row maps body digest did not reproduce")
             rows = sorted(
                 {
                     (contract, row)
@@ -2118,13 +2124,21 @@ class ReobservationReader:
             ).fetchone()
         return None if row is None else str(row[0])
 
-    def map_rows(self, map_digest: str) -> dict[str, str]:
-        """One stored row map by record locator (its body parsed once per process)."""
+    def map_rows(self, map_digest: str) -> Mapping[str, str]:
+        """One stored row map by record locator: a read-only view built once per
+        process per map, so a known extraction costs no copy (review 2e #4)."""
 
-        return {
-            locator: row
-            for locator, (_contract, row) in _row_map(self.instance, map_digest).items()
-        }
+        view = _ROW_VIEWS.get(map_digest)
+        if view is None:
+            view = MappingProxyType(
+                {
+                    locator: row
+                    for locator, (_contract, row) in _row_map(self.instance, map_digest).items()
+                }
+            )
+            with _LOCK:
+                _ROW_VIEWS[map_digest] = view
+        return view
 
     def row_of(self, capture_digest: str, spec_digest: str, locator: str) -> tuple[str, str] | None:
         """The (contract, row) one extracted record of a Capture is: one seek, or None

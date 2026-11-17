@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
@@ -1078,7 +1078,7 @@ def _observed_same_row(value: Any, held_claim: ClaimArtifact, *, state: Any, exe
 
     held = held_claim.backing.procedure_evidence
     port = getattr(executor, "capture_observations", None)
-    rows: dict[tuple[str, str], dict[str, str]] = getattr(state, "row_maps", {})
+    rows: Mapping[tuple[str, str], Mapping[str, str]] = getattr(state, "row_maps", {})
     if (
         not isinstance(value, ExtractedBasis)
         or held is None

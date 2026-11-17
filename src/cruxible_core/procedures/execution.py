@@ -1412,8 +1412,8 @@ class CaptureObservationsProtocol(Protocol):
     def extraction_map(self, extraction: str) -> str | None:
         """The stored row map of one known extraction, if any."""
 
-    def map_rows(self, map_digest: str) -> dict[str, str]:
-        """One stored row map by record locator."""
+    def map_rows(self, map_digest: str) -> Mapping[str, str]:
+        """One stored row map by record locator (a read-only view, never a copy)."""
 
     def rechecked(self, claim_id: str, capture_digest: str) -> bool:
         """Whether a per-Claim record already re-checked the Claim in this Capture."""
@@ -2837,7 +2837,7 @@ class _RunState:
     capture_sources: dict[str, str] = dataclass_field(default_factory=dict)
     #: Each extracted Capture's rows by locator, per (Capture, extract spec):
     #: an item whose Claim's own row this run observed restates nothing.
-    row_maps: dict[tuple[str, str], dict[str, str]] = dataclass_field(default_factory=dict)
+    row_maps: dict[tuple[str, str], Mapping[str, str]] = dataclass_field(default_factory=dict)
     #: Which aliases hold incomplete values, and the control lineage's state.
     completeness: Completeness = dataclass_field(default_factory=Completeness)
     #: Acquiring calls whose Capture list dropped a failed member (D-R37 a4).
@@ -8725,7 +8725,7 @@ def _row_map_of(
     selected: str,
     outcome: ExtractOutcome,
     port: Any = None,
-) -> tuple[Any, dict[str, str]]:
+) -> tuple[Any, Mapping[str, str]]:
     """One Capture's extracted records as rows (a ``RowMap``) and by locator.
 
     The extraction (Capture, spec, selection with its typing) is immutable:

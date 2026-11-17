@@ -330,6 +330,18 @@ def test_an_unchanged_extract_step_hashes_no_row_and_follows_by_its_set(
         return original(*args, **kwargs)
 
     monkeypatch.setattr(claim_reobservations, "row_digest", counted)
+    from cruxible_core.storage.cas import ContentAddressedBodyStore
+
+    stored_bodies = [0]
+    store_body = ContentAddressedBodyStore.store
+
+    def counted_store(self, content, *args, **kwargs):  # type: ignore[no-untyped-def]
+        # Row map, maps and row set bodies (review 2e #4): never stored on a repeat.
+        if b'"tag":"cruxible-row-map' in content or b'"tag":"cruxible-observed-rows' in content:
+            stored_bodies[0] += len(content)
+        return store_body(self, content, *args, **kwargs)
+
+    monkeypatch.setattr(ContentAddressedBodyStore, "store", counted_store)
     work = {}
     for size in (12, 300):
         root = tmp_path / str(size)
@@ -351,14 +363,20 @@ def test_an_unchanged_extract_step_hashes_no_row_and_follows_by_its_set(
         }
         sequences = []
         counts = []
+        stored = []
         for run in range(3):
             hashed[0] = 0
-            maps = [
+            stored_bodies[0] = 0
+            derived = [
                 execution._row_map_of(  # noqa: SLF001
                     state, capture, "sha256:" + "5" * 64, "*|t", outcomes[capture], port
-                )[0]
+                )
                 for capture in captures
             ]
+            maps = [row_map for row_map, _rows in derived]
+            if run:
+                # The run is handed the one read-only view of each known map.
+                assert all(rows is port.map_rows(row_map.digest) for row_map, rows in derived)
             counts.append(hashed[0])
             at = _START + timedelta(hours=1 + run)
             instance.recording_clock = lambda at=at: at
@@ -372,9 +390,11 @@ def test_an_unchanged_extract_step_hashes_no_row_and_follows_by_its_set(
                     actor_id="o",
                 )
             )
+            stored.append(stored_bodies[0])
         _lineages, keys, sets = store.observed_after(sequences[1])
-        work[size] = (counts[1:], len(keys), len(sets))
-    assert work[12] == work[300] == ([0, 0], 0, 1), work
+        work[size] = (counts[1:], stored[1:], len(keys), len(sets))
+        assert stored[0] > 0
+    assert work[12] == work[300] == ([0, 0], [0, 0], 0, 1), work
 
 
 def test_a_journal_from_an_unreleased_transition_build_refuses_with_re_initialise(

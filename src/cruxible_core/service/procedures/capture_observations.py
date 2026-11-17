@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import threading
 from collections import OrderedDict
+from collections.abc import Mapping
 from datetime import datetime
 from typing import Any
 
@@ -111,7 +112,7 @@ class InstanceCaptureObservations:
     def extraction_map(self, extraction: str) -> str | None:
         return ReobservationReader.of(self.instance).extraction_map(extraction)
 
-    def map_rows(self, map_digest: str) -> dict[str, str]:
+    def map_rows(self, map_digest: str) -> Mapping[str, str]:
         return ReobservationReader.of(self.instance).map_rows(map_digest)
 
     def rechecked(self, claim_id: str, capture_digest: str) -> bool:
