@@ -508,6 +508,11 @@ quickstart and concepts pages.
   `Proposal:` line. A refusal that repeats prints once with its count, a
   blocked kit change prints no `Proposal:` line (`--json` keeps the id), and the
   plan says `re-adds a retired definition` rather than `you retired`.
+- **`vocabulary export` keeps what a field means in sight.** It left out
+  `evidence_requirement: captured` and `permitted_roles` whenever lowering
+  could derive them, and spelled reserved contracts `playbill.`; it now writes
+  both, and `cruxible.` names, and export then plan on an untouched vocabulary
+  still changes nothing.
 
 ## [0.3.2] - 2026-08-06
 

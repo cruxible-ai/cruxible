@@ -291,9 +291,11 @@ def test_export_writes_shorthand_and_full_form_and_reads_back_to_each_digest() -
     assert item.fields["slug"].key is True
     assert item.fields["state"].enum == {"open": "Not done.", "done": None}
     assert item.fields["tags"].enum == ("a",)
+    # captured is said, not left to the roles-of-exactly-observation default.
     assert item.fields["seen"].stated == {
         "value": "string{max_len: 64}",
         "permitted_roles": ["observation"],
+        "evidence_requirement": "captured",
         "evidence": ["osv.dev"],
     }
     assert item.fields["count"].stated["evidence_freshness"] == {"stale_after": "PT2592000S"}
@@ -345,6 +347,36 @@ def test_every_shape_the_security_kit_uses_exports_and_lowers_back() -> None:
         assert claim_type_digest(lowered) == claim_type_digest(claim_type), claim_type.predicate
         edited = lower_entry(claim_type.predicate, entry, claim_type)
         assert edited.model_copy(update={"lifecycle": claim_type.lifecycle}) == claim_type
+
+
+def test_exporting_the_security_kit_keeps_what_each_field_means_and_plans_no_change() -> None:
+    """coldkit-04/06, coldcli-18: export dropped ``evidence_requirement: captured`` and
+    ``permitted_roles`` (lowering derives them by rules the file does not show) and
+    spelled reserved contracts ``playbill.``; export then plan must change nothing."""
+
+    from typing import Any, cast
+
+    from cruxible_client.authoring.vocabulary_file import _plan_members
+
+    accepted = _kit_vocabulary()
+    rendered = render_vocabulary_file(accepted, instance_id="inst_x")
+    parsed = load_vocabulary_file(rendered)
+
+    assert "playbill." not in rendered
+    assert "cruxible.coordinator-self-source-v1" in rendered
+    for claim_type in accepted.claim_types.values():
+        kind, _, name = claim_type.predicate.rpartition(".")
+        stated = parsed.kinds[kind].fields[name].stated
+        if claim_type.evidence_requirement == "captured":
+            assert stated.get("evidence_requirement") == "captured", claim_type.predicate
+        if list(claim_type.permitted_roles) != ["normative"]:
+            assert stated.get("permitted_roles") == list(claim_type.permitted_roles), (
+                claim_type.predicate
+            )
+    assert any(item.evidence_requirement == "captured" for item in accepted.claim_types.values())
+    # An untouched file plans nothing: no Claims are read, so no client is needed.
+    planned = _plan_members(cast(Any, None), parsed, accepted)
+    assert planned.members == [] and planned.changes_only == []
 
 
 def test_an_inverse_with_its_own_horizon_and_meaning_exports_and_lowers_back() -> None:
