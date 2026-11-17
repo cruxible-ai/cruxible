@@ -422,6 +422,8 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("GetPredictionWindow", "starts_at"): "VALIDITY WINDOW",
     ("GetPredictionWindow", "ends_at"): "VALIDITY WINDOW",
     ("OrientPrediction", "next_close"): "VALIDITY WINDOW",
+    # A timer Trigger's next instant after the read: its schedule from acceptance.
+    ("GetTriggerCard", "next_fire"): "VALIDITY WINDOW",
     ("GetMandateCard", "valid_from"): "VALIDITY WINDOW",
     ("GetMandateCard", "expires_at"): "VALIDITY WINDOW",
     ("OrientMandate", "expires_at"): "VALIDITY WINDOW",
