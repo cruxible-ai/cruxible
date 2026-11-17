@@ -2352,7 +2352,7 @@ class ProposalTerminalEgressSink:
                     extraction=request.claims_evidence.get(child.item_key),
                     cited_envelopes=cited_envelopes,
                     verified_witnesses=verified_witnesses,
-                    call_latest=request.observation_latest.get(child.reobserving_capture_digest),
+                    call=request.observation_calls.get(child.reobserving_capture_digest),
                     extracted_value=(
                         change.value
                         if isinstance(

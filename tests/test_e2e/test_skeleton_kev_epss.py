@@ -789,7 +789,9 @@ def test_kev_and_epss_flow_from_recorded_bytes_to_claims(tmp_path: Path) -> None
     assert second.terminal_egress[0].settle_outcome == "settled"
     (delisting,) = _summaries(second, "claims")
     assert (delisting.retired, delisting.inverse_written) == (1, 1)
-    assert delisting.re_observed >= 1  # the unchanged positives and the unlisted inverse
+    # The unlisted inverse is reconfirmed per Claim (the 0.5.0 absence fallback);
+    # the unchanged positives' rows are refreshed by the row observation.
+    assert delisting.re_observed >= 1
 
     # 3. EPSS: the API's JSON answer, verbatim, scores every watched CVE.
     replay = Replay(**{EPSS_URL: "epss-api"})

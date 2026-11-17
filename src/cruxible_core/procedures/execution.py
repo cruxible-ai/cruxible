@@ -1365,23 +1365,11 @@ class CaptureObservationsProtocol(Protocol):
     ) -> None:
         """Record one extract step's observation of its whole row set."""
 
-    def observe_enumeration(
-        self,
-        *,
-        contract_digest: str,
-        lacks: tuple[str, ...],
-        capture_digest: str,
-        earliest: datetime,
-        latest: datetime,
-        run_id: str,
-        node_id: str,
-        actor_id: str,
-        lineage: dict[str, str] | None = None,
-    ) -> None:
-        """Record what a complete absence enumeration lacked."""
-
     def row_of(self, capture_digest: str, spec_digest: str, locator: str) -> str | None:
         """The row one extracted record of a Capture was observed as, if any."""
+
+    def rechecked(self, claim_id: str, capture_digest: str) -> bool:
+        """Whether a per-Claim record already re-checked the Claim in this Capture."""
 
     def observe(
         self,
@@ -7067,7 +7055,7 @@ class ProcedureExecutor:
             ),
             # One entry per distinct cited Capture this run fetched, so
             # O(the terminal's items), never the Claims citing them.
-            observation_latest=_observation_latest(state, claims_evidence),
+            observation_calls=_observation_calls(state, claims_evidence),
             prepared_at=self.clock.now(),
         )
         # Ruling C4: a direct run's admission is never a V5+ Line carrier (it
@@ -8666,12 +8654,12 @@ def _row_map_of(
     return found
 
 
-def _observation_latest(
+def _observation_calls(
     state: _RunState | None, receipts: Sequence[ClaimEvidenceReceipt | None]
-) -> dict[str, datetime]:
-    """When the call that fetched each cited Capture ended, for those this run observed."""
+) -> dict[str, tuple[datetime, datetime]]:
+    """The call that fetched each cited Capture, for those this run observed."""
 
-    found: dict[str, datetime] = {}
+    found: dict[str, tuple[datetime, datetime]] = {}
     if state is None:
         return found
     for receipt in receipts:
@@ -8679,7 +8667,7 @@ def _observation_latest(
         if isinstance(cited, str) and cited not in found:
             span = _capture_span(state, cited)
             if span is not None:
-                found[cited] = span[1]
+                found[cited] = span
     return found
 
 

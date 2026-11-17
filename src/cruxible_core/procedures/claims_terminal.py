@@ -854,6 +854,7 @@ def expand_claims(
                         and not _observed_same_row(
                             receipt.value, held_claim, state=state, executor=executor
                         )
+                        and not _already_rechecked(held_claim, receipt.value, executor=executor)
                     ):
                         changes.append(
                             CoreReobservationChange(
@@ -1096,6 +1097,24 @@ def _observed_same_row(value: Any, held_claim: ClaimArtifact, *, state: Any, exe
     if known is None:
         known = port.row_of(cited.capture_digest, cited.extract_spec_digest, cited.record_locator)
     return current is not None and known == current
+
+
+def _already_rechecked(held_claim: ClaimArtifact, value: Any, *, executor: Any) -> bool:
+    """Whether a per-Claim record already re-checked the live Claim in this Capture.
+
+    Its row changed elsewhere, so the row observation does not cover it; once
+    it was recorded per Claim, that Capture's later identical fetches refresh
+    it through the Capture's content (``claim_keys_on``). Restating it again
+    prepares no effect and retains nothing run-varying (review 2d #7).
+    """
+
+    port = getattr(executor, "capture_observations", None)
+    capture = getattr(value, "capture_digest", None)
+    return (
+        port is not None
+        and isinstance(capture, str)
+        and port.rechecked(held_claim.identity.name, capture)
+    )
 
 
 def _observed_now(state: Any, capture: str) -> bool:

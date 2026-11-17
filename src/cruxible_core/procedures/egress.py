@@ -613,10 +613,10 @@ class TerminalEgressRequestV1(_StrictEgressModel):
     claims_evidence: dict[str, ClaimEvidenceReceipt] = Field(
         default_factory=dict, exclude_if=lambda value: not value
     )
-    #: When the call that fetched each cited Capture ended (its last member's
-    #: instant, ruling 1b), for the Captures this run fetched: a per-Claim
-    #: re-observation recorded at delivery, or by recovery, carries it.
-    observation_latest: dict[str, datetime] = Field(
+    #: The earliest and latest member instants of the call that fetched each
+    #: cited Capture (ruling 1b), for the Captures this run fetched: a per-Claim
+    #: re-observation recorded at delivery, or by recovery, carries them.
+    observation_calls: dict[str, tuple[datetime, datetime]] = Field(
         default_factory=dict, exclude_if=lambda value: not value
     )
 
@@ -639,10 +639,18 @@ class TerminalEgressRequestV1(_StrictEgressModel):
             )
         return value
 
-    @field_validator("observation_latest")
+    @field_validator("observation_calls")
     @classmethod
-    def _observation_latest(cls, value: dict[str, datetime]) -> dict[str, datetime]:
-        return {_tagged(digest): ensure_utc(latest) for digest, latest in value.items()}
+    def _observation_calls(
+        cls, value: dict[str, tuple[datetime, datetime]]
+    ) -> dict[str, tuple[datetime, datetime]]:
+        calls = {
+            _tagged(digest): (ensure_utc(earliest), ensure_utc(latest))
+            for digest, (earliest, latest) in value.items()
+        }
+        if any(earliest > latest for earliest, latest in calls.values()):
+            raise ValueError("a call's earliest member instant follows its latest")
+        return calls
 
     @model_validator(mode="after")
     def _shape(self) -> "TerminalEgressRequestV1":
@@ -663,7 +671,7 @@ class TerminalEgressRequestV1(_StrictEgressModel):
                 raise ValueError(
                     "claims egress requires the executor's typed changes; use a claims node"
                 )
-        elif self.claims_changes or self.claims_evidence or self.observation_latest:
+        elif self.claims_changes or self.claims_evidence or self.observation_calls:
             raise ValueError("only the claims executor produces Claim changes and evidence")
         if not self.items:
             raise ValueError("terminal egress requires at least one child item")

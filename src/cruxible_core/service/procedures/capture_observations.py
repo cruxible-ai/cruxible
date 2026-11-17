@@ -103,30 +103,8 @@ class InstanceCaptureObservations:
             lineage=lineage,
         )
 
-    def observe_enumeration(
-        self,
-        *,
-        contract_digest: str,
-        lacks: tuple[str, ...],
-        capture_digest: str,
-        earliest: datetime,
-        latest: datetime,
-        run_id: str,
-        node_id: str,
-        actor_id: str,
-        lineage: dict[str, str] | None = None,
-    ) -> None:
-        ClaimReobservationStore(self.instance).observe_enumeration(
-            contract_digest=contract_digest,
-            lacks=lacks,
-            capture_digest=capture_digest,
-            earliest=earliest,
-            latest=latest,
-            run_id=run_id,
-            node_id=node_id,
-            actor_id=actor_id,
-            lineage=lineage,
-        )
+    def rechecked(self, claim_id: str, capture_digest: str) -> bool:
+        return ReobservationReader.of(self.instance).recorded(claim_id, capture_digest)
 
     def row_of(self, capture_digest: str, spec_digest: str, locator: str) -> str | None:
         found = ReobservationReader.of(self.instance).row_of(capture_digest, spec_digest, locator)

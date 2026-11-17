@@ -762,11 +762,11 @@ def test_acceptance_refuses_a_witness_whose_later_member_names_another_source(
     }, refused
 
 
-def test_an_absence_on_new_bytes_is_refreshed_by_its_lack_not_per_claim(tmp_path: Path) -> None:
-    """Review 2c #5, ruling 2026-11-16 (1): the pages re-read in new bytes with
-    the same entries are a complete enumeration lacking the same Subjects. The
-    held absence reads that one shared observation; nothing is recorded or
-    delivered per absence, at a run whose bytes changed or at the repeat."""
+def test_an_absence_is_reconfirmed_per_claim_by_every_complete_run(tmp_path: Path) -> None:
+    """The 0.5.0 absence fallback (maintainer ruling 2026-11-16): every complete
+    run reconfirms each held absence with one small per-Claim record at that
+    run's call, which its live freshness reads (review 2d #8), whether the
+    pages' bytes changed or are the held Captures again."""
 
     from datetime import timedelta
 
@@ -786,20 +786,21 @@ def test_an_absence_on_new_bytes_is_refreshed_by_its_lack_not_per_claim(tmp_path
         json.dumps({**json.loads(page), "fetched": "again"}, sort_keys=True).encode()
         for page in delisted
     ]
-    for minute in (2, 3):
+    store = ClaimReobservationStore(instance)
+
+    for minute, pages in ((2, restated), (3, restated), (4, delisted)):
         state = run_pages(
             instance,
-            Pages(restated, observed=NOW + timedelta(minutes=minute)),
+            Pages(pages, observed=NOW + timedelta(minutes=minute)),
             line="test.kev-pages-line",
             minute=minute,
         )
         assert state.status == "succeeded", state.terminal
-        (egress,) = state.terminal_egress
-        assert egress.proposal_id is None and egress.children == ()
         after = _inverse_freshness(instance, inverse)
         assert after is not None and (before is None or after > before)
         before = after
-    assert ClaimReobservationStore(instance).history(inverse) == ()
+    records = store.history(inverse)
+    assert len(records) == 3  # one per complete run
 
 
 def _inverse_freshness(instance: Any, claim_id: str) -> Any:

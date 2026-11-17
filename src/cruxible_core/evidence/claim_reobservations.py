@@ -75,8 +75,7 @@ OBSERVED_CONTENTS_BODY = "cruxible-observed-contents-v1"
 #: One extract step's observation of its whole extracted row set (ruling
 #: 2026-11-16 a), keyed by each row's (contract, source, record key, value)
 #: digest: a Claim produced from a row is fresh as of the latest observation of
-#: a set holding it, whatever bytes carried the rows. The same record also
-#: carries a complete absence enumeration's key (F-001).
+#: a set holding it, whatever bytes carried the rows.
 ROW_OBSERVATION_TAG = "cruxible-row-observation-v1"
 #: The (contract, row) set one row observation covers: run-free and
 #: Capture-free, so the same rows in new bytes cite the body stored before.
@@ -87,7 +86,7 @@ ROW_MAP_BODY = "cruxible-row-map-v1"
 #: The row maps of one extract step's Captures (run-free).
 ROW_MAPS_BODY = "cruxible-row-maps-v1"
 _ACCESS = BodyAccessContext(principal_id="claim-reobservation", can_read_body=True)
-_SCHEMA_VERSION = 12
+_SCHEMA_VERSION = 13
 REOBSERVATION_DIRECTORY = "claim-reobservations"
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 # ``reobservations`` keeps the full history (audit, historical verification).
@@ -113,7 +112,7 @@ CREATE TABLE IF NOT EXISTS reobservations (
  observed_content_digest TEXT NOT NULL, observed_at TEXT NOT NULL, recorded_at TEXT NOT NULL,
  observed_us INTEGER NOT NULL, recorded_us INTEGER NOT NULL, sequence INTEGER NOT NULL,
  claim_artifact_digest TEXT NOT NULL, latest_us INTEGER NOT NULL,
- PRIMARY KEY(claim_id, capture_digest)
+ PRIMARY KEY(claim_id, capture_digest, observed_us)
 ) STRICT;
 CREATE INDEX IF NOT EXISTS reobservations_by_sequence ON reobservations (claim_id, sequence);
 CREATE INDEX IF NOT EXISTS reobservations_by_version
@@ -392,25 +391,6 @@ def row_digest(contract: str, source: str, key: object, fields: object) -> str:
         Sha256Value,
         "cruxible-observed-row-v1",
         {"contract": contract, "source": source, "key": key, "value": value},
-    ).tagged
-
-
-def lack_digest(witness: AbsenceWitness, subject: str) -> str:
-    """ "A complete enumeration lacked this Subject": what an absence depends on.
-
-    Ruling 2026-11-16 (1): the logical source, the extract specification and
-    the Subject's path. Published only by a complete enumeration the run
-    fetched whole (F-001), so an unchanged complete enumeration refreshes
-    every absence derived from it with one head update, and a changed one that
-    still lacks the Subject refreshes it too, with no per-Claim record.
-    """
-
-    from cruxible_client.contracts.canonical import Sha256Value, typed_digest
-
-    return typed_digest(
-        Sha256Value,
-        "cruxible-observed-lack-v1",
-        {"source": witness.logical_source, "spec": witness.extract_spec, "subject": subject},
     ).tagged
 
 
@@ -743,6 +723,7 @@ class ClaimReobservationStore:
         extracted_value: object = None,
         cited_envelopes: dict[str, CaptureEnvelopeAny] | None = None,
         verified_witnesses: dict[object, None] | None = None,
+        repeat: bool = False,
     ) -> tuple[CaptureEnvelopeAny, str, str]:
         """The re-observing Capture's envelope, or the typed refusal.
 
@@ -795,7 +776,14 @@ class ClaimReobservationStore:
                 "is recorded only for a live Claim",
                 reason="claim_not_live",
             )
-        if capture_digest in claim.backing.capture_digests:
+        reconfirming = (
+            repeat
+            and extraction is not None
+            and extraction.absence is not None
+            and claim.backing.procedure_evidence is not None
+            and claim.backing.procedure_evidence.absence is not None
+        )
+        if capture_digest in claim.backing.capture_digests and not reconfirming:
             raise ClaimReobservationRefused(
                 f"Claim {claim_id} already cites Capture {capture_digest}: "
                 "nothing new was observed",
@@ -968,15 +956,20 @@ class ClaimReobservationStore:
         extracted_value: object = None,
         cited_envelopes: dict[str, CaptureEnvelopeAny] | None = None,
         verified_witnesses: dict[object, None] | None = None,
-        call_latest: datetime | None = None,
+        call: tuple[datetime, datetime] | None = None,
     ) -> ReobservationRecord | None:
         """Record one admissible re-observation at the current head; a repeat is the same record.
 
-        ``call_latest`` is when the call that fetched the Capture ended (its
-        last member's instant, ruling 1b); a deadline counts the record only if
-        that call ended by it. Unknown (a Capture handed to the run, a write's
-        restatement), the record's own recording instant stands in: a call
-        always ends before its record is made, so that bound is never late.
+        ``call`` is the earliest and latest member instants of the call that
+        fetched the Capture this run (ruling 1b): the record is observed at its
+        earliest, and a deadline counts it only if the call ended by then.
+        Unknown (a Capture handed to the run, a write's restatement), the
+        envelope's instant is the observation and the record's own recording
+        instant its end: a call always ends before its record is made, so that
+        bound is never late. An absence is reconfirmed by every complete run
+        (the 0.5.0 per-Claim fallback): a reconfirmation on the Capture it
+        already cites is admitted when the call is known, one small record per
+        run, its observation that run's call.
 
         Admission is judged at the accepted head, held still from the check
         through the durable append (``holding_accepted_head``), and only when the
@@ -1004,6 +997,7 @@ class ClaimReobservationStore:
                 extracted_value=extracted_value,
                 cited_envelopes=cited_envelopes,
                 verified_witnesses=verified_witnesses,
+                repeat=call is not None,
             )
             self._at(
                 claim_id=claim_id,
@@ -1018,8 +1012,14 @@ class ClaimReobservationStore:
         with self.instance.holding_accepted_head() as main, self._locked(create=True) as conn:
             known = conn.execute(
                 "SELECT contract_digest, observed_content_digest, observed_at, recorded_at "
-                "FROM reobservations WHERE claim_id=? AND capture_digest=?",
-                (claim_id, capture_digest),
+                "FROM reobservations WHERE claim_id=? AND capture_digest=? "
+                "AND (? IS NULL OR observed_us=?)",
+                (
+                    claim_id,
+                    capture_digest,
+                    None if call is None else _micros(call[0]),
+                    None if call is None else _micros(call[0]),
+                ),
             ).fetchone()
             if known is not None:
                 return ReobservationRecord(
@@ -1048,6 +1048,7 @@ class ClaimReobservationStore:
                 extracted_value=extracted_value,
                 cited_envelopes=cited_envelopes,
                 verified_witnesses=verified_witnesses,
+                repeat=call is not None,
             )
             journal = self._journal(create=True)
             assert journal is not None
@@ -1081,6 +1082,15 @@ class ClaimReobservationStore:
                 now=self.instance.recording_clock(),
             )
             record = replace(record, observed_content_digest=cited_content)
+            if call is not None:
+                # This run's call observed it (a reused Capture's envelope says
+                # when its bytes were first observed).
+                record = replace(
+                    record,
+                    observed_at=max(
+                        record.observed_at, min(call[0].astimezone(UTC), record.recorded_at)
+                    ),
+                )
             last = conn.execute("SELECT recorded_us FROM progress WHERE singleton=1").fetchone()
             if last is not None and _micros(record.recorded_at) < int(last[0]):
                 record = replace(record, recorded_at=_from_micros(last[0]))
@@ -1095,8 +1105,8 @@ class ClaimReobservationStore:
                 "claim_artifact_digest": version,
                 "latest": format_datetime(
                     now
-                    if call_latest is None
-                    else max(record.observed_at, min(call_latest.astimezone(UTC), now))
+                    if call is None
+                    else max(record.observed_at, min(call[1].astimezone(UTC), now))
                 ),
             }
             if extraction is not None:
@@ -1266,53 +1276,6 @@ class ClaimReobservationStore:
                 "tag": ROW_OBSERVATION_TAG,
                 "set_digest": set_digest,
                 "maps_digest": maps_digest,
-                "earliest": format_datetime(earliest.astimezone(UTC)),
-                "latest": format_datetime(latest.astimezone(UTC)),
-                "run_id": run_id,
-                "node_id": node_id,
-            },
-            latest=latest,
-            actor_id=actor_id,
-        )
-
-    def observe_enumeration(
-        self,
-        *,
-        contract_digest: str,
-        lacks: Sequence[str],
-        capture_digest: str,
-        earliest: datetime,
-        latest: datetime,
-        run_id: str,
-        node_id: str,
-        actor_id: str,
-        lineage: Mapping[str, str] | None = None,
-    ) -> int | None:
-        """Record what a complete absence enumeration lacked (F-001, 2026-11-16 (1)).
-
-        ``lacks`` are ``lack_digest`` of each Subject the run's complete
-        enumeration lacked: an absence Claim about one of them is fresh as of
-        it. One shared record per complete enumeration, never per Claim; the
-        same lacks again are the same set, one head update.
-        ``capture_digest`` is the witness's root Capture.
-        """
-
-        from cruxible_client.contracts.canonical import canonical_bytes
-
-        if is_previewing():
-            return None
-        body = canonical_bytes(
-            {
-                "tag": OBSERVED_ROWS_BODY,
-                **({} if lineage is None else {"lineage": dict(lineage)}),
-                "rows": [[contract_digest, lack] for lack in sorted(set(lacks))],
-            }
-        )
-        return self._append_shared(
-            {
-                "tag": ROW_OBSERVATION_TAG,
-                "set_digest": self.instance.body_store().store(body, journal_payload=True).digest,
-                "capture": capture_digest,
                 "earliest": format_datetime(earliest.astimezone(UTC)),
                 "latest": format_datetime(latest.astimezone(UTC)),
                 "run_id": run_id,
@@ -1554,11 +1517,17 @@ def reobservation_journal_identity(
 
 @dataclass(frozen=True)
 class ReobservationKey:
-    """One cited Capture of a Claim and the (contract, content) it observed."""
+    """One cited Capture of a Claim and the (contract, content) it observed.
+
+    ``shared`` false: only the lineage's own per-Claim records count for the
+    key, never a shared content or row observation (an absence: its root
+    page's contents say nothing about the rest of its enumeration, F-001).
+    """
 
     cited_capture_digest: str
     contract_digest: str
     observed_content_digest: str
+    shared: bool = True
 
 
 @dataclass(frozen=True)
@@ -1712,7 +1681,9 @@ class ReobservationReader:
             row = conn.execute(_LAST_SEQUENCE, (claim_id, through)).fetchone()
             found = 0 if row is None or row[0] is None else int(row[0])
             if keys and self._content_observed(conn):
-                for pair in {(key.contract_digest, key.observed_content_digest) for key in keys}:
+                for pair in {
+                    (key.contract_digest, key.observed_content_digest) for key in keys if key.shared
+                }:
                     found = max(found, self._key_sequence(conn, pair, through))
         return found
 
@@ -1770,6 +1741,39 @@ class ReobservationReader:
                 ).fetchone():
                     return True
         return False
+
+    def recorded(self, claim_id: str, capture_digest: str) -> bool:
+        """Whether a per-Claim record already re-checked the lineage in this Capture."""
+
+        self._guard_fork()
+        with self._lock:
+            conn = self._connection()
+            if conn is None:
+                return False
+            self.probes += 1
+            return (
+                conn.execute(
+                    "SELECT 1 FROM reobservations WHERE claim_id=? AND capture_digest=? LIMIT 1",
+                    (claim_id, capture_digest),
+                ).fetchone()
+                is not None
+            )
+
+    def last_record_capture(self, claim_id: str) -> str | None:
+        """The Capture of the lineage's latest per-Claim record (one seek), if any."""
+
+        self._guard_fork()
+        with self._lock:
+            conn = self._connection()
+            if conn is None:
+                return None
+            self.probes += 1
+            row = conn.execute(
+                "SELECT capture_digest FROM reobservations WHERE claim_id=? AND sequence<=? "
+                "ORDER BY sequence DESC LIMIT 1",
+                (claim_id, _through()),
+            ).fetchone()
+        return None if row is None else str(row[0])
 
     def row_of(self, capture_digest: str, spec_digest: str, locator: str) -> tuple[str, str] | None:
         """The (contract, row) one extracted record of a Capture is: one seek, or None
@@ -2088,7 +2092,7 @@ class ReobservationReader:
                                 sequence=0,
                                 capture_digest=str(hit[0]),
                             )
-                    if window is not None:
+                    if window is not None and key.shared:
                         point = self._key_point(conn, pair, window, boundaries, held_sets)
                         if point is not None and (best is None or point.rank() > best.rank()):
                             best = point
@@ -2196,12 +2200,14 @@ def claim_keys_on(
 ) -> tuple[ReobservationKey, ...]:
     """The keys one Claim's freshness depends on (ruling 2026-11-16).
 
-    An absence depends on complete enumerations lacking its Subject alone
-    (F-001, 2026-11-16 (1)): the contents of its root page say nothing about
-    the others. A Claim produced
-    from an extracted record depends on that record's row (looked up by its
-    cited Capture, extract specification and record locator) and on the
-    exact cited content too; any other Claim on the contents it cites (1d).
+    An absence reads only its own per-Claim reconfirmations, keyed by the
+    content its root cites (the 0.5.0 fallback): a shared observation of its
+    root page says nothing about the rest of the enumeration (F-001). A Claim
+    produced from an extracted record depends on that record's row and on
+    the exact cited content; once a per-Claim record re-checked it in other
+    bytes (its row changed elsewhere), that Capture's content too, so later
+    identical fetches of those bytes keep refreshing it with no new record.
+    Any other Claim depends on the contents it cites (1a).
     """
 
     content = content_keys_on(connection, capture_digests)
@@ -2212,14 +2218,20 @@ def claim_keys_on(
         root = by_capture.get(witness.capture)
         if root is None:
             return ()
-        lacked = lack_digest(witness, claim.statement.subject.artifact_path)
-        return (ReobservationKey(witness.capture, root.contract_digest, lacked),)
+        return (replace(root, shared=False),)
+    keys = list(content)
     value = getattr(evidence, "value", None)
     if isinstance(value, ExtractedBasis):
         row = reader.row_of(value.capture_digest, value.extract_spec_digest, value.record_locator)
         if row is not None:
-            return (*content, ReobservationKey(value.capture_digest, *row))
-    return content
+            keys.append(ReobservationKey(value.capture_digest, *row))
+        rechecked = reader.last_record_capture(claim.identity.name)
+        if rechecked is not None and rechecked != value.capture_digest:
+            keys.extend(
+                replace(key, cited_capture_digest=value.capture_digest)
+                for key in content_keys_on(connection, (rechecked,))
+            )
+    return tuple(keys)
 
 
 def claim_reobservation_keys(
@@ -2284,7 +2296,6 @@ __all__ = [
     "cited_reobservation_keys",
     "claim_keys_on",
     "claim_reobservation_keys",
-    "lack_digest",
     "row_digest",
     "reobservation_journal_identity",
     "reobservation_journal_signature",
