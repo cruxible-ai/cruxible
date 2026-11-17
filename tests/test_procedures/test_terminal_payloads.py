@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from typing import Any
 
 import pytest
@@ -97,14 +98,20 @@ def test_split_then_join_restores_the_exact_record_and_shares_unchanged_bodies()
     for key in ("children", "evidence"):
         assert key not in split
     assert "items" not in split["request"] and "item_paths" not in split["prepared"]
-    # Only the Subject item's Capture is journaled: the rest are its receipt's.
-    assert list(split["evidence_overrides"]) == [original["children"][-1]["item_key"]]
+    # Only the Subject item's Capture is kept: the rest are its receipt's. The
+    # item list and that override are one run-free body, not inline.
+    assert "evidence_items" not in split and "evidence_overrides" not in split
+    evidence = json.loads(store.held[split["evidence_digest"]])
+    assert evidence["tag"] == "playbill-terminal-evidence-v1"
+    assert list(evidence["overrides"]) == [original["children"][-1]["item_key"]]
+    assert evidence["items"] == sorted(original["evidence"])
     assert join_terminal_egress_payload(split, store.read) == original
     # A second run over the same items stores the same bodies: nothing new.
     held = dict(store.held)
     again = split_terminal_egress_payload(_prepared(5, run_id="run-2"), store=store.store)
     assert store.held == held
     assert again["children_digest"] == split["children_digest"]
+    assert again["evidence_digest"] == split["evidence_digest"]
     # The run header stays inline, run-specific.
     assert again["request"]["run_id"] == "run-2"
     for body in store.held.values():
@@ -131,8 +138,6 @@ def test_absence_receipts_are_held_once_without_the_run_id_and_restore_exactly()
     receipt, whose witness names the run. The request items body holds each
     distinct receipt once and leaves the witness's run id to the record's run
     header, so an unchanged terminal's items are the body stored before."""
-
-    import json
 
     def absence_record(run_id: str) -> dict[str, Any]:
         record = _prepared(4, run_id=run_id)
@@ -172,6 +177,37 @@ def test_absence_receipts_are_held_once_without_the_run_id_and_restore_exactly()
         )
         == other
     )
+
+
+def test_an_unchanged_terminal_record_does_not_grow_with_its_items() -> None:
+    """Ruling 1e: an unchanged claims terminal's record restates no per-item
+    list each run; the lists are bodies an unchanged run stores once."""
+
+    from cruxible_client.contracts.canonical import canonical_bytes
+
+    store = _Store()
+    small = split_terminal_egress_payload(_prepared(5), store=store.store)
+    large = split_terminal_egress_payload(_prepared(500), store=store.store)
+    assert len(canonical_bytes(large)) == len(canonical_bytes(small))
+
+
+def test_a_record_journaled_with_its_evidence_inline_still_joins() -> None:
+    """Records written before the evidence body keep the inline item list and
+    overrides; their reader restores the same map."""
+
+    store = _Store()
+    original = _prepared(4)
+    split = split_terminal_egress_payload(original, store=store.store)
+    body = json.loads(store.held[split.pop("evidence_digest")])
+    split["evidence_overrides"] = body["overrides"]
+    split["evidence_items"] = body["items"]
+    assert join_terminal_egress_payload(split, store.read) == original
+    # A record whose only split part is its inline evidence is still read as split.
+    inline_rest = {key: value for key, value in original.items() if key != "evidence"} | {
+        "evidence_overrides": body["overrides"],
+        "evidence_items": body["items"],
+    }
+    assert join_terminal_egress_payload(inline_rest, store.read) == original
 
 
 def test_other_terminals_and_inline_history_pass_through() -> None:

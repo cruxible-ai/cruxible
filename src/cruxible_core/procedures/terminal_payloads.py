@@ -18,8 +18,12 @@ split are inline and pass through unchanged).
 The item-to-Capture map (``evidence``) is mostly a restatement: an item whose
 cited Capture is its extraction receipt's ``value.capture_digest`` needs no
 entry. Only the items whose Capture is not their receipt's (a Subject item,
-which carries no receipt) are journaled, as ``evidence_overrides``; the join
-restores the whole map.
+which carries no receipt) are kept as overrides, beside the list of the items
+the map held; the join restores the whole map. Both are run-free, so they are
+one body (``evidence_digest``): an unchanged terminal cites the body stored
+before rather than restating a per-item list each run. Records journaled
+before held them inline (``evidence_overrides`` and ``evidence_items``) and
+keep that reader.
 """
 
 from __future__ import annotations
@@ -42,6 +46,9 @@ TERMINAL_REQUEST_ITEMS_V1 = "playbill-terminal-request-items-v1"
 TERMINAL_REQUEST_ITEMS_V2 = "playbill-terminal-request-items-v2"
 TERMINAL_PREPARED_ITEMS_V1 = "playbill-terminal-prepared-items-v1"
 TERMINAL_RECEIPT_CHILDREN_V1 = "playbill-terminal-receipt-children-v1"
+#: The items an item-to-Capture map held and the entries its receipts do not
+#: restore: run-free, so an unchanged terminal's is the body stored before.
+TERMINAL_EVIDENCE_V1 = "playbill-terminal-evidence-v1"
 
 #: The request fields that grow with the terminal's items.
 _REQUEST_ITEM_FIELDS = ("items", "claims_changes", "claims_evidence")
@@ -118,13 +125,20 @@ def split_terminal_egress_payload(
     if isinstance(evidence, Mapping):
         receipts = request.get("claims_evidence") if isinstance(request, Mapping) else None
         receipts = receipts if isinstance(receipts, Mapping) else {}
-        split["evidence_overrides"] = {
-            key: value
-            for key, value in evidence.items()
-            if _cited_capture(receipts.get(key)) != value
-        }
-        # The join restores an entry for exactly the items the map held.
-        split["evidence_items"] = sorted(evidence, key=lambda key: str(key).encode("utf-8"))
+        split["evidence_digest"] = store(
+            canonical_bytes(
+                {
+                    "tag": TERMINAL_EVIDENCE_V1,
+                    # The join restores an entry for exactly the items the map held.
+                    "items": sorted(evidence, key=lambda key: str(key).encode("utf-8")),
+                    "overrides": {
+                        key: value
+                        for key, value in evidence.items()
+                        if _cited_capture(receipts.get(key)) != value
+                    },
+                }
+            )
+        )
     receipt = split.get("receipt")
     if isinstance(receipt, Mapping) and isinstance(receipt.get("children"), list):
         header = {key: value for key, value in receipt.items() if key != "children"}
@@ -220,9 +234,13 @@ def join_terminal_egress_payload(
         restored = {key: value for key, value in prepared.items() if key != "items_digest"}
         restored.update(_body(read_body, prepared["items_digest"], tag=TERMINAL_PREPARED_ITEMS_V1))
         joined["prepared"] = restored
-    if "evidence_overrides" in joined:
-        overrides = joined.pop("evidence_overrides")
-        listed = joined.pop("evidence_items", None)
+    if "evidence_digest" in joined or "evidence_overrides" in joined:
+        if "evidence_digest" in joined:
+            body = _body(read_body, joined.pop("evidence_digest"), tag=TERMINAL_EVIDENCE_V1)
+            overrides, listed = body.get("overrides"), body.get("items")
+        else:  # journaled before the evidence body: both inline
+            overrides = joined.pop("evidence_overrides")
+            listed = joined.pop("evidence_items", None)
         request = joined.get("request")
         receipts = request.get("claims_evidence") if isinstance(request, Mapping) else None
         if not isinstance(overrides, Mapping) or not isinstance(listed, list):
@@ -337,6 +355,7 @@ def _is_split(payload: Mapping[str, Any]) -> bool:
     request, prepared, receipt = (payload.get(key) for key in ("request", "prepared", "receipt"))
     return (
         "children_digest" in payload
+        or "evidence_digest" in payload
         or "evidence_overrides" in payload
         or (isinstance(request, Mapping) and "items_digest" in request)
         or (isinstance(prepared, Mapping) and "items_digest" in prepared)

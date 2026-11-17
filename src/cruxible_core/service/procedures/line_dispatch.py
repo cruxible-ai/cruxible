@@ -107,9 +107,10 @@ _TRIGGER_CHANGED = (
 )
 
 # Idle polls need not move coverage per tick: time-only progress advances the
-# dispatch projection at most this often and is never journaled, so a restart
-# claims at most this interval uncovered beyond it (more only if the projection
-# itself is rebuilt, from the last coverage that matched something).
+# dispatch projection at most this often and is never journaled (nor is a
+# run-journal head move that matched nothing), so a restart claims at most this
+# interval uncovered beyond it (more only if the projection itself is rebuilt,
+# from the last coverage that matched something).
 _IDLE_COVERAGE_INTERVAL = timedelta(minutes=1)
 
 
@@ -1026,6 +1027,7 @@ def service_match_listening_lines(
             )
             details: list[str] = []
             stopped = False
+            matched = False
             for trigger in triggers:
                 name = trigger.trigger.identity.qualified
                 if name in scan["done"]:
@@ -1078,7 +1080,10 @@ def service_match_listening_lines(
                     )
                     stopped = True
                     break
-                _enqueue(store, conn, result, actor, now, session_id=session["session_id"])
+                enqueued = _enqueue(
+                    store, conn, result, actor, now, session_id=session["session_id"]
+                )
+                matched = matched or any(item.newly_enqueued for item in enqueued.occurrences)
                 if result.detail is not None:
                     details.append(result.detail)
                 if result.status == "incomplete":
@@ -1099,19 +1104,31 @@ def service_match_listening_lines(
                 trigger.trigger.identity.qualified in scan["done"] for trigger in triggers
             )
             detail = details[0] if details else None
-            # Pending transitions have already landed independently. Time-only
-            # progress is never journaled and can wait (a Trigger's recorded
-            # reach only lags, which is conservative); event progress, partial
-            # scans and a timed Trigger's first reach cannot.
-            time_only = (
+            # Pending transitions have already landed independently. Coverage
+            # that matched nothing is never journaled: neither time-only
+            # progress nor a run-journal head move with no new occurrence. A
+            # projection rebuilt from the journal reads such a segment from its
+            # last journaled coverage, so its positions and recorded reaches
+            # only lag (a re-scan pages from there and re-finds nothing new;
+            # a restart rolls over from the head and asks the time gap to be
+            # evaluated). A match, a cursor change, a partial scan, a changed
+            # detail and a timed Trigger's first reach are journaled.
+            unjournaled = (
                 complete
+                and not matched
                 and not continuing_scan
                 and scan["cursors"] == previous_cursors
-                and scan["through"] == session["positions"]
                 and detail == session.get("detail")
                 and scan["timed"].keys() <= session.get("trigger_until", {}).keys()
             )
-            if time_only and now - evaluated_until < _IDLE_COVERAGE_INTERVAL:
+            # A head move advances positions on every tick (one projection
+            # row), so the next scan never re-reads the same run records; pure
+            # time progress waits for the idle interval.
+            if (
+                unjournaled
+                and scan["through"] == session["positions"]
+                and now - evaluated_until < _IDLE_COVERAGE_INTERVAL
+            ):
                 continue
             session["detail"] = detail
             if complete:
@@ -1128,7 +1145,7 @@ def service_match_listening_lines(
                 )
             else:
                 session["scan"] = scan
-            if time_only:
+            if unjournaled:
                 store.advance_coverage(conn, session)
             else:
                 store.append(conn, "coverage", session, actor=actor, now=now)

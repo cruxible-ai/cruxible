@@ -82,11 +82,18 @@ def count_settled_refusals_step(
         page[-1][0] if page else (cursor.record_id if cursor.journal_identity == identity else 0),
     )
     if not page and through == cursor:
+        # Caught up: fold in the log the counts before this step wrote.
+        index.checkpoint_settled()
         return SettledStep(ran=True, records=0, more=False)
     advanced = index.advance_settled(
         instance, expected=cursor, through=through, deliveries=deliveries, wait=wait
     )
-    return SettledStep(ran=advanced, records=len(page), more=advanced and len(page) == limit)
+    more = advanced and len(page) == limit
+    if advanced and not more:
+        # Caught up: fold the log this count wrote into the index file once,
+        # rather than leaving it on disk until SQLite's own checkpoint.
+        index.checkpoint_settled()
+    return SettledStep(ran=advanced, records=len(page), more=more)
 
 
 def _settled_delivery(journal, stream, stored, bodies) -> SettledDelivery | None:  # type: ignore[no-untyped-def]
