@@ -158,32 +158,36 @@ class CaptureEnvelopeIndex:
                 )
                 connection.execute("INSERT OR IGNORE INTO derivations VALUES (?)", (digest,))
 
-    def remember_content_key(self, content_key: str, capture_digest: str, *, proof: str) -> None:
+    def remember_content_key(
+        self, content_key: str, capture_digest: str, *, proofs: tuple[str, ...]
+    ) -> None:
         """Name the Capture an identical re-fetch reuses (``capture_content_key``).
 
         The executor names each Capture it stores new once the run journaled
-        producing it; ``proof`` is that record's payload body. The key covers
-        the executed request, which the envelope bytes do not carry. The latest
-        one stored wins. Not rebuilt from the store's bytes: a lost row costs
-        one new Capture, never a wrong reuse.
+        producing it; ``proofs`` are the journal payloads its production is
+        verified from (admission, invocation completion and source records,
+        production), held space-separated. The key covers the executed
+        request, which the envelope bytes do not carry. The latest one stored
+        wins. Not rebuilt from the store's bytes: a lost row costs one new
+        Capture, never a wrong reuse.
         """
 
         with self._connection() as connection:
             connection.execute(
                 "INSERT OR REPLACE INTO content_reuse VALUES (?,?,?)",
-                (content_key, capture_digest, proof),
+                (content_key, capture_digest, " ".join(proofs)),
             )
 
-    def capture_for_content_key(self, content_key: str) -> tuple[str, str] | None:
-        """The held Capture an identical re-fetch reproduces and its production
-        record's payload body, if one was named (a candidate)."""
+    def capture_for_content_key(self, content_key: str) -> tuple[str, tuple[str, ...]] | None:
+        """The held Capture an identical re-fetch reproduces and the journal
+        payloads its production is proven from, if one was named (a candidate)."""
 
         with self._connection() as connection:
             row = connection.execute(
                 "SELECT capture_digest, proof_digest FROM content_reuse WHERE content_key=?",
                 (content_key,),
             ).fetchone()
-        return None if row is None else (str(row[0]), str(row[1]))
+        return None if row is None else (str(row[0]), tuple(str(row[1]).split()))
 
     def _derivation_inputs(self, content: bytes) -> tuple[str, ...] | None:
         """A derived envelope's input Captures, from its manifest (stored before it).

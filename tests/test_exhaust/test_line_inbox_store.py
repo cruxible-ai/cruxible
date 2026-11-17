@@ -608,6 +608,58 @@ def test_a_resighted_batch_writes_one_group_row_and_no_item_row_at_two_sizes(
             assert store.get(envelope.item_id).envelope == envelope
 
 
+def test_an_unchanged_re_posting_raises_no_event_a_line_or_reader_sees_at_two_sizes(
+    tmp_path: Path,
+) -> None:
+    """Round 6 item 3: the same items posted again by later runs (same keys,
+    same content) add no activity entry and no Trigger event, at 3 and 30
+    items: a Line is driven only by Trigger events (cadence, cron, Capture
+    landing, window close, accepted generation), and none reads the inbox.
+    Each re-posting is one constant-size batch record citing the run-free
+    items body it stored before."""
+
+    import sqlite3
+
+    from cruxible_core.triggers.journal import trigger_events
+
+    grown = {}
+    for size in (3, 30):
+        (tmp_path / str(size)).mkdir()
+        instance, store, write = _world(tmp_path / str(size))
+        items = [{"cve": f"CVE-{index}"} for index in range(size)]
+
+        def post(run_id: str, at: datetime) -> None:
+            store.post(
+                [
+                    _posting(item, run_id=run_id, item_key=f"item-{index}", at=at)
+                    for index, item in enumerate(items)
+                ],
+                **write,  # type: ignore[arg-type]
+            )
+
+        def activity() -> int:
+            conn = sqlite3.connect(store.path)
+            try:
+                return int(conn.execute("SELECT COUNT(*) FROM activity").fetchone()[0])
+            finally:
+                conn.close()
+
+        def journal_bytes() -> int:
+            return sum(
+                path.stat().st_size for path in store.root.rglob("records.log") if path.is_file()
+            )
+
+        post("RUN-1", NOW)
+        noted, events, logged = activity(), trigger_events(instance), journal_bytes()
+        assert noted == size
+        post("RUN-2", NOW + timedelta(hours=1))
+        post("RUN-3", NOW + timedelta(hours=2))
+        assert activity() == noted
+        assert trigger_events(instance) == events == ()
+        grown[size] = journal_bytes() - logged
+    assert grown[3] == grown[30], grown
+
+
 def test_grouped_sightings_keep_their_true_first_and_latest_after_out_of_order_recovery(
     tmp_path: Path,
 ) -> None:

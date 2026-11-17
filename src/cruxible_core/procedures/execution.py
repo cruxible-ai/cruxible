@@ -6,7 +6,7 @@ import base64
 import hashlib
 import json
 import time
-from collections import Counter, OrderedDict
+from collections import Counter
 from collections.abc import Collection, Iterable, Iterator, Mapping, Sequence
 from contextlib import nullcontext
 from dataclasses import dataclass
@@ -66,6 +66,8 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.captures import (
+    INPUT_MANIFEST_V1,
+    INPUT_MANIFEST_V2,
     CaptureBuildResult,
     CaptureDerivation,
     CaptureEnvelopeV1,
@@ -567,27 +569,12 @@ def retain_state_tap_material(
     :class:`StateTapMaterialV2` naming it. A Claim read stores its value whole.
     """
 
-    result = value.get("result") if isinstance(value, dict) else None
-    receipt = value.get("receipt") if isinstance(value, dict) else None
-    if (
-        node.reads_claims
-        or not isinstance(value, dict)
-        or not isinstance(result, dict)
-        or not isinstance(receipt, dict)
-        or not isinstance(result.get("evaluated_at"), str)
-        or not isinstance(receipt.get("evaluation_time"), str)
-        or not isinstance(receipt.get("result_digest"), str)
-    ):
+    timeless = _timeless_state_view(value, reads_claims=node.reads_claims)
+    if timeless is None:
         return bodies.store(canonical_bytes(value)).digest
-    timeless_result = {key: item for key, item in result.items() if key != "evaluated_at"}
-    timeless_receipt = {
-        key: item
-        for key, item in receipt.items()
-        if key not in {"evaluation_time", "result_digest"}
-    }
-    body = bodies.store(
-        canonical_bytes({**value, "result": timeless_result, "receipt": timeless_receipt})
-    )
+    result = cast(dict[str, Any], cast(dict[str, Any], value)["result"])
+    receipt = cast(dict[str, Any], cast(dict[str, Any], value)["receipt"])
+    body = bodies.store(timeless)
     material = StateTapMaterialV2(
         result_body_digest=body.digest,
         evaluated_at=cast(str, result["evaluated_at"]),
@@ -595,6 +582,60 @@ def retain_state_tap_material(
         receipt_result_digest=cast(str, receipt["result_digest"]),
     )
     return bodies.store(canonical_bytes(material.model_dump(mode="json"))).digest
+
+
+def _timeless_state_view(value: object, *, reads_claims: bool) -> bytes | None:
+    """A Query read's view without its evaluation instant (None: nothing to remove).
+
+    The bytes ``retain_state_tap_material`` stores as the result body: the
+    same answer read again at another instant reproduces them.
+    """
+
+    result = value.get("result") if isinstance(value, dict) else None
+    receipt = value.get("receipt") if isinstance(value, dict) else None
+    if (
+        reads_claims
+        or not isinstance(value, dict)
+        or not isinstance(result, dict)
+        or not isinstance(receipt, dict)
+        or not isinstance(result.get("evaluated_at"), str)
+        or not isinstance(receipt.get("evaluation_time"), str)
+        or not isinstance(receipt.get("result_digest"), str)
+    ):
+        return None
+    timeless_result = {key: item for key, item in result.items() if key != "evaluated_at"}
+    timeless_receipt = {
+        key: item
+        for key, item in receipt.items()
+        if key not in {"evaluation_time", "result_digest"}
+    }
+    return canonical_bytes({**value, "result": timeless_result, "receipt": timeless_receipt})
+
+
+def accepted_read_identity(run_input: AcceptedStateRunInput, value: object) -> str:
+    """One accepted-state read's run-free identity, as a derive's manifest names it.
+
+    Its coordinate, its Query or ClaimType, its parameters and its result
+    without the evaluation instant (the timeless body a Query read retains;
+    a Claim read's whole value). The same read of an unchanged generation
+    reproduces it, so a derive over it reuses the Capture it made before
+    (ruling 1c); a run input digest also commits the instant and never does.
+    """
+
+    timeless = _timeless_state_view(
+        value, reads_claims=isinstance(run_input, AcceptedClaimRunInputV1)
+    )
+    body = canonical_bytes(normalize_canonical(value)) if timeless is None else timeless
+    return typed_digest(
+        Sha256Value,
+        "cruxible-accepted-read-identity-v1",
+        {
+            "coordinate": run_input.read_coordinate.model_dump(mode="json"),
+            "definition_digest": accepted_read_definition_digest(run_input),
+            "parameters_digest": run_input.parameters_digest,
+            "result_body_digest": "sha256:" + hashlib.sha256(body).hexdigest(),
+        },
+    ).tagged
 
 
 class ProcedureResourceBudgetV1(_StrictExecutionModel):
@@ -1351,7 +1392,7 @@ class CaptureObservationsProtocol(Protocol):
     def held_capture(self, content_key: str, *, commitment_digest: str) -> tuple[str, Any] | None:
         """The held Capture (digest, envelope) of these contents, when it may be reused."""
 
-    def remember(self, content_key: str, capture_digest: str, *, proof: str) -> None:
+    def remember(self, content_key: str, capture_digest: str, *, proofs: tuple[str, ...]) -> None:
         """Name the new Capture these contents' next identical re-fetch reuses.
 
         ``proof`` is the payload body of the record journaling its production.
@@ -1370,23 +1411,17 @@ class CaptureObservationsProtocol(Protocol):
     ) -> None:
         """Record one extract step's observation of its whole row set."""
 
-    def observe_enumeration(
-        self,
-        *,
-        contract_digest: str,
-        lacks: tuple[str, ...],
-        capture_digest: str,
-        earliest: datetime,
-        latest: datetime,
-        run_id: str,
-        node_id: str,
-        actor_id: str,
-        lineage: dict[str, str] | None = None,
-    ) -> None:
-        """Record what a complete absence enumeration lacked."""
-
     def row_of(self, capture_digest: str, spec_digest: str, locator: str) -> str | None:
         """The row one extracted record of a Capture was observed as, if any."""
+
+    def extraction_map(self, extraction: str) -> str | None:
+        """The stored row map of one known extraction, if any."""
+
+    def map_rows(self, map_digest: str) -> Mapping[str, str]:
+        """One stored row map by record locator (a read-only view, never a copy)."""
+
+    def rechecked(self, claim_id: str, version: str, capture_digest: str) -> bool:
+        """Whether this Claim version's latest per-Claim re-check is in this Capture."""
 
     def observe(
         self,
@@ -2792,14 +2827,25 @@ class _RunState:
     #: recorded as a content observation: an item restating a Claim on another
     #: Capture of the same content observed nothing a Claim needs (ruling 1a).
     observed_contents: dict[str, tuple[str, str]] = dataclass_field(default_factory=dict)
+    #: Each accepted-state read's run-free identity, by its run input digest:
+    #: what a derive's manifest names (``accepted_read_identity``).
+    read_identities: dict[str, str] = dataclass_field(default_factory=dict)
     #: Each Capture this run stored new, by its reuse key: named reusable only
     #: once its ``produced_capture`` is journaled (F-008).
     pending_reuse_keys: dict[str, str] = dataclass_field(default_factory=dict)
+    #: The journal payloads proving each provider invocation this run made, by
+    #: its receipt digest: its completion and the source request and read
+    #: records journaled for it (``pending_source_proofs``, since the last
+    #: completion). With the admission and production payloads they are what a
+    #: verifier resolves a Capture's producer receipt from (review 2e #5).
+    invocation_proofs: dict[str, tuple[str, ...]] = dataclass_field(default_factory=dict)
+    pending_source_proofs: list[str] = dataclass_field(default_factory=list)
+    admission_proof: str | None = None
     #: Each fetched Capture's logical source: part of its rows' identity.
     capture_sources: dict[str, str] = dataclass_field(default_factory=dict)
     #: Each extracted Capture's rows by locator, per (Capture, extract spec):
     #: an item whose Claim's own row this run observed restates nothing.
-    row_maps: dict[tuple[str, str], dict[str, str]] = dataclass_field(default_factory=dict)
+    row_maps: dict[tuple[str, str], Mapping[str, str]] = dataclass_field(default_factory=dict)
     #: Which aliases hold incomplete values, and the control lineage's state.
     completeness: Completeness = dataclass_field(default_factory=Completeness)
     #: Acquiring calls whose Capture list dropped a failed member (D-R37 a4).
@@ -3543,6 +3589,7 @@ class ProcedureExecutor:
             )
             value = self._retained_state_value(accepted_state.input, access=access)
             digest = run_input_digest(accepted_state.input)
+            state.read_identities[digest] = accepted_read_identity(accepted_state.input, value)
             name = accepted_state.input.input_name
             state.outputs[name] = normalize_canonical(value)
             state.provenance[name] = AliasProvenanceV1(
@@ -3664,6 +3711,7 @@ class ProcedureExecutor:
         state.read_rows_by_input[node.as_] = rows
         state.late_reads[node.as_] = material.input
         digest = run_input_digest(material.input)
+        state.read_identities[digest] = accepted_read_identity(material.input, material.value)
         state.outputs[node.as_] = normalize_canonical(material.value)
         state.provenance[node.as_] = AliasProvenanceV1(
             whole=frozenset(
@@ -4534,8 +4582,10 @@ class ProcedureExecutor:
                 request=executed.model_dump(mode="json"),
             )
             into.member_requests[key] = derived.request_digest
-            self._append_event(
-                admission, records, "source_request_derived", derived.model_dump(mode="json")
+            state.pending_source_proofs.append(
+                self._append_event(
+                    admission, records, "source_request_derived", derived.model_dump(mode="json")
+                ).record.payload_digest
             )
             try:
                 read = reader.read(
@@ -4558,14 +4608,16 @@ class ProcedureExecutor:
                 drop(f"{relative_path!r} cannot be read: {exc}")
                 continue
             remaining -= read.receipt.byte_length
-            self._append_event(
-                admission,
-                records,
-                "source_read",
-                {
-                    "receipt": read.receipt.model_dump(mode="json"),
-                    "receipt_digest": source_read_receipt_digest(read.receipt),
-                },
+            state.pending_source_proofs.append(
+                self._append_event(
+                    admission,
+                    records,
+                    "source_read",
+                    {
+                        "receipt": read.receipt.model_dump(mode="json"),
+                        "receipt_digest": source_read_receipt_digest(read.receipt),
+                    },
+                ).record.payload_digest
             )
             try:
                 output, receipt, receipt_digest = self._invoke_provider_v4(
@@ -4698,7 +4750,11 @@ class ProcedureExecutor:
                 "declare effect: pure.",
                 node_id=node.node_id,
             )
-        derivation = _capture_derivation(node, input_lineage) if derived_fields else None
+        derivation = (
+            _capture_derivation(node, input_lineage, state.read_identities)
+            if derived_fields
+            else None
+        )
         if not derived_fields:
             input_lineage = frozenset(
                 token for token in input_lineage if token.slot not in _CAPTURE_SLOTS
@@ -4791,11 +4847,13 @@ class ProcedureExecutor:
                     else workspace_request.model_dump(mode="json")
                 ),
             )
-            self._append_event(
-                admission,
-                records,
-                "source_request_derived",
-                derived_request.model_dump(mode="json"),
+            state.pending_source_proofs.append(
+                self._append_event(
+                    admission,
+                    records,
+                    "source_request_derived",
+                    derived_request.model_dump(mode="json"),
+                ).record.payload_digest
             )
             source_read_receipt: SourceReadReceipt | None = None
             provider_payload = resolved_request
@@ -4825,14 +4883,16 @@ class ProcedureExecutor:
                     ) from exc
                 provider_payload = workspace_read.provider_input
                 source_read_receipt = workspace_read.receipt
-                self._append_event(
-                    admission,
-                    records,
-                    "source_read",
-                    {
-                        "receipt": source_read_receipt.model_dump(mode="json"),
-                        "receipt_digest": source_read_receipt_digest(source_read_receipt),
-                    },
+                state.pending_source_proofs.append(
+                    self._append_event(
+                        admission,
+                        records,
+                        "source_read",
+                        {
+                            "receipt": source_read_receipt.model_dump(mode="json"),
+                            "receipt_digest": source_read_receipt_digest(source_read_receipt),
+                        },
+                    ).record.payload_digest
                 )
             try:
                 output, invocation_receipt, invocation_receipt_digest = self._invoke_provider_v4(
@@ -5682,7 +5742,14 @@ class ProcedureExecutor:
         )
         maps = []
         for capture, outcome in parts:
-            row_map, rows = _row_map_of(state, capture, spec, selected, outcome)
+            row_map, rows = _row_map_of(
+                state,
+                capture,
+                spec,
+                f"{selected}|{outcome.typing_key}",
+                outcome,
+                self.capture_observations,
+            )
             state.row_maps[(capture, spec)] = rows
             maps.append(row_map)
         spans = [_capture_span(state, capture) for capture, _outcome in parts]
@@ -6172,8 +6239,9 @@ class ProcedureExecutor:
                 member_request_digest=member_request_digest,
             )
             key = state.pending_reuse_keys.pop(digest, None)
-            if key is not None and self.capture_observations is not None:
-                self.capture_observations.remember(key, digest, proof=proof)
+            closure = self._reuse_proof(state, records, invocation_receipt_digest, proof)
+            if key is not None and closure and self.capture_observations is not None:
+                self.capture_observations.remember(key, digest, proofs=closure)
         state.source_capture_associations.append(
             ProcedureSourceCaptureAssociation(
                 occurrence_path=occurrence_path,
@@ -6189,6 +6257,35 @@ class ProcedureExecutor:
                 policy_token(acquisition.envelope.capture_contract_digest),
             }
         )
+
+    @staticmethod
+    def _reuse_proof(
+        state: _RunState,
+        records: list[StoredProcedureJournalRecordV1],
+        invocation_receipt_digest: str,
+        production: str,
+    ) -> tuple[str, ...]:
+        """Every journal payload a verifier resolves this Capture's production from.
+
+        The run's admission, the invocation's completion and its source request
+        and read records, and the production record (review 2e #5). Empty when
+        any is unknown to this run (a resumed run): the Capture is then not
+        named reusable, and an identical re-fetch stores and proves its own.
+        """
+
+        if state.admission_proof is None:
+            state.admission_proof = next(
+                (
+                    item.record.payload_digest
+                    for item in records
+                    if item.record.event_kind == "admission_bound"
+                ),
+                None,
+            )
+        invocation = state.invocation_proofs.get(invocation_receipt_digest)
+        if state.admission_proof is None or invocation is None:
+            return ()
+        return (state.admission_proof, *invocation, production)
 
     def _produced_capture(
         self,
@@ -7085,7 +7182,7 @@ class ProcedureExecutor:
             ),
             # One entry per distinct cited Capture this run fetched, so
             # O(the terminal's items), never the Claims citing them.
-            observation_latest=_observation_latest(state, claims_evidence),
+            observation_calls=_observation_calls(state, claims_evidence),
             prepared_at=self.clock.now(),
         )
         # Ruling C4: a direct run's admission is never a V5+ Line carrier (it
@@ -7237,6 +7334,7 @@ class ProcedureExecutor:
                 terminal_node_id=node.node_id,
                 shared=shared_terminal_dependencies(tuple(manifests.values()), folded),
                 digest=lambda content: self.bodies.digest_bytes(content).tagged,
+                read_identities=state.read_identities,
             )
             self.bodies.store_many(built.bodies, journal_payload=True)
             items_record_digest = self._append_event(
@@ -7868,12 +7966,14 @@ class ProcedureExecutor:
             receipt=receipt,
             receipt_digest=receipt_digest,
         )
-        self._append_event(
+        completion = self._append_event(
             admission,
             records,
             "provider_invocation_completed",
             completed.model_dump(mode="json"),
-        )
+        ).record.payload_digest
+        state.invocation_proofs[receipt_digest] = (completion, *state.pending_source_proofs)
+        state.pending_source_proofs.clear()
         state.provider_invocations_completed += 1
         state.invocation_receipt_digests.append(receipt_digest)
         if outcome.status != "ok":
@@ -8637,30 +8737,37 @@ def _extract_only_keys(node: ExtractNode, *, state: _RunState) -> list[dict[str,
     return cast(list[dict[str, object]], resolved)
 
 
-#: Each (Capture, extract spec, selection)'s rows: an immutable derivation of
-#: immutable inputs, computed once per process.
-_ROW_MAPS: OrderedDict[tuple[str, str, str], tuple[Any, dict[str, str]]] = OrderedDict()
-_ROW_MAPS_CAPACITY = 256
-
-
 def _row_map_of(
-    state: _RunState, capture: str, spec: str, selected: str, outcome: ExtractOutcome
-) -> tuple[Any, dict[str, str]]:
+    state: _RunState,
+    capture: str,
+    spec: str,
+    selected: str,
+    outcome: ExtractOutcome,
+    port: Any = None,
+) -> tuple[Any, Mapping[str, str]]:
     """One Capture's extracted records as rows (a ``RowMap``) and by locator.
 
-    The rows of the same Capture under the same spec and selection never
-    change, so a later run reuses them: the loop over records runs once.
+    The extraction (Capture, spec, selection with its typing) is immutable:
+    once its map is stored, a later run finds it by one seek on the
+    projection (``extraction_map``) and derives nothing, whatever the working
+    set (review 2d #6). Only a new extraction loops over its records.
     """
 
     from cruxible_core.evidence.claim_reobservations import RowMap, row_digest
     from cruxible_core.procedures.extract import _Record, held_wire, wire_value
 
-    key = (capture, spec, selected)
-    held = _ROW_MAPS.get(key)
-    if held is not None:
-        _ROW_MAPS.move_to_end(key)
-        return held
+    extraction = typed_digest(
+        Sha256Value,
+        "cruxible-extraction-v1",
+        {"capture": capture, "spec": spec, "selected": selected},
+    ).tagged
     contract = state.capture_contracts.get(capture, "")
+    known = None if port is None else port.extraction_map(extraction)
+    if known is not None:
+        return (
+            RowMap(capture, spec, contract, (), extraction=extraction, digest=known),
+            port.map_rows(known),
+        )
     source = state.capture_sources.get(capture, "")
     rows: dict[str, str] = {}
     for item in outcome.held:
@@ -8677,19 +8784,15 @@ def _row_map_of(
                 for name, value in item.fields.items()
             },
         )
-    found = (RowMap(capture, spec, contract, tuple(sorted(rows.items()))), rows)
-    _ROW_MAPS[key] = found
-    while len(_ROW_MAPS) > _ROW_MAPS_CAPACITY:
-        _ROW_MAPS.popitem(last=False)
-    return found
+    return RowMap(capture, spec, contract, tuple(sorted(rows.items())), extraction=extraction), rows
 
 
-def _observation_latest(
+def _observation_calls(
     state: _RunState | None, receipts: Sequence[ClaimEvidenceReceipt | None]
-) -> dict[str, datetime]:
-    """When the call that fetched each cited Capture ended, for those this run observed."""
+) -> dict[str, tuple[datetime, datetime]]:
+    """The call that fetched each cited Capture, for those this run observed."""
 
-    found: dict[str, datetime] = {}
+    found: dict[str, tuple[datetime, datetime]] = {}
     if state is None:
         return found
     for receipt in receipts:
@@ -8697,7 +8800,7 @@ def _observation_latest(
         if isinstance(cited, str) and cited not in found:
             span = _capture_span(state, cited)
             if span is not None:
-                found[cited] = span[1]
+                found[cited] = span
     return found
 
 
@@ -8774,8 +8877,15 @@ def _capture_input_fields(contract: Contract) -> dict[str, tuple[str, bool]]:
     return found
 
 
-def _capture_derivation(node: CallNode, lineage: frozenset[DependencyToken]) -> CaptureDerivation:
-    """A derive call's recorded inputs: Captures, their receipts, and state reads (D-R37 c1)."""
+def _capture_derivation(
+    node: CallNode, lineage: frozenset[DependencyToken], read_identities: Mapping[str, str]
+) -> CaptureDerivation:
+    """A derive call's recorded inputs: Captures, their receipts, and state reads (D-R37 c1).
+
+    A state read is named by its run-free identity (manifest v2): an unchanged
+    read of an unchanged generation names the same manifest, so the derive
+    reuses its held Capture instead of storing a new one every run.
+    """
 
     def slot(*names: str) -> tuple[str, ...]:
         return tuple(
@@ -8786,7 +8896,12 @@ def _capture_derivation(node: CallNode, lineage: frozenset[DependencyToken]) -> 
         )
 
     captures = slot(*_CAPTURE_SLOTS)
-    reads = slot("accepted_state")
+    reads = tuple(
+        sorted(
+            {read_identities[digest] for digest in slot("accepted_state")},
+            key=lambda item: item.encode("ascii"),
+        )
+    )
     if not captures and not reads:
         raise _RunRefusal(
             "contract_input_refused",
@@ -8796,9 +8911,10 @@ def _capture_derivation(node: CallNode, lineage: frozenset[DependencyToken]) -> 
         )
     return CaptureDerivation(
         manifest=InputReceiptSetManifest(
+            tag=INPUT_MANIFEST_V2 if reads else INPUT_MANIFEST_V1,
             input_capture_digests=captures,
             input_receipt_digests=slot("receipt"),
-            input_accepted_state_digests=reads,
+            input_accepted_read_digests=reads,
         ),
         input_template_digest=derive_input_template_digest(node.input),
     )

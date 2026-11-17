@@ -806,15 +806,13 @@ def test_an_inverse_creates_its_missing_x_and_keeps_one_identity(tmp_path: Path,
     else:
         assert held.statement.object.of.address.artifact_path == vulnerability
 
-    # The same complete absence from new bytes: the complete enumeration still
-    # lacks the Subject, and that one shared observation refreshes the inverse
-    # with no per-Claim item (ruling 2026-11-16 (1)).
+    # The same complete absence from new bytes re-confirms it per Claim (the
+    # 0.5.0 absence fallback), same identity.
     _write(root, [], note="re-read")
     again = run(instance, root, minute=1)
     assert again.status == "succeeded", again.terminal
     assert not _subject_items(again)
-    assert _identities(instance, again) == {}
-    del inverse_identity
+    assert _identities(instance, again) == {inverse_identity: "reobservation"}
 
 
 def test_an_inverse_whose_x_is_missing_without_create_is_refused_per_item(

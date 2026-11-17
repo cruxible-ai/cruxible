@@ -167,16 +167,20 @@ def test_a_refused_reobservation_is_reported_not_counted(
     document = json.loads(path.read_text())
     document["catalogVersion"] = "2026.11.01"
     path.write_text(json.dumps(document))
-    record = ClaimReobservationStore.record
+    record_many = ClaimReobservationStore.record_many
     refused: list[str] = []
 
-    def refuse_two(self, *, claim_id: str, **kwargs: Any):  # type: ignore[no-untyped-def]
-        if len(refused) < 2:
-            refused.append(claim_id)
-            raise ClaimReobservationRefused("test refusal", reason="claim_not_live")
-        return record(self, claim_id=claim_id, **kwargs)
+    def refuse_two(self, requests, **kwargs: Any):  # type: ignore[no-untyped-def]
+        # The delivery's one batch: the first two are refused at admission.
+        refused.extend(item.claim_id for item in requests[:2])
+        outcome = record_many(self, requests[2:], **kwargs)
+        return {
+            0: ClaimReobservationRefused("test refusal", reason="claim_not_live"),
+            1: ClaimReobservationRefused("test refusal", reason="claim_not_live"),
+            **{index + 2: exc for index, exc in outcome.items()},
+        }
 
-    monkeypatch.setattr(ClaimReobservationStore, "record", refuse_two)
+    monkeypatch.setattr(ClaimReobservationStore, "record_many", refuse_two)
     # The rows are taken to have changed elsewhere too, so each unchanged item
     # reaches delivery (the same rows would be one row observation instead).
     from cruxible_core.procedures import claims_terminal

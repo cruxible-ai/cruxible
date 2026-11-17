@@ -11,7 +11,7 @@ from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from functools import lru_cache
-from typing import TYPE_CHECKING, Annotated, Literal, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Annotated, Final, Literal, Protocol, runtime_checkable
 
 from pydantic import (
     BaseModel,
@@ -2180,18 +2180,37 @@ def capture_digest(envelope: CaptureEnvelopeV1 | CaptureEnvelope) -> CasDigest:
     return CasDigest(hashlib.sha256(render_capture_envelope(envelope)).hexdigest())
 
 
-class InputReceiptSetManifest(_StrictCaptureModel):
-    """Content-addressed exact inputs required by a derived Capture."""
+INPUT_MANIFEST_V1: Final = "playbill-input-receipt-set-manifest-v1"
+INPUT_MANIFEST_V2: Final = "playbill-input-receipt-set-manifest-v2"
 
-    tag: Literal["playbill-input-receipt-set-manifest-v1"] = (
-        "playbill-input-receipt-set-manifest-v1"
-    )
+
+class InputReceiptSetManifest(_StrictCaptureModel):
+    """Content-addressed exact inputs required by a derived Capture.
+
+    v1 names each accepted-state read by its run input digest, which also
+    commits the read's evaluation instant; stored v1 manifests keep that
+    meaning and their digests. v2 names each read by its run-free identity
+    (coordinate, Query or ClaimType, parameters, result without the instant):
+    the same read of an unchanged generation names the same manifest, so a
+    derive over it reuses its held Capture (ruling 1c). A manifest naming no
+    read is v1.
+    """
+
+    tag: Literal[
+        "playbill-input-receipt-set-manifest-v1", "playbill-input-receipt-set-manifest-v2"
+    ] = "playbill-input-receipt-set-manifest-v1"
     input_receipt_digests: tuple[str, ...] = ()
     input_capture_digests: tuple[str, ...] = ()
     input_claim_artifact_digests: tuple[str, ...] = ()
-    #: The accepted-state reads a derive consumed, each by its run input digest
-    #: (which commits the read's coordinate, Query, parameters and result).
+    #: v1: the accepted-state reads a derive consumed, each by its run input
+    #: digest (which commits the read's coordinate, Query, parameters, result
+    #: and evaluation instant).
     input_accepted_state_digests: tuple[str, ...] = Field(
+        default=(), exclude_if=lambda value: not value
+    )
+    #: v2: the accepted-state reads a derive consumed, each by its run-free
+    #: read identity.
+    input_accepted_read_digests: tuple[str, ...] = Field(
         default=(), exclude_if=lambda value: not value
     )
 
@@ -2200,6 +2219,7 @@ class InputReceiptSetManifest(_StrictCaptureModel):
         "input_capture_digests",
         "input_claim_artifact_digests",
         "input_accepted_state_digests",
+        "input_accepted_read_digests",
     )
     @classmethod
     def _digests(cls, value: tuple[str, ...]) -> tuple[str, ...]:
@@ -2217,10 +2237,23 @@ class InputReceiptSetManifest(_StrictCaptureModel):
                 self.input_capture_digests,
                 self.input_claim_artifact_digests,
                 self.input_accepted_state_digests,
+                self.input_accepted_read_digests,
             )
         ):
             raise ValueError("input receipt-set manifest must name at least one exact input")
+        if self.tag == INPUT_MANIFEST_V1 and self.input_accepted_read_digests:
+            raise ValueError("a v1 input receipt-set names reads by run input digest only")
+        if self.tag == INPUT_MANIFEST_V2 and (
+            self.input_accepted_state_digests or not self.input_accepted_read_digests
+        ):
+            raise ValueError("a v2 input receipt-set names its reads by read identity")
         return self
+
+    @property
+    def accepted_reads(self) -> tuple[str, ...]:
+        """The accepted-state reads it names, in its own version's terms."""
+
+        return self.input_accepted_read_digests or self.input_accepted_state_digests
 
 
 def render_input_receipt_set_manifest(manifest: InputReceiptSetManifest) -> bytes:
@@ -4301,6 +4334,8 @@ __all__ = [
     "DirectClaimSource",
     "DirectExternalSelection",
     "DirectForeignSourceSelection",
+    "INPUT_MANIFEST_V1",
+    "INPUT_MANIFEST_V2",
     "InputReceiptSetManifest",
     "ProcedureEgressCaptureEvidence",
     "ProcedureProducerReceiptProtocol",

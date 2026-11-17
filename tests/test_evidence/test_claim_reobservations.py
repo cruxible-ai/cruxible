@@ -197,6 +197,8 @@ def _apply_synthetic(  # type: ignore[no-untyped-def]
                     "contract_digest": store.contract_for_tests,
                     "observed_content_digest": content,
                     "observed_at": _stamp(observed),
+                    # Every admitted record names the Claim version it checked.
+                    "claim_artifact_digest": getattr(store, "version_for_tests", ""),
                 },
                 first_sequence + offset,
                 recorded,
@@ -235,6 +237,8 @@ def test_the_freshness_lookup_is_bounded_by_cited_contents_not_history(tmp_path:
     store = ClaimReobservationStore(instance)
     (real,) = store.history(current.identity.name)
     store.contract_for_tests = real.contract_digest  # type: ignore[attr-defined]
+    version = claim_artifact_digest(current).tagged
+    store.version_for_tests = version  # type: ignore[attr-defined]
     replaced = "sha256:" + "2" * 64  # content a later revision no longer cites
     hourly = [
         (
@@ -266,7 +270,9 @@ def test_the_freshness_lookup_is_bounded_by_cited_contents_not_history(tmp_path:
     # Whether the lineage was re-observed, then two seeks for the one cited content.
     assert reader.probes == 4
     assert reader.rows_read == 1
-    key = ReobservationKey("sha256:" + "f" * 64, real.contract_digest, real.observed_content_digest)
+    key = ReobservationKey(
+        "sha256:" + "f" * 64, real.contract_digest, real.observed_content_digest, version=version
+    )
     current_read = _vm_steps(reader, lambda: reader.latest(current.identity.name, (key,), at))
     assert current_read < 400, current_read
 
@@ -283,6 +289,8 @@ def test_historical_reads_do_not_walk_late_backfills(tmp_path: Path, backfills: 
     store = ClaimReobservationStore(instance)
     (real,) = store.history(claim.identity.name)
     store.contract_for_tests = real.contract_digest  # type: ignore[attr-defined]
+    version = claim_artifact_digest(claim).tagged
+    store.version_for_tests = version  # type: ignore[attr-defined]
     # Observed at +30 min, recorded at +2 h: valid backfills for a later instant.
     _apply_synthetic(
         store,
@@ -299,7 +307,9 @@ def test_historical_reads_do_not_walk_late_backfills(tmp_path: Path, backfills: 
         first_sequence=100,
     )
     reader = ReobservationReader.of(instance)
-    key = ReobservationKey("sha256:" + "f" * 64, real.contract_digest, real.observed_content_digest)
+    key = ReobservationKey(
+        "sha256:" + "f" * 64, real.contract_digest, real.observed_content_digest, version=version
+    )
     at = _START + timedelta(minutes=40)
     reading = reader.latest(claim.identity.name, (key,), at)
     (selected,) = reading.evidence

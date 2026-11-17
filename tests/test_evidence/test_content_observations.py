@@ -277,47 +277,6 @@ def test_freshness_reads_do_not_grow_with_observation_history(tmp_path: Path) ->
         assert costs[1_000][name] <= small + 64, (name, costs)
 
 
-def test_an_unchanged_complete_enumeration_is_one_head_update_at_any_size(
-    tmp_path: Path,
-) -> None:
-    """Ruling 2026-11-16 (1): repeating the same lacks writes no member row and
-    the same journal work at 12 and 120 absences."""
-
-    added = {}
-    for size in (12, 120):
-        root = tmp_path / str(size)
-        root.mkdir()
-        instance, _owner = _freshness_world(root, stale_after=_HOUR)
-        _claim, cited, key = _cited(instance)
-        store = ClaimReobservationStore(instance)
-        lacks = tuple(f"sha256:{index:064x}" for index in range(size))
-
-        def observe(at: datetime) -> None:
-            instance.recording_clock = lambda: at
-            store.observe_enumeration(
-                contract_digest=key.contract_digest,
-                lacks=lacks,
-                capture_digest=cited,
-                earliest=at - timedelta(minutes=1),
-                latest=at,
-                run_id="RUN-x",
-                node_id="absence",
-                actor_id="o",
-            )
-
-        observe(_START + timedelta(hours=1))
-        with store._locked() as conn:  # noqa: SLF001
-            members = conn.execute("SELECT COUNT(*) FROM observed_sets").fetchone()[0]
-        files = sum(1 for path in (instance.root / "cas").rglob("*") if path.is_file())
-        observe(_START + timedelta(hours=2))
-        with store._locked() as conn:  # noqa: SLF001
-            assert conn.execute("SELECT COUNT(*) FROM observed_sets").fetchone()[0] == members
-        added[size] = (
-            sum(1 for path in (instance.root / "cas").rglob("*") if path.is_file()) - files
-        )
-    assert added[12] == added[120] == 1  # the repeat's own journal payload
-
-
 def test_a_later_selection_of_the_same_captures_records_maps_its_rows_too(
     tmp_path: Path,
 ) -> None:
@@ -350,15 +309,18 @@ def test_a_later_selection_of_the_same_captures_records_maps_its_rows_too(
 def test_an_unchanged_extract_step_hashes_no_row_and_follows_by_its_set(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Review 2c #6: the same Capture's rows are derived once per process, and a
-    repeated row set reaches next by its digest, its members never expanded,
-    at 12 and 120 rows."""
+    """Review 2c #6 and 2d #6: a known extraction is found by one seek, never
+    derived again, whatever the working set (12 or 300 Captures, beyond any
+    fixed cache), and a repeated row set reaches next by its digest."""
 
     from types import SimpleNamespace
 
     from cruxible_core.evidence import claim_reobservations
     from cruxible_core.procedures import execution
     from cruxible_core.procedures.extract import _Record
+    from cruxible_core.service.procedures.capture_observations import (
+        InstanceCaptureObservations,
+    )
 
     hashed = [0]
     original = claim_reobservations.row_digest
@@ -368,34 +330,59 @@ def test_an_unchanged_extract_step_hashes_no_row_and_follows_by_its_set(
         return original(*args, **kwargs)
 
     monkeypatch.setattr(claim_reobservations, "row_digest", counted)
+    from cruxible_core.storage.cas import ContentAddressedBodyStore
+
+    stored_bodies = [0]
+    store_body = ContentAddressedBodyStore.store
+
+    def counted_store(self, content, *args, **kwargs):  # type: ignore[no-untyped-def]
+        # Row map, maps and row set bodies (review 2e #4): never stored on a repeat.
+        if b'"tag":"cruxible-row-map' in content or b'"tag":"cruxible-observed-rows' in content:
+            stored_bodies[0] += len(content)
+        return store_body(self, content, *args, **kwargs)
+
+    monkeypatch.setattr(ContentAddressedBodyStore, "store", counted_store)
     work = {}
-    for size in (12, 120):
+    for size in (12, 300):
         root = tmp_path / str(size)
         root.mkdir()
         instance, _owner = _freshness_world(root, stale_after=_HOUR)
-        _claim, cited, key = _cited(instance)
+        _claim, _cited_capture, key = _cited(instance)
         store = ClaimReobservationStore(instance)
+        port = InstanceCaptureObservations(instance)
+        captures = [f"sha256:{index:064x}" for index in range(size)]
         state = SimpleNamespace(
-            capture_contracts={cited: key.contract_digest}, capture_sources={cited: "source"}
+            capture_contracts=dict.fromkeys(captures, key.contract_digest),
+            capture_sources=dict.fromkeys(captures, "source"),
         )
-        outcome = SimpleNamespace(
-            held=[
-                _Record(locator=f"/{index}", key={"id": index}, fields={}) for index in range(size)
-            ]
-        )
-        sequences = []
-        hashed[0] = 0
-        counts = []
-        for run in range(2):
-            row_map, _rows = execution._row_map_of(  # noqa: SLF001
-                state, cited, "sha256:" + "5" * 64, "*", outcome
+        outcomes = {
+            capture: SimpleNamespace(
+                held=[_Record(locator="/0", key={"id": index}, fields={})], typing_key="t"
             )
+            for index, capture in enumerate(captures)
+        }
+        sequences = []
+        counts = []
+        stored = []
+        for run in range(3):
+            hashed[0] = 0
+            stored_bodies[0] = 0
+            derived = [
+                execution._row_map_of(  # noqa: SLF001
+                    state, capture, "sha256:" + "5" * 64, "*|t", outcomes[capture], port
+                )
+                for capture in captures
+            ]
+            maps = [row_map for row_map, _rows in derived]
+            if run:
+                # The run is handed the one read-only view of each known map.
+                assert all(rows is port.map_rows(row_map.digest) for row_map, rows in derived)
             counts.append(hashed[0])
             at = _START + timedelta(hours=1 + run)
             instance.recording_clock = lambda at=at: at
             sequences.append(
                 store.observe_rows(
-                    (row_map,),
+                    tuple(maps),
                     earliest=at - timedelta(minutes=1),
                     latest=at,
                     run_id=f"RUN-{run}",
@@ -403,9 +390,44 @@ def test_an_unchanged_extract_step_hashes_no_row_and_follows_by_its_set(
                     actor_id="o",
                 )
             )
-        _lineages, keys, sets = store.observed_after(sequences[0])
-        work[size] = (counts[1] - counts[0], len(keys), len(sets))
-    assert work[12] == work[120] == (0, 0, 1), work
+            stored.append(stored_bodies[0])
+        _lineages, keys, sets = store.observed_after(sequences[1])
+        work[size] = (counts[1:], stored[1:], len(keys), len(sets))
+        assert stored[0] > 0
+    assert work[12] == work[300] == ([0, 0], [0, 0], 0, 1), work
+
+
+def test_a_record_two_typings_map_to_different_rows_has_no_row(tmp_path: Path) -> None:
+    """Review 2e #3: two extractions of one Capture and spec under different
+    typings can make one locator two rows. A Claim's row is then unknown (its
+    cited content and its own records carry it), never whichever map sorts
+    first; where every map agrees, that row."""
+
+    from cruxible_core.evidence.claim_reobservations import RowMap
+
+    instance, _owner = _freshness_world(tmp_path, stale_after=_HOUR)
+    _claim, cited, key = _cited(instance)
+    store = ClaimReobservationStore(instance)
+    spec = "sha256:" + "5" * 64
+    first, second = "sha256:" + "6" * 64, "sha256:" + "7" * 64
+    plan = (
+        ("t1", (("/0", first), ("/1", first))),
+        ("t2", (("/0", second), ("/1", first))),
+    )
+    for index, (typing, rows) in enumerate(plan):
+        at = _START + timedelta(hours=1 + index)
+        instance.recording_clock = lambda at=at: at
+        store.observe_rows(
+            (RowMap(cited, spec, key.contract_digest, rows, extraction=typing),),
+            earliest=at - timedelta(minutes=1),
+            latest=at,
+            run_id=f"RUN-{index}",
+            node_id="extract",
+            actor_id="o",
+        )
+    reader = ReobservationReader(instance)
+    assert reader.row_of(cited, spec, "/0") is None
+    assert reader.row_of(cited, spec, "/1") == (key.contract_digest, first)
 
 
 def test_a_journal_from_an_unreleased_transition_build_refuses_with_re_initialise(
@@ -449,3 +471,35 @@ def test_a_journal_from_an_unreleased_transition_build_refuses_with_re_initialis
             pass
     with pytest.raises(ClaimReobservationJournalCorrupt, match="re-initialise"):
         store.observed_after(0)
+
+
+def test_a_source_returning_to_a_known_set_names_its_keys_to_next(tmp_path: Path) -> None:
+    """Review 2d #4: B -> A -> B. The return to B is a switch of the source's
+    set: the follower names B's members, so a stale reader subscribed while A
+    held them is reached."""
+
+    from cruxible_core.evidence.claim_reobservations import RowMap
+
+    instance, _owner = _freshness_world(tmp_path, stale_after=_HOUR)
+    _claim, cited, key = _cited(instance)
+    store = ClaimReobservationStore(instance)
+    spec = "sha256:" + "5" * 64
+    row_b = (("/0", "sha256:" + "6" * 64), ("/1", "sha256:" + "8" * 64))
+    row_a = (("/0", "sha256:" + "7" * 64), ("/1", "sha256:" + "8" * 64))
+    sequences = []
+    for index, rows in enumerate((row_b, row_a, row_b)):
+        at = _START + timedelta(hours=1 + index)
+        instance.recording_clock = lambda at=at: at
+        sequences.append(
+            store.observe_rows(
+                (RowMap(cited, spec, key.contract_digest, rows),),
+                earliest=at - timedelta(minutes=1),
+                latest=at,
+                run_id=f"RUN-{index}",
+                node_id="extract",
+                actor_id="o",
+            )
+        )
+    _lineages, keys, _sets = store.observed_after(sequences[1])
+    assert (key.contract_digest, "sha256:" + "8" * 64) in keys
+    assert (key.contract_digest, "sha256:" + "6" * 64) in keys

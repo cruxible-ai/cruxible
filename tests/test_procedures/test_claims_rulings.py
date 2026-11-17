@@ -301,14 +301,14 @@ def test_reobservation_recovery_replays_the_core_changes_once(
     class Crash(BaseException):
         pass
 
-    original = ClaimReobservationStore.record
+    original = ClaimReobservationStore.record_many
 
-    def crash_after_append(self, **kwargs):
-        original(self, **kwargs)
+    def crash_after_append(self, requests, **kwargs):
+        original(self, requests, **kwargs)
         raise Crash()
 
     with monkeypatch.context() as patch:
-        patch.setattr(ClaimReobservationStore, "record", crash_after_append)
+        patch.setattr(ClaimReobservationStore, "record_many", crash_after_append)
         with pytest.raises(Crash):
             run(instance, root, minute=1)
     recovered = service_recover_proposal_egress(instance, recorded_at=NOW + timedelta(minutes=2))

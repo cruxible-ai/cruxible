@@ -545,6 +545,9 @@ def _forget_parsed_receipts() -> None:
     from cruxible_core.query import engine, explanation
 
     settlement._CHANGE_SET_PARSES.clear()
+    # Worlds built from the same items hash to the same digests, so a digest
+    # validated by an earlier test in this process would hide cold work.
+    canonical._valid_sha256_hex.cache_clear()
     recovery.reset_released_records()
     memos = (
         closure._PROOFS,

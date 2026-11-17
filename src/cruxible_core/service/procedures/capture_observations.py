@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import threading
 from collections import OrderedDict
+from collections.abc import Mapping
 from datetime import datetime
 from typing import Any
 
@@ -56,13 +57,18 @@ class InstanceCaptureObservations:
         found = store.capture_envelopes.capture_for_content_key(content_key)
         if found is None:
             return None
-        digest, proof = found
+        digest, proofs = found
         # Named only once its run journaled producing it (F-008): reusable only
-        # while that production record's body is not recorded missing, corrupt
-        # or erased (a journal payload lands with its record, so only damage
-        # is logged for it): one indexed answer, never a read of the producing
-        # run's records.
-        if _proof_lost(store, proof):
+        # while every journal payload its production is verified from (the
+        # run's admission, the invocation's completion and source records, the
+        # production record; review 2e #5) is neither recorded missing, corrupt
+        # or erased nor unreadable: one indexed answer, a few bodies read once
+        # per process, never a read of the producing run's records. A row
+        # naming fewer (an earlier build's) is never reused: the run fetches
+        # anew and names its own.
+        if len(proofs) < 3 or any(
+            _proof_lost(store, proof) or not _proof_shown(store, proof) for proof in proofs
+        ):
             return None
         if body_present(store, digest) is False or body_present(store, commitment_digest) is False:
             return None
@@ -75,11 +81,11 @@ class InstanceCaptureObservations:
             return None
         return digest, envelope
 
-    def remember(self, content_key: str, capture_digest: str, *, proof: str) -> None:
+    def remember(self, content_key: str, capture_digest: str, *, proofs: tuple[str, ...]) -> None:
         """Name the new Capture these contents' next identical re-fetch reuses."""
 
         self.instance.body_store().capture_envelopes.remember_content_key(
-            content_key, capture_digest, proof=proof
+            content_key, capture_digest, proofs=proofs
         )
 
     def observe_rows(
@@ -103,30 +109,15 @@ class InstanceCaptureObservations:
             lineage=lineage,
         )
 
-    def observe_enumeration(
-        self,
-        *,
-        contract_digest: str,
-        lacks: tuple[str, ...],
-        capture_digest: str,
-        earliest: datetime,
-        latest: datetime,
-        run_id: str,
-        node_id: str,
-        actor_id: str,
-        lineage: dict[str, str] | None = None,
-    ) -> None:
-        ClaimReobservationStore(self.instance).observe_enumeration(
-            contract_digest=contract_digest,
-            lacks=lacks,
-            capture_digest=capture_digest,
-            earliest=earliest,
-            latest=latest,
-            run_id=run_id,
-            node_id=node_id,
-            actor_id=actor_id,
-            lineage=lineage,
-        )
+    def extraction_map(self, extraction: str) -> str | None:
+        return ReobservationReader.of(self.instance).extraction_map(extraction)
+
+    def map_rows(self, map_digest: str) -> Mapping[str, str]:
+        return ReobservationReader.of(self.instance).map_rows(map_digest)
+
+    def rechecked(self, claim_id: str, version: str, capture_digest: str) -> bool:
+        latest = ReobservationReader.of(self.instance).rechecked(claim_id, version)
+        return latest is not None and latest[0] == capture_digest
 
     def row_of(self, capture_digest: str, spec_digest: str, locator: str) -> str | None:
         found = ReobservationReader.of(self.instance).row_of(capture_digest, spec_digest, locator)
@@ -152,6 +143,32 @@ class InstanceCaptureObservations:
             actor_id=actor_id,
             lineage=lineage,
         )
+
+
+#: Production proof bodies read whole once in this process (immutable by
+#: digest: a later loss is a recorded damage or erasure, ``_proof_lost``).
+_SHOWN: set[tuple[str, str]] = set()
+
+
+def _proof_shown(store: Any, digest: str) -> bool:
+    """Whether the production record's body can be read (review 2d #3).
+
+    A journal payload's arrival is not in the landing log, so its loss can go
+    unrecorded: the candidate's proof is read once per process, and a Capture
+    whose proof cannot be shown is never reused; the run fetches anew and
+    records producing it, which replaces the reuse key.
+    """
+
+    key = (str(getattr(store, "root", "")), digest)
+    if key in _SHOWN:
+        return True
+    try:
+        store.read(digest, access=_ACCESS)
+    except (CruxibleError, OSError, ValueError):
+        return False
+    with _LOCK:
+        _SHOWN.add(key)
+    return True
 
 
 def _proof_lost(store: Any, digest: str) -> bool:

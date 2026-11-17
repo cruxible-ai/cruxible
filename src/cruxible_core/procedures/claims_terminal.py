@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
@@ -854,6 +854,7 @@ def expand_claims(
                         and not _observed_same_row(
                             receipt.value, held_claim, state=state, executor=executor
                         )
+                        and not _already_rechecked(held_claim, receipt.value, executor=executor)
                     ):
                         changes.append(
                             CoreReobservationChange(
@@ -1088,7 +1089,7 @@ def _observed_same_row(value: Any, held_claim: ClaimArtifact, *, state: Any, exe
 
     held = held_claim.backing.procedure_evidence
     port = getattr(executor, "capture_observations", None)
-    rows: dict[tuple[str, str], dict[str, str]] = getattr(state, "row_maps", {})
+    rows: Mapping[tuple[str, str], Mapping[str, str]] = getattr(state, "row_maps", {})
     if (
         not isinstance(value, ExtractedBasis)
         or held is None
@@ -1107,6 +1108,31 @@ def _observed_same_row(value: Any, held_claim: ClaimArtifact, *, state: Any, exe
     if known is None:
         known = port.row_of(cited.capture_digest, cited.extract_spec_digest, cited.record_locator)
     return current is not None and known == current
+
+
+def _already_rechecked(held_claim: ClaimArtifact, value: Any, *, executor: Any) -> bool:
+    """Whether this Claim version's latest per-Claim re-check is in this Capture.
+
+    Its row changed elsewhere, so the row observation does not cover it; once
+    a per-Claim record re-checked this exact version in this Capture, the
+    Capture's later identical fetches refresh it through the Capture's content
+    (``claim_keys_on``), so restating it again prepares nothing (review 2d
+    #7). Only the latest re-check is that association: a return to an earlier
+    re-checked Capture, or a successor version, is re-checked again (review
+    2e #1-#2).
+    """
+
+    from cruxible_client.contracts.claims import claim_artifact_digest
+
+    port = getattr(executor, "capture_observations", None)
+    capture = getattr(value, "capture_digest", None)
+    return (
+        port is not None
+        and isinstance(capture, str)
+        and port.rechecked(
+            held_claim.identity.name, claim_artifact_digest(held_claim).tagged, capture
+        )
+    )
 
 
 def _observed_now(state: Any, capture: str) -> bool:

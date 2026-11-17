@@ -116,6 +116,7 @@ from cruxible_core.authoring.lowering import (
 from cruxible_core.evidence.claim_reobservations import (
     ClaimReobservationRefused,
     ClaimReobservationStore,
+    ReobservationRequest,
 )
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.indexes.subject_identity import (
@@ -2337,6 +2338,38 @@ class ProposalTerminalEgressSink:
         refused: dict[str, ReobservationRefusalReason] = {}
         if not unchanged:
             return refused
+        keys: list[str] = []
+        requests: list[ReobservationRequest] = []
+        for child in unchanged:
+            if not isinstance(child, TerminalEgressChildReceiptV3):
+                continue  # a reused Subject observes nothing
+            change = request.claims_changes.get(child.item_key)
+            keys.append(child.item_key)
+            requests.append(
+                ReobservationRequest(
+                    claim_id=PurePosixPath(child.path).stem,
+                    capture_digest=child.reobserving_capture_digest,
+                    extraction=request.claims_evidence.get(child.item_key),
+                    extracted_value=(
+                        change.value if isinstance(change, CoreReobservationChange) else None
+                    ),
+                    call=request.observation_calls.get(child.reobserving_capture_digest),
+                )
+            )
+        # One journal record for the delivery (each Claim still its own
+        # re-observation when read back).
+        for index, exc in (
+            ClaimReobservationStore(self.instance)
+            .record_many(
+                requests,
+                actor_id=request.actor_context.actor_id,
+                cited_envelopes={},
+                verified_witnesses={},
+            )
+            .items()
+        ):
+            refused[keys[index]] = exc.reason
+        return refused
         store = ClaimReobservationStore(self.instance)
         cited_envelopes: dict[str, CaptureEnvelopeAny] = {}
         verified_witnesses: dict[object, None] = {}
@@ -2352,7 +2385,7 @@ class ProposalTerminalEgressSink:
                     extraction=request.claims_evidence.get(child.item_key),
                     cited_envelopes=cited_envelopes,
                     verified_witnesses=verified_witnesses,
-                    call_latest=request.observation_latest.get(child.reobserving_capture_digest),
+                    call=request.observation_calls.get(child.reobserving_capture_digest),
                     extracted_value=(
                         change.value
                         if isinstance(

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Any, Callable, Iterable, Literal, NoReturn, Sequence
 
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
@@ -284,14 +283,6 @@ def append_absence(
             expect_coordinate=admission.accepted_coordinate,
         )
         seal(witness)
-    # A complete enumeration this run fetched whole is observed as the set of
-    # Subjects it lacked (ruling 2026-11-16 (1)): every absence derived from
-    # it reads that one observation, so a held absence needs no per-Claim
-    # reconfirmation (review 2c #3, #5).
-    observing = (
-        None if witness is None else _enumeration_span(witness, executor=executor, state=state)
-    )
-    lacked: set[str] = set()
     if not complete:
         diagnostics.add(
             ClaimsDiagnostic(
@@ -666,21 +657,22 @@ def append_absence(
                             )
                         continue
                     seen_changes.add(unit)
-                    lacked.add(path)
                     if claim is not None and isinstance(claim.statement.object, NoneClaimObject):
                         diagnostics.same += 1
-                        if observing is None and capture not in claim.backing.capture_digests:
-                            append(
-                                CoreReobservationChange(
-                                    rationale="Re-confirmed complete source absence.",
-                                    claim_id=claim.identity.name,
-                                    artifact_digest=claim_artifact_digest(claim).tagged,
-                                    value=inverse,
-                                ),
-                                receipt,
-                                {"absence": path, "template": index, "unit": inverse},
-                                held_identity(subject, ct, claim),
-                            )
+                        # Every complete run reconfirms a held absence: one small
+                        # per-Claim record, at this run's call (the 0.5.0
+                        # fallback, maintainer ruling 2026-11-16).
+                        append(
+                            CoreReobservationChange(
+                                rationale="Re-confirmed complete source absence.",
+                                claim_id=claim.identity.name,
+                                artifact_digest=claim_artifact_digest(claim).tagged,
+                                value=inverse,
+                            ),
+                            receipt,
+                            {"absence": path, "template": index, "unit": inverse},
+                            held_identity(subject, ct, claim),
+                        )
                         continue
                     if created_target is not None:
                         if create_target is None:
@@ -728,56 +720,6 @@ def append_absence(
                                 "context": context,
                             },
                         )
-    if observing is not None and witness is not None and lacked:
-        _observe_lacks(witness, sorted(lacked), observing, executor=executor, admission=admission)
-
-
-def _enumeration_span(
-    witness: AbsenceWitness, *, executor: Any, state: Any
-) -> tuple[str, datetime, datetime] | None:
-    """The contract and span a complete enumeration can be observed with, when
-    this run fetched every Capture it read (F-001); None otherwise."""
-
-    from cruxible_core.procedures.execution import _capture_span
-
-    if getattr(executor, "capture_observations", None) is None:
-        return None
-    spans = [_capture_span(state, capture) for capture in witness.captures]
-    contract = state.capture_contracts.get(witness.capture)
-    if contract is None or any(span is None for span in spans):
-        return None
-    known = [span for span in spans if span is not None]
-    return contract, min(span[0] for span in known), max(span[1] for span in known)
-
-
-def _observe_lacks(
-    witness: AbsenceWitness,
-    subjects: Sequence[str],
-    observing: tuple[str, datetime, datetime],
-    *,
-    executor: Any,
-    admission: Any,
-) -> None:
-    """Publish what the complete enumeration lacked: one shared record, keyed by
-    each lacked Subject (``lack_digest``); the same lacks again are one head update."""
-
-    from cruxible_core.evidence.claim_reobservations import lack_digest
-
-    contract, earliest, latest = observing
-    executor.capture_observations.observe_enumeration(
-        contract_digest=contract,
-        lacks=tuple(lack_digest(witness, subject) for subject in subjects),
-        capture_digest=witness.capture,
-        earliest=earliest,
-        latest=latest,
-        run_id=admission.run_id,
-        node_id=witness.node_id,
-        actor_id=admission.actor_context.actor_id,
-        lineage={
-            "procedure": admission.procedure_identity.qualified,
-            "procedure_artifact_digest": admission.procedure_artifact_digest,
-        },
-    )
 
 
 def _pairs_by_end(
