@@ -647,13 +647,13 @@ def test_an_authored_parameter_description_is_shown_as_written(tmp_path: Path) -
 
     output = CliRunner().invoke(show).output
     assert (
-        "      needs  file data/doc.json (json, at most 256 KiB, parameter path): present\n"
-        in output
+        "      needs  file data/doc.json (json, at most 256 KiB per its CaptureContract, "
+        "parameter path): present\n" in output
     )
     assert f"        {DOC_HELP}\n" in output
     assert (
-        "      needs  file data/missing.json (json, at most 256 KiB, parameter path): absent\n"
-        in output
+        "      needs  file data/missing.json (json, at most 256 KiB per its CaptureContract, "
+        "parameter path): absent\n" in output
     )
 
 
@@ -786,3 +786,47 @@ def test_a_call_prints_its_build_short_and_the_capability_its_slot_names(
         "  (capability workspace.file@1)\n" in output
     )
     assert "ab" * 7 not in output
+
+
+def test_a_fetch_names_its_request_max_bytes_beside_the_contract_budget() -> None:
+    """coldcli-15: the contract's budget and the Line's request max_bytes both show."""
+
+    from cruxible_client.contracts.procedures.models import CallNode, ProjectNode
+    from cruxible_core.cli.commands.playbill import _runbook_input_lines
+    from cruxible_core.service.runbook_preview import DefinitionReader, _inputs
+    from tests.core_support._light_capture_support import JSON_DECODING, http_contract
+    from tests.support.lines import line_spec
+    from tests.support.procedures import procedure_definition
+
+    contract = http_contract(name="test.feed", max_bytes=1 << 20, decoding=JSON_DECODING)
+    reader = DefinitionReader(_Typed({"CaptureContract:test.feed": contract}))
+    base = _fetch_definition("test.feed-procedure")
+    call = base.nodes[0]
+    definition = procedure_definition(
+        "test.feed-procedure",
+        slots={
+            "fetch": {
+                "capability": {"name": "web.fetch", "version": 1, "digest": "sha256:" + "1" * 64}
+            }
+        },
+        nodes=(
+            CallNode(
+                node_id="catalog",
+                slot="fetch",
+                input={**call.input, "max_bytes": "$params.max_bytes"},
+                captures=call.captures,
+                as_="catalog",
+                next="result",
+            ),
+            ProjectNode(node_id="result", fields={}, as_="result"),
+        ),
+    )
+    line = line_spec(
+        "test.feed-line",
+        parameters={"url": "https://feeds.example.test/a.json", "max_bytes": 4 << 20},
+    )
+    (item,) = _inputs(reader, definition, line, None)
+
+    assert (item.limits.max_bytes, item.limits.request_max_bytes) == (1 << 20, 4 << 20)
+    text = "\n".join(_runbook_input_lines(item))
+    assert "at most 1 MiB per its CaptureContract" in text and "request max_bytes 4 MiB" in text

@@ -94,7 +94,7 @@ def test_a_next_page_prints_what_cruxible_next_prints(
     cli_text = _cli(http, instance_id, monkeypatch, "next", "--workspace-root", workspace)
 
     _same_text(cli_text, str(page))
-    assert repr(page).startswith("NextPage(")
+    assert repr(page) == str(page).splitlines()[0]
 
 
 @pytest.mark.parametrize(
@@ -127,7 +127,8 @@ def test_a_get_card_prints_what_cruxible_get_prints(
     cli_text = _cli(http, instance_id, monkeypatch, "get", target, "--detail", detail)
 
     _same_text(cli_text, str(card), instants=detail == "why")
-    assert repr(card).startswith("KnowledgeCard(")
+    # S1: one short line naming the thing, never a model dump.
+    assert "\n" not in repr(card) and card.identity in repr(card)
 
 
 def test_str_makes_no_request(world) -> None:  # type: ignore[no-untyped-def]

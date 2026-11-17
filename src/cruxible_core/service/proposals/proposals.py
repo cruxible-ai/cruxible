@@ -24,6 +24,7 @@ from cruxible_client.contracts.errors import (
     ProposalReadmitRequiresResubmission,
     ProposalSelectorAmbiguousError,
     ProposalStale,
+    ProposalWithdrawNotAuthor,
 )
 from cruxible_client.contracts.principals import AuthoringRefusal
 from cruxible_client.contracts.procedures.node_summary import (
@@ -1421,13 +1422,17 @@ def _is_kit_removal(source: ProposalResult) -> bool:
 
     Additions and removals share the ``kit-{id}-{digest}`` target, and the
     candidate does not tell them apart by itself (a removal that only keeps
-    and carries retires nothing). The one transition the submitter records on
-    the proposal is its rationale, written by one format for each: ``Remove kit
-    {id} {version}.`` for a removal, Install/Upgrade/Downgrade/Reinstall for the
-    rest. The check is that exact form.
+    and carries retires nothing). The kit door records the transition on the
+    admission (``kit_transition``). A kit proposal admitted before that field
+    existed falls back to its rationale, written by one format for each:
+    ``Remove kit {id} {version}.`` for a removal, Install/Upgrade/Downgrade/
+    Reinstall for the rest; the check is that exact form.
     """
 
     kit_id = _kit_id(source)
+    recorded = source.admission.kit_transition
+    if kit_id is not None and recorded is not None:
+        return recorded == "remove"
     rationale = source.admission.rationale or ""
     return (
         kit_id is not None
@@ -1745,7 +1750,6 @@ def service_withdraw_playbill_proposal(
     actor_id: str,
     reason: str,
     withdrawn_at: str,
-    unscoped_operator: bool = False,
     dry_run: bool | None = None,
     at: str | None = None,
 ) -> PlaybillProposalWithdrawResultV1:
@@ -1766,21 +1770,12 @@ def service_withdraw_playbill_proposal(
     intent would lose the outcome. A proposal awaiting readmit (its base moved)
     has no ending yet, so it may be withdrawn instead of readmitted.
 
-    WHO may withdraw. Ordinarily the proposal's own actor, matched on
-    `admission.actor_id` -- which is the runtime credential's LABEL, because a
-    label is the only identity a proposal carries and the only one a later
-    request can present. That is deliberately not a tier check: an ADMIN of the
-    same instance is still not the author of somebody else's proposal, and
-    withdrawal is a statement of intent, which only its author has.
-
-    A label is not durable, though. Rotating, revoking or re-minting a
-    credential under a different label would leave that actor's open proposals
-    withdrawable by nobody and permanently in the inventory -- card 110's
-    graveyard, back through the door this verb exists to close. So an UNSCOPED
-    operator, holding a daemon-wide credential rather than an instance-bound
-    one, may withdraw any withdrawable proposal. It is the authority that
-    already allocates and stops hosts, and withdrawal touches no accepted state,
-    so it is a strictly smaller lever than the ones it holds.
+    WHO may withdraw: only the proposal's own actor, matched on
+    `admission.actor_id`. Withdrawal is a statement of intent, which only its
+    author has; it is deliberately not a tier check. Anyone else is refused
+    ``cruxible.proposal.withdraw_not_author`` with the reviewer's repair,
+    rejecting it with a reason. (A later run of a Line supersedes its Line's
+    open proposal through its own path, not this verb.)
     """
 
     with change_scope(
@@ -1798,7 +1793,6 @@ def service_withdraw_playbill_proposal(
             actor_id=actor_id,
             reason=reason,
             withdrawn_at=withdrawn_at,
-            unscoped_operator=unscoped_operator,
         )
 
 
@@ -1810,13 +1804,10 @@ def _withdraw(
     actor_id: str,
     reason: str,
     withdrawn_at: str,
-    unscoped_operator: bool,
 ) -> PlaybillProposalWithdrawResultV1:
     admission = instance.proposal_evidence().read_admission(proposal_id)
-    if admission.actor_id != actor_id and not unscoped_operator:
-        raise ProposalAdmissionError(
-            "only the source proposal actor, or a daemon-wide operator, may withdraw it"
-        )
+    if admission.actor_id != actor_id:
+        raise ProposalWithdrawNotAuthor(proposal_id, author=admission.actor_id)
     record, already, coordinate = _close(
         instance,
         mode,

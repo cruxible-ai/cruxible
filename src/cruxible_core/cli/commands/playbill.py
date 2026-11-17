@@ -146,6 +146,7 @@ from cruxible_client.contracts.kits import (
     kit_version_key,
 )
 from cruxible_client.contracts.line_dispatch import LineDispatchItem, LineEvaluateResult
+from cruxible_client.contracts.line_inbox import compact_inbox_list
 from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.principals import is_canonical_principal_id
 from cruxible_client.contracts.procedures.results import (
@@ -160,7 +161,6 @@ from cruxible_client.contracts.provider_installation import (
     ProviderRetireRequest,
 )
 from cruxible_client.contracts.public_names import public_name as _public_name
-from cruxible_client.contracts.read_values import shown_plain
 from cruxible_client.contracts.repair_spelling import render_repair
 from cruxible_client.contracts.repairs import RepairOperation
 from cruxible_client.contracts.resolution_contracts import ResolutionContractReference
@@ -206,8 +206,11 @@ from cruxible_client.contracts.write import (
 from cruxible_client.errors import DataValidationError
 from cruxible_client.kits import (
     KIT_ARTIFACT,
+    add_kit_files,
     check_kit_updates,
+    compact_kit_change,
     kit_automation_template,
+    read_kit_build_files,
     resolve_kit,
     resolve_kit_image,
     stage_kit_providers,
@@ -1796,6 +1799,12 @@ def body_group() -> None:
 @json_option
 @handle_errors
 def store_body(path: str, output_json: bool) -> None:
+    """Store PATH's bytes (`-` reads stdin) as an inert body and print its digest.
+
+    The bytes are stored, never interpreted; a Document proposal names the
+    digest as its body.
+    """
+
     content = read_payload_bytes(path)
     result = _server_call(
         lambda client, instance_id: client.store_body(instance_id, content),
@@ -2146,6 +2155,8 @@ def retire_provider(build: str, dry_run: bool | None, at: str | None, output_jso
         click.echo(f"{result.build}: {result.status}")
         for identity in result.pinned_by:
             click.echo(f"  pinned by {identity}")
+        for warning in result.warnings:
+            click.echo(f"warning: {printable(warning)}", err=True)
         if result.detail:
             click.echo(result.detail)
         if result.proposal_id:
@@ -2225,6 +2236,7 @@ def kit_group() -> None:
 _KIT_CONSEQUENCE_TEXT = {
     "overwrites_your_edit": "overwrites your edit",
     "re_adds_retired": "re-adds a definition you retired",
+    "consumer_retired": "keeps your retirement",
     "takes_over_outside_definition": "takes over a definition you defined outside the kit",
     "replaces_carried_definition": "replaces a definition the kit depends on",
     "release_dropped": "the release dropped it",
@@ -2234,6 +2246,7 @@ _KIT_CONSEQUENCE_TEXT = {
 _KIT_KEEP_TEXT = {
     "overwrites_your_edit": ("keeps your edit", "your edit"),
     "re_adds_retired": ("keeps it retired", "you retired it"),
+    "consumer_retired": ("kept retired", "you retired it"),
     "takes_over_outside_definition": (
         "keeps your definition from outside the kit",
         "your definition from outside the kit",
@@ -2322,9 +2335,43 @@ def _exit_if_kit_blocked(result: KitChangeResult) -> None:
         raise SystemExit(1)
 
 
+def _echo_kit_refusals(result: KitChangeResult) -> None:
+    if result.detail:
+        click.echo(printable(result.detail))
+    for refusal in result.refusals:
+        click.echo(refusal.code)
+        click.echo(f"Next: {printable(refusal.repair)}")
+
+
+def _kit_plan_counts(result: KitChangeResult) -> list[str]:
+    """One line per plan action: how many paths of each kind (``retire: 120 (...)``)."""
+
+    counts: dict[str, dict[str, int]] = {}
+    for item in result.plan:
+        if item.action == "unchanged":
+            continue
+        kind = _kit_plan_heading((item.identity or item.path).partition(":")[0])
+        by_kind = counts.setdefault(item.action, {})
+        by_kind[kind] = by_kind.get(kind, 0) + 1
+    return [
+        f"  {action}: {sum(by_kind.values()):,} ("
+        + ", ".join(f"{kind} {count:,}" for kind, count in sorted(by_kind.items()))
+        + ")"
+        for action, by_kind in sorted(counts.items())
+    ]
+
+
 def _echo_kit_change(
-    result: KitChangeResult, *, template_on_disk: Path | None = None, source: str | None = None
+    result: KitChangeResult,
+    *,
+    template_on_disk: Path | None = None,
+    source: str | None = None,
+    blocked_plan: Literal["list", "counts"] | None = None,
 ) -> None:
+    """One kit change. ``blocked_plan`` (kit remove) puts a blocked change's refusal
+    and repair first, then its plan as counts per kind, or listed after them."""
+
+    refusal_first = blocked_plan is not None and result.status in {"blocked", "would_block"}
     version = "" if result.version is None else f" {result.version}"
     transition = ""
     if result.transition is not None:
@@ -2349,12 +2396,27 @@ def _echo_kit_change(
             f"Built by {provenance.principal_id or 'an unattributed principal'} on "
             f"{provenance.instance_id} at {provenance.coordinate.git_oid[:12]} (claimed)"
         )
+    if refusal_first:
+        _echo_kit_refusals(result)
+        counts = _kit_plan_counts(result)
+        if counts:
+            click.echo("Plan:")
+            for line in counts:
+                click.echo(line)
+            if blocked_plan == "counts":
+                click.echo("(--detail lists each path)")
     groups: dict[str, list[str]] = {}
+    shows_unchanged = result.unchanged is None
     for item in result.plan:
-        if item.action == "unchanged":
+        if item.action == "unchanged" and not shows_unchanged:
             continue
         kind = _kit_plan_heading((item.identity or item.path).partition(":")[0])
-        line = f"  {item.action}: {_public_name(item.identity) if item.identity else item.path}"
+        named = _public_name(item.identity) if item.identity else item.path
+        if item.consequence == "consumer_retired":
+            # S7: your retirement stands; nothing to decide.
+            groups.setdefault(kind, []).append(f"  kept retired: {named}")
+            continue
+        line = f"  {item.action}: {named}"
         notes = []
         if item.consequence is not None:
             notes.append(
@@ -2369,15 +2431,15 @@ def _echo_kit_change(
         if notes:
             line += f" ({'; '.join(notes)})"
         groups.setdefault(kind, []).append(line)
-    for kind in sorted(groups):
-        click.echo(f"{kind}:")
-        for line in groups[kind]:
-            click.echo(line)
-    if result.detail:
-        click.echo(printable(result.detail))
-    for refusal in result.refusals:
-        click.echo(refusal.code)
-        click.echo(f"Next: {printable(refusal.repair)}")
+    if not refusal_first or blocked_plan == "list":
+        for kind in sorted(groups):
+            click.echo(f"{kind}:")
+            for line in groups[kind]:
+                click.echo(line)
+    if result.unchanged:
+        click.echo(f"unchanged: {result.unchanged:,} (--detail lists each)")
+    if not refusal_first:
+        _echo_kit_refusals(result)
     _echo_automation_template(
         result.automation_template, on_disk=template_on_disk, reference=source
     )
@@ -2454,6 +2516,17 @@ def _echo_kit_change(
         "is stored); kit add never installs or submits it."
     ),
 )
+@click.option(
+    "--file",
+    "kit_files",
+    multiple=True,
+    metavar="PATH",
+    help=(
+        "A plain file the kit carries for its reader, such as README.md or a reference "
+        "page (repeatable). It keeps its path relative to the workspace root and is "
+        "listed in the manifest's files with its sha256; it is never a definition."
+    ),
+)
 @json_option
 @handle_errors
 def build_kit(
@@ -2464,6 +2537,7 @@ def build_kit(
     providers: tuple[Path, ...],
     default_providers: tuple[Path, ...],
     automation_template: Path | None,
+    kit_files: tuple[str, ...],
     output_json: bool,
 ) -> None:
     """Export this instance's owned definitions as one self-contained kit release.
@@ -2502,7 +2576,12 @@ def build_kit(
         )
         return client.build_kit(instance_id, request)
 
-    bundle = _server_call(build, command_name="cruxible kit build").bundle
+    carried: tuple[tuple[str, bytes], ...] = ()
+    if kit_files:
+        workspace = _existing_workspace_root() or Path.cwd()
+        # Read before the build, so a missing or outside path refuses first.
+        carried = read_kit_build_files(kit_files, workspace=workspace)
+    bundle = add_kit_files(_server_call(build, command_name="cruxible kit build").bundle, carried)
     write_kit_directory(bundle, out)
     if output_json:
         _emit_json(bundle.manifest.model_dump(mode="json"))
@@ -2513,8 +2592,10 @@ def build_kit(
             f"content {bundle.manifest.content_digest}"
         )
         _echo_kit_requires(bundle.manifest.requires)
-        template = bundle.manifest.automation_template
-        _echo_automation_template(template, on_disk=_kit_directory_file(str(out), template))
+        template_path = bundle.manifest.automation_template
+        _echo_automation_template(
+            template_path, on_disk=_kit_directory_file(str(out), template_path)
+        )
 
 
 @kit_group.command("add")
@@ -2553,6 +2634,12 @@ def build_kit(
 @click.option(
     "--allow-downgrade", is_flag=True, help="Install a release older than the installed one."
 )
+@click.option(
+    "--detail",
+    "show_unchanged",
+    is_flag=True,
+    help="List every path, the unchanged ones too (by default they are counted).",
+)
 @change_control_options
 @json_option
 @handle_errors
@@ -2564,6 +2651,7 @@ def add_kit(
     retire_dependents: tuple[str, ...],
     keep_build: tuple[str, ...],
     allow_downgrade: bool,
+    show_unchanged: bool,
     dry_run: bool | None,
     at: str | None,
     output_json: bool,
@@ -2619,6 +2707,8 @@ def add_kit(
         return client.add_kit(instance_id, request)
 
     result = with_automation_template(_server_call(add, command_name="cruxible kit add"), template)
+    if not show_unchanged:
+        result = compact_kit_change(result)
     if output_json:
         _emit_json(result.model_dump(mode="json"))
     else:
@@ -2760,14 +2850,26 @@ def kit_status(offline: bool, output_json: bool) -> None:
 
 @kit_group.command("remove")
 @click.argument("kit_id")
+@click.option(
+    "--detail",
+    "show_plan",
+    is_flag=True,
+    help="On a blocked removal, also list each path it would retire or keep.",
+)
 @change_control_options
 @json_option
 @handle_errors
-def remove_kit(kit_id: str, dry_run: bool | None, at: str | None, output_json: bool) -> None:
+def remove_kit(
+    kit_id: str, show_plan: bool, dry_run: bool | None, at: str | None, output_json: bool
+) -> None:
     """Retire every artifact KIT_ID installed (previews by default).
 
     Lands at once when the approval policy requires no approval, otherwise it
-    stops at proposed.
+    stops at proposed. Removal is one-way: a removed kit cannot be added back.
+    Live Claims under its definitions block it until they are retired;
+    automation you authored over the kit is never retired by it. A blocked
+    removal prints the refusal and its repair first, then counts per kind;
+    --detail lists each path.
     """
     request = KitRemoveRequest(kit_id=kit_id, dry_run=dry_run, at=at)
     result = _server_call(
@@ -2777,7 +2879,7 @@ def remove_kit(kit_id: str, dry_run: bool | None, at: str | None, output_json: b
     if output_json:
         _emit_json(result.model_dump(mode="json"))
     else:
-        _echo_kit_change(result)
+        _echo_kit_change(result, blocked_plan="list" if show_plan else "counts")
     _exit_if_kit_blocked(result)
 
 
@@ -2843,9 +2945,22 @@ def capture_group() -> None:
 
 @capture_group.command("read")
 @click.argument("capture_digest")
-@click.option("--max-bytes", type=click.IntRange(min=0), default=4 * 1024 * 1024, show_default=True)
+@click.option(
+    "--max-bytes",
+    type=click.IntRange(min=0),
+    default=4 * 1024 * 1024,
+    show_default=True,
+    help="The most body bytes returned.",
+)
 @handle_errors
 def read_capture(capture_digest: str, max_bytes: int) -> None:
+    """Verify and read one retained Capture: its envelope and body, as JSON.
+
+    CAPTURE_DIGEST is the Capture's digest. The body is base64 (`body`), at most
+    --max-bytes of it; reading it needs body-read permission. An erased or
+    unavailable body answers `unavailable` with its reason.
+    """
+
     from cruxible_client.contracts.capture_reads import CaptureReadRequest
 
     result = _server_call(
@@ -4365,8 +4480,18 @@ def _principal_successor(
     dry_run: bool | None,
     at: str | None,
     output_json: bool,
+    command: str,
 ) -> None:
-    """Propose a successor key for ``target_id`` and print it (``rotate`` and ``recover``)."""
+    """Propose a successor key for ``target_id`` and print it (``rotate`` and ``recover``).
+
+    S5: the new key directory gets the principal's settings file, as `principal
+    add` writes one: the connection, the instance, the new key and the bearer
+    token of the settings file the CLI remembers for the principal. The CLI keeps
+    acting with the old file until the change is active (activation is signed
+    with the current key); the output names the new file to load then.
+    """
+
+    generated: list[tuple[str, GeneratedKeyMaterial]] = []
 
     def call(client: CruxibleClient, instance_id: str) -> contracts.ProposalInspection:
         matches = principal_records(client, instance_id)
@@ -4379,6 +4504,7 @@ def _principal_successor(
             kind=target.kind,
             forbidden_roots=_custody_forbidden_roots(),
         )
+        generated.append((instance_id, material))
         return client.propose_principal_change(
             instance_id,
             principal=material.principal.model_dump(mode="json"),
@@ -4399,10 +4525,55 @@ def _principal_successor(
         if dry_run
         else _server_call(call, command_name="cruxible principal change")
     )
+    settings = (
+        _successor_settings(target_id, Path(key_dir).expanduser(), *generated[0], command=command)
+        if generated
+        else None
+    )
     if output_json:
-        _emit_json(result.model_dump(mode="json"))
-    else:
-        _echo_proposal(result, result.lint, principal_change=True)
+        payload = result.model_dump(mode="json")
+        if settings is not None:
+            payload["settings_path"] = str(settings)
+        _emit_json(payload)
+        return
+    _echo_proposal(result, result.lint, principal_change=True)
+    if settings is not None:
+        click.echo(f"Settings for the new key: {settings}")
+        click.echo(f"Once the change is active, load them with: set -a; . {settings}; set +a")
+
+
+def _successor_settings(
+    principal_id: str,
+    key_dir: Path,
+    instance_id: str,
+    material: GeneratedKeyMaterial,
+    *,
+    command: str,
+) -> Path:
+    """Write the settings file beside a successor key, carrying the remembered token."""
+
+    from cruxible_client.authoring.principal_settings import read_principal_settings
+    from cruxible_core.cli.context import principal_binding
+
+    token: str | None = None
+    transport = _transport_target(_root_ctx_obj())
+    if transport is not None:
+        known = load_cli_context().principals.get(principal_binding(transport, instance_id))
+        remembered = None if known is None else known.settings.get(principal_id)
+        if remembered is not None:
+            try:
+                token = read_principal_settings(Path(remembered)).token
+            except (OSError, ValueError):
+                token = None
+    return write_principal_settings(
+        key_dir,
+        ctx_obj=_root_ctx_obj(),
+        instance_id=instance_id,
+        principal_id=principal_id,
+        private_key_path=material.private_key_path,
+        token=token,
+        written_by=command,
+    )
 
 
 @principal_group.command("rotate")
@@ -4434,6 +4605,7 @@ def rotate_principal(
         dry_run=dry_run,
         at=at,
         output_json=output_json,
+        command="cruxible principal rotate",
     )
 
 
@@ -4467,6 +4639,7 @@ def recover_principal(
         dry_run=dry_run,
         at=at,
         output_json=output_json,
+        command="cruxible principal recover",
     )
 
 
@@ -4732,7 +4905,7 @@ def _echo_proposal(
         )
     actor = admission.get("actor_id") if isinstance(admission, Mapping) else None
     if inspection.outcome is not None:
-        _echo_landing(inspection.outcome)
+        _echo_landing(inspection.outcome, inspection.warnings)
     elif (
         proposal_id
         and principal_change
@@ -4749,9 +4922,14 @@ def _echo_proposal(
     echo_preview_next(inspection.status, inspection.accepted_coordinate)
 
 
-def _echo_landing(outcome: contracts.AuthoringLanding | None) -> None:
-    """Whether a direct propose landed its change, or why it stopped and what to run."""
+def _echo_landing(outcome: contracts.AuthoringLanding | None, warnings: Sequence[str] = ()) -> None:
+    """Whether a direct propose landed its change, or why it stopped and what to run.
 
+    ``warnings`` (S7): each kit-bundled definition the change retires.
+    """
+
+    for warning in warnings:
+        click.echo(f"warning: {printable(warning)}", err=True)
     if outcome is None:
         return
     for line in landing_lines(outcome):
@@ -4827,7 +5005,7 @@ def retire_claim_type(
     if reason_line is not None:
         click.echo(f"refused: {reason_line}")
         return
-    _echo_landing(result.outcome)
+    _echo_landing(result.outcome, result.warnings)
 
 
 @claim_type_group.command("migrate")
@@ -4881,7 +5059,7 @@ def migrate_claim_type(request_file: str, no_accept: bool, output_json: bool) ->
         proposal_id = admission.get("proposal_id", "<submitted>")
         click.echo(f"Proposal: {proposal_id}")
         if result.proposal.outcome is not None:
-            _echo_landing(result.proposal.outcome)
+            _echo_landing(result.proposal.outcome, result.proposal.warnings)
         else:
             click.echo(f"Next: cruxible proposal approve {proposal_id}")
     click.echo("Semantic delta:")
@@ -4933,8 +5111,9 @@ def list_predictions(claim: str, output_json: bool) -> None:
     The daemon resolves the Claim's current accepted version and returns the
     accepted resolution contracts whose hypothesis is that exact version, retired
     ones included; contracts testing an earlier version of the Claim are not
-    listed. Pending (unaccepted) predictions and settlement outcomes are read with
-    `cruxible get ResolutionContract:NAME` and `cruxible next`.
+    listed. A pending (unaccepted) prediction is a proposal: `cruxible proposal list`
+    names it and `cruxible get PROPOSAL_ID` reads it. An accepted one and its
+    settlement are read with `cruxible get ResolutionContract:NAME` and `cruxible next`.
     """
 
     request = contracts.ResolutionContractsRequest(hypothesis=claim)
@@ -5542,6 +5721,10 @@ def preflight_authoring_intent(intent_id: str, output_brief: bool) -> None:
     )
     if output_brief:
         codes = [item.code for item in result.frontier.diagnostics]
+        if result.unchanged:
+            # S2: identical to accepted state; a submit would propose nothing.
+            _emit_brief(outcome="unchanged", ids={"intent": intent_id}, next_command=None)
+            return
         _emit_brief(
             outcome=result.verdict + (f" ({', '.join(codes)})" if codes else ""),
             ids={"intent": intent_id},
@@ -6569,12 +6752,16 @@ def backlinks(
             "runs",
             "backlinks",
             "proof",
+            "proof-full",
             "body",
         ]
     ),
     default="summary",
     show_default=True,
-    help="How deep to read the one thing REF names.",
+    help=(
+        "How deep to read the one thing REF names. On a Claim, proof is its verdict and "
+        "cited Captures; proof-full the whole envelope and facts."
+    ),
 )
 @click.option(
     "--range",
@@ -6641,12 +6828,14 @@ def get_by_ref(
     """
 
     from cruxible_client.contracts.get_reads import ByteRange, GetRequest
+    from cruxible_client.contracts.get_text import claim_proof_summary, claim_proof_summary_lines
 
+    proof_full = detail == "proof-full"
     try:
         request = GetRequest.model_validate(
             {
                 "ref": ref,
-                "detail": detail,
+                "detail": "proof" if proof_full else detail,
                 "range": None if byte_range is None else ByteRange.parse(byte_range),
                 "at": at_oid,
                 "evaluation_time": evaluation_time,
@@ -6671,8 +6860,17 @@ def get_by_ref(
         lambda client, instance_id: client.get(instance_id, request=request),
         command_name="cruxible get",
     )
+    proof = result.proof
+    claim_summary = result.kind == "claim" and result.detail == "proof" and not proof_full
     if output_json:
+        if claim_summary and proof is not None:
+            result = result.model_copy(update={"proof": claim_proof_summary(proof)})
         _emit_json(result.model_dump(mode="json"))
+        return
+    if claim_summary and proof is not None:
+        click.echo(f"{result.ref}  ({result.coordinate.git_oid})")
+        for line in claim_proof_summary_lines(proof):
+            click.echo(line)
         return
     _emit_get_text(result, evidence_erased=_stale_claim_evidence_erased(request, result))
     if result.next_cursor is not None:
@@ -8356,25 +8554,31 @@ def _inbox_row(envelope: Any) -> str:
 def inbox_list(
     line: str | None, status: str | None, limit: int, cursor: str | None, output_json: bool
 ) -> None:
-    """List inbox items, most recently posted first."""
+    """List inbox items, most recently posted first, one compact row each.
 
-    result = _server_call(
-        lambda client, instance_id: client.list_inbox(
-            instance_id, line=line, status=cast(Any, status), limit=limit, cursor=cursor
-        ),
-        command_name="cruxible inbox list",
+    Each row is the item's id, status, Line, posting terminal, seen count and a
+    one-line title; `inbox get ITEM` shows every field and the whole payload.
+    """
+
+    result = compact_inbox_list(
+        _server_call(
+            lambda client, instance_id: client.list_inbox(
+                instance_id, line=line, status=cast(Any, status), limit=limit, cursor=cursor
+            ),
+            command_name="cruxible inbox list",
+        )
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
         return
-    if not result.entries:
+    if not result.rows:
         click.echo("No inbox items.")
         return
-    click.echo("STATUS  ITEM  LINE  SEEN  LAST_POSTED")
-    for entry in result.entries:
-        click.echo(_inbox_row(entry.item))
-        preview = shown_plain(entry.payload_preview)
-        click.echo(f"  {preview if isinstance(preview, str) else json.dumps(preview)}")
+    click.echo("STATUS  ITEM  LINE  KIND  SEEN  TITLE")
+    for row in result.rows:
+        click.echo(
+            f"{row.status}  {row.item_id[:16]}  {row.line}  {row.kind}  {row.seen}  {row.title}"
+        )
     _echo_list_continuation(result.next_cursor)
 
 
@@ -8553,8 +8757,9 @@ def enable_line(line: str, dry_run: bool | None, at: str | None, output_json: bo
 def disable_line(line: str, dry_run: bool | None, at: str | None, output_json: bool) -> None:
     """Stop LINE admitting work on its own; runs already admitted keep going.
 
-    Disabling a Line whose enablement already stopped changes nothing. A
-    retired Line can be disabled too.
+    Disabling a Line whose enablement already stopped changes nothing. A Line
+    never enabled has no enablement to stop and refuses
+    (`cruxible.line.never_enabled`). A retired Line can be disabled too.
     """
 
     result = _server_call(
@@ -8936,7 +9141,11 @@ def _runbook_input_lines(item: Any) -> list[str]:
         facts.append(f"at most {limits.max_files} files")
     if limits.max_bytes is not None:
         each = " each" if limits.max_files is not None else ""
-        facts.append(f"at most {_byte_size_text(limits.max_bytes)}{each}")
+        # coldcli-15: the budget is the CaptureContract's; a fetch's own
+        # max_bytes (the Line parameter) is a separate, request-side limit.
+        facts.append(f"at most {_byte_size_text(limits.max_bytes)}{each} per its CaptureContract")
+    if limits.request_max_bytes is not None and limits.request_max_bytes != limits.max_bytes:
+        facts.append(f"request max_bytes {_byte_size_text(limits.request_max_bytes)}")
     if item.parameter is not None:
         facts.append(f"parameter {item.parameter}")
     text = f"needs  {_RUNBOOK_INPUT_NOUNS[item.kind]} {where}"
@@ -9179,130 +9388,7 @@ def next_work(
     )
 
 
-@playbill_group.group("curation")
-def curation_group() -> None:
-    """Review the ontology-maintenance patterns curation detection records (beta).
-
-    Curation is beta: detection runs only when a Trigger aimed at the
-    curation.detect action (curation-detect) is authored; none is seeded.
-    """
-
-
-def _curation_ruling_options(function: Callable[..., Any]) -> Callable[..., Any]:
-    function = click.option(
-        "--attribution-ref",
-        "attribution_refs",
-        multiple=True,
-        help="A reference recorded with the ruling, such as a ticket or Claim ID (repeatable).",
-    )(function)
-    function = click.option("--reason", required=True, help="Why, recorded with the ruling.")(
-        function
-    )
-    return click.option(
-        "--expected-latest-event-digest",
-        required=True,
-        help="The item's latest_event_digest from curation list; refuses if it moved.",
-    )(function)
-
-
-def _echo_curation_action(result: contracts.CurationActionResult, done: str) -> None:
-    if result.status == "would_record":
-        click.echo(f"Would record the ruling on {result.item['item_id']}; nothing was appended")
-        echo_preview_next(result.status, result.coordinate)
-        return
-    item_id = str(result.item["item_id"])
-    latest = result.item.get("latest_event_digest")
-    click.echo(f"Curation item {item_id}: {done}")
-    if isinstance(latest, str):
-        # The next ruling on this item names this digest; a suppressed item
-        # leaves `curation list`, so this line is where it can be read.
-        click.echo(f"latest_event_digest: {latest}")
-        if done.startswith("suppressed"):
-            click.echo(
-                "Undo: cruxible curation unsuppress "
-                f"{shlex.quote(item_id)} --expected-latest-event-digest {latest} "
-                "--reason '<TEXT>'"
-            )
-
-
-def _curation_item_line(item: Mapping[str, Any]) -> str:
-    kind = str(item.get("pattern_kind", "")).removeprefix("playbill.curation.")
-    subject = item.get("subject") or {}
-    summary = f"{subject.get('kind', '')}:{subject.get('name', '')}"
-    status = "" if item.get("status") == "open" else f" [{item.get('status')}]"
-    return (
-        f"{item.get('item_id')}  {kind}  {summary}{status}  "
-        f"latest={item.get('latest_event_digest')}"
-    )
-
-
-@curation_group.command("list")
-@click.option(
-    "--access-profile",
-    "access_profile_path",
-    default=None,
-    type=PayloadFile(),
-    help="CoverageAccessProfile JSON/YAML (- for stdin); defaults to public and instance access.",
-)
-@click.option(
-    "--limit",
-    default=contracts.CURATION_LIST_DEFAULT_LIMIT,
-    show_default=True,
-    type=click.IntRange(1, contracts.CURATION_LIST_MAX_LIMIT),
-    help="Queue items per page.",
-)
-@click.option("--cursor", default=None, help="Continue a previous page of the same queue.")
-@json_option
-@handle_errors
-def curation_list(
-    access_profile_path: str | None,
-    limit: int,
-    cursor: str | None,
-    output_json: bool,
-) -> None:
-    """List the open curation items detection recorded; a pure read.
-
-    Detection runs on its own on every accepted generation (the curation.detect
-    Trigger). Each line is the item ID, its pattern kind, its subject and the
-    latest_event_digest the rulings (overrule, accept-fixed, suppress) need.
-    """
-
-    profile = (
-        CoverageAccessProfile(
-            profile_id="cli-curation",
-            permitted_access_classes=("instance", "public"),
-        ).model_dump(mode="json")
-        if access_profile_path is None
-        else _read_model(access_profile_path, CoverageAccessProfile).model_dump(mode="json")
-    )
-    result = _server_call(
-        lambda client, instance_id: client.list_curation(
-            instance_id, access_profile=profile, limit=limit, cursor=cursor
-        ),
-        command_name="cruxible curation list",
-    )
-    if output_json:
-        _emit_json(result.model_dump(mode="json"))
-        return
-    detection = result.detection
-    ran = (
-        "never run"
-        if detection.detected_through_generation is None
-        else f"through generation {detection.detected_through_generation} "
-        f"at {detection.detected_at}"
-    )
-    click.echo(
-        f"Curation queue at generation {result.generation}: {len(result.items)} item(s); "
-        f"detection {detection.state} ({ran}), trigger {detection.trigger}."
-    )
-    for item in result.items:
-        click.echo(f"  {_curation_item_line(item)}")
-    for inactive in result.inactive_detectors:
-        click.echo(f"Inactive: {inactive.pattern_kind} ({inactive.reason})")
-    _echo_list_continuation(result.next_cursor)
-
-
-@curation_group.command("duplicates")
+@playbill_group.command("duplicates")
 @click.option("--kind", required=True, help="The Subject kind to audit.")
 @click.option(
     "--limit",
@@ -9314,7 +9400,7 @@ def curation_list(
 @click.option("--cursor", default=None, help="Continue a previous page of the same audit.")
 @json_option
 @handle_errors
-def curation_duplicates(kind: str, limit: int, cursor: str | None, output_json: bool) -> None:
+def duplicates_audit(kind: str, limit: int, cursor: str | None, output_json: bool) -> None:
     """List possible duplicates of one kind; a pure, bounded read.
 
     Subjects whose ids or aliases, and values of one predicate, that meet under
@@ -9326,10 +9412,10 @@ def curation_duplicates(kind: str, limit: int, cursor: str | None, output_json: 
     """
 
     result = _server_call(
-        lambda client, instance_id: client.curation_duplicates(
+        lambda client, instance_id: client.duplicates(
             instance_id, kind=kind, limit=limit, cursor=cursor
         ),
-        command_name="cruxible curation duplicates",
+        command_name="cruxible duplicates",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
@@ -9354,196 +9440,6 @@ def curation_duplicates(kind: str, limit: int, cursor: str | None, output_json: 
             members = ", ".join(f"{item.value!r} {item.claim}" for item in group.values)
             click.echo(f"  {group.predicate} {group.key!r}: {members}")
     _echo_list_continuation(result.next_cursor)
-
-
-@curation_group.command("overrule")
-@click.argument("item_id")
-@_curation_ruling_options
-@change_control_options
-@json_option
-@handle_errors
-def curation_overrule(
-    item_id: str,
-    expected_latest_event_digest: str,
-    reason: str,
-    attribution_refs: tuple[str, ...],
-    dry_run: bool | None,
-    at: str | None,
-    output_json: bool,
-) -> None:
-    """Close an item as not applying here, permanently: its pattern is never raised again.
-
-    It cannot be undone, so it previews by default; commit with ``--commit --at OID``.
-    """
-
-    result = _server_call(
-        lambda client, instance_id: client.overrule_curation(
-            instance_id,
-            item_id=item_id,
-            expected_latest_event_digest=expected_latest_event_digest,
-            reason=reason,
-            attribution_refs=attribution_refs,
-            dry_run=dry_run,
-            at=at,
-        ),
-        command_name="cruxible curation overrule",
-    )
-    if output_json:
-        _emit_json(result.model_dump(mode="json"))
-        return
-    _echo_curation_action(result, str(result.item["status"]))
-
-
-@curation_group.command("accept-fixed")
-@click.argument("item_id")
-@_curation_ruling_options
-@click.option("--proposal-id", default=None, help="The accepted proposal that fixed the item.")
-@click.option(
-    "--changeset-digest",
-    default=None,
-    help="Pins --proposal-id to its exact accepted ChangeSet (optional).",
-)
-@click.option(
-    "--generation",
-    type=click.IntRange(min=1),
-    default=None,
-    help="The accepted generation that fixed the item, instead of --proposal-id.",
-)
-@change_control_options
-@json_option
-@handle_errors
-def curation_accept_fixed(
-    item_id: str,
-    expected_latest_event_digest: str,
-    reason: str,
-    attribution_refs: tuple[str, ...],
-    proposal_id: str | None,
-    changeset_digest: str | None,
-    generation: int | None,
-    dry_run: bool | None,
-    at: str | None,
-    output_json: bool,
-) -> None:
-    """Link an item to the accepted change that fixed it, closing it.
-
-    Name the change by --proposal-id or --generation; the daemon resolves the
-    rest. The change must postdate the item and touch its subject or evidence.
-    """
-
-    if (proposal_id is None) == (generation is None):
-        raise click.UsageError("name the fixing change with --proposal-id or --generation")
-    result = _server_call(
-        lambda client, instance_id: client.accept_fixed_curation(
-            instance_id,
-            item_id=item_id,
-            expected_latest_event_digest=expected_latest_event_digest,
-            reason=reason,
-            accepted_proposal_id=proposal_id,
-            accepted_changeset_digest=changeset_digest,
-            accepted_generation=generation,
-            attribution_refs=attribution_refs,
-            dry_run=dry_run,
-            at=at,
-        ),
-        command_name="cruxible curation accept-fixed",
-    )
-    if output_json:
-        _emit_json(result.model_dump(mode="json"))
-        return
-    _echo_curation_action(result, str(result.item["status"]))
-
-
-@curation_group.command("suppress")
-@click.argument("item_id")
-@_curation_ruling_options
-@click.option(
-    "--scope",
-    type=click.Choice(("item", "lineage")),
-    required=True,
-    help="item: hide this item; lineage: also hide every successor its pattern opens.",
-)
-@click.option(
-    "--until-generation",
-    type=click.IntRange(min=0),
-    help="The last generation the suppression hides through (default: until lifted).",
-)
-@change_control_options
-@json_option
-@handle_errors
-def curation_suppress(
-    item_id: str,
-    expected_latest_event_digest: str,
-    reason: str,
-    attribution_refs: tuple[str, ...],
-    scope: str,
-    until_generation: int | None,
-    dry_run: bool | None,
-    at: str | None,
-    output_json: bool,
-) -> None:
-    """Hide an item, or its lineage, without resolving it; detection keeps running."""
-
-    result = _server_call(
-        lambda client, instance_id: client.suppress_curation(
-            instance_id,
-            item_id=item_id,
-            expected_latest_event_digest=expected_latest_event_digest,
-            reason=reason,
-            scope=cast(Any, scope),
-            until_generation=until_generation,
-            attribution_refs=attribution_refs,
-            dry_run=dry_run,
-            at=at,
-        ),
-        command_name="cruxible curation suppress",
-    )
-    if output_json:
-        _emit_json(result.model_dump(mode="json"))
-        return
-    _echo_curation_action(result, f"suppressed ({scope})")
-
-
-@curation_group.command("unsuppress")
-@click.argument("item_id")
-@_curation_ruling_options
-@click.option(
-    "--suppression",
-    "suppression_event_id",
-    default=None,
-    help="The suppression's event ID; needed only when the item carries more than one.",
-)
-@change_control_options
-@json_option
-@handle_errors
-def curation_unsuppress(
-    item_id: str,
-    expected_latest_event_digest: str,
-    reason: str,
-    attribution_refs: tuple[str, ...],
-    suppression_event_id: str | None,
-    dry_run: bool | None,
-    at: str | None,
-    output_json: bool,
-) -> None:
-    """Lift a suppression recorded on an item, so what it hid is listed again."""
-
-    result = _server_call(
-        lambda client, instance_id: client.unsuppress_curation(
-            instance_id,
-            item_id=item_id,
-            expected_latest_event_digest=expected_latest_event_digest,
-            reason=reason,
-            suppression_event_id=suppression_event_id,
-            attribution_refs=attribution_refs,
-            dry_run=dry_run,
-            at=at,
-        ),
-        command_name="cruxible curation unsuppress",
-    )
-    if output_json:
-        _emit_json(result.model_dump(mode="json"))
-        return
-    _echo_curation_action(result, "unsuppressed")
 
 
 @playbill_group.command("audit")

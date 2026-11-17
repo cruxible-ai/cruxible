@@ -137,6 +137,9 @@ class ProposalInspection(_StrictServiceModel):
         default=None,
         exclude_if=lambda value: value is None,
     )
+    #: Each kit-bundled definition this change retires, said once (S7): it
+    #: stays retired across that kit's upgrades.
+    warnings: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
 
 
 class ActivationReceipt(_StrictServiceModel):

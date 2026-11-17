@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
-from cruxible_client import CruxibleClient
+from cruxible_client import CruxibleClient, contracts
 from cruxible_client.contracts.principals import PRINCIPAL_ID_HEADER
 from cruxible_client.errors import ConfigError as ClientConfigError
 from cruxible_core.governance.keys import generate_client_principal_key
@@ -427,3 +427,294 @@ def test_the_write_verbs_refuse_a_caller_that_cannot_author_with_the_whoami_repa
         answer = refused.json()
         assert answer["error_code"] == code, verb
         assert answer["repair"] == repair == who["authoring_refusal"]["repair"], verb
+
+
+# Every write whose record names who did it, by operation group: an auth-off
+# request naming no principal acts as ``operator``, which is no principal, so each
+# is refused with the whoami refusal and repair before it reads or records
+# anything (ruling 5, 2026-11-16). Requests are built unvalidated: the refusal
+# comes before any field past the preview flags is read.
+def _attributed_writes() -> dict[str, dict[str, Callable[[], object]]]:
+    from cruxible_client.contracts.attestation_evidence import ClaimAttestationEvidenceRequest
+    from cruxible_client.contracts.capture_erasure import CaptureEraseRequest
+    from cruxible_client.contracts.claim_attestations import ClaimAttestationAppendRequest
+    from cruxible_client.contracts.kits import KitAddRequest, KitBuildRequest, KitRemoveRequest
+    from cruxible_client.contracts.predictions import PredictRequest, SettleRequest
+    from cruxible_client.contracts.provider_installation import (
+        ProviderInstallRequest,
+        ProviderMoveRequest,
+        ProviderRetireRequest,
+    )
+    from cruxible_core.runtime import playbill_api as api
+    from cruxible_core.service.discovery.curation import PlaybillBlockObserveRequestV1
+    from cruxible_core.service.procedures.procedure_runs import LineRunRequest, ProcedureRunRequest
+
+    preview = {"dry_run": True}
+    return {
+        "evidence": {
+            "erase_capture": lambda: api.playbill_erase_capture(
+                INSTANCE, CaptureEraseRequest.model_construct(dry_run=True, at=None)
+            ),
+            "attest_evidence": lambda: api.playbill_prepare_claim_attestation_evidence(
+                INSTANCE, request=ClaimAttestationEvidenceRequest.model_construct()
+            ),
+            "attest_append": lambda: api.playbill_append_claim_attestation(
+                INSTANCE, request=ClaimAttestationAppendRequest.model_construct()
+            ),
+        },
+        "predictions": {
+            "predict": lambda: api.playbill_predict(
+                INSTANCE, request=PredictRequest.model_construct()
+            ),
+            "settle": lambda: api.playbill_settle_prediction(
+                INSTANCE, "pred_x", request=SettleRequest.model_construct()
+            ),
+        },
+        "instance": {
+            "decommission": lambda: api.playbill_instance_decommission(
+                INSTANCE, reason="done", dry_run=True
+            ),
+            "rebuild_next": lambda: api.playbill_instance_rebuild_next(INSTANCE),
+        },
+        "providers": {
+            "install": lambda: api.playbill_provider_install(
+                INSTANCE, ProviderInstallRequest.model_construct(**preview)
+            ),
+            "retire": lambda: api.playbill_provider_retire(
+                INSTANCE, ProviderRetireRequest.model_construct(**preview)
+            ),
+            "move": lambda: api.playbill_provider_move(
+                INSTANCE, ProviderMoveRequest.model_construct(**preview)
+            ),
+        },
+        "kits": {
+            "build": lambda: api.playbill_kit_build(
+                INSTANCE, KitBuildRequest.model_construct(automation_template=None)
+            ),
+            "add": lambda: api.playbill_kit_add(INSTANCE, KitAddRequest.model_construct(**preview)),
+            "remove": lambda: api.playbill_kit_remove(
+                INSTANCE, KitRemoveRequest.model_construct(**preview)
+            ),
+        },
+        "governance_proposals": {
+            "compiler_upgrade": lambda: api.playbill_propose_compiler_upgrade(
+                INSTANCE, dry_run=True
+            ),
+            "principal_change": lambda: api.playbill_propose_principal_change(
+                INSTANCE,
+                principal=None,  # type: ignore[arg-type]
+                proposal_name="p",
+                dry_run=True,
+            ),
+        },
+        "measurements": {
+            "measure": lambda: api.playbill_procedure_measure(
+                INSTANCE,
+                "absent",
+                request=None,  # type: ignore[arg-type]
+            ),
+            "dispose": lambda: api.playbill_procedure_dispose(
+                INSTANCE,
+                "absent",
+                request=None,  # type: ignore[arg-type]
+            ),
+        },
+        "proposal_doors": {
+            "document": lambda: api.playbill_propose_document(
+                INSTANCE,
+                shell=None,
+                proposal_name="p",
+                dry_run=False,  # type: ignore[arg-type]
+            ),
+            "file_bundle": lambda: api.playbill_propose_file_bundle(
+                INSTANCE,
+                bundle=None,
+                file="f.md",
+                proposal_name="p",  # type: ignore[arg-type]
+            ),
+            "builtin_claim_type": lambda: api.playbill_propose_builtin_claim_type(
+                INSTANCE,
+                builtin="semantic.alias",
+                proposal_name="p",  # type: ignore[arg-type]
+            ),
+            "capture_contract": lambda: api.playbill_propose_capture_contract(
+                INSTANCE,
+                input=None,
+                proposal_name="p",  # type: ignore[arg-type]
+            ),
+            "claim_type_input": lambda: api.playbill_propose_claim_type_input(
+                INSTANCE,
+                input=None,
+                proposal_name="p",  # type: ignore[arg-type]
+            ),
+            "claim_type_migration": lambda: api.playbill_migrate_claim_type(
+                INSTANCE,
+                request=None,  # type: ignore[arg-type]
+            ),
+        },
+        "inbox_and_blocks": {
+            "inbox_ack": lambda: api.playbill_inbox_ack(INSTANCE, "INB-absent"),
+            "inbox_dismiss": lambda: api.playbill_inbox_dismiss(
+                INSTANCE, "INB-absent", reason="no"
+            ),
+            "inbox_link": lambda: api.playbill_inbox_link(
+                INSTANCE,
+                "INB-absent",
+                target=None,  # type: ignore[arg-type]
+            ),
+            "block_declare": lambda: api.playbill_block_declare(
+                INSTANCE,
+                None,  # type: ignore[arg-type]
+            ),
+            "block_observe": lambda: api.playbill_block_observe(
+                INSTANCE, request=PlaybillBlockObserveRequestV1.model_construct(dry_run=None)
+            ),
+        },
+        "runs": {
+            "procedure_run": lambda: api.playbill_procedure_run(
+                INSTANCE, "absent", request=ProcedureRunRequest(input={})
+            ),
+            "action_run": lambda: api.playbill_action_run(
+                INSTANCE, request=contracts.ActionRunRequest(action="evidence.sweep")
+            ),
+            "line_run": lambda: api.playbill_line_run(
+                INSTANCE, "sha256:" + "0" * 64, request=LineRunRequest.model_construct()
+            ),
+            "line_evaluate": lambda: api.playbill_line_evaluate(
+                INSTANCE,
+                "absent",
+                request=contracts.LineEvaluateRequest.model_construct(dry_run=False),
+            ),
+            "line_dispatch": lambda: api.playbill_line_dispatch(
+                INSTANCE, "absent", request=contracts.LineDispatchRequest.model_construct()
+            ),
+            "runbook_run": lambda: api.playbill_runbook_run(INSTANCE, "absent"),
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    "group",
+    [
+        "evidence",
+        "predictions",
+        "instance",
+        "providers",
+        "kits",
+        "governance_proposals",
+        "measurements",
+        "proposal_doors",
+        "inbox_and_blocks",
+        "runs",
+    ],
+)
+def test_the_implicit_operator_may_not_make_an_attributed_write(
+    daemon: tuple[TestClient, Path], tmp_path: Path, group: str
+) -> None:
+    from cruxible_core.errors import PrincipalRefusedError
+
+    client, managed = daemon
+    assert _init(client, tmp_path, managed, claim="alice").status_code == 200  # type: ignore[attr-defined]
+    who = client.get(f"/api/v1/{INSTANCE}/whoami").json()
+    assert who["actor_id_source"] == "local_operator"
+
+    for door, call in _attributed_writes()[group].items():
+        with pytest.raises(PrincipalRefusedError) as refused:
+            call()
+        assert refused.value.error_code == "cruxible.identity.principal_unconfigured", door
+        assert "set CRUXIBLE_PRINCIPAL_ID" in str(refused.value), door
+        assert refused.value.repair is not None, door
+        assert refused.value.repair.model_dump(mode="json") == who["authoring_refusal"]["repair"]
+
+
+def test_the_documented_local_operator_acts_stay_open(
+    daemon: tuple[TestClient, Path], tmp_path: Path
+) -> None:
+    """Line enable and disable and Capture uploads are the local operator's own
+    acts: they are refused for what they name, never for who asks."""
+
+    from cruxible_client.contracts.uploads import CaptureUploadOpenRequest
+    from cruxible_core.errors import PrincipalRefusedError
+    from cruxible_core.runtime import playbill_api as api
+
+    client, managed = daemon
+    assert _init(client, tmp_path, managed, claim="alice").status_code == 200  # type: ignore[attr-defined]
+
+    upload = CaptureUploadOpenRequest(filename="a.txt", byte_length=1, sha256="sha256:" + "0" * 64)
+    acts: dict[str, Callable[[], object]] = {
+        # This daemon sets no upload root, so the open is refused for that instead.
+        "upload_open": lambda: api.playbill_capture_upload_open(INSTANCE, upload),
+        "line_enable": lambda: api.playbill_line_enable(INSTANCE, "absent", dry_run=True),
+        "line_disable": lambda: api.playbill_line_disable(INSTANCE, "absent", dry_run=True),
+    }
+    for act, call in acts.items():
+        with pytest.raises(Exception) as refused:
+            call()
+        assert not isinstance(refused.value, PrincipalRefusedError), (act, refused.value)
+
+
+def test_a_principal_registered_as_operator_makes_attributed_writes(
+    daemon: tuple[TestClient, Path], tmp_path: Path
+) -> None:
+    from cruxible_core.runtime import playbill_api as api
+
+    client, managed = daemon
+    initialized = client.post(
+        f"/api/v1/{INSTANCE}/init",
+        json={"principals": [_principal(tmp_path, managed, "operator")]},
+    )
+    assert initialized.status_code == 200, initialized.text
+
+    rebuilt = api.playbill_instance_rebuild_next(INSTANCE)
+    previewed = api.playbill_instance_decommission(INSTANCE, reason="done", dry_run=True)
+
+    assert rebuilt.instance_id == INSTANCE
+    assert previewed.status == "would_decommission"
+    assert previewed.decommissioned_by == "operator"
+
+
+def test_every_client_surface_shows_the_attributed_write_refusal_and_its_repair(
+    daemon: tuple[TestClient, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The SDK keeps the code and served repair, the CLI prints both, and MCP
+    appends the repair in its own spelling, as for authoring."""
+
+    from click.testing import CliRunner
+    from mcp.server.fastmcp.exceptions import ToolError
+
+    from cruxible_core.cli.main import cli
+    from cruxible_core.mcp.server import _tool_failure_message
+
+    client, managed = daemon
+    assert _init(client, tmp_path, managed, claim="alice").status_code == 200  # type: ignore[attr-defined]
+    repair = client.get(f"/api/v1/{INSTANCE}/whoami").json()["authoring_refusal"]["repair"]
+    transport = CruxibleClient(base_url="http://cruxible")
+    transport._client = client  # type: ignore[assignment]
+
+    with pytest.raises(Exception) as sdk:
+        transport.rebuild_next(INSTANCE)
+    assert getattr(sdk.value, "error_code", None) == "cruxible.identity.principal_unconfigured"
+    assert getattr(sdk.value, "repair").model_dump(mode="json") == repair
+
+    tool_error = ToolError(str(sdk.value))
+    tool_error.__cause__ = sdk.value
+    mcp_message = _tool_failure_message("cruxible_instance_rebuild_next", tool_error)
+    assert "cruxible.identity.principal_unconfigured" in mcp_message
+    assert "Repair:" in mcp_message
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: transport)
+    monkeypatch.delenv("CRUXIBLE_PRINCIPAL_ID", raising=False)
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://playbill.invalid",
+            "--instance-id",
+            INSTANCE,
+            "instance",
+            "rebuild-next",
+        ],
+    )
+    assert result.exit_code == 1, result.output
+    assert "cruxible.identity.principal_unconfigured" in result.output
+    assert "Repair: cruxible orient" in result.output

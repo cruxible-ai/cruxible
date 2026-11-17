@@ -202,7 +202,7 @@ def _ledger(
         location = history.generation(item.position)
         row = generation_row(instance, history, records, reasons, location)
         return OrientActivityGenerationAccepted(
-            at=row.accepted_at,
+            at=row.proposed_at,
             ref=row.proposal,
             sequence=row.sequence,
             git_oid=row.git_oid,

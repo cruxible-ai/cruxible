@@ -24,7 +24,7 @@ class _OrientClient(_Client):
             instance="inst_test",
             coordinate=AcceptedCoordinate.model_validate(_COORDINATE.model_dump(mode="json")),
             generation=4,
-            accepted_at=datetime(2026, 8, 24, tzinfo=UTC),
+            proposed_at=datetime(2026, 8, 24, tzinfo=UTC),
             evaluation_time=datetime(2026, 8, 24, 12, tzinfo=UTC),
             kinds=(),
             next=('cx.orient(kind="dev.roadmap_item")',),

@@ -90,6 +90,12 @@ def consumer_statuses(manager: Any) -> tuple[Any, ...]:
     return tuple(statuses)
 
 
+def _runbook_ran_since(instance: Any, fire_key: str, instant: datetime) -> bool:
+    from cruxible_core.service.runbooks import runbook_ran_since
+
+    return runbook_ran_since(instance, fire_key, instant)
+
+
 class ConsumerRunner:
     def __init__(self, manager: Any, *, kinds: Sequence[ConsumerKind] | None = None):
         self.manager = manager
@@ -160,6 +166,7 @@ class ConsumerRunner:
             now=now,
             listening_since=listening_since,
             listening_generation=self._listening_generation.get(instance_id),
+            target_ran_since=lambda key, at: _runbook_ran_since(instance, key, at),
         )
         for kind in self.kinds:
             if not kind.active(instance):

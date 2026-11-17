@@ -174,6 +174,13 @@ class _SyncClient:
     naming one of them would not tell an author what to repin.
     """
 
+    def whoami(self, _instance_id: str) -> object:
+        """A registered principal: nothing refuses the declaration."""
+
+        from types import SimpleNamespace
+
+        return SimpleNamespace(authoring_refusal=None)
+
     def __init__(
         self,
         *,

@@ -428,7 +428,7 @@ def test_a_replay_runs_the_claimed_plan_not_a_successor(
     from cruxible_core.triggers import journal
 
     instance, root, now = _fired_world(
-        tmp_path, [{"action": "evidence.sweep"}, {"action": "curation.detect"}]
+        tmp_path, [{"action": "evidence.sweep"}, {"action": "prediction.anchor_retry"}]
     )
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
 
@@ -437,27 +437,30 @@ def test_a_replay_runs_the_claimed_plan_not_a_successor(
     ).tagged
     real = journal.fire_runbook_action
 
-    def crash_on_curation(instance: Any, **kwargs: Any) -> int:
-        if kwargs["action"] == "curation.detect":
+    def crash_on_retry(instance: Any, **kwargs: Any) -> int:
+        if kwargs["action"] == "prediction.anchor_retry":
             raise RuntimeError("the daemon died here")
         return real(instance, **kwargs)
 
-    monkeypatch.setattr(journal, "fire_runbook_action", crash_on_curation)
+    monkeypatch.setattr(journal, "fire_runbook_action", crash_on_retry)
     with pytest.raises(RuntimeError):
         _drain(instance, root, now=now)
     monkeypatch.setattr(journal, "fire_runbook_action", real)
-    assert (_action_fires(instance), _action_fires(instance, "curation.detect")) == (1, 0)
+    assert (_action_fires(instance), _action_fires(instance, "prediction.anchor_retry")) == (1, 0)
     # A successor reorders the steps before the replay.
     author_runbook(
-        instance, "test.rb", [{"action": "curation.detect"}, {"action": "evidence.sweep"}]
+        instance, "test.rb", [{"action": "prediction.anchor_retry"}, {"action": "evidence.sweep"}]
     )
     _drain(instance, root, now=now + timedelta(seconds=5))
     last = runbook_service.latest_runbook_run(instance, "test.rb")
     assert last is not None and last.runbook_artifact_digest == original
-    assert [step.target.action for step in last.steps] == ["evidence.sweep", "curation.detect"]
+    assert [step.target.action for step in last.steps] == [
+        "evidence.sweep",
+        "prediction.anchor_retry",
+    ]
     assert _statuses(last) == ["fired", "fired"]
     # Each action fired exactly once for this fire: no reuse, no repeat, no skip.
-    assert (_action_fires(instance), _action_fires(instance, "curation.detect")) == (1, 1)
+    assert (_action_fires(instance), _action_fires(instance, "prediction.anchor_retry")) == (1, 1)
     assert list(journal.pending_runbook_fires(instance)) == []
 
 

@@ -69,7 +69,7 @@ def test_selector_refuses_ambiguous_and_unmapped_paths(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="occurs 2 times"):
         workspace.select(source).anchor("same")
-    with pytest.raises(ValueError, match="maps to 0 catalogued files"):
+    with pytest.raises(ValueError, match="is not in the workspace file catalog"):
         workspace.select("corpus/other.md")
 
 

@@ -111,8 +111,7 @@ quickstart and concepts pages.
 - **More reads for agents.** `cruxible since GENERATION` pages accepted
   change sets; `cruxible audit` ranks Claim verification work; `cruxible
   backlinks REF` lists the notes, Documents and cited sections pointing into a
-  Subject; `cruxible whoami` explains the active writer identity;
-  `cruxible curation` reviews detected duplicates and patterns (beta).
+  Subject; and `cruxible whoami` explains the active writer identity.
 - **The floor is a greppable copy of accepted state.** The daemon writes
   `.cruxible/floor/current/<kind>/<id>.yaml` (each field's value with its
   `CLM-` and `CAP-` handles) and Documents as readable files after every
@@ -431,9 +430,6 @@ quickstart and concepts pages.
   across the re-exec, so a waiting restart could hang past `--timeout`. The
   listener is no longer inherited, and each wait probe is bounded by the time
   left (at most 5 seconds).
-- **`curation overrule` previews by default.** It closes an item for good,
-  so it is now an irreversible change: a commit needs `--commit --at OID`
-  (MCP and SDK: `dry_run=false` and `at`).
 - **`ledger publish` exits 1 when publication ends `behind`,** and prints
   Git's multi-line reason one line at a time.
 - **Proposal acts need a named principal.** A request naming no principal

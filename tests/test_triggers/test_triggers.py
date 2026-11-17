@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from cruxible_client.contracts.triggers import CadenceSchedule
+from cruxible_client.contracts.triggers import CadenceSchedule, CronSchedule
 from cruxible_core.triggers import journal as trigger_journal
 from cruxible_core.triggers.journal import (
     InternalTrigger,
@@ -186,7 +186,7 @@ def test_a_journal_its_creator_has_not_committed_reads_as_none(tmp_path: Path) -
     # A writer still creates the schema in it.
     fire(world, NOW + timedelta(days=1), since=NOW + timedelta(days=1))
     with sqlite3.connect(path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone() == (6,)
+        assert connection.execute("PRAGMA user_version").fetchone() == (8,)
 
 
 def test_timer_state_follows_the_accepted_trigger_set(tmp_path: Path) -> None:
@@ -392,7 +392,7 @@ def test_version_two_journal_migrates_in_place_without_losing_fires(tmp_path: Pa
     assert trigger_events(world) == events
     schedule_deadline(world, "next.expire", NOW + timedelta(hours=2))
     with sqlite3.connect(journal_path(world)) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone() == (6,)
+        assert connection.execute("PRAGMA user_version").fetchone() == (8,)
         assert connection.execute("SELECT * FROM timers").fetchall() == timers
     assert trigger_events(world) == events
 
@@ -409,7 +409,7 @@ def test_version_three_journal_gains_the_kit_resume_tables_in_place(tmp_path: Pa
     assert trigger_events(world) == events
     schedule_deadline(world, "next.expire", NOW + timedelta(hours=2))
     with sqlite3.connect(journal_path(world)) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone() == (6,)
+        assert connection.execute("PRAGMA user_version").fetchone() == (8,)
         assert connection.execute("SELECT count(*) FROM kit_resumes").fetchone() == (0,)
     assert trigger_events(world) == events
 
@@ -432,7 +432,7 @@ def test_version_four_journal_without_runbook_fires_migrates_with_empty_runbook_
     assert pending_runbook_fires(world) == ()
     schedule_deadline(world, "next.expire", NOW + timedelta(hours=2))
     with sqlite3.connect(journal_path(world)) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone() == (6,)
+        assert connection.execute("PRAGMA user_version").fetchone() == (8,)
         assert connection.execute("SELECT count(*) FROM runbook_fires").fetchone() == (0,)
     assert trigger_events(world) == events
     assert pending_runbook_fires(world) == ()
@@ -510,7 +510,7 @@ def test_a_v5_journal_without_plan_columns_gains_them_when_it_holds_no_runbook_f
     assert pending_runbook_fires(world) == ()
     schedule_deadline(world, "next.expire", NOW + timedelta(hours=2))
     with sqlite3.connect(journal_path(world)) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone() == (6,)
+        assert connection.execute("PRAGMA user_version").fetchone() == (8,)
         columns = {row[1] for row in connection.execute("PRAGMA table_info(runbook_fires)")}
         assert {"plan_digest", "plan"} <= columns
         assert connection.execute("SELECT count(*) FROM runbook_steps").fetchone() == (0,)
@@ -601,3 +601,244 @@ def test_out_of_order_generation_times_fall_back_without_stopping_trigger_ticks(
     assert (
         fire(world, NOW + timedelta(seconds=11), triggers=(trigger,), since=listening_since) == ()
     )
+
+
+# Missed instants (ruling 7, 2026-11-16): the first evaluation after a restart
+# records, per authored timer, the instants that fell due while no daemon ran.
+
+NIGHTLY = InternalTrigger(
+    "Trigger:nightly-maintain",
+    "runbook:maintain",
+    CronSchedule(expression="0 2 * * *"),
+    accepted_at=NOW,
+)
+HOURLY = _cadence("Trigger:sweep-hourly", "evidence.sweep", timedelta(hours=1))
+
+
+def test_a_restart_records_each_authored_timers_missed_instants_once(tmp_path: Path) -> None:
+    from cruxible_core.triggers.journal import MissedInstants, missed_trigger_instants
+
+    world = instance(tmp_path)
+    triggers = (*CONFIG, NIGHTLY, HOURLY)
+    fire(world, NOW + timedelta(hours=1), triggers=triggers)
+    assert missed_trigger_instants(world) == ()
+
+    # Down from 01:00 to day 3 at 05:30: three nightly runs and 52 hourly ticks fell due.
+    restart = NOW + timedelta(days=3, hours=5, minutes=30)
+    assert fire(world, restart, triggers=triggers, since=restart) == ()
+    recorded = missed_trigger_instants(world)
+    assert recorded == (
+        MissedInstants(
+            "Trigger:nightly-maintain",
+            "runbook:maintain",
+            restart,
+            NOW + timedelta(hours=2),
+            NOW + timedelta(days=3, hours=2),
+            4,
+        ),
+        MissedInstants(
+            "Trigger:sweep-hourly",
+            "evidence.sweep",
+            restart,
+            NOW + timedelta(hours=2),
+            NOW + timedelta(days=3, hours=5),
+            76,
+        ),
+    )
+    # The seeded housekeeping Triggers are never recorded, and nothing is fired late.
+    assert {event.trigger for event in trigger_events(world)} == {
+        "Trigger:prediction-anchor-retry",
+        "Trigger:sweep-hourly",
+    }
+    assert all(event.due_at <= NOW + timedelta(hours=1) for event in trigger_events(world))
+    # Later ticks under the same daemon add nothing, and fire on schedule again.
+    (*_, tick) = fire(world, NOW + timedelta(days=3, hours=6), triggers=triggers, since=restart)
+    assert tick.due_at == NOW + timedelta(days=3, hours=6)
+    assert missed_trigger_instants(world) == recorded
+
+    # A later restart's missed instants replace that timer's earlier record; a
+    # timer that missed nothing this time keeps its own (`next` drops it once
+    # its target has run since).
+    again = NOW + timedelta(days=3, hours=8, minutes=15)
+    fire(world, again, triggers=triggers, since=again)
+    assert [
+        (item.trigger, item.count, item.restarted_at) for item in missed_trigger_instants(world)
+    ] == [("Trigger:nightly-maintain", 4, restart), ("Trigger:sweep-hourly", 2, again)]
+
+
+def test_a_restart_that_missed_nothing_writes_nothing(tmp_path: Path) -> None:
+    from cruxible_core.triggers.journal import missed_trigger_instants
+
+    world = instance(tmp_path)
+    triggers = (NIGHTLY,)
+    fire(world, NOW + timedelta(hours=2), triggers=triggers)
+    before = journal_path(world).read_bytes()
+    # Down from 02:00 to 03:00: the nightly instant was not due in between.
+    restart = NOW + timedelta(hours=3)
+    assert fire(world, restart, triggers=triggers, since=restart) == ()
+    assert journal_path(world).read_bytes() == before
+    assert missed_trigger_instants(world) == ()
+
+
+def test_a_version_six_journal_gains_the_missed_table_in_place(tmp_path: Path) -> None:
+    from cruxible_core.triggers.journal import missed_trigger_instants
+
+    world = instance(tmp_path)
+    fire(world, NOW + timedelta(hours=1), triggers=(HOURLY,))
+    events = trigger_events(world)
+    with sqlite3.connect(journal_path(world)) as connection:
+        connection.execute("DROP TABLE missed")
+        connection.execute("PRAGMA user_version=6")
+    assert missed_trigger_instants(world) == ()
+    restart = NOW + timedelta(hours=4, minutes=30)
+    fire(world, restart, triggers=(HOURLY,), since=restart)
+    with sqlite3.connect(journal_path(world)) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone() == (8,)
+    assert [(item.trigger, item.count) for item in missed_trigger_instants(world)] == [
+        ("Trigger:sweep-hourly", 3)
+    ]
+    assert trigger_events(world) == events
+
+
+def test_a_cadence_gap_is_counted_without_walking_its_grid() -> None:
+    from cruxible_core.triggers.cadence import timer_gap, timer_instants
+
+    every_minute = CadenceSchedule(interval_seconds=60)
+    after, through = NOW + timedelta(seconds=30), NOW + timedelta(days=30)
+    walked = list(timer_instants(every_minute, accepted_at=NOW, after=after, through=through))
+    assert timer_gap(every_minute, accepted_at=NOW, after=after, through=through) == (
+        walked[0],
+        walked[-1],
+        len(walked),
+    )
+    hourly_cron = CronSchedule(expression="0 * * * *")
+    assert timer_gap(hourly_cron, accepted_at=NOW, after=NOW, through=NOW + timedelta(hours=3)) == (
+        NOW + timedelta(hours=1),
+        NOW + timedelta(hours=3),
+        3,
+    )
+    assert timer_gap(every_minute, accepted_at=NOW, after=NOW, through=NOW) is None
+
+
+@pytest.mark.parametrize("ran", [False, True])
+def test_missed_instants_accumulate_until_the_target_runs(tmp_path: Path, ran: bool) -> None:
+    """A second outage before the target runs adds to the first: the earliest
+    instant, the latest instant and the summed count; once it ran, it replaces."""
+
+    from cruxible_core.triggers.journal import missed_trigger_instants
+
+    world = instance(tmp_path)
+    asked: list[tuple[str, datetime]] = []
+
+    def target_ran_since(key: str, at: datetime) -> bool:
+        asked.append((key, at))
+        return ran
+
+    def restart(at: datetime) -> None:
+        evaluate_triggers(
+            world,
+            now=at,
+            listening_since=at,
+            triggers=(NIGHTLY,),
+            target_ran_since=target_ran_since,
+        )
+
+    evaluate_triggers(world, now=NOW + timedelta(hours=3), listening_since=NOW, triggers=(NIGHTLY,))
+    first = NOW + timedelta(days=2, hours=3)  # missed day 1 and day 2 at 02:00
+    restart(first)
+    restart(NOW + timedelta(days=4, hours=3))  # missed day 3 and day 4
+    (row,) = missed_trigger_instants(world)
+    assert asked == [("runbook:maintain", first)]
+    assert row.last_due == NOW + timedelta(days=4, hours=2)
+    assert row.restarted_at == NOW + timedelta(days=4, hours=3)
+    if ran:
+        assert (row.first_due, row.count) == (NOW + timedelta(days=3, hours=2), 2)
+    else:
+        assert (row.first_due, row.count) == (NOW + timedelta(days=1, hours=2), 4)
+
+
+def test_an_actions_missed_instants_reconcile_on_its_own_fires(tmp_path: Path) -> None:
+    from cruxible_core.triggers.journal import missed_trigger_instants
+
+    world = instance(tmp_path)
+    daily = _cadence("Trigger:sweep-daily", "evidence.sweep", timedelta(days=1))
+    fire(world, NOW + timedelta(days=1), triggers=(daily,))
+    fire(
+        world,
+        NOW + timedelta(days=3, hours=1),
+        triggers=(daily,),
+        since=NOW + timedelta(days=3, hours=1),
+    )
+    # Down again before the action fired: the count adds up.
+    again = NOW + timedelta(days=5, hours=1)
+    fire(world, again, triggers=(daily,), since=again)
+    (row,) = missed_trigger_instants(world)
+    assert (row.first_due, row.last_due, row.count) == (
+        NOW + timedelta(days=2),
+        NOW + timedelta(days=5),
+        4,
+    )
+
+
+def test_a_retargeted_trigger_owes_nothing_for_its_predecessors_instants(tmp_path: Path) -> None:
+    """Review finding 2: a successor version (here aimed at another Runbook) starts
+    its own record; the old target's count is never relabelled as the new one's."""
+
+    from cruxible_core.triggers.journal import missed_trigger_instants
+
+    world = instance(tmp_path)
+    asked: list[str] = []
+
+    def target_ran_since(key: str, at: datetime) -> bool:
+        asked.append(key)
+        return False
+
+    old = replace(NIGHTLY, version="sha256:" + "1" * 64)
+    evaluate_triggers(world, now=NOW + timedelta(hours=3), listening_since=NOW, triggers=(old,))
+    first = NOW + timedelta(days=2, hours=3)
+    evaluate_triggers(world, now=first, listening_since=first, triggers=(old,))
+    successor = replace(old, action="runbook:other", version="sha256:" + "2" * 64)
+    again = NOW + timedelta(days=3, hours=3)
+    evaluate_triggers(
+        world,
+        now=again,
+        listening_since=again,
+        triggers=(successor,),
+        target_ran_since=target_ran_since,
+    )
+    (row,) = missed_trigger_instants(world)
+    assert (row.action, row.version, row.count) == ("runbook:other", successor.version, 1)
+    assert row.first_due == NOW + timedelta(days=3, hours=2)
+    assert asked == []
+
+
+def test_a_version_seven_journal_gains_the_missed_version_in_place(tmp_path: Path) -> None:
+    from cruxible_core.triggers.journal import missed_trigger_instants
+
+    world = instance(tmp_path)
+    fire(world, NOW + timedelta(hours=1), triggers=(HOURLY,))
+    restart = NOW + timedelta(hours=4, minutes=30)
+    fire(world, restart, triggers=(HOURLY,), since=restart)
+    with sqlite3.connect(journal_path(world)) as connection:
+        connection.execute("ALTER TABLE missed DROP COLUMN version")
+        connection.execute("PRAGMA user_version=7")
+    assert [row.version for row in missed_trigger_instants(world)] == [""]
+    schedule_deadline(world, "next.expire", NOW + timedelta(days=1))
+    with sqlite3.connect(journal_path(world)) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone() == (8,)
+    assert [row.count for row in missed_trigger_instants(world)] == [3]
+
+
+def test_an_unserved_actions_timer_records_no_missed_instants(tmp_path: Path) -> None:
+    """Review finding 4: an accepted Trigger aimed at curation.detect (not served in
+    0.5.0) is still read for history, but nothing would run it, so its outage is
+    never recorded or offered as `action run curation.detect`."""
+
+    from cruxible_core.triggers.journal import missed_trigger_instants
+
+    world = instance(tmp_path)
+    curation = _cadence("Trigger:curation-hourly", "curation.detect", timedelta(hours=1))
+    fire(world, NOW + timedelta(hours=1), triggers=(curation, HOURLY))
+    restart = NOW + timedelta(hours=4, minutes=30)
+    fire(world, restart, triggers=(curation, HOURLY), since=restart)
+    assert [row.trigger for row in missed_trigger_instants(world)] == ["Trigger:sweep-hourly"]

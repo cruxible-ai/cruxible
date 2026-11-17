@@ -206,7 +206,9 @@ base 1.0.0 content sha256:433a7768…; up to date
   proposal sha256:… (cruxible proposal approve sha256:… --signer-id ID --key
   FILE, as a second principal)`). Until it is approved, the capabilities are
   absent, and `kit status` lists the pending add with its proposal and the
-  approve command.
+  approve command. If other writes land before the approval, the kit proposal
+  is stale and is not rebased: run `cruxible kit add base` again for a fresh
+  proposal and have that approved (the refusal names this repair).
 - **Upgrading.** The base kit changes only with a Cruxible release. A newer
   release may bundle a newer version; `kit status` compares the installed one
   with the bundled one (no registry is asked), and says when the installed
@@ -366,7 +368,7 @@ The result is one of:
 | Status | Meaning | Next |
 |---|---|---|
 | `accepted` | The change set landed: the approval policy required no approval. | Nothing. |
-| `proposed` | It awaits approval. | `cruxible proposal approve`; the approval that completes it activates it. |
+| `proposed` | It awaits approval. | `cruxible proposal approve`; the approval that completes it activates it. If other writes land first, run the same `kit add` again (the stale proposal is not rebased; its refusal names this repair). |
 | `awaiting_providers` | A provider installation the kit needs awaits approval. | Approve that installation; its activation proposes the definitions on their own, as you (`kit status` shows the resume). |
 | `blocked` | Something in current state stops it; the detail says what. | Fix the cause, or choose another release. |
 
@@ -446,9 +448,17 @@ upgrade always proposes, and the release's version wins by default. The
 preview names what each replacement does:
 
 - it overwrites an edit you made since install;
-- it re-adds a definition you retired;
+- it re-adds a definition retired outside the kit's record (for example after
+  `kit remove`);
 - it takes over a definition you defined outside the kit;
 - it replaces a definition the kit carried in as a dependency.
+
+A definition the kit installed that you retired since -- any kind, including a
+provider build -- stays retired: the upgrade skips it without `--keep` and lists
+it as `kept retired: ...`. The add refuses only when something the release
+still installs depends on it (`cruxible.kit.retired_dependency`, naming both).
+Retiring a definition an installed kit bundles warns, naming the kit, because
+nothing re-adds it afterwards.
 
 To keep your version instead, name it with `--keep` (repeatable, by identity
 such as `--keep ClaimType:catalog.part.title`), or keep every definition you
@@ -540,6 +550,10 @@ authored in one authored change, retire the Claims one Subject at a time
 (`cruxible retire KIND/ID --with-claims --because TEXT`), then preview the
 removal again; or keep the kit. `kit remove` has no option that retires Claims,
 so an instance that has recorded many Claims under a kit in practice keeps it.
+Nor does it retire the automation you authored over the kit: that is yours,
+and it stays until you retire it. A blocked removal prints the refusal and its
+repair first, then the plan as counts per action and kind; add `--detail` to
+list each path.
 
 A blocked removal records nothing: the commit checks the removal at the head
 its preview was pinned to and submits only what passes, and the command exits
@@ -551,7 +565,7 @@ proposal. Below `graph_write` (an MCP server capped by `CRUXIBLE_MODE`, say),
 `kit add` and `kit remove` stay proposed and the result says who can activate
 them.
 
-A removed kit cannot be added back: its retired definitions cannot be revived,
+Removal is one-way. A removed kit cannot be added back: its retired definitions cannot be revived,
 so a later `kit add` of it refuses with a `revival_refused` code (for example
 `cruxible.capture_contract.revival_refused`).
 
@@ -628,6 +642,13 @@ cruxible kit build --id car-parts --version 1.0.0 --owns catalog. --out ./car-pa
   definitions. The check is an authoring preview: nothing is stored. The
   template travels as one of the kit's files, outside the release's content
   digest, and is never installed.
+- `--file PATH` (repeatable) copies a plain file for the kit's reader, such as
+  `README.md` or a reference page, into the kit at its path relative to the
+  workspace root, and lists it in the manifest's `files` with its sha256 (a
+  root `README*` is the `readme`, `examples/...` an `example`, anything else a
+  `reference`). Like the template it is outside the content digest. A missing
+  file or one outside the workspace refuses `cruxible.kit.file_refused` with
+  its repair.
 
 ### Bundle your own provider
 

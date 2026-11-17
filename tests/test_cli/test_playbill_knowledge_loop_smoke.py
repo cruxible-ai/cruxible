@@ -662,7 +662,7 @@ def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
         for claim in cell
     } == {identity.removeprefix("Claim:") for identity in claim_identities}
     assert (
-        cruxible.json("get", claim_identities[0], "--detail", "proof")["proof"]["envelope"][
+        cruxible.json("get", claim_identities[0], "--detail", "proof-full")["proof"]["envelope"][
             "identity"
         ]
         == claim_identities[0]

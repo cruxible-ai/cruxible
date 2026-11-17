@@ -88,11 +88,6 @@ from cruxible_core.server.playbill_request_models import (
     BlockDepublishRequest,
     BlockObserveRequest,
     CompilerUpgradeRequest,
-    CurationAcceptFixedRequest,
-    CurationListRequest,
-    CurationOverruleRequest,
-    CurationSuppressRequest,
-    CurationUnsuppressRequest,
     FileBundleRequest,
     FileProposeRequest,
     FloorDeltaRequest,
@@ -1321,28 +1316,14 @@ def next_work(
 
 
 @router.post(
-    "/{instance_id}/curation/list",
-    response_model=contracts.CurationListResult,
-)
-def curation_list(
-    instance_id: str,
-    req: CurationListRequest,
-) -> contracts.CurationListResult:
-    return playbill_api.playbill_curation_list(
-        resolve_server_instance_id(instance_id),
-        request=req.model_dump(mode="json", exclude_none=True),
-    )
-
-
-@router.post(
-    "/{instance_id}/curation/duplicates",
+    "/{instance_id}/duplicates",
     response_model=DuplicatesAuditResult,
 )
-def curation_duplicates(
+def duplicates(
     instance_id: str,
     req: DuplicatesAuditRequest,
 ) -> DuplicatesAuditResult:
-    return playbill_api.playbill_curation_duplicates(
+    return playbill_api.playbill_duplicates(
         resolve_server_instance_id(instance_id),
         request=req,
     )
@@ -1359,62 +1340,6 @@ def audit(
     return playbill_api.playbill_audit(
         resolve_server_instance_id(instance_id),
         request=req.model_dump(mode="json", exclude_none=True),
-    )
-
-
-@router.post(
-    "/{instance_id}/curation/overrule",
-    response_model=contracts.CurationActionResult,
-)
-def curation_overrule(
-    instance_id: str,
-    req: CurationOverruleRequest,
-) -> contracts.CurationActionResult:
-    return playbill_api.playbill_curation_overrule(
-        resolve_server_instance_id(instance_id),
-        request=req.model_dump(mode="json"),
-    )
-
-
-@router.post(
-    "/{instance_id}/curation/accept-fixed",
-    response_model=contracts.CurationActionResult,
-)
-def curation_accept_fixed(
-    instance_id: str,
-    req: CurationAcceptFixedRequest,
-) -> contracts.CurationActionResult:
-    return playbill_api.playbill_curation_accept_fixed(
-        resolve_server_instance_id(instance_id),
-        request=req.model_dump(mode="json"),
-    )
-
-
-@router.post(
-    "/{instance_id}/curation/suppress",
-    response_model=contracts.CurationActionResult,
-)
-def curation_suppress(
-    instance_id: str,
-    req: CurationSuppressRequest,
-) -> contracts.CurationActionResult:
-    return playbill_api.playbill_curation_suppress(
-        resolve_server_instance_id(instance_id),
-        request=req.model_dump(mode="json"),
-    )
-
-
-@router.post(
-    "/{instance_id}/curation/unsuppress",
-    response_model=contracts.CurationActionResult,
-)
-def curation_unsuppress(
-    instance_id: str,
-    req: CurationUnsuppressRequest,
-) -> contracts.CurationActionResult:
-    return playbill_api.playbill_curation_unsuppress(
-        resolve_server_instance_id(instance_id),
-        request=req.model_dump(mode="json"),
     )
 
 

@@ -8,8 +8,6 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from cruxible_client.contracts import (
-    CURATION_LIST_DEFAULT_LIMIT,
-    CURATION_LIST_MAX_LIMIT,
     NEXT_DEFAULT_LIMIT,
     NEXT_MAX_LIMIT,
     FloorExportPart,
@@ -332,13 +330,6 @@ class NextRequest(_StrictPlaybillRequest):
     caller_tools: tuple[str, ...] | None = None
 
 
-class CurationListRequest(_StrictPlaybillRequest):
-    tag: Literal["playbill-curation-list-request-v1"] = "playbill-curation-list-request-v1"
-    access_profile: dict[str, Any]
-    limit: int = Field(default=CURATION_LIST_DEFAULT_LIMIT, ge=1, le=CURATION_LIST_MAX_LIMIT)
-    cursor: str | None = Field(default=None, max_length=4096)
-
-
 class BlockObserveRequest(_StrictPlaybillRequest):
     """The declared blocks a client read on the pages it touched, for block churn."""
 
@@ -368,56 +359,6 @@ class AuditRequest(_StrictPlaybillRequest):
         }
     )
     cursor: dict[str, Any] | None = None
-
-
-class CurationOverruleRequest(_StrictPlaybillRequest):
-    tag: Literal["playbill-curation-overrule-request-v1"] = "playbill-curation-overrule-request-v1"
-    item_id: str
-    expected_latest_event_digest: str
-    reason: CallerText
-    attribution_refs: tuple[str, ...] = ()
-    dry_run: DryRun = None
-    at: PreviewAt = None
-
-
-class CurationAcceptFixedRequest(_StrictPlaybillRequest):
-    tag: Literal["playbill-curation-accept-fixed-request-v1"] = (
-        "playbill-curation-accept-fixed-request-v1"
-    )
-    item_id: str
-    expected_latest_event_digest: str
-    reason: CallerText
-    accepted_proposal_id: str | None = None
-    accepted_changeset_digest: str | None = None
-    accepted_generation: int | None = None
-    attribution_refs: tuple[str, ...] = ()
-    dry_run: DryRun = None
-    at: PreviewAt = None
-
-
-class CurationSuppressRequest(_StrictPlaybillRequest):
-    tag: Literal["playbill-curation-suppress-request-v1"] = "playbill-curation-suppress-request-v1"
-    item_id: str
-    expected_latest_event_digest: str
-    reason: CallerText
-    scope: Literal["item", "lineage"]
-    until_generation: int | None = None
-    attribution_refs: tuple[str, ...] = ()
-    dry_run: DryRun = None
-    at: PreviewAt = None
-
-
-class CurationUnsuppressRequest(_StrictPlaybillRequest):
-    tag: Literal["playbill-curation-unsuppress-request-v1"] = (
-        "playbill-curation-unsuppress-request-v1"
-    )
-    item_id: str
-    expected_latest_event_digest: str
-    reason: CallerText
-    suppression_event_id: str | None = None
-    attribution_refs: tuple[str, ...] = ()
-    dry_run: DryRun = None
-    at: PreviewAt = None
 
 
 class ResolveCoverageRequest(_StrictPlaybillRequest):

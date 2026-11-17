@@ -207,6 +207,7 @@ from cruxible_client.contracts.get_reads import (
     GetSubjectHistory,
 )
 from cruxible_client.contracts.identity_normalizers import KeyNormalizer
+from cruxible_client.contracts.kits import KitStatus
 from cruxible_client.contracts.policies import (
     CAPTURE_CONTRACT_REF_ROLE,
     CaptureContractAdmission,
@@ -242,6 +243,7 @@ from cruxible_client.contracts.resolution_contracts import (
     ResolutionContract,
     ResolutionContractReference,
 )
+from cruxible_client.contracts.runbooks import RunbookPreview, RunbookRunResult
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.shapes import (
     Contract,
@@ -629,11 +631,11 @@ class KnowledgeCard:
     _file_paths: Mapping[str, str] | None = field(default=None, repr=False, compare=False)
 
     def __str__(self) -> str:
-        """The answer as ``cruxible get`` prints it; ``repr()`` stays the model.
+        """The answer as ``cruxible get`` prints it; ``repr()`` is its first line.
 
         A Claim summary is the typed view the SDK reads from the Claim's proof,
-        so it prints that view's own lines; a proof prints as its repr, as the
-        CLI prints it as JSON. Reads nothing.
+        so it prints that view's own lines; a proof prints as its JSON, as the
+        CLI prints it. Reads nothing.
         """
 
         from cruxible_client.contracts.get_text import claim_view_lines, render_get
@@ -643,7 +645,26 @@ class KnowledgeCard:
         text = (
             None if self._result is None else render_get(self._result, file_paths=self._file_paths)
         )
-        return repr(self) if text is None else text
+        if text is not None:
+            return text
+        import json
+
+        return json.dumps(self.value, indent=2, default=str)
+
+    def __repr__(self) -> str:
+        """The first line of what the CLI prints (S1); the fields hold the whole answer.
+
+        When that line does not name the thing (a proof, which prints as JSON, or
+        a detail that opens with a section), it is ``kind: identity (detail)``.
+        """
+
+        from cruxible_client.contracts.text_display import one_line_repr
+
+        first = one_line_repr(self)
+        if self.identity in first:
+            return first
+        detail = "summary" if self._result is None else self._result.detail
+        return f"{self.kind.value}: {self.identity} ({detail})"
 
     @property
     def ref(self) -> TypedRef:
@@ -694,13 +715,20 @@ class NextPage:
         return iter(self.items)
 
     def __str__(self) -> str:
-        """The queue as ``cruxible next`` prints it; ``repr()`` stays the model. Reads nothing."""
+        """The queue as ``cruxible next`` prints it; ``repr()`` is its first line. Reads nothing."""
 
         from cruxible_client.contracts.text_display import next_lines
 
         return "\n".join(
             next_lines(status=self.status, items=self.items, unobserved=self.unobserved)
         )
+
+    def __repr__(self) -> str:
+        """The first line of what the CLI prints (S1); the fields hold the whole page."""
+
+        from cruxible_client.contracts.text_display import one_line_repr
+
+        return one_line_repr(self)
 
 
 @dataclass(frozen=True)
@@ -834,6 +862,7 @@ class _IntentDraft:
             preflight=result.preflight,
             candidate_status=result.status,
             outcome=result.outcome,
+            warnings=result.warnings,
         )
 
 
@@ -2333,6 +2362,7 @@ class Intent:
         preflight: api.AuthoringPreflightResult | None = None,
         candidate_status: api.CandidateStatusRecord | None = None,
         outcome: api.AuthoringLanding | None = None,
+        warnings: tuple[str, ...] = (),
     ) -> None:
         self._playbill = cx
         self._draft = draft
@@ -2341,6 +2371,8 @@ class Intent:
         self._candidate_status = candidate_status
         # The daemon spells ``outcome.next`` for the CLI; an Intent shows the SDK call.
         self.outcome = landing_for_surface(outcome, "sdk")
+        #: Each kit-bundled definition the submitted change retires (S7).
+        self.kit_warnings = warnings
 
     @classmethod
     def from_preflight(
@@ -2562,6 +2594,7 @@ class Intent:
         self._raw = result.intent
         self._candidate_status = result.status
         self.outcome = landing_for_surface(result.outcome, "sdk")
+        self.kit_warnings = result.warnings
         return self
 
     def status(self) -> api.CandidateStatusRecord:
@@ -2658,6 +2691,39 @@ class Proposal:
         """
         return self._playbill._client.readmit_proposal(
             self._playbill._instance_id, self.proposal_id, dry_run=dry_run, at=at
+        )
+
+    def reject(
+        self, reason: str, *, dry_run: bool | None = None, at: str | None = None
+    ) -> api.ProposalRejectResult:
+        """Reject another actor's open or stale proposal, with the reason its author reads.
+
+        A reviewer's terminal statement: the proposal leaves the open inventory
+        and every settlement door refuses it. Your own proposal you withdraw
+        instead (the refusal says so). Needs graph write. ``dry_run=True``
+        checks it and records nothing.
+
+        Next: ``cx.get(proposal.proposal_id)`` shows who rejected it and why.
+        """
+        cx = self._playbill
+        return cx._client.reject_proposal(
+            cx._instance_id, self.proposal_id, reason=reason, dry_run=dry_run, at=at
+        )
+
+    def withdraw(
+        self, reason: str, *, dry_run: bool | None = None, at: str | None = None
+    ) -> api.ProposalWithdrawResult:
+        """Withdraw your own open or stale proposal: it will never be activated.
+
+        Only its author withdraws it; anyone else is refused
+        ``cruxible.proposal.withdraw_not_author``, whose repair is to reject it.
+        ``dry_run=True`` checks it and records nothing.
+
+        Next: author the change again for a new proposal, if it is still wanted.
+        """
+        cx = self._playbill
+        return cx._client.withdraw_proposal(
+            cx._instance_id, self.proposal_id, reason=reason, dry_run=dry_run, at=at
         )
 
     def __repr__(self) -> str:
@@ -3295,7 +3361,7 @@ class Cruxible:
         limit: int | None = None,
         cursor: str | None = None,
     ) -> api.ProposalList:
-        """One page of proposals, newest first; follow ``next_cursor`` while truncated.
+        """One page of proposals, oldest admission first; follow ``next_cursor`` while truncated.
 
         Next: ``cx.get(entry.proposal_id)`` to read one, or ``cx.proposal(id).review()``.
         """
@@ -3331,6 +3397,8 @@ class Cruxible:
     def file(self, path: str | Path) -> FileSelector:
         """Select text from a catalogued workspace file, to cite as evidence.
 
+        Only catalogued files are selected (an uncatalogued path refuses). A write
+        citing a file as ``FileEvidence(file="PATH#ANCHOR")`` catalogues it itself.
         Next: ``cx.file(path).section("Heading", "Child")`` or ``.anchor("text found once")``;
         pass the selection as ``supported_by=``.
         """
@@ -4810,6 +4878,34 @@ class Cruxible:
 
         return Line(self, name.removeprefix("Line:"))
 
+    def runbook(self, name: str) -> Runbook:
+        """A handle on one accepted Runbook by name: preview it, or run it now.
+
+        Next: ``cx.runbook(name).preview()`` for what each step reads and writes,
+        then ``.run()``.
+        """
+
+        return Runbook(self, name.removeprefix("Runbook:"))
+
+    def whoami(self) -> api.WhoAmI:
+        """Who this connection acts as, whether it can author here, and why not.
+
+        ``can_author`` and ``authoring_refusal`` carry the code, detail and repair
+        authoring would return. Next: the refusal's repair, when there is one.
+        """
+
+        return self._client.whoami(self._instance_id)
+
+    def kits(self) -> KitStatus:
+        """The kits installed here, their versions, providers and pending adds.
+
+        Adding or removing a kit stays a CLI step: ``cruxible kit add`` reads the
+        kit directory or registry, and ``cruxible kit status`` also checks for a
+        newer release. Next: ``cx.next()`` names a kit add that waits on review.
+        """
+
+        return self._client.kit_status(self._instance_id)
+
     def inbox(self) -> Inbox:
         """The Line inbox: what Lines sent to intelligence, and your dispositions of it.
 
@@ -5452,27 +5548,7 @@ class Cruxible:
         self._observe_read(_coordinate(result.coordinate), expected=self._read_at())
         return result
 
-    def curation_list(
-        self, *, limit: int | None = None, cursor: str | None = None
-    ) -> api.CurationListResult:
-        """Read one page of the curation queue: a pure read of what detection recorded.
-
-        Detection runs on its own on accepted generations; ``result.detection`` says
-        when it last ran and ``inactive_detectors`` which detectors cannot run here.
-        A truncated page carries ``next_cursor``; pass it back as ``cursor``.
-
-        Next: ``cx.curation_overrule(...)``, ``cx.curation_accept_fixed(...)`` or
-        ``cx.curation_suppress(...)`` on an item.
-        """
-
-        return self._client.list_curation(
-            self._instance_id,
-            access_profile=self._access_profile.model_dump(),
-            limit=limit,
-            cursor=cursor,
-        )
-
-    def curation_duplicates(
+    def duplicates(
         self, kind: str, *, limit: int | None = None, cursor: str | None = None
     ) -> DuplicatesAuditResult:
         """List possible duplicates of one kind for you to resolve; a pure, bounded read.
@@ -5488,9 +5564,7 @@ class Cruxible:
         ``canonical_form``.
         """
 
-        return self._client.curation_duplicates(
-            self._instance_id, kind=kind, limit=limit, cursor=cursor
-        )
+        return self._client.duplicates(self._instance_id, kind=kind, limit=limit, cursor=cursor)
 
     def audit(
         self,
@@ -5520,127 +5594,6 @@ class Cruxible:
         )
         self._observe_read(_coordinate(result.coordinate), expected=self._read_at())
         return result
-
-    def curation_overrule(
-        self,
-        *,
-        item_id: str,
-        expected_latest_event_digest: str,
-        reason: str,
-        attribution_refs: tuple[str, ...] = (),
-        dry_run: bool | None = None,
-        at: str | None = None,
-    ) -> api.CurationActionResult:
-        """Record, permanently, that a detector pattern does not apply here.
-
-        It cannot be undone, so it previews by default (``dry_run`` unset or
-        true appends nothing); commit with ``dry_run=False`` and ``at`` set to
-        the preview's ``coordinate.git_oid``.
-
-        Next: ``cx.curation_list()``; the pattern is never raised again.
-        """
-
-        return self._client.overrule_curation(
-            self._instance_id,
-            item_id=item_id,
-            expected_latest_event_digest=expected_latest_event_digest,
-            reason=reason,
-            attribution_refs=attribution_refs,
-            dry_run=dry_run,
-            at=at,
-        )
-
-    def curation_accept_fixed(
-        self,
-        *,
-        item_id: str,
-        expected_latest_event_digest: str,
-        reason: str,
-        accepted_proposal_id: str | None = None,
-        accepted_changeset_digest: str | None = None,
-        accepted_generation: int | None = None,
-        attribution_refs: tuple[str, ...] = (),
-        dry_run: bool | None = None,
-        at: str | None = None,
-    ) -> api.CurationActionResult:
-        """Link an item to the accepted change that fixed it.
-
-        Name the change by ``accepted_proposal_id`` (``accepted_changeset_digest``
-        pins it exactly) or by ``accepted_generation``; the daemon resolves the rest.
-
-        Next: ``cx.curation_list()``; the item is resolved.
-        """
-
-        return self._client.accept_fixed_curation(
-            self._instance_id,
-            item_id=item_id,
-            expected_latest_event_digest=expected_latest_event_digest,
-            reason=reason,
-            accepted_proposal_id=accepted_proposal_id,
-            accepted_changeset_digest=accepted_changeset_digest,
-            accepted_generation=accepted_generation,
-            attribution_refs=attribution_refs,
-            dry_run=dry_run,
-            at=at,
-        )
-
-    def curation_suppress(
-        self,
-        *,
-        item_id: str,
-        expected_latest_event_digest: str,
-        reason: str,
-        scope: Literal["item", "lineage"],
-        until_generation: int | None = None,
-        attribution_refs: tuple[str, ...] = (),
-        dry_run: bool | None = None,
-        at: str | None = None,
-    ) -> api.CurationActionResult:
-        """Hide an item (``item``) or its whole lineage (``lineage``) without resolving it.
-
-        Detection keeps running; ``until_generation`` lets the suppression lapse.
-
-        Next: ``cx.curation_unsuppress(...)`` to lift it.
-        """
-
-        return self._client.suppress_curation(
-            self._instance_id,
-            item_id=item_id,
-            expected_latest_event_digest=expected_latest_event_digest,
-            reason=reason,
-            scope=scope,
-            until_generation=until_generation,
-            attribution_refs=attribution_refs,
-            dry_run=dry_run,
-            at=at,
-        )
-
-    def curation_unsuppress(
-        self,
-        *,
-        item_id: str,
-        expected_latest_event_digest: str,
-        reason: str,
-        suppression_event_id: str | None = None,
-        attribution_refs: tuple[str, ...] = (),
-        dry_run: bool | None = None,
-        at: str | None = None,
-    ) -> api.CurationActionResult:
-        """Lift a suppression on an item; name it when the item carries more than one.
-
-        Next: ``cx.curation_list()``; what it hid is listed again.
-        """
-
-        return self._client.unsuppress_curation(
-            self._instance_id,
-            item_id=item_id,
-            expected_latest_event_digest=expected_latest_event_digest,
-            reason=reason,
-            suppression_event_id=suppression_event_id,
-            attribution_refs=attribution_refs,
-            dry_run=dry_run,
-            at=at,
-        )
 
     def _assert_coordinate(self, coordinate: AcceptedCoordinate) -> None:
         if coordinate != self.coordinate:
@@ -5987,6 +5940,49 @@ class Line:
         return ProcedureRun(cx, result)
 
 
+class Runbook:
+    """A handle on one accepted Runbook by name. Each call reaches the daemon.
+
+    ``run`` runs its steps now, in order, each Line as your manual run and
+    each action fired as ``action run`` fires it; it stops at the first step
+    that fails or sends writes to review.
+
+    Next: ``runbook.preview()``, then ``runbook.run()``.
+    """
+
+    def __init__(self, cx: Cruxible, name: str) -> None:
+        self._playbill = cx
+        self.name = name
+
+    @property
+    def ref(self) -> str:
+        """The ``get`` reference for this Runbook's card. Next: ``cx.get(runbook.ref)``."""
+
+        return f"Runbook:{self.name}"
+
+    def preview(self) -> RunbookPreview:
+        """What each step can read, write, call, settle and set off; nothing runs.
+
+        Next: ``runbook.run()``.
+        """
+        cx = self._playbill
+        return cx._client.preview_runbook(cx._instance_id, self.name)
+
+    def run(self) -> RunbookRunResult:
+        """Run the Runbook now under your authority; the result lists every step.
+
+        Needs governed write. A step that fails stops the run (later steps are
+        ``not_run``); a stop for review is not a failure.
+
+        Next: ``cx.get(runbook.ref)`` for its latest runs, or the stopped step's run.
+        """
+        cx = self._playbill
+        return cx._client.run_runbook(cx._instance_id, self.name)
+
+    def __repr__(self) -> str:
+        return f"Runbook({self.name!r})"
+
+
 class Inbox:
     """The Line inbox. A Line's post_inbox terminal posts items it could not decide.
 
@@ -6009,14 +6005,19 @@ class Inbox:
         status: api.InboxItemStatus | None = None,
         limit: int | None = None,
         cursor: str | None = None,
-    ) -> api.InboxList:
-        """One page of items, most recently posted first; follow ``next_cursor``.
+    ) -> api.InboxRows:
+        """One page of items as compact rows (id, Line, kind, title, status, seen
+        count), most recently posted first; follow ``next_cursor``.
 
-        Next: ``inbox.get(entry.item.item_id)`` to read one whole.
+        Next: ``inbox.get(row.item_id)`` to read one whole.
         """
+        from cruxible_client.contracts.line_inbox import compact_inbox_list
+
         cx = self._playbill
-        return cx._client.list_inbox(
-            cx._instance_id, line=line, status=status, limit=limit, cursor=cursor
+        return compact_inbox_list(
+            cx._client.list_inbox(
+                cx._instance_id, line=line, status=status, limit=limit, cursor=cursor
+            )
         )
 
     def get(self, item_id: str) -> api.InboxItem:

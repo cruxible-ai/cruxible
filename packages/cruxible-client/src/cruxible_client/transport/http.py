@@ -1935,30 +1935,7 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.SinceResult)
 
-    def list_curation(
-        self,
-        instance_id: str,
-        *,
-        access_profile: Mapping[str, Any],
-        limit: int | None = None,
-        cursor: str | None = None,
-    ) -> contracts.CurationListResult:
-        """One page of the curation queue; follow ``next_cursor`` while ``truncated``."""
-        body: dict[str, Any] = {
-            "tag": "playbill-curation-list-request-v1",
-            "access_profile": dict(access_profile),
-        }
-        if limit is not None:
-            body["limit"] = limit
-        if cursor is not None:
-            body["cursor"] = cursor
-        response = self._client.post(
-            f"/api/v1/{instance_id}/curation/list",
-            json=body,
-        )
-        return self._parse_model(response, contracts.CurationListResult)
-
-    def curation_duplicates(
+    def duplicates(
         self,
         instance_id: str,
         *,
@@ -1975,7 +1952,7 @@ class CruxibleClient:
             }
         )
         response = self._client.post(
-            f"/api/v1/{instance_id}/curation/duplicates",
+            f"/api/v1/{instance_id}/duplicates",
             json=request.model_dump(mode="json", exclude_none=True),
         )
         return self._parse_model(response, DuplicatesAuditResult)
@@ -2027,117 +2004,6 @@ class CruxibleClient:
             json={key: value for key, value in payload.items() if value is not None},
         )
         return self._parse_model(response, contracts.AuditResult)
-
-    def overrule_curation(
-        self,
-        instance_id: str,
-        *,
-        item_id: str,
-        expected_latest_event_digest: str,
-        reason: str,
-        attribution_refs: tuple[str, ...] = (),
-        dry_run: bool | None = None,
-        at: str | None = None,
-    ) -> contracts.CurationActionResult:
-        response = self._client.post(
-            f"/api/v1/{instance_id}/curation/overrule",
-            json={
-                "tag": "playbill-curation-overrule-request-v1",
-                "item_id": item_id,
-                "expected_latest_event_digest": expected_latest_event_digest,
-                "reason": reason,
-                "attribution_refs": list(attribution_refs),
-                **_change_control(dry_run, at),
-            },
-        )
-        return self._parse_model(response, contracts.CurationActionResult)
-
-    def accept_fixed_curation(
-        self,
-        instance_id: str,
-        *,
-        item_id: str,
-        expected_latest_event_digest: str,
-        reason: str,
-        accepted_proposal_id: str | None = None,
-        accepted_changeset_digest: str | None = None,
-        accepted_generation: int | None = None,
-        attribution_refs: tuple[str, ...] = (),
-        dry_run: bool | None = None,
-        at: str | None = None,
-    ) -> contracts.CurationActionResult:
-        """Link an item to its fixing change, by proposal (optionally pinned to its
-        ChangeSet) or by accepted generation."""
-        response = self._client.post(
-            f"/api/v1/{instance_id}/curation/accept-fixed",
-            json={
-                "tag": "playbill-curation-accept-fixed-request-v1",
-                "item_id": item_id,
-                "expected_latest_event_digest": expected_latest_event_digest,
-                "reason": reason,
-                "accepted_proposal_id": accepted_proposal_id,
-                "accepted_changeset_digest": accepted_changeset_digest,
-                "accepted_generation": accepted_generation,
-                "attribution_refs": list(attribution_refs),
-                **_change_control(dry_run, at),
-            },
-        )
-        return self._parse_model(response, contracts.CurationActionResult)
-
-    def suppress_curation(
-        self,
-        instance_id: str,
-        *,
-        item_id: str,
-        expected_latest_event_digest: str,
-        reason: str,
-        scope: Literal["item", "lineage"],
-        until_generation: int | None = None,
-        attribution_refs: tuple[str, ...] = (),
-        dry_run: bool | None = None,
-        at: str | None = None,
-    ) -> contracts.CurationActionResult:
-        response = self._client.post(
-            f"/api/v1/{instance_id}/curation/suppress",
-            json={
-                "tag": "playbill-curation-suppress-request-v1",
-                "item_id": item_id,
-                "expected_latest_event_digest": expected_latest_event_digest,
-                "reason": reason,
-                "scope": scope,
-                "until_generation": until_generation,
-                "attribution_refs": list(attribution_refs),
-                **_change_control(dry_run, at),
-            },
-        )
-        return self._parse_model(response, contracts.CurationActionResult)
-
-    def unsuppress_curation(
-        self,
-        instance_id: str,
-        *,
-        item_id: str,
-        expected_latest_event_digest: str,
-        reason: str,
-        suppression_event_id: str | None = None,
-        attribution_refs: tuple[str, ...] = (),
-        dry_run: bool | None = None,
-        at: str | None = None,
-    ) -> contracts.CurationActionResult:
-        """Lift one suppression on an item (the only one, unless named)."""
-        response = self._client.post(
-            f"/api/v1/{instance_id}/curation/unsuppress",
-            json={
-                "tag": "playbill-curation-unsuppress-request-v1",
-                "item_id": item_id,
-                "expected_latest_event_digest": expected_latest_event_digest,
-                "reason": reason,
-                "suppression_event_id": suppression_event_id,
-                "attribution_refs": list(attribution_refs),
-                **_change_control(dry_run, at),
-            },
-        )
-        return self._parse_model(response, contracts.CurationActionResult)
 
     def resolve_coverage(
         self,

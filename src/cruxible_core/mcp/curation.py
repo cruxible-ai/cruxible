@@ -16,7 +16,7 @@ _PROFILES = (PROFILE_DEFAULT, PROFILE_FULL)
 
 #: The everyday agent loop: map state, read it, write it, and settle. Agents read
 #: state only through orient, query and get; the full grammar (query_spec, the
-#: since change feed, authoring, Procedures, Lines, curation) is in the full
+#: since change feed, authoring, Procedures, Lines) is in the full
 #: profile.
 _DEFAULT_TOOLS = frozenset(
     {

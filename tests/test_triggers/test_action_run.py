@@ -20,8 +20,8 @@ from types import SimpleNamespace
 import pytest
 
 from cruxible_client import contracts
-from cruxible_client.contracts.triggers import INTERNAL_ACTIONS
-from cruxible_core.consumers.next import NEXT_QUEUE, curation, evidence, predictions
+from cruxible_client.contracts.triggers import INTERNAL_ACTIONS, SERVED_INTERNAL_ACTIONS
+from cruxible_core.consumers.next import NEXT_QUEUE, evidence, predictions
 from cruxible_core.errors import ConfigError, PermissionDeniedError
 from cruxible_core.runtime import playbill_api
 from cruxible_core.runtime.permissions import PermissionMode, request_permission_scope
@@ -33,8 +33,21 @@ NOW = datetime(2026, 10, 13, tzinfo=UTC)
 _NEXT_COVERED_SEQUENCE = {
     "evidence.sweep": evidence.sweep_covered_sequence,
     "prediction.anchor_retry": predictions.retry_covered_sequence,
-    "curation.detect": curation.covered_sequence,
 }
+
+
+@pytest.fixture(autouse=True)
+def _acting_as_a_principal(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Firing an action is an attributed write, so these calls act as ``owner``:
+    the implicit local operator is refused before any fire (its own test lives
+    with the principal-claim tests)."""
+
+    from cruxible_core.server.actor_identity import local_operator_actor_context
+
+    actor = local_operator_actor_context().model_copy(
+        update={"actor_type": "service_account", "actor_id": "owner"}
+    )
+    monkeypatch.setattr(playbill_api, "_attributed_actor", lambda *_args: actor)
 
 
 def _bare_instance(root: Path):  # type: ignore[no-untyped-def]
@@ -113,7 +126,7 @@ def test_run_action_requires_governed_write_tier(monkeypatch, tmp_path: Path) ->
             )
 
 
-@pytest.mark.parametrize("name", sorted(INTERNAL_ACTIONS))
+@pytest.mark.parametrize("name", sorted(SERVED_INTERNAL_ACTIONS))
 def test_run_action_appends_the_fire_for_every_registered_action(
     monkeypatch,  # type: ignore[no-untyped-def]
     tmp_path: Path,
@@ -323,3 +336,18 @@ def test_run_action_wait_on_floor_refresh_also_only_observes(
 
     assert result.outcome.status == "completed"
     assert floor_module.refresh_covered_sequence(instance) >= result.event_id
+
+
+def test_run_action_refuses_an_action_this_release_does_not_serve(
+    monkeypatch, tmp_path: Path
+) -> None:  # type: ignore[no-untyped-def]
+    """Ruling 13: curation is not served, so firing curation.detect by hand refuses."""
+
+    instance = _bare_instance(tmp_path)
+    monkeypatch.setattr(playbill_api, "get_playbill_manager", lambda: _manager(instance))
+    with request_permission_scope(PermissionMode.GOVERNED_WRITE):
+        with pytest.raises(ConfigError, match="not served: curation is not served"):
+            playbill_api.playbill_action_run(
+                "inst_test", request=contracts.ActionRunRequest(action="curation.detect")
+            )
+    assert trigger_events(instance) == ()

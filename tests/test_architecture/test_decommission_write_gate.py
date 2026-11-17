@@ -1,7 +1,7 @@
 """The terminal lifecycle state gates every governed-write door, by inventory.
 
 Decommission shipped enforced at four call sites: proposal submit, activation
-and the inert body store. Approvals, curation rulings, attestations,
+and the inert body store. Approvals, attestations,
 predictions, settlements, Procedure binds and Procedure/Line runs all still
 landed durable writes into an instance that had stopped accepting them. The set
 below is the declared write plane; adding a governed-write door without gating
@@ -137,13 +137,16 @@ DECLARED_WRITE_GATES: dict[str, frozenset[str]] = {
     "cruxible_core/service/evidence/claim_attestations.py": frozenset(
         {"service_append_claim_attestation", "service_prepare_claim_attestation_evidence"}
     ),
+    "cruxible_core/service/discovery/block_observations.py": frozenset(
+        {"service_observe_playbill_blocks"}
+    ),
+    # Curation is served by no surface in 0.5.0; its rulings stay gated in the tree.
     "cruxible_core/service/discovery/curation.py": frozenset(
         {
             "service_overrule_playbill_curation",
             "service_suppress_playbill_curation",
             "service_unsuppress_playbill_curation",
             "service_accept_fixed_playbill_curation",
-            "service_observe_playbill_blocks",
         }
     ),
     "cruxible_core/service/procedures/measurements.py": frozenset(

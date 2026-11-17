@@ -176,6 +176,9 @@ _OPERAND_PLACEHOLDERS: Mapping[str, str] = {
     "because": placeholder("TEXT"),
     "file": placeholder("FILE#ANCHOR"),
     "capture": placeholder("CAP"),
+    # The Runbook or internal action a missed-instants repair runs.
+    "runbook": placeholder("NAME"),
+    "action": placeholder("NAME"),
 }
 
 
@@ -236,6 +239,8 @@ def _mcp_repair_call(
         return _mcp_call("cruxible_line_dispatch", line=text("line"), request=request)
     if operation == "cruxible.inbox.list" and text("line"):
         return _mcp_call("cruxible_inbox_list", line=text("line"), status="unread")
+    if operation == "cruxible.runbook.run" and text("runbook"):
+        return _mcp_call("cruxible_runbook_run", runbook=text("runbook"))
     if operation == "cruxible.kit.add" and text("reference"):
         return _mcp_call("cruxible_kit_add", reference=text("reference"))
     if operation == "cruxible.prediction.settle" and text("prediction_id"):
@@ -367,6 +372,8 @@ def _sdk_repair_call(
 
     if operation == "cruxible.line.enable" and (line := text("line")):
         return _sdk_call("cx.line", line) + ".enable()"
+    if operation == "cruxible.runbook.run" and (runbook := text("runbook")):
+        return _sdk_call("cx.runbook", runbook) + ".run()"
     if operation == "cruxible.vocabulary.export":
         return (
             _sdk_call("cx.vocabulary.export", force=True)
@@ -454,6 +461,10 @@ def _sdk_repair_call(
     return None
 
 
+#: Served operations only the CLI performs: no MCP tool, no SDK method.
+CLI_ONLY_OPERATIONS: frozenset[str] = frozenset({"cruxible.action.run"})
+
+
 def next_repair_command(
     operation: str,
     *,
@@ -469,6 +480,13 @@ def next_repair_command(
 
     if operation == "hand_edit":
         return None
+    if surface in {"mcp", "sdk"} and operation in CLI_ONLY_OPERATIONS:
+        # Only the CLI runs it: the line is the CLI command, saying so.
+        values = arguments if isinstance(arguments, Mapping) else {}
+        return render_repair(
+            RepairOperation(operation=operation, arguments=dict(values)),
+            surface=surface,
+        )
     if surface == "mcp":
         return _mcp_repair_call(operation, arguments=arguments, operands=operands)
     if surface == "sdk":
@@ -552,6 +570,11 @@ def next_repair_command(
         parts.append(shlex.quote(line))
         if operation == "cruxible.line.dispatch" and isinstance(limit, int) and limit > 1:
             parts.extend(["--limit", str(limit)])
+    elif operation in {"cruxible.runbook.run", "cruxible.action.run"}:
+        name = values.get("runbook" if operation == "cruxible.runbook.run" else "action")
+        if not isinstance(name, str) or not name:
+            return None
+        parts.append(shlex.quote(name))
     elif operation == "cruxible.inbox.list":
         line = values.get("line")
         if not isinstance(line, str) or not line:
@@ -786,15 +809,6 @@ def _sdk_procedure(method: str) -> SdkSpelling:
     return spell
 
 
-def _sdk_curation(verb: str, *keywords: str, required: tuple[str, ...] = ()) -> SdkSpelling:
-    def spell(values: Mapping[str, object]) -> str:
-        operands = {key: _operand(values, key) for key in (*_CURATION_REQUIRED, *required)}
-        optional = tuple(key for key in keywords if key not in required)
-        return _sdk_call(f"cx.curation_{verb}", **operands, **_given(values, *optional))
-
-    return spell
-
-
 def _sdk_approve(values: Mapping[str, object]) -> str:
     """The approval call; SIGNER is the caller's ApprovalSigner (a NameError until given)."""
 
@@ -802,32 +816,6 @@ def _sdk_approve(values: Mapping[str, object]) -> str:
     signer = values.get("signer_id")
     whose = f"  # SIGNER: {signer}'s ApprovalSigner" if isinstance(signer, str) and signer else ""
     return f"{handle}.approve(signer=SIGNER, reviewed={handle}.review()){whose}"
-
-
-_CURATION_REQUIRED = ("item_id", "expected_latest_event_digest", "reason")
-_CURATION_FLAGS = _flags(
-    _CHANGE_FLAGS,
-    expected_latest_event_digest="--expected-latest-event-digest",
-    reason="--reason",
-)
-_CURATION_ARGS = _flags(
-    _CHANGE_ARGS,
-    item_id="item_id",
-    expected_latest_event_digest="expected_latest_event_digest",
-    reason="reason",
-)
-
-
-def _curation(verb: str, **extra: str) -> RepairSpelling:
-    return RepairSpelling(
-        cli=f"curation {verb}",
-        cli_args=("item_id",),
-        cli_flags=_flags(_CURATION_FLAGS, **{key: f"--{flag}" for key, flag in extra.items()}),
-        mcp=f"cruxible_curation_{verb.replace('-', '_')}",
-        mcp_args=_flags(_CURATION_ARGS, **{key: key for key in extra}),
-        sdk=_sdk_curation(verb.replace("-", "_"), *extra, "dry_run", "at", required=tuple(extra)),
-        required=(*_CURATION_REQUIRED, *extra),
-    )
 
 
 def _proposal_verb(
@@ -1213,7 +1201,7 @@ REPAIR_SPELLINGS: Mapping[str, RepairSpelling] = {
         sdk=lambda values: _sdk_call("cx.block.sync", *_listed(values, "paths")),
         required=("paths",),
     ),
-    # Captures and curation.
+    # Captures.
     "cruxible.capture.erase": RepairSpelling(
         cli="capture erase",
         cli_args=("capture_digest",),
@@ -1228,15 +1216,6 @@ REPAIR_SPELLINGS: Mapping[str, RepairSpelling] = {
         ),
         required=("capture_digest", "because"),
     ),
-    "cruxible.curation.list": RepairSpelling(
-        cli="curation list",
-        mcp="cruxible_curation_list",
-        sdk=lambda _values: "cx.curation_list()",
-    ),
-    "cruxible.curation.suppress": _curation("suppress", scope="scope"),
-    "cruxible.curation.unsuppress": _curation("unsuppress"),
-    "cruxible.curation.overrule": _curation("overrule"),
-    "cruxible.curation.accept-fixed": _curation("accept-fixed"),
     # Lines and Procedures.
     "cruxible.line.enable": RepairSpelling(
         cli="line enable",
@@ -1278,6 +1257,22 @@ REPAIR_SPELLINGS: Mapping[str, RepairSpelling] = {
         },
         sdk=_sdk_line("dispatch", "occurrence_id", "limit"),
         required=("line",),
+    ),
+    # A Runbook runs on every client; an action runs on the CLI alone.
+    "cruxible.runbook.run": RepairSpelling(
+        cli="runbook run",
+        cli_args=("runbook",),
+        # Its --dry-run is the static preview: definitions only, nothing runs.
+        cli_flags={"dry_run": "--dry-run"},
+        mcp="cruxible_runbook_run",
+        mcp_args={"runbook": "runbook"},
+        sdk=lambda values: _sdk_call("cx.runbook", _operand(values, "runbook")) + ".run()",
+        required=("runbook",),
+    ),
+    "cruxible.action.run": RepairSpelling(
+        cli="action run",
+        cli_args=("action",),
+        required=("action",),
     ),
     "cruxible.procedure.run": RepairSpelling(
         cli="procedure run",

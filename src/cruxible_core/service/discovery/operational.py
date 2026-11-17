@@ -334,6 +334,42 @@ def schedule_summary(schedule: TriggerSchedule) -> str:
     raise TriggerFormatError(f"unsupported Trigger schedule kind {schedule.kind!r}")
 
 
+def compact_schedule(schedule: TriggerSchedule) -> str:
+    """A Trigger schedule as text shows it: ``cron 0 14 * * *``, ``every 3600s``."""
+
+    if isinstance(schedule, CadenceSchedule):
+        return f"every {schedule.interval_seconds}s"
+    if isinstance(schedule, CronSchedule):
+        return f"cron {schedule.expression}"
+    return schedule_summary(schedule)
+
+
+def runbook_schedules(projection: Any, line: str, *, limit: int) -> tuple[str, ...]:
+    """Each Runbook Trigger that runs ``line`` through a Runbook step, compact.
+
+    The Runbooks that run the Line come from the maintained ``runbook_lines``
+    index (one seek by Line), and only then is the answer bounded: ``limit``
+    Runbooks, each with up to ``limit`` of its Triggers. It never reads a
+    Runbook that does not run this Line.
+    """
+
+    runbooks = [
+        str(row[0])
+        for row in projection.typed.connection.execute(
+            "SELECT source_identity FROM runbook_lines WHERE line=? "
+            "ORDER BY source_identity LIMIT ?",
+            (line, limit),
+        )
+    ]
+    found: list[str] = []
+    for name in runbooks:
+        aimed = aimed_trigger_page(projection, (name,), limit=limit, target_kind="runbook")[name]
+        for trigger in aimed.identities:
+            schedule = cast(Trigger, projection.typed.source(trigger)).schedule
+            found.append(f"{compact_schedule(schedule)} ({trigger} via {name})")
+    return tuple(found)
+
+
 def window_summary(window: object) -> str:
     if isinstance(window, FixedWindow):
         return (
@@ -539,8 +575,14 @@ def line_card(
             )
             for name in aimed.identities
         )
+        via_runbooks = runbook_schedules(
+            projection, line.identity.qualified, limit=OPERATIONAL_CARD_LIST_LIMIT
+        )
     digest = line_identity_digest(line.identity)
     trigger = trigger_kind(aimed.schedule_kinds)
+    if via_runbooks and trigger == "manual":
+        # S3: a Runbook's Trigger runs it, so it is not run only by hand.
+        trigger = "runbook"
     procedure = line.procedure.target.qualified
     next_steps = [render(procedure, None)]
     next_steps.extend(render(item.trigger, None) for item in triggers)
@@ -568,6 +610,7 @@ def line_card(
         procedure=procedure,
         authority=line_authority(line),
         trigger=trigger,
+        sched="; ".join(via_runbooks) or None,
         triggers=triggers,
         triggers_total=aimed.total,
         triggers_inactive=_triggers_inactive(line, aimed.total, operations.arm_state),

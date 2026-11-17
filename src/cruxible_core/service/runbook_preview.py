@@ -332,6 +332,7 @@ def _inputs(
                     depth=None if decoding is None else decoding.limits.depth,
                     records=None if decoding is None else decoding.limits.records,
                     max_files=item.max_files,
+                    request_max_bytes=item.request_max_bytes,
                 ),
                 origins=item.origins,
                 state=state,  # type: ignore[arg-type]

@@ -285,6 +285,14 @@ evidence is one or more of:
   example a supplier API response that a Procedure fetched (`--capture CAP-…`,
   or `--evidence-contract` for the newest one about the Subject).
 
+Which citation fits depends on what the judgment rests on. A quoted code line
+(`--evidence-file PATH#TEXT`) is a pointer for reviewers: it shows where to
+look, but it is not a witness that resurfaces the judgment when the code
+changes in a way that matters. A judgment that depends on code should cite a
+check result where one exists, such as a scanner's finding, so the evidence
+moves when the check's answer does. Prose keeps quote and `--section`
+citations.
+
 A Capture's bytes are the document its producer returned, verbatim: the body an
 origin sent, the file read, the document a conversion produced, in whatever
 format it is. How it was obtained (the URL and the URL a redirect settled on,
@@ -676,22 +684,13 @@ through the queue, repairs, duplicates and `audit`.
 
 ### Work queues
 
-Three queues tell you what to do, each a read:
+Two queues tell you what to do, each a read:
 
 - **next** is what is wrong or waiting on you, each row with the exact
   operation that repairs it, and alternatives where there are several: stale or drifted evidence, stale proposals, stale
   blocks, Lines with gaps, available compiler upgrades, and more. It is one
   to-do list for people and agents alike.
 - **audit** ranks Claims worth verifying, by stake, weakness and recency.
-- **curation** (beta) lists ontology-maintenance patterns that detection found.
-  Detection runs only when a `curation-detect` Trigger aimed at the
-  `curation.detect` action is authored (none is seeded), never on `next`'s
-  path; `curation list` only reads. Each item takes one ruling: `overrule`
-  closes it as not applying, permanently (it previews first and commits only
-  with the preview's coordinate); `suppress` hides the item, or with
-  `--scope lineage` also every successor its pattern opens; `unsuppress` lifts
-  a suppression; and `accept-fixed` links it to the accepted proposal or
-  generation that fixed it.
 
 ### Projection blocks
 
@@ -872,9 +871,8 @@ armed:
   --dispatch` does both). `next` names the exact command for each gap, for
   example after the daemon was down.
 
-Internal actions (floor refresh, evidence sweeps, prediction retries, and
-curation detection once its Trigger is authored) also run on Triggers, and
-need no enablement.
+Internal actions (floor refresh, evidence sweeps, prediction retries) also
+run on Triggers, and need no enablement.
 
 "Arm" has one meaning: a labeled branch of a Procedure graph, such as a
 guard's true or false edge, which measurements can read at `arm` grain to

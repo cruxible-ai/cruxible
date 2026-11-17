@@ -19,6 +19,7 @@ from cruxible_client.contracts.errors import (
     ProposalRejectedError,
     ProposalSelectorAmbiguousError,
     ProposalWithdrawnError,
+    ProposalWithdrawNotAuthor,
 )
 from cruxible_core.cli.commands.playbill import withdraw_proposal as _withdraw_proposal_command
 from cruxible_core.runtime import playbill_api
@@ -367,7 +368,7 @@ def test_only_the_submitting_actor_may_withdraw(tmp_path: Path) -> None:
         timestamp=TIMESTAMP,
     )
 
-    with pytest.raises(ProposalAdmissionError, match="only the source proposal actor"):
+    with pytest.raises(ProposalWithdrawNotAuthor, match="only its author .owner. may withdraw"):
         service_withdraw_playbill_proposal(
             instance,
             proposal_id=opened.proposal.admission.proposal_id,
@@ -581,16 +582,12 @@ def test_a_withdrawn_stale_proposal_cannot_be_readmitted(tmp_path: Path) -> None
         )
 
 
-def test_a_daemon_wide_operator_may_withdraw_a_foreign_proposal(tmp_path: Path) -> None:
-    """A proposal whose author's credential label is gone is not withdrawable by nobody.
+def test_only_the_author_withdraws_and_anyone_else_is_told_to_reject(tmp_path: Path) -> None:
+    """Withdrawal is its author's statement of intent; nobody else makes it.
 
-    The actor check is on the credential LABEL, because that is the only
-    identity a proposal carries. A rotated, revoked or re-minted credential
-    therefore leaves its open proposals with no author who can present that
-    label, and the inventory keeps them forever -- card 110's graveyard, back
-    through the door withdrawal exists to close. The daemon-wide operator, the
-    authority that already allocates and stops hosts, is the way out; an
-    instance-scoped credential of another label is still refused.
+    A non-author -- a reviewer, or the same principal under a rotated label --
+    is refused with a code and the reviewer's repair, rejecting with a reason,
+    and the proposal stays open (ruling 6, 2026-11-16).
     """
 
     instance, _owner = seed_claims(tmp_path)
@@ -603,7 +600,7 @@ def test_a_daemon_wide_operator_may_withdraw_a_foreign_proposal(tmp_path: Path) 
     )
     proposal_id = opened.proposal.admission.proposal_id
 
-    with pytest.raises(ProposalAdmissionError, match="or a daemon-wide operator"):
+    with pytest.raises(ProposalWithdrawNotAuthor) as refused:
         service_withdraw_playbill_proposal(
             instance,
             proposal_id=proposal_id,
@@ -612,22 +609,19 @@ def test_a_daemon_wide_operator_may_withdraw_a_foreign_proposal(tmp_path: Path) 
             withdrawn_at=WITHDRAWN_AT,
         )
 
+    assert refused.value.error_code == "cruxible.proposal.withdraw_not_author"
+    assert "only its author 'owner' may withdraw" in str(refused.value)
+    assert refused.value.repair.operation == "cruxible.proposal.reject"
+    assert refused.value.repair.arguments == {"proposal_id": proposal_id}
+    assert instance.proposal_evidence().read_withdrawal(proposal_id) is None
     result = service_withdraw_playbill_proposal(
         instance,
         proposal_id=proposal_id,
-        actor_id="owner-rotated",
-        reason="the author's credential was rotated",
+        actor_id="owner",
+        reason="the author changed their mind",
         withdrawn_at=WITHDRAWN_AT,
-        unscoped_operator=True,
     )
-
-    assert result.actor_id == "owner-rotated"
-    entry = next(
-        item
-        for item in service_list_playbill_proposals(instance).entries
-        if item.proposal_id == proposal_id
-    )
-    assert entry.terminal_reason == "withdrawn"
+    assert result.actor_id == "owner"
 
 
 def _withdraw_through_the_served_verb(
@@ -646,10 +640,8 @@ def _withdraw_through_the_served_verb(
     boundary the middleware binds from the same credential. An unscoped
     daemon-wide operator presents `None` in both; every persisted runtime
     credential is bound to exactly one instance and presents that id in both.
-
-    The facade is where the override lives -- the service takes a flag, and
-    `current_request_instance_scope() is None` is what decides it -- so this
-    goes through `playbill_api`, not through the service.
+    Neither binding widens who may withdraw: this goes through `playbill_api`
+    so the served verb is what is checked.
     """
 
     class Manager:
@@ -679,18 +671,15 @@ def _withdraw_through_the_served_verb(
         )
 
 
-def test_an_unscoped_operator_credential_withdraws_a_foreign_proposal(
+def test_an_unscoped_operator_credential_may_not_withdraw_a_foreign_proposal(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The daemon-wide operator path, as a request actually presents it.
+    """The served verb, as a daemon-wide credential presents it: no exception.
 
-    `service_withdraw_playbill_proposal` takes the override as a flag; the
-    served verb is what decides it, from the credential's bound instance scope.
-    A credential with NO bound scope is the daemon-wide operator -- the same
-    reading `require_unscoped_operator` makes for every other daemon-wide lever
-    -- and it is the way out of card 110's graveyard when the proposal's author
-    holds a label nobody can present any more.
+    A credential with no bound instance scope allocates and stops hosts, but
+    withdrawal is the author's statement, so it is refused like any other
+    non-author and the proposal stays open.
     """
 
     instance, _owner = seed_claims(tmp_path)
@@ -703,37 +692,30 @@ def test_an_unscoped_operator_credential_withdraws_a_foreign_proposal(
     )
     proposal_id = opened.proposal.admission.proposal_id
 
-    result = _withdraw_through_the_served_verb(
-        instance,
-        monkeypatch,
-        proposal_id=proposal_id,
-        credential_label="daemon-operator",
-        instance_scope=None,
-    )
+    with pytest.raises(ProposalWithdrawNotAuthor):
+        _withdraw_through_the_served_verb(
+            instance,
+            monkeypatch,
+            proposal_id=proposal_id,
+            credential_label="daemon-operator",
+            instance_scope=None,
+        )
 
-    assert result.proposal_id == proposal_id
-    assert result.actor_id == "daemon-operator"
-    assert result.already_withdrawn is False
     entry = next(
         item
         for item in service_list_playbill_proposals(instance).entries
         if item.proposal_id == proposal_id
     )
-    assert entry.status == "settled"
-    assert entry.terminal_reason == "withdrawn"
+    assert entry.status == "open"
 
 
 def test_an_instance_scoped_credential_may_not_withdraw_a_foreign_proposal(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The other side of the same line, and the reason it is a line at all.
+    """A credential bound to this instance withdraws its own proposals only.
 
-    A credential BOUND to this instance is not the daemon-wide operator, however
-    high its tier: on a shared daemon that binding is the tenant boundary. It
-    may withdraw its own proposals and no others, so a foreign one refuses typed
-    and stays open. Without this, dropping the `is None` from the override would
-    hand every scoped credential the operator's reach and nothing would fail.
+    However high its tier, a foreign proposal refuses typed and stays open.
     """
 
     instance, _owner = seed_claims(tmp_path)
@@ -746,7 +728,7 @@ def test_an_instance_scoped_credential_may_not_withdraw_a_foreign_proposal(
     )
     proposal_id = opened.proposal.admission.proposal_id
 
-    with pytest.raises(ProposalAdmissionError, match="or a daemon-wide operator"):
+    with pytest.raises(ProposalWithdrawNotAuthor):
         _withdraw_through_the_served_verb(
             instance,
             monkeypatch,

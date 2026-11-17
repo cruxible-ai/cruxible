@@ -602,6 +602,26 @@ def _refuse(
 _WORKING_SELECTION_REFUSALS = (CaptureFormatError, CanonicalEncodingError, ValidationError)
 
 
+def _refuse_unserved_action(action: str, offending_element: str) -> None:
+    """Refuse naming an internal action this release does not serve."""
+
+    from cruxible_client.contracts.triggers import (
+        SERVED_INTERNAL_ACTIONS,
+        UNSERVED_INTERNAL_ACTIONS,
+    )
+
+    why = UNSERVED_INTERNAL_ACTIONS.get(action)
+    if why is not None:
+        _refuse(
+            "cruxible.authoring.action_not_served",
+            offending_element,
+            f"Internal action {action!r} is not served: {why}, so nothing would run it. "
+            "Name one of: " + ", ".join(SERVED_INTERNAL_ACTIONS) + ".",
+            repair_kind="replace_input",
+            repair_description="Name a served internal action, or leave this one out.",
+        )
+
+
 def _refuse_retired_source(
     head: CaptureContractAny | None, *, source_id: str, offending_element: str
 ) -> None:
@@ -3410,6 +3430,7 @@ def _render_trigger_member(
         )
     else:
         assert payload.action is not None
+        _refuse_unserved_action(payload.action, "action")
         target = ActionTarget(action=payload.action)
     schedule = _resolve_trigger_authoring_schedule(payload.schedule, tree=tree)
     selector = schedule_capture_selector(schedule)

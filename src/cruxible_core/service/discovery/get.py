@@ -749,6 +749,9 @@ def _resolve_capture(
             cited = captures_with_prefix(projection.typed.connection, hex_digits, limit=1)
         if cited or uncited_capture_present(instance, digest):
             return ResolvedRef("capture", digest, _display("capture", digest))
+        erased = _erased_captures(instance, hex_digits)
+        if erased:
+            return ResolvedRef("capture", erased[0], _display("capture", erased[0]))
         raise _not_found("Capture", ref, (), surface=surface, section="captures")
     from cruxible_core.service.evidence.capture_reads import (
         CaptureHandleAmbiguous,
@@ -765,7 +768,26 @@ def _resolve_capture(
         raise _ambiguous(ref, [_display("capture", item) for item in resolution.candidates])
     if isinstance(resolution, CaptureHandleExhausted):
         raise capture_handle_exhausted(ref, field="ref")
+    erased = _erased_captures(instance, hex_digits)
+    if len(erased) == 1:
+        return ResolvedRef("capture", erased[0], _display("capture", erased[0]))
+    if erased:
+        raise _ambiguous(ref, [_display("capture", item) for item in erased])
     raise _not_found("Capture", ref, (), surface=surface, section="captures")
+
+
+def _erased_captures(instance: PlaybillInstance, hex_prefix: str) -> tuple[str, ...]:
+    """Erased Captures a handle names (S5): no Claim cites them and no body verifies,
+    but the erasure record still answers when, by whom and why. One index range."""
+
+    from cruxible_core.evidence.capture_erasures import (
+        CaptureErasureStore,
+        erasure_journal_present,
+    )
+
+    if not erasure_journal_present(instance):
+        return ()
+    return CaptureErasureStore(instance).captures_with_prefix(hex_prefix, limit=2)
 
 
 def _resolve_typed(
@@ -1413,7 +1435,7 @@ def _claim_card(
         verdict=verdict,
         status=status,
         revision=int(row.revision) if row is not None else 1,
-        accepted=accepted,
+        proposed_at=accepted,
         contenders=tuple(
             GetContender(
                 claim=item.claim_id,
@@ -2063,11 +2085,20 @@ def _trigger_card(
 ) -> GetTriggerCard:
     with instance.bind_accepted_projection(coordinate) as projection:
         trigger = cast(Trigger, projection.typed.source(resolved.identity))
-    target = trigger.line.qualified if trigger.line is not None else str(trigger.action)
+    from cruxible_core.service.discovery.operational import compact_schedule
+
+    target = (
+        trigger.line.qualified
+        if trigger.line is not None
+        else trigger.runbook.qualified
+        if trigger.runbook is not None
+        else str(trigger.action)
+    )
     return GetTriggerCard(
         trigger=resolved.identity,
         lifecycle=trigger.lifecycle.state,
         schedule=trigger.schedule.model_dump(mode="json"),
+        sched=compact_schedule(trigger.schedule),
         target=target,
         next=(_render_get(surface, resolved.display, "history"),),
     )
@@ -2640,7 +2671,7 @@ def _revision(
         revision=entry.revision,
         sequence=entry.sequence,
         git_oid=generation.git_oid[:12],
-        accepted=accepted,
+        proposed_at=accepted,
         actor=actor,
         approved_by=approved_by,
         lifecycle=shown.lifecycle,
@@ -3010,7 +3041,7 @@ def _field_event(
         "claim": claim_id,
         "sequence": location.sequence,
         "git_oid": generation.git_oid[:12],
-        "accepted": accepted,
+        "proposed_at": accepted,
         "actor": actor,
         "approved_by": approved_by,
         "reason": reasons.reason(generation, versions.path),

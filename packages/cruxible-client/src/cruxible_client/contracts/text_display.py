@@ -54,6 +54,17 @@ def short_oid(git_oid: str) -> str:
     return git_oid[:SHORT_OID]
 
 
+def one_line_repr(result: object) -> str:
+    """An SDK result's ``repr()``: the first line of the text the CLI prints for it.
+
+    Ruling S1: a REPL echo is one short line, never a model dump; ``print()``
+    shows the whole text and ``model_dump()`` (or the result's fields) the model.
+    """
+
+    first = str(result).split("\n", 1)[0].strip()
+    return first or type(result).__name__
+
+
 def short_provider_build(name: str) -> str:
     """A provider build as text shows it: ``NAME/<64 hex>`` (or ``Provider:NAME/...``)
     as ``NAME/<12 hex>``, as coordinates show a Git OID."""
@@ -127,7 +138,7 @@ def render_orient(result: Mapping[str, Any]) -> str:
 
     lines = [
         f"Cruxible {result['instance']} generation={result['generation']} "
-        f"at {result['coordinate']['git_oid'][:12]} accepted {result['accepted_at']}"
+        f"at {result['coordinate']['git_oid'][:12]} proposed {result['proposed_at']}"
     ]
     if result.get("mirror_url"):
         lines.append(f"Ledger mirror: {result['mirror_url']}")
@@ -295,7 +306,7 @@ def render_orient(result: Mapping[str, Any]) -> str:
         for row in result["generations"]:
             approvals = ",".join(row.get("approvals", ())) or "-"
             lines.append(
-                f"seq {row['sequence']} at {row['git_oid'][:12]}  {row['accepted_at']}  "
+                f"seq {row['sequence']} at {row['git_oid'][:12]}  proposed {row['proposed_at']}  "
                 f"by {row.get('proposer') or '-'}  approved {approvals}  "
                 f"members={row['members']}"
                 + (f"  {row['proposal']}" if row.get("proposal") else "")
@@ -358,6 +369,8 @@ def render_orient(result: Mapping[str, Any]) -> str:
                 f"  {query['name']}({params})" + (f"  {description}" if description else "")
             )
     attention = result.get("attention")
+    if result.get("attention_scope") == "head_only":
+        lines.append("attention: head only")
     if attention is not None:
         setup = attention.get("setup_items")
         lines.append(
@@ -872,7 +885,10 @@ def landing_lines(outcome: AuthoringLanded | AuthoringProposed | AuthoringRefuse
     """Whether an authored change landed, or why it stopped and what to run."""
 
     if outcome.status == "landed":
-        return [f"landed: accepted at {short_oid(outcome.accepted_coordinate.git_oid)}"]
+        at = short_oid(outcome.accepted_coordinate.git_oid)
+        if outcome.unchanged:
+            return [f"unchanged: identical to accepted state at {at}; nothing proposed"]
+        return [f"landed: accepted at {at}"]
     lines = [outcome.message]
     if outcome.next:
         lines.append(f"next: {outcome.next}")

@@ -100,9 +100,6 @@ COMPUTED_PRODUCERS: Mapping[tuple[str, str], Mapping[str, frozenset[str]]] = {
     ("src/cruxible_core/service/authoring/documents.py", "admit_proposal"): {
         CHANGE: frozenset({"dry_run"})
     },
-    ("src/cruxible_core/service/discovery/curation.py", "_record_ruling"): {
-        CHANGE: frozenset({"dry_run"})
-    },
     ("src/cruxible_core/server/errors.py", "_repair_for_error"): {
         "credential.mint": frozenset(
             {"refused_operation", "credential_env", "accepted_credentials", "credential_options"}
@@ -110,6 +107,12 @@ COMPUTED_PRODUCERS: Mapping[tuple[str, str], Mapping[str, frozenset[str]]] = {
         "credential.claim-bootstrap": frozenset({"instance_id"}),
         "credential.recover-admin": frozenset({"instance_id"}),
     },
+    # A CLI-only operation's next line on MCP or the SDK: the CLI form, re-rendered
+    # from the row's own operation and arguments.
+    (
+        "packages/cruxible-client/src/cruxible_client/contracts/repair_spelling.py",
+        "next_repair_command",
+    ): {"cruxible.action.run": frozenset({"action"})},
     ("src/cruxible_core/service/identity.py", "credential_unbound_refusal"): {
         "credential.mint": frozenset({"unbound_credential_id"})
     },
@@ -195,12 +198,24 @@ _REPAIR_CALLS = {"RepairOperation", "PlaybillNextRepairV1", "NextRepair", "Consu
 _CHANGE_CALLS = {"change_scope", "state_change_scope", "ChangeMode", "_pin", "ChangeRefusedError"}
 
 
+#: Source kept in the tree but served by no surface in this release: its repairs
+#: name commands that do not exist now, and nothing can raise them to a client.
+UNSERVED_SOURCES = frozenset(
+    {
+        # Curation (ruling 13, 2026-11-16): the domain package stays, unwired.
+        "src/cruxible_core/service/discovery/curation.py",
+    }
+)
+
+
 def _producers() -> Iterator[tuple[str, str, ast.Call, str | None]]:
     """Every call that names an operation: (file, function, call, callee name)."""
 
     for base in (_ROOT / "src", _ROOT / "packages" / "cruxible-client" / "src"):
         for path in sorted(base.rglob("*.py")):
             relative = path.relative_to(_ROOT).as_posix()
+            if relative in UNSERVED_SOURCES:
+                continue
 
             def walk(
                 node: ast.AST, names: tuple[str, ...]

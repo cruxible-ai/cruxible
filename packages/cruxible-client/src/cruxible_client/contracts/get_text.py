@@ -334,6 +334,14 @@ def effective_text(start: datetime | None, end: datetime | None) -> str:
     return "effective " + "..".join("" if at is None else at.isoformat() for at in (start, end))
 
 
+def _by(item: Any) -> str:
+    """Who accepted a revision: ``by owner``, then ``, approved by alice`` when anyone signed."""
+
+    approvers = [name for name in getattr(item, "approved_by", ()) if name]
+    shown = f"by {item.actor or '-'}"
+    return shown + (f", approved by {', '.join(approvers)}" if approvers else "")
+
+
 def history_lines(history: Any) -> list[str]:
     """Revisions newest first; a Subject's field events grouped by field, each its timeline."""
 
@@ -346,7 +354,7 @@ def history_lines(history: Any) -> list[str]:
         period = effective_text(revision.effective_from, revision.effective_until)
         lines.append(
             f"rev {revision.revision}  seq {revision.sequence} at {revision.git_oid}  "
-            f"{revision.accepted}  by {revision.actor or '-'}{change}{value}"
+            f"proposed {revision.proposed_at}  {_by(revision)}{change}{value}"
             + (f"  {period}" if period else "")
         )
         if revision.reason is not None:
@@ -387,8 +395,8 @@ def history_lines(history: Any) -> list[str]:
                 if getattr(event, "contended", False):
                     what += "  (contends with a live value)"
             lines.append(
-                f"  seq {event.sequence}  {event.git_oid}  {event.accepted}  "
-                f"by {event.actor or '-'}  {what}  [{event.claim}]"
+                f"  seq {event.sequence}  {event.git_oid}  proposed {event.proposed_at}  "
+                f"{_by(event)}  {what}  [{event.claim}]"
             )
             if event.reason is not None:
                 lines.append(f"      reason: {reason_text(event.reason)}")
@@ -412,9 +420,21 @@ def proposed_reason_lines(reason: Any) -> list[str]:
 
 
 def _card_cell(part: object) -> str:
-    """One card cell: a reserved stored name in its public spelling, anything else as text."""
+    """One card cell: a reserved stored name in its public spelling, anything else as text.
 
-    return public_name(part) if isinstance(part, str) else str(part)
+    S3: a boolean reads ``true``/``false`` and a missing value ``none``, never a
+    Python repr; a nested value reads as compact JSON.
+    """
+
+    if isinstance(part, str):
+        return public_name(part)
+    if isinstance(part, bool):
+        return "true" if part else "false"
+    if part is None:
+        return "none"
+    if isinstance(part, dict | list):
+        return json.dumps(part, ensure_ascii=False, separators=(",", ":"), default=str)
+    return str(part)
 
 
 def render_get(
@@ -454,7 +474,7 @@ def render_get(
                 + (" (evidence erased)" if evidence_erased else "")
                 + f" status={card['status']} "
                 f"revision={card['revision']}"
-                + (f" accepted={card['accepted']}" if card.get("accepted") else "")
+                + (f" proposed={card['proposed_at']}" if card.get("proposed_at") else "")
             )
             period = effective_text(result.card.effective_from, result.card.effective_until)
             if period:
@@ -526,6 +546,11 @@ def render_get(
                     lines.append(json.dumps(concise(value), ensure_ascii=False, indent=2))
                     continue
                 if value in (None, [], {}):
+                    continue
+                if key == "schedule" and result.kind == "trigger" and card.get("sched"):
+                    # S3: the compact ``sched`` line says it; JSON keeps the schedule.
+                    continue
+                if key == "trigger" and result.kind == "line" and card.get("sched"):
                     continue
                 if key == "operations" and result.kind == "provider":
                     lines.append("operations:")
@@ -654,3 +679,43 @@ def claim_view_lines(view: Any) -> list[str]:
         f"{view.claim}  verdict={view.verdict} lifecycle={view.lifecycle_state} "
         f"revision={view.revision}",
     ]
+
+
+def claim_proof_summary(proof: Mapping[str, Any]) -> dict[str, Any]:
+    """A Claim's proof as a summary: its verdict and each cited Capture on one line.
+
+    ``get CLM --detail proof`` answers this by default (S1); ``--detail
+    proof-full`` (MCP ``proof_full``) answers the whole envelope and facts.
+    Each Capture line is ``CAP-<12 hex>  <status>  <contract>  <role>``.
+    """
+
+    verdict = ""
+    for fact in proof.get("facts", ()):
+        if isinstance(fact, Mapping) and fact.get("schema_id") == "cruxible.claim.current_verdict":
+            value = fact.get("value")
+            verdict = str(value.get("verdict", "")) if isinstance(value, Mapping) else ""
+    captures = [
+        "  ".join(
+            (
+                "CAP-" + str(item.get("capture_digest", "")).removeprefix("sha256:")[:12],
+                str(item.get("status", "")),
+                str(item.get("capture_contract_identity", "")),
+                str(item.get("citation_role", "")),
+            )
+        )
+        for item in proof.get("admission_accounts", ())
+        if isinstance(item, Mapping)
+    ]
+    return {"verdict": verdict, "captures": captures, "full": "detail proof_full"}
+
+
+def claim_proof_summary_lines(proof: Mapping[str, Any]) -> list[str]:
+    """The summary as the CLI prints it."""
+
+    summary = claim_proof_summary(proof)
+    lines = [f"verdict: {summary['verdict'] or '-'}"]
+    lines.extend(f"  {line}" for line in summary["captures"])
+    if not summary["captures"]:
+        lines.append("  (cites no Capture)")
+    lines.append("(--detail proof-full prints the whole envelope and facts)")
+    return lines

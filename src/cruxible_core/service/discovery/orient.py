@@ -197,6 +197,8 @@ class _State:
     #: Each declared kind's identity rule as orient shows it: ``keys: a, b (unique)``
     #: or ``minted``.
     identities: dict[str, str] = dataclass_field(default_factory=dict)
+    #: SubjectKinds that are retired at this coordinate (a removed kit's kinds).
+    retired_kinds: frozenset[str] = frozenset()
     #: Each live ClaimType's ledger path and accepted revision, by predicate.
     placements: dict[str, tuple[str, int]] = dataclass_field(default_factory=dict)
 
@@ -305,6 +307,12 @@ def _read_state(instance: PlaybillInstance, coordinate: AcceptedProjectionCoordi
             str(kind): int(count) for kind, count in connection.execute(LIVE_SUBJECT_COUNTS_SQL)
         }
         identities = {item.kind: kind_identity(item) for item in accepted_subject_kinds(typed)}
+        retired_kinds = frozenset(
+            str(identity).removeprefix("SubjectKind:")
+            for (identity,) in connection.execute(
+                "SELECT identity FROM subject_kinds WHERE lifecycle='retired'"
+            )
+        )
         procedures = tuple(
             OrientProcedure(
                 name=item.identity.removeprefix("Procedure:"),
@@ -339,6 +347,7 @@ def _read_state(instance: PlaybillInstance, coordinate: AcceptedProjectionCoordi
         queries=tuple(sorted(queries, key=lambda item: item.name)),
         operations=accepted_provider_operations(instance, coordinate),
         identities=identities,
+        retired_kinds=retired_kinds,
     )
 
 
@@ -432,9 +441,14 @@ def _with_evidence_counts(
 
 
 def _kind_names(state: _State) -> tuple[str, ...]:
+    """Every kind orient lists: declared, holding live Subjects, or named by a live
+    ClaimType. A retired SubjectKind with no live Subject is not listed, though a
+    ClaimType kept beside it (a pair kind's endpoint) still names it."""
+
     kinds = set(state.subjects_by_kind) | set(state.identities)
     for claim_type in state.claim_types:
         kinds.update(concrete_subject_kinds(claim_type.allowed_subject_kinds))
+    kinds -= {kind for kind in state.retired_kinds if not state.subjects_by_kind.get(kind)}
     return tuple(sorted(kinds, key=lambda item: item.encode("utf-8")))
 
 
@@ -965,7 +979,7 @@ def service_playbill_orient(
         "instance": instance.descriptor.instance_id,
         "coordinate": served,
         "generation": _generation(instance, coordinate),
-        "accepted_at": instance.accepted_evaluation_time(coordinate.git_oid),
+        "proposed_at": instance.accepted_evaluation_time(coordinate.git_oid),
         "evaluation_time": moment,
         "mirror_url": instance.ledger_mirror_url(),
         "retention_generations": instance.retention.generations,
@@ -1213,18 +1227,24 @@ def service_playbill_orient(
         heads: ReadHeads | None = read_heads(instance, coordinate=coordinate)
     except CruxibleError:
         heads = None
-    attention = _attention(
-        instance,
-        coordinate=coordinate,
-        evaluation_time=moment,
-        state=state,
-        caller=caller,
-        caller_rung=caller_rung,
-        surface=surface,
-        caller_tools=caller_tools,
-        heads=heads,
-        provider_lane=provider_lane,
-        consumers_running=consumers_running,
+    # S4: attention is the live queue; a read at an earlier generation omits it.
+    historical = coordinate.git_oid != instance.accepted_coordinate().git_oid
+    attention = (
+        None
+        if historical
+        else _attention(
+            instance,
+            coordinate=coordinate,
+            evaluation_time=moment,
+            state=state,
+            caller=caller,
+            caller_rung=caller_rung,
+            surface=surface,
+            caller_tools=caller_tools,
+            heads=heads,
+            provider_lane=provider_lane,
+            consumers_running=consumers_running,
+        )
     )
     focus = max(kinds_page, key=lambda row: (row.subjects, len(row.predicates)), default=None)
     if focus is not None:
@@ -1232,7 +1252,7 @@ def service_playbill_orient(
         select = _select_names(focus)
         if select:
             calls.append(_Call("query", (("kind", focus.kind), ("select", select), ("limit", 10))))
-    if attention.next_items or attention.setup_items:
+    if attention is not None and (attention.next_items or attention.setup_items):
         calls.append(_Call("next"))
     if len(state.queries) > ORIENT_DEFAULT_QUERIES:
         calls.append(_Call("orient", (("section", "queries"),)))
@@ -1250,13 +1270,14 @@ def service_playbill_orient(
     if next_cursor is not None:
         calls.append(_Call("orient", (("cursor", next_cursor),)))
     live_procedures = sum(item.lifecycle == "live" for item in state.procedures)
-    if attention.enablements is not None or counts["runs"]:
+    enablements = None if attention is None else attention.enablements
+    if enablements is not None or counts["runs"]:
         base["live"] = live_view(
             instance,
             tuple(
                 name
                 for name, present in (
-                    ("attention.enablements", attention.enablements is not None),
+                    ("attention.enablements", enablements is not None),
                     ("artifacts.runs", bool(counts["runs"])),
                     ("artifacts.running", bool(counts["runs"])),
                 )
@@ -1279,6 +1300,7 @@ def service_playbill_orient(
         queries=state.queries[:ORIENT_DEFAULT_QUERIES],
         queries_truncated=len(state.queries) > ORIENT_DEFAULT_QUERIES,
         attention=attention,
+        attention_scope="head_only" if historical else None,
         truncated=next_cursor is not None,
         next_cursor=next_cursor,
         next=tuple(render_orient_call(call, surface) for call in calls),

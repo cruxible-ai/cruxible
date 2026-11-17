@@ -109,8 +109,8 @@ with `--commit --at OID` (the preview's coordinate) is terminal: it
 ends one instance's governed writes and cannot be undone. It is ADMIN-tiered and
 deletes NOTHING. Afterwards:
 
-- every governed write -- proposals, approvals, activation, curation
-  rulings, Claim attestations, predictions and settlements, and
+- every governed write -- proposals, approvals, activation, Claim
+  attestations, predictions and settlements, and
   Procedure/Line runs -- refuses with the typed
   `cruxible.instance.decommissioned` error carrying the recorded reason;
 - reads keep serving at the accepted coordinate, and `orient` and `next` report

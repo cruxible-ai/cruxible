@@ -295,6 +295,18 @@ def latest_runbook_run(instance: PlaybillInstance, name: str) -> RunbookRunResul
     return None if row is None else RunbookRunResult.model_validate(json.loads(row[0]))
 
 
+def runbook_ran_since(instance: PlaybillInstance, fire_key: str, instant: datetime) -> bool:
+    """Whether the Runbook a fire key names started a run at or after ``instant``.
+
+    One index seek of its latest retained run, manual or Trigger-fired.
+    """
+
+    from cruxible_client.contracts.triggers import RUNBOOK_FIRE_PREFIX
+
+    latest = latest_runbook_run(instance, fire_key.removeprefix(RUNBOOK_FIRE_PREFIX))
+    return latest is not None and latest.started_at >= instant
+
+
 class _DaemonClock:
     def __init__(self, clock: Any | None) -> None:
         self._clock = clock

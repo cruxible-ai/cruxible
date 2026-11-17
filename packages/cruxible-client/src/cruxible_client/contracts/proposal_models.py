@@ -256,6 +256,10 @@ class ProposalReceiveLimits(_StrictProposalModel):
         return members * self.change_set_record_bytes_per_member
 
 
+#: What a kit proposal does to its kit.
+KitProposalTransition = Literal["add", "remove"]
+
+
 class ProposalAdmissionRequest(_StrictProposalModel):
     tag: Literal["playbill-proposal-request-v1"] = "playbill-proposal-request-v1"
     target_ref: str
@@ -270,6 +274,12 @@ class ProposalAdmissionRequest(_StrictProposalModel):
     rationale: str | None = Field(
         default=None,
         max_length=CHANGE_SET_RATIONALE_MAX_LENGTH,
+    )
+    #: A kit change's transition, set only by the kit door: ``add`` (install,
+    #: upgrade, downgrade, reinstall) or ``remove``. Absent for every other
+    #: proposal, and for kit proposals recorded before the field existed.
+    kit_transition: KitProposalTransition | None = Field(
+        default=None, exclude_if=lambda value: value is None
     )
 
     @field_validator("rationale")
@@ -324,8 +334,8 @@ class ProposalWithdrawalRecord(_StrictProposalModel):
     statement, so a second one over the same proposal is refused rather than
     silently restating the first with a new reason.
 
-    ``kind`` says who closed it: ``withdrawn`` by its author (or a daemon-wide
-    operator), ``rejected`` by a reviewer. ``withdrawn_at`` is the instant it
+    ``kind`` says who closed it: ``withdrawn`` by its author (or as superseded
+    by a later run of its Line), ``rejected`` by a reviewer. ``withdrawn_at`` is the instant it
     closed either way.
 
     A rejection records each Claim the rejected candidate proposed
@@ -622,6 +632,12 @@ class ProposalAdmissionRecord(_StrictProposalModel):
     # names its exact operation here.
     procedure_operation: str | None = Field(default=None, exclude_if=lambda value: value is None)
     originating_line: OriginatingLine | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    #: A kit change's transition (``add`` or ``remove``), recorded when the kit
+    #: door created it; absent for every other proposal and for kit proposals
+    #: admitted before the field existed (those fall back to their rationale).
+    kit_transition: KitProposalTransition | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
 

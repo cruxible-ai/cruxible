@@ -81,7 +81,11 @@ def test_authoring_submit_lands_when_allowed(
         assert submitted.outcome.proposal_id == submitted.status.proposal_id
         assert submitted.outcome.proposal_id is not None
         assert submitted.outcome.next is not None
-        verb = "approve" if expected == "independent_approval_required" else "activate"
+        verb = (
+            "approve"
+            if expected in {"independent_approval_required", "accept_never"}
+            else "activate"
+        )
         assert verb in submitted.outcome.next
         # The next step is structured, so every client spells it as its own call.
         repair = submitted.outcome.next_repair

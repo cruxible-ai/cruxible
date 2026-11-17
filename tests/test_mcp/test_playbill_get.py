@@ -58,6 +58,7 @@ def test_get_is_a_read_only_default_tool_with_only_declared_parameters(
         "runs",
         "backlinks",
         "proof",
+        "proof_full",
         "body",
     ]
     # No free-form object: every object a parameter takes declares its fields.

@@ -191,7 +191,7 @@ def test_expect_and_an_already_present_value_compare_canonically(
         == "accepted"
     )
     again = write(instance, {"op": "add", "subject": ALPHA, "field": "tags", "value": " INFRA "})
-    assert again.status == "accepted" and again.proposal is None
+    assert again.status == "unchanged" and again.proposal is None
     assert again.changes[0].already_live
     assert stored(instance, "tags") == ["infra"]
 

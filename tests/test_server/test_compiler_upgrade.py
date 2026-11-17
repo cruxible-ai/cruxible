@@ -38,7 +38,7 @@ def _served(tmp_path, monkeypatch):
     instance_id = instance.descriptor.instance_id
     get_registry().create_governed_instance_with_id(instance_id)
     monkeypatch.setattr(playbill_api.get_playbill_manager(), "get", lambda _: instance)
-    monkeypatch.setattr(playbill_api, "_actor_id", lambda _instance_id: "owner")
+    monkeypatch.setattr(playbill_api, "_attributed_actor_id", lambda _instance_id: "owner")
     return instance, instance_id
 
 

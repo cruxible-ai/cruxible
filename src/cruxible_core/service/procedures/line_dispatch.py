@@ -16,9 +16,10 @@ from __future__ import annotations
 
 import base64
 import json
+from collections import OrderedDict
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import AbstractContextManager, contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from functools import partial
 from types import SimpleNamespace
@@ -55,6 +56,7 @@ from cruxible_client.contracts.triggers import (
     WindowCloseSchedule,
     schedule_is_timed,
 )
+from cruxible_core.derived.memo import memo_get, memo_put
 from cruxible_core.errors import RequestRefusedError
 from cruxible_core.exhaust.line_dispatch import LineDispatchStore, dispatch_root
 from cruxible_core.governance.actor_context import GovernedActorContext
@@ -1180,6 +1182,9 @@ class LineCoverageGap:
     line_id: str
     since: datetime
     until: datetime
+    #: Each cadence or cron Trigger aimed at the Line with instants in the range:
+    #: (Trigger identity, first instant, last instant, how many).
+    missed: tuple[tuple[str, datetime, datetime, int], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -1212,6 +1217,70 @@ def _uncovered(
             if part[0] < part[1]
         ]
     return remaining
+
+
+# Per instance root, Trigger version and range: its instants in the range.
+_TimerGap = tuple[datetime, datetime, int] | tuple[()]
+_TIMER_MISSES: OrderedDict[tuple[str, str, str, str], _TimerGap] = OrderedDict()
+_TIMER_MISSES_CAPACITY = 1024
+
+
+def _timer_misses(
+    instance: PlaybillInstance, line: str, ranges: list[tuple[datetime, datetime]]
+) -> list[tuple[tuple[str, datetime, datetime, int], ...]]:
+    """Per range, the instants each cadence or cron Trigger aimed at ``line`` had in it.
+
+    Read when a gap is listed: one Line and its Triggers from the projection,
+    then each count memoized by Trigger version and range, so a later ``next``
+    reads none of it again. Ranges are evaluation ranges, ``[since, until)``. A
+    Line or Trigger that cannot be read gives no counts (its gap stays a
+    ``line_coverage_gap``).
+    """
+
+    from cruxible_core.service.procedures.procedure_runs import trigger_accepted_at
+    from cruxible_core.triggers.cadence import timer_gap
+
+    try:
+        coordinate = instance.accepted_coordinate()
+        accepted = _accepted_line_by_reference(instance, coordinate=coordinate, reference=line)
+        timers = [
+            (trigger, trigger_accepted_at(instance, trigger))
+            for trigger in line_triggers(instance, accepted, coordinate=coordinate)
+            if schedule_is_timed(trigger.trigger.schedule)
+            and not isinstance(trigger.trigger.schedule, GenerationAcceptedSchedule)
+        ]
+    except (CruxibleError, OSError, ValueError):
+        return [() for _ in ranges]
+    found = []
+    root = str(instance.root)
+    tick = timedelta(microseconds=1)
+    for since, until in ranges:
+        misses = []
+        for trigger, accepted_at in timers:
+            key = (
+                root,
+                trigger.artifact_digest,
+                str(format_datetime(since)),
+                str(format_datetime(until)),
+            )
+            cached: _TimerGap | None = memo_get(_TIMER_MISSES, key)
+            if cached is None:
+                # () records "no instant in the range", so it is not counted again.
+                cached = (
+                    timer_gap(
+                        trigger.trigger.schedule,
+                        accepted_at=accepted_at,
+                        after=since - tick,
+                        through=until - tick,
+                    )
+                    or ()
+                )
+                memo_put(_TIMER_MISSES, key, cached, capacity=_TIMER_MISSES_CAPACITY)
+            if cached:
+                first, last, count = cached
+                misses.append((trigger.trigger.identity.qualified, first, last, count))
+        found.append(tuple(misses))
+    return found
 
 
 def line_attention(
@@ -1283,7 +1352,20 @@ def line_attention(
                 pending.append(
                     LinePendingWork(session["line"], session["line_id"], due, _instant(oldest))
                 )
-    return tuple(gaps), tuple(pending)
+    # Each listed gap's missed timer instants, read after the store lock is released.
+    by_line: dict[str, list[LineCoverageGap]] = {}
+    for gap in gaps:
+        by_line.setdefault(gap.line, []).append(gap)
+    counted = {
+        id(gap): missed
+        for line, held in by_line.items()
+        for gap, missed in zip(
+            held,
+            _timer_misses(instance, line, [(gap.since, gap.until) for gap in held]),
+            strict=True,
+        )
+    }
+    return tuple(replace(gap, missed=counted[id(gap)]) for gap in gaps), tuple(pending)
 
 
 def service_dispatch_line(

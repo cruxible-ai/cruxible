@@ -61,7 +61,7 @@ rows leave it out.
 | Pages | `projection_backing_stale`, `projection_dirty` | A stamped passage reflects state that moved, or someone edited it. |
 | Vocabulary file | `vocabulary_file_behind`, `vocabulary_file_baseline_invalid` | Accepted vocabulary moved past `.cruxible/vocabulary.yaml`'s export, or its header names an export this instance does not know; `cruxible vocabulary export` repairs ([Evolving your vocabulary](evolving-your-vocabulary.md#the-vocabulary-file)). |
 | Proposals | `proposal_awaiting_approval`, `proposal_stale` | A change waits for an approval, or the state moved since it was checked. |
-| Automation | `line_inbox_unread`, `line_coverage_gap`, `line_work_pending`, `line_disabled_by_upgrade` | A Line posted something, missed work, or stopped after its definition changed. |
+| Automation | `line_inbox_unread`, `line_coverage_gap`, `trigger_instants_missed`, `line_work_pending`, `line_disabled_by_upgrade` | A Line posted something, a schedule missed instants while no daemon ran, or a Line stopped after its definition changed. |
 | Setup | `line_not_enabled` | A Line was accepted but nobody has enabled it yet. |
 | Predictions | `prediction_settleable` | A prediction's window closed and it can be settled. |
 | Upgrades | `upgrade_available` | A newer compiler revision can be adopted. |
@@ -191,15 +191,15 @@ automation](lines-and-automation.md). A compiler upgrade is covered in
 [Upgrading](upgrading.md). Adding a newer release of a kit proposes its changes,
 which you review like any change ([Kits](kits.md)).
 
-## Duplicates (beta)
+## Duplicates
 
 The same thing recorded twice splits what's known about it.
-`cruxible curation duplicates --kind KIND` lists Subjects whose ids, aliases
+`cruxible duplicates --kind KIND` lists Subjects whose ids, aliases
 or key values look the same under a loose comparison (case, punctuation) but
 differ under the kind's own rules:
 
 ~~~text
-$ cruxible curation duplicates --kind catalog.part
+$ cruxible duplicates --kind catalog.part
 Possible duplicates of catalog.part: 2 group(s); read 3 Subject(s), 0 alias(es), 7 value(s).
   subjects 'bp1142': catalog.part/bp-1142 (bp-1142), catalog.part/bp1142 (bp1142)
   ...
@@ -227,12 +227,7 @@ Record your judgment as state, so it isn't asked again:
   --because "Different suppliers' part numbers."`).
 
 Both are ordinary fields, so the judgment has its reason and its history like
-any other Claim. `cruxible curation list` shows the items detection recorded
-(detection runs only once a `curation-detect` Trigger aimed at the
-`curation.detect` action is authored; none is seeded),
-and `overrule`, `suppress`, `unsuppress` and `accept-fixed` close them out.
-`overrule` is permanent, so it previews first: commit it with `--commit --at
-OID` from the preview (or answer its confirmation prompt).
+any other Claim.
 
 ## When a field turns into prose
 

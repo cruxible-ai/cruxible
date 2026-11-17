@@ -6254,6 +6254,7 @@ class ProposalService:
                 readmits=readmits,
                 procedure_operation=procedure_operation,
                 originating_line=originating_line,
+                kit_transition=request.kit_transition,
             )
             candidate_value = outcome.candidate.candidate_digest if outcome.candidate else None
             try:

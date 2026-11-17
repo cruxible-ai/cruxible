@@ -10,7 +10,9 @@ No Trigger fires retroactively. A timer fires each of its instants once, all of
 them after the acceptance of its Trigger version (a cadence first at acceptance
 plus one interval, a successor schedule from its own acceptance), and none
 before the daemon began listening: instants that pass while no daemon runs are
-skipped, never fired late. A retired Trigger stops.
+skipped, never fired late. A retired Trigger stops. The first evaluation after a
+restart records, per authored timer, the instants it skipped (``missed``), so
+``next`` can say so; the seeded housekeeping Triggers are not recorded.
 
 Deadlines are not Triggers. A worker schedules its own (``next.expire``) as an
 operational refresh signal; they fire into the same log, under their action and
@@ -38,6 +40,7 @@ from cruxible_client.contracts.temporal import format_datetime, parse_datetime
 from cruxible_client.contracts.triggers import (
     INTERNAL_ACTIONS,
     RUNBOOK_FIRE_PREFIX,
+    UNSERVED_INTERNAL_ACTIONS,
     AcceptedTrigger,
     GenerationAcceptedSchedule,
     Trigger,
@@ -48,7 +51,7 @@ from cruxible_client.contracts.triggers import (
     trigger_path,
 )
 from cruxible_core.derived.memo import memo_get, memo_put
-from cruxible_core.triggers.cadence import timer_instants
+from cruxible_core.triggers.cadence import timer_gap, timer_instants
 
 _SCHEMA = """
 CREATE TABLE events (
@@ -67,7 +70,16 @@ CREATE TRIGGER events_no_delete BEFORE DELETE ON events
 CREATE TABLE generations (trigger_id TEXT PRIMARY KEY, version TEXT NOT NULL,
  listening_since TEXT NOT NULL, covered INTEGER NOT NULL) STRICT;
 """
-_VERSION = 6
+_VERSION = 8
+# Each authored timer's instants that fell due while no daemon ran, as the first
+# evaluations after restarts found them: accumulated across restarts until the
+# timer's target runs, for one Trigger version (its target), retained beside the
+# fires, never rebuilt.
+_MISSED_SCHEMA = (
+    "CREATE TABLE IF NOT EXISTS missed (trigger_id TEXT PRIMARY KEY, action TEXT NOT NULL, "
+    "restarted_at TEXT NOT NULL, first_due TEXT NOT NULL, last_due TEXT NOT NULL, "
+    "count INTEGER NOT NULL CHECK(count > 0), version TEXT NOT NULL DEFAULT '') STRICT",
+)
 # Each Runbook fire key's progress, retained beside its fires and never rebuilt
 # (D-R36): ``latest`` is the newest fire, kept as fires are recorded so a poll
 # reads one row per Runbook instead of the fire history; ``started`` is the fire
@@ -240,9 +252,20 @@ def _open(instance: Any, *, create: bool = False) -> Iterator[sqlite3.Connection
                 if sqlite3.complete_statement(statement):
                     connection.execute(statement)
                     statement = ""
-            for table in (*_KIT_RESUME_SCHEMA, *_RUNBOOK_FIRES_SCHEMA):
+            for table in (*_KIT_RESUME_SCHEMA, *_RUNBOOK_FIRES_SCHEMA, *_MISSED_SCHEMA):
                 connection.execute(table)
             connection.execute(f"PRAGMA user_version={_VERSION}")
+        elif version == 6:
+            # v7 added only the missed-instants table; a v6 reader sees none.
+            if create:
+                for table in _MISSED_SCHEMA:
+                    connection.execute(table)
+                connection.execute(f"PRAGMA user_version={_VERSION}")
+        elif version == 7:
+            # v8 binds each missed record to its Trigger version (and so its target).
+            if create:
+                connection.execute("ALTER TABLE missed ADD COLUMN version TEXT NOT NULL DEFAULT ''")
+                connection.execute(f"PRAGMA user_version={_VERSION}")
         elif version in (2, 3, 4, 5):
             # A reader of an older journal sees what it holds; the next writer
             # brings it forward one step at a time.
@@ -270,7 +293,7 @@ def _open(instance: Any, *, create: bool = False) -> Iterator[sqlite3.Connection
                 # A v5 runbook_fires holds no row here (no Runbook fire exists), so
                 # it is replaced by the current shape rather than altered.
                 connection.execute("DROP TABLE IF EXISTS runbook_fires")
-                for table in (*_KIT_RESUME_SCHEMA, *_RUNBOOK_FIRES_SCHEMA):
+                for table in (*_KIT_RESUME_SCHEMA, *_RUNBOOK_FIRES_SCHEMA, *_MISSED_SCHEMA):
                     connection.execute(table)
                 connection.execute(f"PRAGMA user_version={_VERSION}")
         elif version != _VERSION:
@@ -537,6 +560,198 @@ def cancel_deadline(instance: Any, name: str) -> None:
         connection.execute("DELETE FROM deadlines WHERE name=?", (name,))
 
 
+@dataclass(frozen=True)
+class MissedInstants:
+    """One authored timer's instants that fell due while no daemon ran."""
+
+    trigger: str
+    #: The internal action it fires, or its Runbook's fire key.
+    action: str
+    #: When the daemon that skipped them began listening.
+    restarted_at: datetime
+    first_due: datetime
+    last_due: datetime
+    count: int
+    #: The Trigger version (artifact digest) whose instants these are.
+    version: str = ""
+
+
+def _seeded_trigger_paths() -> frozenset[str]:
+    from cruxible_core.ledger.genesis_seeds import GENESIS_SEED_HISTORY
+
+    return frozenset(
+        seed.path
+        for seed_set in GENESIS_SEED_HISTORY
+        for seed in seed_set.seeds
+        if seed.path.startswith("triggers/")
+    )
+
+
+_SEEDED_TRIGGER_PATHS = _seeded_trigger_paths()
+
+
+def housekeeping_trigger(identity: str) -> bool:
+    """Whether a Trigger is one creation seeds (the daemon's own housekeeping).
+
+    Its missed instants are not reported: what it keeps current is refreshed
+    by its next instant, and nobody authored it.
+    """
+
+    name = identity.removeprefix("Trigger:")
+    try:
+        return trigger_path(name) in _SEEDED_TRIGGER_PATHS
+    except ValueError:
+        return False
+
+
+def _missed(
+    covered: dict[str, str],
+    *,
+    listening_since: datetime,
+    triggers: Sequence[InternalTrigger],
+) -> list[MissedInstants]:
+    """Each authored timer's instants in ``(covered_until, listening_since)``.
+
+    ``covered_until`` advances to the evaluation instant whenever the log is
+    written, so every instant after it and before this listener began was due
+    while no daemon fired it: skipped, never fired late. After the first write
+    under this listener ``covered_until`` is past ``listening_since`` and the
+    range is empty, so this is work per Trigger once per restart.
+    """
+
+    found: list[MissedInstants] = []
+    through = listening_since - timedelta(microseconds=1)
+    for item in triggers:
+        if isinstance(item.schedule, GenerationAcceptedSchedule) or not schedule_is_timed(
+            item.schedule
+        ):
+            continue
+        if housekeeping_trigger(item.trigger) or item.action in UNSERVED_INTERNAL_ACTIONS:
+            # Housekeeping is refreshed by its next instant; an unserved action
+            # (curation in 0.5.0) has nothing that would run it.
+            continue
+        after = item.accepted_at
+        if item.trigger in covered:
+            after = max(after, _instant(covered[item.trigger]))
+        if after >= through:
+            continue
+        gap = timer_gap(item.schedule, accepted_at=item.accepted_at, after=after, through=through)
+        if gap is not None:
+            found.append(
+                MissedInstants(
+                    item.trigger, item.action, listening_since, *gap, version=item.version
+                )
+            )
+    return found
+
+
+def _record_missed(
+    connection: sqlite3.Connection,
+    missed: Sequence[MissedInstants],
+    *,
+    target_ran_since: Callable[[str, datetime], bool] | None,
+) -> None:
+    """Record a restart's skipped instants, accumulating while the target has not run.
+
+    A timer's earlier record is unreconciled until its target runs after that
+    restart: a fire of the action (read here, one index seek), or a run of the
+    Runbook (``target_ran_since``; without it a Runbook's record accumulates).
+    An unreconciled record keeps its earliest instant and adds the count; a
+    reconciled one is replaced, and so is a record of another Trigger version
+    (a retargeted or rescheduled Trigger owes nothing for its predecessor's
+    instants). One read per timer that missed instants.
+    """
+
+    for item in missed:
+        row = connection.execute(
+            "SELECT restarted_at,first_due,count,action,version FROM missed WHERE trigger_id=?",
+            (item.trigger,),
+        ).fetchone()
+        first, count = item.first_due, item.count
+        if row is not None and (str(row[3]), str(row[4])) == (item.action, item.version):
+            previous = _instant(str(row[0]))
+            if item.action.startswith(RUNBOOK_FIRE_PREFIX):
+                ran = target_ran_since is not None and target_ran_since(item.action, previous)
+            else:
+                fired = connection.execute(
+                    "SELECT fired_at FROM events WHERE action=? ORDER BY sequence DESC LIMIT 1",
+                    (item.action,),
+                ).fetchone()
+                ran = fired is not None and _instant(str(fired[0])) >= previous
+            if not ran:
+                first, count = min(first, _instant(str(row[1]))), count + int(row[2])
+        connection.execute(
+            "INSERT INTO missed VALUES (?,?,?,?,?,?,?) ON CONFLICT(trigger_id) DO UPDATE SET "
+            "action=excluded.action,restarted_at=excluded.restarted_at,"
+            "first_due=excluded.first_due,last_due=excluded.last_due,count=excluded.count,"
+            "version=excluded.version",
+            (
+                item.trigger,
+                item.action,
+                format_datetime(item.restarted_at),
+                format_datetime(first),
+                format_datetime(item.last_due),
+                count,
+                item.version,
+            ),
+        )
+
+
+def _coverage(connection: sqlite3.Connection | None) -> dict[str, str]:
+    if connection is None:
+        return {}
+    return dict(connection.execute("SELECT trigger_id,covered_until FROM timers").fetchall())
+
+
+# Per instance root: the listener whose restart was already checked for missed
+# instants, so an idle tick never repeats the check.
+_MISSED_CHECKED: OrderedDict[str, str] = OrderedDict()
+
+
+def missed_trigger_instants(instance: Any) -> tuple[MissedInstants, ...]:
+    """Every authored timer's instants the latest restart that skipped any found.
+
+    One read of a table with at most one row per timer Trigger.
+    """
+
+    with _open(instance) as connection:
+        if connection is None:
+            return ()
+        user_version = connection.execute("PRAGMA user_version").fetchone()[0]
+        if user_version < 7:
+            return ()
+        rows = connection.execute(
+            "SELECT trigger_id,action,restarted_at,first_due,last_due,count,"
+            + ("version" if user_version >= 8 else "''")
+            + " FROM missed ORDER BY trigger_id"
+        ).fetchall()
+    return tuple(
+        MissedInstants(
+            str(trigger),
+            str(action),
+            _instant(restarted),
+            _instant(first),
+            _instant(last),
+            int(count),
+            version=str(version),
+        )
+        for trigger, action, restarted, first, last, count, version in rows
+    )
+
+
+def last_fired_at(instance: Any, *, action: str) -> datetime | None:
+    """When ``action`` last fired (by any Trigger, a deadline or by hand): one index seek."""
+
+    with _open(instance) as connection:
+        if connection is None:
+            return None
+        row = connection.execute(
+            "SELECT fired_at FROM events WHERE action=? ORDER BY sequence DESC LIMIT 1",
+            (action,),
+        ).fetchone()
+    return None if row is None else _instant(str(row[0]))
+
+
 def _due_timers(
     connection: sqlite3.Connection | None,
     *,
@@ -552,11 +767,7 @@ def _due_timers(
     """
 
     fires: list[_Fire] = []
-    covered = (
-        {}
-        if connection is None
-        else dict(connection.execute("SELECT trigger_id,covered_until FROM timers").fetchall())
-    )
+    covered = _coverage(connection)
     for item in triggers:
         if isinstance(item.schedule, GenerationAcceptedSchedule):
             continue
@@ -758,8 +969,13 @@ def evaluate_triggers(
     listening_since: datetime,
     triggers: Sequence[InternalTrigger] | None = None,
     listening_generation: int | None = None,
+    target_ran_since: Callable[[str, datetime], bool] | None = None,
 ) -> tuple[TriggerEvent, ...]:
     """Fire each timer instant and due deadline once.
+
+    ``target_ran_since(fire_key, instant)`` says whether a Runbook ran at or
+    after ``instant`` (its manual runs are not in this log); a timer's missed
+    instants accumulate across restarts until its target has run.
 
     ``listening_since`` is when this evaluator (the daemon's consumer runner)
     began firing: timer instants before it passed while nothing was listening
@@ -769,6 +985,9 @@ def evaluate_triggers(
 
     if triggers is None:
         triggers = internal_triggers(instance)
+    root = str(instance.root)
+    listener = str(format_datetime(listening_since))
+    unchecked = memo_get(_MISSED_CHECKED, root) != listener
     with _open(instance) as connection:
         generation_fires, generation_updates = _generation_work(
             connection,
@@ -777,10 +996,18 @@ def evaluate_triggers(
             listening_since=listening_since,
             listening_generation=listening_generation,
         )
+        missed = (
+            _missed(_coverage(connection), listening_since=listening_since, triggers=triggers)
+            if unchecked
+            else []
+        )
+        if unchecked and not missed:
+            memo_put(_MISSED_CHECKED, root, listener, capacity=_TRIGGERS_CAPACITY)
         if not (
             _due_timers(connection, now=now, listening_since=listening_since, triggers=triggers)
             or generation_fires
             or generation_updates
+            or missed
         ):
             return ()
     with _open(instance, create=True) as connection:
@@ -801,6 +1028,12 @@ def evaluate_triggers(
             "version=excluded.version,listening_since=excluded.listening_since,covered=excluded.covered",
             generation_updates,
         )
+        if unchecked:
+            _record_missed(
+                connection,
+                _missed(_coverage(connection), listening_since=listening_since, triggers=triggers),
+                target_ran_since=target_ran_since,
+            )
         for item in triggers:
             if isinstance(item.schedule, GenerationAcceptedSchedule):
                 continue
@@ -809,4 +1042,6 @@ def evaluate_triggers(
                 "ON CONFLICT(trigger_id) DO UPDATE SET covered_until=excluded.covered_until",
                 (item.trigger, format_datetime(now)),
             )
+        if unchecked:
+            memo_put(_MISSED_CHECKED, root, listener, capacity=_TRIGGERS_CAPACITY)
         return tuple(_record(connection, fires, now=now))

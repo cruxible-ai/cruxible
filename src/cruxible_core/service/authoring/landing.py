@@ -39,8 +39,11 @@ def service_land_authoring_submit(
     outcome: AuthoringLanding
     if status.state == "accepted":
         assert status.accepted_generation is not None
+        # S2: accepted with no proposal is a payload identical to accepted state.
         outcome = AuthoringLanded(
-            proposal_id=proposal_id, accepted_coordinate=status.accepted_generation
+            proposal_id=proposal_id,
+            accepted_coordinate=status.accepted_generation,
+            unchanged=proposal_id is None,
         )
     elif status.state == "awaiting_external_approval" or any(
         item.condition == "external-approval" for item in status.path_to_acceptance
@@ -112,6 +115,17 @@ def service_land_authoring_submit(
             )
     data = submitted.model_dump(mode="json")
     data["outcome"] = outcome.model_dump(mode="json")
+    from cruxible_core.service.discovery.kit_owners import kit_retirement_warnings
+
+    # Only an admitted proposal has candidate evidence to read; a refused
+    # preflight's candidate digest names nothing stored.
+    warned = (
+        kit_retirement_warnings(coordinator.instance, status.candidate_digest)
+        if status.proposal_id is not None
+        else ()
+    )
+    if warned:
+        data["warnings"] = list(warned)
     data["status"] = status.model_dump(mode="json")
     data["intent"]["candidate_status"] = data["status"]
     return contracts.AuthoringSubmitResultRecord.model_validate(data)
@@ -194,7 +208,16 @@ def land_direct_proposal(
         receipt, outcome = land_proposal(instance, proposal_id=proposal_id, actor_id=actor_id)
         if receipt.accepted_coordinate is not None:
             accepted = receipt.accepted_coordinate
-    return inspection.model_copy(update={"outcome": outcome, "accepted_coordinate": accepted})
+    from cruxible_core.service.discovery.kit_owners import kit_retirement_warnings
+
+    warned = (
+        ()
+        if proposal.candidate is None
+        else kit_retirement_warnings(instance, proposal.candidate.candidate_digest)
+    )
+    return inspection.model_copy(
+        update={"outcome": outcome, "accepted_coordinate": accepted, "warnings": warned}
+    )
 
 
 def _recompiled_submission(
@@ -309,12 +332,17 @@ def _stopped(
             ),
         )
     if reason == "accept_never":
+        # Kept for review: a reviewer approves it, and that approval activates it.
         return _proposed(
             proposal_id,
             reason="accept_never",
-            message='not activated: the caller requested accept="never"',
-            repair=activate,
-            delegated=not may_activate,
+            message=(
+                'not activated: the caller requested accept="never"; a reviewer approves '
+                "it, which activates it"
+            ),
+            repair=RepairOperation(
+                operation="cruxible.proposal.approve", arguments={"proposal_id": proposal_id}
+            ),
         )
     return _proposed(
         proposal_id,

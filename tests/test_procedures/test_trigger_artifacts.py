@@ -556,6 +556,13 @@ def test_triggers_are_authored_lowered_and_read_like_other_definitions(tmp_path)
     with pytest.raises(AuthoringLoweringError) as missing:
         _render_trigger_member(payload.model_copy(update={"line_name": "absent"}), tree=tree)
     assert missing.value.code == "cruxible.authoring.trigger_line_missing"
+    # Ruling 13: a Trigger aimed at curation.detect refuses as not served.
+    with pytest.raises(AuthoringLoweringError) as unserved:
+        _render_trigger_member(
+            payload.model_copy(update={"line_name": None, "action": "curation.detect"}), tree=tree
+        )
+    assert unserved.value.code == "cruxible.authoring.action_not_served"
+    assert "curation is not served in this release" in str(unserved.value)
 
     tree[path] = content
     _accept_tree(instance, owner, tree, timestamp="2026-09-30T10:02:00.000000Z", proposal_name="a")

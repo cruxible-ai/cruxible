@@ -51,11 +51,21 @@ credential decides who acts, and a principal ID that disagrees with it is refuse
 way: they are signed with the principal's private key.
 
 A request that names no principal acts as the implicit local operator
-(`operator`), which is not a principal. It may not settle or close a proposal:
-approve (submitting an approval), activate, reject, withdraw and readmit refuse
-it with `cruxible.identity.principal_unconfigured` and its repair (name a
-principal). A principal registered under the name `operator` acts like any
-other.
+(`operator`), which is not a principal. It may not make a write whose record
+names who did it: authoring and the write verbs, approve (submitting an
+approval), activate, reject, withdraw and readmit, `capture erase`, `claim
+attest`, `prediction propose` and `settle`, `instance decommission` and
+`rebuild-next`, `provider install`, `retire` and `move`, `kit build`, `add` and
+`remove`, `compiler upgrade` and principal changes (`principal add`, `rotate`,
+`recover`, `revoke`), `procedure measure` and `dispose`, `inbox ack`, `dismiss` and `link`, the block
+declarations and observations `files add`, `block repin` and `block sync`
+record, and every run it would start
+(`procedure run`, `action run`, `line run`, `line evaluate`, `line dispatch`,
+`runbook run`) refuse it with `cruxible.identity.principal_unconfigured` and
+its repair (name a principal). `init`, `line enable` and `line disable`, and
+Capture uploads stay open to it; writes that record no actor (ledger mirror
+set, clear and publish, `body store`, `block depublish`) are unchanged. A
+principal registered under the name `operator` acts like any other.
 
 `CRUXIBLE_CLIENT_TIMEOUT_S` (default 180) bounds how long a client waits for a
 daemon that has accepted a request. An SDK `Cruxible.connect()` reads only the
@@ -128,8 +138,8 @@ which exists before `init` too.
   to commit: `kit add` and `kit remove`. Commit with `--commit`.
 - A change that cannot be undone previews unless asked to commit, and commits
   only with the preview's coordinate: `instance decommission`,
-  `credential revoke`, `credential rotate`, `ledger set-mirror`, `capture
-  erase` and `curation overrule`. Commit with
+  `credential revoke`, `credential rotate`, `ledger set-mirror` and `capture
+  erase`. Commit with
   `--commit --at OID`; without `--at` it refuses
   `cruxible.preview.confirmation_required`.
 - Everything else commits unless `--dry-run` is given.
@@ -246,8 +256,12 @@ revokes every credential that acts as it: the next request with one is refused
 with `cruxible.identity.principal_revoked` and the rows are marked revoked.
 Rotation keeps the principal, tier and label, so rotating a bound credential
 needs the same authority minting it would: the request acts as that principal,
-or `credential rotate --key-dir DIR` signs its consent. Any admin may revoke a
-credential, but never receives a replacement for someone else's principal.
+or `credential rotate --key-dir DIR` signs its consent. With `--key-dir`, the
+replacement token is written into DIR's `cruxible.env` only when that file holds
+the token being rotated (compare-and-write); a file holding another credential's
+token, or none, refuses before anything is revoked, naming the file. Any admin
+may revoke a credential, but never receives a replacement for someone else's
+principal.
 
 The bootstrap claim and `recover-admin` mint unbound operator credentials: they
 carry transport authority (host, init, credentials, daemon lifecycle) but act as
@@ -589,7 +603,7 @@ identity and is unsafe; prefer repairing the typed cause and allowing re-arm.
 The daemon's internal schedules are governed Trigger artifacts
 (`triggers/<name>.json`) aimed at an internal action, not daemon-local
 configuration. Internal actions are registered in code (`evidence.sweep`,
-`prediction.anchor_retry`, `floor.refresh`, `curation.detect`); a Trigger aimed
+`prediction.anchor_retry`, `floor.refresh`); a Trigger aimed
 at one takes a
 `cadence`, `cron`, or `generation_accepted` schedule. Capture-landing and
 window-close schedules for internal actions are
@@ -599,10 +613,10 @@ action name that is not registered is refused at acceptance
 instance is initialized with `evidence-sweep` (daily),
 `prediction-anchor-retry` (hourly) and `floor-refresh` (on accepted
 generations); change a schedule, add a Trigger, or retire one through an
-ordinary proposal. Curation detection (beta) is opt-in: author a
-`curation-detect` Trigger aimed at the `curation.detect` action to run it.
-Internal-action Triggers need no enablement. `cruxible next` reports
-unscheduled findings actions other than opt-in `curation.detect`, and an
+ordinary proposal. Curation is not served in this release: authoring a
+Trigger, a Runbook step or an `action run` of `curation.detect` refuses
+(`cruxible.authoring.action_not_served`). Internal-action Triggers need no
+enablement. `cruxible next` reports unscheduled findings actions, and an
 unscheduled floor action when workspace delivery is enabled.
 
 No Trigger fires retroactively. A timer fires each of its instants once, all of
@@ -1025,7 +1039,7 @@ What travels: `refs/heads/main`, whichever of `refs/notes/cruxible-gen`,
 per OPEN proposal under `refs/heads/proposals/`, and `refs/settled/archive` once
 there is retained closed work. Activated, withdrawn and stale review branches
 are removed; their commits and refused admission commits stay reachable through
-that single archive ref. Historical review, readmission and curation keep the
+that single archive ref. Historical review and readmission keep the
 candidate bytes after Git collection. Old `refs/settled/<digest>` links no longer
 resolve; retained commits can be opened by their exact OID. To retain this history
 in a reviewer clone, fetch the custom archive ref explicitly:
@@ -1189,14 +1203,15 @@ and `POST /{instance}/providers/install`.
 
 ~~~text
 cruxible kit build --id ID --version X.Y.Z --owns PREFIX. [--owns PREFIX.]...
-  --out KIT_DIR [--provider PACKAGE_DIR]... [--default-provider PACKAGE_DIR]... [--json]
+  --out KIT_DIR [--provider PACKAGE_DIR]... [--default-provider PACKAGE_DIR]...
+  [--automation-template FILE] [--file PATH]... [--json]
 cruxible kit add KIT [--source TEXT] [--keep IDENTITY]... [--keep-local-edits]
   [--keep-build Line:NAME]...
-  [--retire-dependents IDENTITY]... [--allow-downgrade]
+  [--retire-dependents IDENTITY]... [--allow-downgrade] [--detail]
   [--dry-run|--commit] [--at OID] [--json]
 cruxible kit pull REFERENCE --out DIR [--layout] [--json]
 cruxible kit status [--offline] [--json]
-cruxible kit remove ID [--dry-run|--commit] [--at OID] [--json]
+cruxible kit remove ID [--detail] [--dry-run|--commit] [--at OID] [--json]
 ~~~
 
 `KIT` is a kit directory, an OCI image layout directory, or a registry
@@ -1361,12 +1376,20 @@ blocks the change. `add` refuses a release older than
 the installed one unless `--allow-downgrade`, and the preview names the transition
 (install, upgrade, downgrade, reinstall).
 
+The answer lists the paths a change touches and counts the ones it leaves as
+they are (`unchanged: N`, the `unchanged` field in `--json` and MCP);
+`--detail` (MCP `detail: true`) lists every path.
+
 `add` and `remove` land at once when the instance's approval policy requires no
 approval and the request's tier may activate (`graph_write`), like value
 writes; otherwise they stop at proposed for the ordinary `cruxible proposal
 approve`, which activates them. Below `graph_write` (a capped MCP server, say)
 the result's detail says `Not activated: ... Next: someone who can runs
-cruxible proposal activate ID`. `add`
+cruxible proposal activate ID`. A kit proposal waiting for an independent
+approver goes stale when other writes land first, and it is not rebased: run
+the same `kit add` (or `kit remove`) again for a fresh proposal at the head,
+then have it approved. The refusal an approval or readmit of the stale one
+gets names that command as its repair. `add`
 records a `kit_receipt` Document, `documents/kit-<id>.json`, with each path's
 release digest, installed digest and content digest, and the bundled packages.
 
@@ -1450,20 +1473,35 @@ depends on what it would retire (`Refused: cruxible.change_set.incomplete_closur
 the refusal counts the dependents by kind, names a few, and gives the repair
 (retire the automation you authored over the kit, retire the Claims Subject by
 Subject with `cruxible retire KIND/ID --with-claims`, or keep the kit); there is
-no option that retires Claims. A blocked commit of `kit add` or `kit remove`
-exits 1, and a blocked removal commit records nothing (a blocked preview exits
-0). A removed kit cannot be added back: its retired definitions refuse revival
-(`revival_refused`). Removing a kit that is not installed
+no option that retires Claims, and the removal never retires automation you
+authored over the kit (Lines, Mandates, Triggers, Runbooks): it stays yours. A
+blocked removal prints the refusal and its repair first, then the plan as
+counts per action and kind; `--detail` also lists each path after them. A
+blocked commit of `kit add` or `kit remove` exits 1, and a blocked removal
+commit records nothing (a blocked preview exits 0). Removal is one-way: a
+removed kit cannot be added back, because its retired definitions refuse
+revival (`revival_refused`). After a removal `orient` no longer lists its
+retired SubjectKinds, even where a kept pair-endpoint ClaimType still names one. Removing a kit that is not installed
 refuses with `cruxible.kit.not_installed`, naming the installed kits.
 
+`kit build --file PATH` (repeatable) copies a plain file, such as `README.md`
+or a reference page, into the kit at its path relative to the workspace root
+and lists it in the manifest's `files` with its sha256 and role; like the
+automation template it is outside the release's content digest and is never a
+definition. A missing file, a path outside the workspace, a hidden or reserved
+kit path, or the automation template's own path refuses
+`cruxible.kit.file_refused` with its repair, before the build runs.
+
 MCP: `cruxible_kit_build` (`providers` names packages staged with
-`cruxible_body_store`; `delivery: index` makes one a default provider), `cruxible_kit_status` (with the same update check,
+`cruxible_body_store`; `delivery: index` makes one a default provider; `files`
+names plain files in the adapter's workspace, as `--file`), `cruxible_kit_status` (with the same update check,
 `offline`), `cruxible_kit_add` (`reference` is a kit directory or layout the adapter reads,
 or a registry reference it pulls; or inline `bundle`; a commit stages its provider files) and
 `cruxible_kit_remove`. HTTP:
 `POST /{instance}/kits/build`, `GET /{instance}/kits`,
 `POST /{instance}/kits` and `POST /{instance}/kits/remove`.
-SDK: `read_kit_directory`, `write_kit_directory` and `stage_kit_providers` in
+SDK: `read_kit_directory`, `write_kit_directory`, `stage_kit_providers`,
+`read_kit_build_files` and `add_kit_files` (what `--file` does) in
 `cruxible_client.kits`, with the matching `CruxibleClient` methods.
 
 ## document
@@ -1584,7 +1622,7 @@ Cruxible ships builtin ClaimTypes, and a new instance starts with every one of t
 values; stored in the canonical form `nfc, casefold, collapse_whitespace,
 trim`). `semantic.distinct_from` states that its object Subject is a different
 thing from its subject, whatever names or keys they share (any kinds; many
-values): the duplicates audit never groups the pair. An instance created before a builtin shipped adopts it with
+values): `duplicates` never groups the pair. An instance created before a builtin shipped adopts it with
 `propose --builtin NAME`, which asks the daemon to propose its exact builtin
 definition; MCP's
 `cruxible_claim_type_propose` takes `builtin` in place of `input`, and the SDK
@@ -1817,7 +1855,8 @@ reads one Claim's card; `--detail why` its verdict with the law evidence and
 source handles it was computed from (and, when a Procedure proposed the
 accepted revision, `reason`: that item's own rationale and the run and terminal
 that proposed it), `--detail history` its revisions, and
-`--detail proof` its full envelope and facts. `orient` counts Claims by status
+`--detail proof` its verdict and cited Captures (`--detail proof-full` the full
+envelope and facts). `orient` counts Claims by status
 under `artifacts.claims`, from the `next` worker's facts when they are current
 at the read's coordinate and instant, else derived at the read.
 
@@ -1843,7 +1882,7 @@ how an agent leaves contested state contested instead of forcing a judgment it
 is not confident in: it holds the Claim's rows in `next` (see below) until what
 the agent examined changes. `--valid-until` ends the attestation, and with it
 the hold.
-`get CLM-... --detail proof --json` carries the typed statement (subject,
+`get CLM-... --detail proof-full --json` carries the typed statement (subject,
 predicate, object, role, qualifier, lifecycle, predecessor digest) in its
 top-level `statement` field alongside the canonical envelope.
 
@@ -1928,11 +1967,7 @@ full event stream.
 **Read receipts.** A local daemon records no read-touch (consumption) receipts:
 `CRUXIBLE_CONSUMPTION_RECEIPTS` defaults to `off`, so reads write no receipts. Set it
 to `on` on a managed daemon to record one receipt per served artifact. Receipts
-feed curation only: with them off, dead-vocabulary detection stands down
-(`consumption_receipts_off`). If a daemon that was recording is later run with
-receipts off, it marks the instance unobserved once, and when recording resumes
-the detector stays silent (`consumption_observation_gap`) until a receipt is
-written, then counts zero use only from that point.
+feed `audit`'s reader counts.
 
 One authoring intent is one changeset. The tagless `change_set` input carries
 any mix of members -- `claim`, `claim_type`, `claim_type_succession`,
@@ -2885,7 +2920,10 @@ a tick on its schedule, a generation accepted, a Capture landed or a window
 closed. A downtime range with nothing due is recorded as evaluated at the
 restart and never listed. Each row names the exact
 `cruxible line evaluate LINE --since S --until U --dispatch` that covers it and
-runs what it finds (the row leaves once an evaluation covers the range). `next` also shows one
+runs what it finds (the row leaves once an evaluation covers the range). When a
+cadence or cron Trigger aimed at the Line had instants in the range, the range
+is shown instead as one `trigger_instants_missed` row per such Trigger (see
+[runbook](#runbook)), with the same evaluation as its repair. `next` also shows one
 `line_work_pending` row while work it matched before the restart, or that was
 evaluated explicitly, waits for `line dispatch`. Nothing evaluated or matched
 before a restart is dispatched automatically. Rebuilding the disposable event
@@ -3193,8 +3231,8 @@ under a new operation key.
 cruxible action run NAME [--wait] [--wait-timeout SECONDS] [--json]
 ~~~
 
-Fire one registered internal action (`floor.refresh`, `evidence.sweep`,
-`prediction.anchor_retry`, or `curation.detect`) by hand, outside any
+Fire one registered internal action (`floor.refresh`, `evidence.sweep` or
+`prediction.anchor_retry`) by hand, outside any
 Trigger's schedule. The fire is appended to the same trigger journal a
 Trigger's own schedule writes to -- the manual fire's occurrence records
 that it was manual and the writer principal -- so the owning consumer's
@@ -3222,9 +3260,19 @@ Trigger may aim at it with `runbook_name` on a cadence, cron or
 generation_accepted schedule, and each Line step then runs under that Line's
 own enablement: a step whose Line is not enabled stops the scheduled run there.
 A scheduled Trigger fires only while the daemon is running. An instant missed
-while it was down is not run afterwards, and for a Runbook nothing reports it
-(a Trigger aimed at a Line leaves a `line_coverage_gap` row in `next`): run the
-Runbook yourself after downtime. A Runbook's scheduled runs never overlap:
+while it was down is not run afterwards. Only time schedules (cadence and cron)
+can miss instants; other Triggers fire on daemon events. The first evaluation
+after a restart records, for each authored timer Trigger, the instants that fell
+due while no daemon ran, and `next` shows one `trigger_instants_missed` row per
+Trigger (`detail`: `since` and `until`, the first and last missed instant,
+`count`, and `target`), whatever it targets. Its repair runs the target:
+`cruxible runbook run NAME` for a Runbook, `cruxible action run NAME` for an
+internal action, and for a Line the `line evaluate` of the range its restart
+left uncovered. A Runbook or action row stands until the target runs after the
+restart (by hand or on its next instant), and another outage before then adds to
+it (the earliest `since`, the latest `until`, the summed `count`); a Line row
+stands until an evaluation covers the range. The Triggers creation seeds (the daemon's own housekeeping) are not
+reported, and nothing is ever caught up automatically. A Runbook's scheduled runs never overlap:
 instants that come due while its run is still going are folded into one run
 right after it, and nothing reports the folded instants.
 
@@ -3307,7 +3355,10 @@ cruxible inbox link ITEM (--proposal ID | --subject KIND/ID) [--json]
 ~~~
 
 The Line inbox holds what Lines sent to intelligence: the items a `post_inbox`
-terminal selected and could not decide. It is operational state (a journal and
+terminal selected and could not decide. `inbox list` (and MCP and the SDK) shows
+one compact row per item: id, status, Line, kind (the posting terminal), seen
+count and a one-line title read from the payload; `inbox get` shows every field
+and the whole payload. It is operational state (a journal and
 a rebuildable index under the instance's exhaust), never accepted state.
 
 Each item is its payload exactly as posted -- untyped instance data -- inside a
@@ -3789,7 +3840,8 @@ Line accepted but not yet enabled, `line_not_enabled`), so it sorts after
 every problem. A row also carries `since`, when the condition it reports
 began, where state already records it: `line_not_enabled` (the Line's
 acceptance), `line_disabled_by_upgrade` (the upgrade's acceptance),
-`line_run_failed`, `line_coverage_gap`, `line_work_pending`, the new-evidence
+`line_run_failed`, `line_coverage_gap`, `trigger_instants_missed` (the first
+missed instant), `line_work_pending`, the new-evidence
 rows (the attestation), `proposal_awaiting_approval` (its admission),
 `prediction_settleable` (the window's close) and `claim_conflicted` (when the
 newest contender or their ClaimType took its current form, so the contest
@@ -3892,52 +3944,14 @@ Nothing renews a mandate, so its repair starts a successor from
 whose window reaches past the lead time, or the mandate's retirement, closes
 the row.
 
-## curation
+## duplicates
 
 ~~~text
-cruxible curation list [--access-profile FILE] [--limit N] [--cursor CURSOR] [--json]
-cruxible curation duplicates --kind KIND [--limit N] [--cursor CURSOR] [--json]
-cruxible curation overrule ITEM_ID
-  --expected-latest-event-digest DIGEST --reason TEXT [--attribution-ref REF]...
-  [--dry-run|--commit] [--at OID] [--json]
-cruxible curation accept-fixed ITEM_ID
-  --expected-latest-event-digest DIGEST --reason TEXT
-  (--proposal-id DIGEST [--changeset-digest DIGEST] | --generation N)
-  [--attribution-ref REF]... [--dry-run|--commit] [--at OID] [--json]
-cruxible curation suppress ITEM_ID
-  --expected-latest-event-digest DIGEST --reason TEXT
-  --scope item|lineage [--until-generation N] [--attribution-ref REF]...
-  [--dry-run|--commit] [--at OID] [--json]
-cruxible curation unsuppress ITEM_ID
-  --expected-latest-event-digest DIGEST --reason TEXT [--suppression EVENT_ID]
-  [--attribution-ref REF]... [--dry-run|--commit] [--at OID] [--json]
+cruxible duplicates --kind KIND [--limit N] [--cursor CURSOR] [--json]
 ~~~
 
-Curation is beta, and detection runs only when a Trigger aimed at the
-`curation.detect` internal action is authored (for example `curation-detect` on
-accepted generations; none is seeded, and `next` never runs or waits on it).
-Each fire runs every detector at the head and records what it found, evaluated
-at the fire's recorded instant. `curation list` is a pure read of that queue: it prints each item's ID,
-pattern kind, subject and `latest_event_digest` (what every ruling needs), when
-detection last ran (`current`, `behind` or `never_run`) and whether its Trigger
-is live, and the detectors that cannot run here and why (dead vocabulary needs
-`CRUXIBLE_CONSUMPTION_RECEIPTS=on`; block churn needs recorded block observations).
-With no such Trigger, `curation list` reports detection `never_run` and its
-Trigger `missing`.
-
-Block churn is the one detector that reads the workspace, which the daemon never
-does: `block repin` and `block sync` (without `--check`) record the declared
-blocks of the pages they touched, with their accounting, for detection to read
-when it next runs. Nothing else records them, and nothing reads the whole
-workspace to do it.
-
-The queue is paged (default 25 items, at most 200); a cut page has
-`truncated: true` and a `next_cursor` for `--cursor`, which continues only while
-accepted state and the queue itself are unchanged; otherwise it is refused as
-`cruxible.list.cursor_stale`.
-
-`curation duplicates` is the post-hoc duplicates audit: computed on demand,
-never on the write path and never by detection. For one Subject kind it lists
+`duplicates` is the post-hoc duplicates audit: computed on demand, never on
+the write path. For one Subject kind it lists
 what is equal under a broad comparison (NFKC, casefold, punctuation stripped,
 whitespace collapsed and trimmed, plus the alias graph) but distinct under the
 declared rules: Subjects whose ids or aliases meet (`subjects` groups), Subjects
@@ -3955,28 +3969,13 @@ audit reads at most 50,000 rows in all, one budget shared by its reads --
 Subjects, aliases, `distinct_from` relations, key Claims, values -- each asking SQL for no
 more than what remains; when the budget runs out it says so
 (`budget_exhausted`) and the groups cover only what was read. `scanned` counts
-the rows each read returned. It pages like the
-queue (default 25 groups, at most 200), recomputing within the same bound for
+the rows each read returned. It pages
+(default 25 groups, at most 200), recomputing within the same bound for
 each page.
-
-The rulings append attributed operational events; they do not create governed
-proposals or mutate accepted knowledge. `overrule` closes an item permanently:
-its pattern is never raised again. Because it cannot be undone it is an
-irreversible change, like `capture erase`: with no mode it previews, and a
-commit needs `--commit --at OID` (the preview's git oid) or the confirmation
-prompt; MCP and the SDK commit only with `dry_run=false` and `at`, and refuse
-`cruxible.preview.confirmation_required` without it. The other rulings commit
-directly. `accept-fixed` links an item to the accepted
-change that fixed it, named by proposal (pinned with `--changeset-digest` if
-wanted) or by `--generation`; the change must postdate the item and touch its
-subject or evidence. Detection never closes an item itself, even one whose
-artifact a later change retired: closing a fixed pattern is always this
-attributed ruling. `suppress` hides the item (`item`) or its whole lineage,
-the successors its pattern opens after a fix (`lineage`), until
-`--until-generation` or until `unsuppress` lifts it; detection keeps running.
-`unsuppress` names the item that recorded the suppression, even once that item
-is fixed: a lineage suppression on a resolved item keeps hiding its successors
-until lifted there.
+A cut page has `truncated: true` and a `next_cursor` for `--cursor`, which
+continues only while accepted state is unchanged; otherwise it is refused as
+`cruxible.list.cursor_stale`. MCP: `cruxible_duplicates` (full profile); SDK:
+`cx.duplicates(kind)`.
 
 ## audit
 
@@ -4104,7 +4103,11 @@ use `files propose` for Document changes, then cite the section as evidence for
 a bounded Claim value (see `write` above). The default evidence
 is `--because` as self evidence; `--evidence-file` cites text found once in a
 workspace file, read on this side (a file the catalog does not name is
-catalogued by the write, as below), and `--capture` an existing
+catalogued by the write, as below). A quoted code line is a pointer for
+reviewers, not a witness that resurfaces the judgment: a judgment that depends
+on code cites a check result where one exists (a scanner's finding, by
+`--capture` or `--evidence-contract`), while prose keeps quote and `--section`
+citations. `--capture` cites an existing
 Capture by its sha256 digest or its handle `CAP-<12+ hex>` (a digest prefix
 unique among the verified Captures the instance holds, cited or not; ambiguous
 or unknown handles refuse with the nearest handles). A Capture under a
@@ -4165,7 +4168,10 @@ and no current none is unknown.
 there. A value already live in the same role restates that Claim: on evidence
 of content it already cites the same way it is answered as done (already live);
 on new evidence (other `--because` words, another Capture) that Claim's evidence
-is refreshed, never a second Claim written; `--expect-absent` refuses it
+is refreshed, never a second Claim written. A `set` or `add` whose every change
+restates a live value in the same `--because` words answers `unchanged` and
+writes nothing (no proposal, no generation); the same content under a cited
+Capture is a re-observation, recorded as before; `--expect-absent` refuses it
 instead (`cruxible.write.value_already_present`). `retire` ends one live
 Claim, named by ID, by SUBJECT FIELD when that field holds one value, or by
 SUBJECT FIELD VALUE for one of several (`cruxible retire catalog.part/bp-2210
@@ -4252,7 +4258,7 @@ catalogued here). Pages are bounded by `--limit`; `--cursor` continues one.
 ## get
 
 ~~~text
-cruxible get REF [--detail summary|evidence|why|history|incoming|pairs|runs|proof|body]
+cruxible get REF [--detail summary|evidence|why|history|incoming|pairs|runs|proof|proof-full|body]
   [--range START:END] [--output FILE] [--limit N] [--cursor C] [--field FIELD]
   [--at GIT_OID] [--evaluation-time TS] [--json]
 ~~~
@@ -4274,8 +4280,10 @@ the bare run id) answers a run's state, outcomes and terminal detail;
 `Line:<name>` (or the Line identity digest `next` names a due Line by, in full
 or as a 12+ hex prefix) answers the Line's Procedure, its schedule kinds, each
 Trigger aimed at it by name and version (with the `get Trigger:<name>` that
-reads it), its authority, `triggers_inactive: not enabled` while Triggers aim
-at it but it is not enabled, its enablements (the principal kind, state and
+reads it), `sched` when a Runbook step runs it (each Runbook Trigger, compact:
+`cron 0 14 * * * (Trigger:T via Runbook:R)`; its schedule kind then reads
+`runbook`, never `manual`), its authority, `triggers_inactive: not enabled`
+while Triggers aim at it but it is not enabled, its enablements (the principal kind, state and
 stop reason, the pinned Line digest and Trigger versions, how far its daemon
 matched (`evaluated_until`), and who enabled each: a runtime credential's id
 and label only to that credential or an admin, otherwise
@@ -4325,10 +4333,15 @@ with its Claim ID. Subject rows carry the Claim id behind each value. A
 as the Subject when its first segment names a declared SubjectKind, unless that
 exact path is an accepted artifact. A
 summary's coordinate is the git oid's 12-hex prefix and the generation; the
-full accepted coordinate is under `--detail proof`. `--at` takes a git oid, a
+full accepted coordinate is under `--detail proof`. On a Claim, `--detail proof`
+is a summary (its verdict and each cited Capture on one line: `CAP-` handle,
+admission status, contract and role); `--detail proof-full` (MCP `proof_full`)
+is the whole envelope and facts. `--at` takes a git oid, a
 unique 12+ hex prefix of one, or a generation number, so either half of a
 printed coordinate reads back; each history row prints both (`seq N at
-<12 hex>`). An all-digit value of 11 or fewer characters is always a
+<12 hex>`). History rows are ordered by generation; the time each shows is
+`proposed <time>` (JSON `proposed_at`), when its change set was proposed, since
+the instant of acceptance is not recorded. An all-digit value of 11 or fewer characters is always a
 generation, never an oid prefix; twelve or more digits are a prefix. Evidence
 names each Capture by its `CAP-<12 hex>` handle, which `get` and `capture read`
 both accept, labels a copy by origin (`own words (N bytes)`, `own words in FILE (N bytes)`
@@ -4371,7 +4384,9 @@ admits, by name), the artifact counts, the named queries with their parameters,
 who you are and whether you can author (when not, the same `authoring_refusal`
 code, detail and repair that `whoami` reports), what the `next` queue
 holds (its problems as `next_items` and the first of them in `top`, its setup
-rows apart as `setup_items`), and the next commands to run. When any Line was ever enabled, attention
+rows apart as `setup_items`), and the next commands to run. Attention is the
+live queue, so `--at` an earlier generation omits it and prints `attention: head
+only` (`attention_scope: head_only`). When any Line was ever enabled, attention
 counts the enablements as the instance's Line consumer reports them (running,
 stalled, stopped) and names up to three stalled or stopped Lines with the stop
 reason, for any caller of the instance, without daemon scope; it also notes
@@ -5058,7 +5073,9 @@ record beside the admission, touches no accepted state, leaves every byte of the
 candidate readable, and moves the proposal out of `proposal list --status open`
 with terminal reason `withdrawn`. Only the actor who submitted a proposal may
 withdraw it (a later run of a Line withdraws its Line's open proposal as
-superseded, naming the successor in `superseded_by`; see [line](#line)); withdrawing an already-withdrawn proposal repeats the first answer
+superseded, naming the successor in `superseded_by`; see [line](#line)); anyone else
+refuses `cruxible.proposal.withdraw_not_author` (the repair is to reject it with a
+reason). Withdrawing an already-withdrawn proposal repeats the first answer
 rather than rewriting its reason, and a settled proposal refuses, because its
 outcome is not an intention to overwrite: an accepted one refuses
 `cruxible.proposal.already_accepted` (naming its git oid and generation), as
@@ -5251,7 +5268,11 @@ self-rotation: run `cruxible proposal approve PID --signer-id <the proposing
 actor> --key <that actor's current private key> --yes`, which activates it
 once that signature completes it. For `principal add` and `principal recover`,
 the signer is the actor performing the operation, never the new or
-locked-out principal. Registration neither
+locked-out principal. `principal rotate` and `principal recover` write the
+principal's settings file (`cruxible.env`) beside the new key in `--key-dir`,
+carrying the bearer token of the settings file the CLI remembers for it; the
+CLI keeps acting with the old file, and the output names the new one to load
+once the change is active. Registration neither
 grants authority immediately nor sends a private key to the daemon. Other
 non-creator principals may record additional voluntary approvals. `--kind`
 is explicit and may be `ordinary` or `recovery`; the daemon kind is
