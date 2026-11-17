@@ -2237,7 +2237,7 @@ def kit_group() -> None:
 
 _KIT_CONSEQUENCE_TEXT = {
     "overwrites_your_edit": "overwrites your edit",
-    "re_adds_retired": "re-adds a definition you retired",
+    "re_adds_retired": "re-adds a retired definition",
     "consumer_retired": "keeps your retirement",
     "takes_over_outside_definition": "takes over a definition you defined outside the kit",
     "replaces_carried_definition": "replaces a definition the kit depends on",
@@ -2247,7 +2247,7 @@ _KIT_CONSEQUENCE_TEXT = {
 #: line, then as `kit status` lists it afterwards.
 _KIT_KEEP_TEXT = {
     "overwrites_your_edit": ("keeps your edit", "your edit"),
-    "re_adds_retired": ("keeps it retired", "you retired it"),
+    "re_adds_retired": ("keeps it retired", "retired here"),
     "consumer_retired": ("kept retired", "you retired it"),
     "takes_over_outside_definition": (
         "keeps your definition from outside the kit",
@@ -2452,7 +2452,8 @@ def _echo_kit_change(
             and item.consequence == "takes_over_outside_definition"
         ):
             click.echo(f"Next: rerun cruxible kit add with --keep {item.identity} to keep yours.")
-    if result.proposal_id:
+    if result.proposal_id and result.status != "blocked":
+        # A blocked change records nothing to act on (--json keeps the id).
         click.echo(f"Proposal: {result.proposal_id}")
         if result.status == "proposed":
             if result.approval_required:

@@ -1777,6 +1777,8 @@ def test_a_kit_install_and_removal_preview_by_default_and_write_nothing(
     )
     assert removal.status == "would_propose" and removal.proposal_id is None
     assert {item.action for item in removal.plan} == {"retire"}
+    # Said before it is committed: a removed kit cannot come back in this release.
+    assert removal.detail == "one-way: a removed kit cannot be added back in this release"
     assert [
         kit.kit_id for kit in _installed(playbill_api.playbill_kit_status(consumer.instance_id))
     ] == ["acme"]
@@ -2948,3 +2950,58 @@ def test_kit_status_drops_a_kit_add_once_its_proposal_lands(
     status = playbill_api.playbill_kit_status(consumer.instance_id)
     assert status.resumes == ()
     assert [kit.kit_id for kit in status.kits] == ["base"]
+
+
+def test_re_adding_a_removed_kit_refuses_once_with_counts_and_records_nothing(
+    worlds: tuple[_World, _World],
+) -> None:
+    """sec N1: the re-add repeated one revival refusal per definition and named a proposal."""
+
+    publisher, consumer = worlds
+    publisher.author(_claim_type(SEATS, {"type": "integer"}), _claim_type(PLAN, {"type": "string"}))
+    release = publisher.build("1.0.0")
+    consumer.add(release)
+    consumer.settle(
+        playbill_api.playbill_kit_remove(
+            consumer.instance_id, KitRemoveRequest(kit_id="acme", dry_run=False)
+        )
+    )
+    before = consumer.tree()
+    expected = (
+        "kit acme was removed here, and a removed kit cannot be added back in this release "
+        "(2 of its definitions are retired: ClaimType 2); add it on a new instance"
+    )
+
+    preview = _kit_preview(consumer, KitAddRequest(bundle=release, source="test"))
+    assert preview.status == "would_block" and preview.detail == expected
+    committed = playbill_api.playbill_kit_add(
+        consumer.instance_id, KitAddRequest(bundle=release, source="test", dry_run=False)
+    )
+
+    assert committed.status == "blocked" and committed.detail == expected
+    assert committed.proposal_id is None and committed.plan == ()
+    assert consumer.tree() == before
+
+
+def test_a_repeated_kit_refusal_prints_once_with_its_count() -> None:
+    """sec N1: one revival refusal per retired definition ran together on one line."""
+
+    from cruxible_client.contracts.diagnostics import CompilerDiagnostic
+    from cruxible_core.service.kits import _kit_refusal_detail
+
+    def refusal(kind: str) -> CompilerDiagnostic:
+        return CompilerDiagnostic(
+            code=f"cruxible.{kind}.revival_refused",
+            severity="error",
+            message=f"A retired {kind} cannot be revived.",
+        )
+
+    detail = _kit_refusal_detail(
+        [refusal("subject_kind")] * 10 + [refusal("trigger")], {}, removal=False
+    )
+
+    assert detail == (
+        "Refused: cruxible.subject_kind.revival_refused: A retired subject_kind cannot be "
+        "revived. (10 definitions); cruxible.trigger.revival_refused: A retired trigger "
+        "cannot be revived."
+    )

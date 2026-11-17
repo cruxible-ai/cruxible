@@ -501,6 +501,13 @@ quickstart and concepts pages.
 - **A kit add whose provider installs await an approver says so.** Its preview
   and its `awaiting_providers` commit answered `approval_required: false`
   under `independent_approval_required`; both now answer true.
+- **Removing and re-adding a kit say what happens.** The removal preview says
+  removal is one-way in this release. A `kit add` of a removed kit is blocked
+  before anything is installed or proposed, with one line counting its retired
+  definitions per kind, instead of one revival refusal per definition and a
+  `Proposal:` line. A refusal that repeats prints once with its count, a
+  blocked kit change prints no `Proposal:` line (`--json` keeps the id), and the
+  plan says `re-adds a retired definition` rather than `you retired`.
 
 ## [0.3.2] - 2026-08-06
 

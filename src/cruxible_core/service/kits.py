@@ -1899,13 +1899,19 @@ def _closure_summary(message: str, tree: Mapping[str, bytes], *, removal: bool) 
 def _kit_refusal_detail(
     diagnostics: Iterable[CompilerDiagnostic], tree: Mapping[str, bytes], *, removal: bool
 ) -> str:
-    """Each refusal by code and its message; an incomplete closure as a summary."""
+    """Each refusal by code and its message, once with a count when it repeats; an
+    incomplete closure as a summary."""
 
+    counted: dict[str, int] = {}
+    for item in diagnostics:
+        line = (
+            _closure_summary(item.message, tree, removal=removal)
+            if item.code == _INCOMPLETE_CLOSURE
+            else f"{item.code}: {item.message}"
+        )
+        counted[line] = counted.get(line, 0) + 1
     return "Refused: " + "; ".join(
-        _closure_summary(item.message, tree, removal=removal)
-        if item.code == _INCOMPLETE_CLOSURE
-        else f"{item.code}: {item.message}"
-        for item in diagnostics
+        line if count == 1 else f"{line} ({count:,} definitions)" for line, count in counted.items()
     )
 
 
@@ -2119,6 +2125,35 @@ def _submit(
         else _kit_refusal_detail(admitted.diagnostics, candidate, removal=removal),
         coordinate=mode.coordinate,
         **described,  # type: ignore[arg-type]
+    )
+
+
+def _removed_kit_refusal(
+    tree: Mapping[str, bytes], contents: Mapping[str, bytes], kit_id: str
+) -> str | None:
+    """Why a kit removed here cannot be added back, or None when nothing it ships is
+    retired here (morning-rulings-1116 (8): removal is one-way in this release).
+
+    Reads the release's own paths only (O(kit size)), before anything is installed
+    or proposed, so the re-add refuses once instead of once per retired definition.
+    """
+
+    retired: dict[str, int] = {}
+    for path in contents:
+        current = tree.get(path)
+        if current is None:
+            continue
+        state = _artifact_state(path, current)
+        if state.lifecycle.state != "live":
+            kind = state.identity.qualified.partition(":")[0]
+            retired[kind] = retired.get(kind, 0) + 1
+    if not retired:
+        return None
+    counts = ", ".join(f"{kind} {count:,}" for kind, count in sorted(retired.items()))
+    return (
+        f"kit {kit_id} was removed here, and a removed kit cannot be added back in this "
+        f"release ({sum(retired.values()):,} of its definitions are retired: {counts}); "
+        "add it on a new instance"
     )
 
 
@@ -2771,6 +2806,18 @@ def _add_kit(
             detail=refusal.detail,
             coordinate=mode.coordinate,
         )
+    if receipt is not None and not receipt.artifacts:
+        removed = _removed_kit_refusal(tree, contents, manifest.kit_id)
+        if removed is not None:
+            return KitChangeResult(
+                kit_id=manifest.kit_id,
+                version=manifest.version,
+                status="would_block" if mode.previewing else "blocked",
+                transition=transition,
+                provenance=manifest.provenance,
+                detail=removed,
+                coordinate=mode.coordinate,
+            )
     # Kit-add work only: indexed receipt documents and their recorded definitions,
     # never the instance's Claims or Subjects. Reuse this inventory for both guards.
     receipts = tuple(_receipts(instance, tree))
@@ -3282,7 +3329,7 @@ def _remove_kit(
             + ", ".join(edited),
             coordinate=mode.coordinate,
         )
-    return _submit(
+    result = _submit(
         instance,
         mode,
         kit_id=request.kit_id,
@@ -3298,6 +3345,14 @@ def _remove_kit(
         removal=True,
         may_activate=may_activate,
     )
+    if result.status == "would_propose" and result.detail is None:
+        result = result.model_copy(update={"detail": KIT_REMOVAL_ONE_WAY})
+    return result
+
+
+#: What a removal preview says before it is committed (morning-rulings-1116 (8)):
+#: a retired definition is never revived in this release, so the kit cannot return.
+KIT_REMOVAL_ONE_WAY = "one-way: a removed kit cannot be added back in this release"
 
 
 #: Why a kit removal keeps a pair kind's endpoint ClaimType (R13): a Subject-valued

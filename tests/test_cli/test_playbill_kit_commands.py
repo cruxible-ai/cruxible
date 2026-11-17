@@ -999,6 +999,8 @@ def test_kit_remove_exits_1_only_when_a_commit_was_blocked(
                 kit_id="acme",
                 version="1.0.0",
                 status=status,  # type: ignore[arg-type]
+                # A refused commit's admission id: nothing to act on (sec N1).
+                proposal_id="sha256:" + "e" * 64 if status == "blocked" else None,
                 detail="Refused: cruxible.change_set.incomplete_closure: 1 live artifact(s)",
             )
 
@@ -1010,6 +1012,7 @@ def test_kit_remove_exits_1_only_when_a_commit_was_blocked(
     assert result.exit_code == exit_code, result.output
     assert f"acme 1.0.0: {status}" in result.output
     assert "Refused: cruxible.change_set.incomplete_closure" in result.output
+    assert "Proposal:" not in result.output
 
 
 def test_a_blocked_kit_remove_prints_its_refusal_first_and_the_plan_as_counts(

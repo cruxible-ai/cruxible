@@ -565,9 +565,9 @@ proposal. Below `graph_write` (an MCP server capped by `CRUXIBLE_MODE`, say),
 `kit add` and `kit remove` stay proposed and the result says who can activate
 them.
 
-Removal is one-way. A removed kit cannot be added back: its retired definitions cannot be revived,
-so a later `kit add` of it refuses with a `revival_refused` code (for example
-`cruxible.capture_contract.revival_refused`).
+Removal is one-way, and the removal preview says so. A removed kit cannot be added back: its
+retired definitions cannot be revived, so a later `kit add` of it is blocked before anything is
+installed or proposed, with one line counting its retired definitions per kind.
 
 The base kit cannot be removed:
 

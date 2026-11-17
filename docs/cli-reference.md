@@ -1354,8 +1354,8 @@ remapped to the digests this instance actually holds. A definition this instance
 holds differently takes the release's version as a successor of its own, and the
 preview says what that does here: `overwrites your edit` (edited since install,
 compared by content, so a reverted edit is no edit, and a pin that only
-followed a kit definition's own succession is no edit either), `re-adds a definition you
-retired`, `takes over a definition you defined outside the kit`, or `replaces a
+followed a kit definition's own succession is no edit either), `re-adds a retired
+definition`, `takes over a definition you defined outside the kit`, or `replaces a
 definition the kit depends on`. `--keep IDENTITY` (such as
 `ClaimType:acme.account.seats`, repeatable) and `--keep-local-edits` keep this
 instance's version instead (the preview reads `keep: X (keeps your edit)`, and
@@ -1480,9 +1480,11 @@ authored over the kit (Lines, Mandates, Triggers, Runbooks): it stays yours. A
 blocked removal prints the refusal and its repair first, then the plan as
 counts per action and kind; `--detail` also lists each path after them. A
 blocked commit of `kit add` or `kit remove` exits 1, and a blocked removal
-commit records nothing (a blocked preview exits 0). Removal is one-way: a
-removed kit cannot be added back, because its retired definitions refuse
-revival (`revival_refused`). After a removal `orient` no longer lists its
+commit records nothing (a blocked preview exits 0). Removal is one-way, and
+its preview says so: a removed kit cannot be added back, because its retired
+definitions cannot be revived. A later `kit add` of it is blocked before
+anything is installed or proposed, with one line counting its retired
+definitions per kind. After a removal `orient` no longer lists its
 retired SubjectKinds, even where a kept pair-endpoint ClaimType still names one. Removing a kit that is not installed
 refuses with `cruxible.kit.not_installed`, naming the installed kits.
 
