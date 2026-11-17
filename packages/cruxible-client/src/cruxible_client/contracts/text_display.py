@@ -618,13 +618,21 @@ def review_change_lines(
     return lines
 
 
-def review_definition_lines(item: ReviewDefinition) -> list[str]:
-    """One proposed definition: a heading, then its typed fields as terse rows."""
+def review_definition_lines(
+    item: ReviewDefinition, *, file_paths: Mapping[str, str] | None = None
+) -> list[str]:
+    """One proposed definition: a heading, then its typed fields as terse rows.
+
+    ``file_paths`` (the caller's workspace catalog) names a note's file by its path.
+    """
 
     from cruxible_client.contracts.mandate_scope import MANDATE_CHANGE_KIND_ORDER
     from cruxible_client.contracts.proposal_summary import (
+        ReviewClaimTypeDefinition,
+        ReviewDocumentDefinition,
         ReviewLineDefinition,
         ReviewMandateDefinition,
+        ReviewNoteDefinition,
         ReviewRunbookDefinition,
         ReviewTriggerDefinition,
     )
@@ -679,6 +687,25 @@ def review_definition_lines(item: ReviewDefinition) -> list[str]:
     elif isinstance(detail, ReviewTriggerDefinition):
         rows.append(("schedule", detail.schedule))
         rows.append(("target", _public_name(detail.target)))
+    elif isinstance(detail, ReviewClaimTypeDefinition):
+        rows.append(("value", detail.value))
+        rows.append(("cardinality", detail.cardinality))
+        rows.append(("kinds", ", ".join(detail.subject_kinds)))
+        rows.append(("roles", ", ".join(detail.roles)))
+        rows.append(("evidence", detail.evidence_requirement))
+        if detail.evidence:
+            rows.append(("admits", ", ".join(detail.evidence)))
+        if detail.description is not None:
+            rows.append(("description", _summary_value_text(detail.description)))
+    elif isinstance(detail, ReviewDocumentDefinition):
+        rows.append(("title", detail.title))
+        rows.extend((link.relation, _public_name(link.target)) for link in detail.links)
+        if not detail.links:
+            rows.append(("links", "none"))
+    elif isinstance(detail, ReviewNoteDefinition):
+        section = "/".join(detail.section)
+        rows.append(("section", f"{file_shown(detail.file, file_paths)}#{section}"))
+        rows.extend(("about", subject) for subject in detail.about)
     if rows:
         lines.extend(_table([(label, printable(value)) for label, value in rows], "    "))
     if isinstance(detail, ReviewMandateDefinition) and detail.scope:
@@ -853,7 +880,7 @@ def render_review_summary(
             else f"Definitions ({review.definition_count}; showing {shown}):"
         )
         for definition in review.definitions:
-            lines.extend(review_definition_lines(definition))
+            lines.extend(review_definition_lines(definition, file_paths=file_paths))
         if review.definitions_next is not None:
             lines.append(f"More definitions: {run}--definitions-from {review.definitions_next}")
     if review.item_reason_count:

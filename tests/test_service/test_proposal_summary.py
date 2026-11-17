@@ -984,3 +984,72 @@ def test_a_citation_without_excerpt_ranges_still_reads_unavailable(tmp_path, mon
     text = "\n".join(review_change_lines(change))
     assert ("unavailable: the cited body is missing or damaged here" in text) is (not present)
     assert reads == []
+
+
+def test_a_new_field_a_guidance_link_and_a_note_review_as_what_they_say():
+    """coldcli-17, coldps-06, psw F15, sec N8: their review read only `created`; it now
+    shows the field's type, roles and evidence, the page's links, and the note's
+    section and Subjects."""
+
+    from cruxible_client.contracts.artifacts import ArtifactIdentity
+    from cruxible_client.contracts.doc_sections import section_digest
+    from cruxible_client.contracts.documents import DocumentLink, DocumentShell
+    from cruxible_client.contracts.notes import Note, note_identity
+    from cruxible_client.contracts.proposal_summary import ReviewDefinition
+    from cruxible_client.contracts.text_display import review_definition_lines
+    from cruxible_core.service.proposals.review_view import definition_row
+    from tests.core_support._identity_support import KIND, identity_claim_type
+
+    field = identity_claim_type("alias", canonical_form=None, value_type={"type": "string"})
+    page = DocumentShell(
+        identity="document:doc-review-guide",
+        document_kind="guidance",
+        title="How to review aliases",
+        media_type="text/markdown",
+        body_digest="sha256:" + "4" * 64,
+        links=(DocumentLink(relation="guides", target_identity=f"ClaimType:{KIND}.alias"),),
+        governance_scope=("guidance",),
+        lifecycle={"revision": 1},
+    )
+    note = Note(
+        identity=note_identity("notes", ("Triage", "Why")),
+        source_id="notes",
+        section=("Triage", "Why"),
+        capture_digest="sha256:" + "1" * 64,
+        section_digest=section_digest(b"x"),
+        about=(ArtifactIdentity(kind="Subject", name=f"{KIND}/wi-1"),),
+    )
+
+    def lines(kind: str, artifact: object, disposition: str = "create") -> list[str]:
+        dumped = artifact.model_dump(mode="json")  # type: ignore[attr-defined]
+        _key, row = definition_row(
+            path=f"{kind}/x.json",
+            artifact_kind=kind,
+            disposition=disposition,
+            old=None if disposition == "create" else dumped,
+            new=dumped,
+            before=None,
+            after=None,
+        )
+        return review_definition_lines(
+            ReviewDefinition.model_validate(row), file_paths={"notes": "docs/notes.md"}
+        )
+
+    shown = lines("claim-type", field)
+    assert shown[0] == f"  ClaimType {KIND}.alias: created"
+    rows = {line.split()[0]: line.split(None, 1)[1] for line in shown[1:]}
+    assert rows["value"] == "string{max_len: 256}" and rows["cardinality"] == "one"
+    assert rows["kinds"] == KIND and rows["roles"] == "observation"
+    assert "admits" in rows and "playbill." not in "\n".join(shown)
+    # A revised field lists its changed fields instead of restating the whole type.
+    assert lines("claim-type", field, "replace") == [f"  ClaimType {KIND}.alias: revised"]
+
+    shown = lines("document", page)
+    assert shown[0] == "  Document doc-review-guide: created"
+    assert any(line.split() == ["guides", f"ClaimType:{KIND}.alias"] for line in shown)
+    assert any("How to review aliases" in line for line in shown)
+
+    shown = lines("note", note)
+    assert shown[0] == f"  Note {note.identity.name}: created"
+    assert any(line.split() == ["section", "docs/notes.md#Triage/Why"] for line in shown)
+    assert any(line.split() == ["about", f"{KIND}/wi-1"] for line in shown)

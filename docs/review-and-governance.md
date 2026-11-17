@@ -69,8 +69,10 @@ Definitions follow the values, one block each. A Line shows its Procedure,
 authority, bindings, parameters, acquisition, budgets and inbox; a mandate its
 Line, grant, validity, condition and a table of the ClaimTypes it covers with
 the basis for each kind of change; a Runbook its steps; a Trigger its schedule
-and target. Other kinds print one line, and a revision lists the fields it
-changes:
+and target; a new ClaimType its value type, cardinality, kinds, roles and the
+evidence it admits; a Document its title and links (`guides ClaimType:...`); a
+note its section and the Subjects it is about. Other kinds print one line, and
+a revision lists the fields it changes:
 
 ~~~text
 Definitions (1):

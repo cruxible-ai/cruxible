@@ -517,6 +517,12 @@ quickstart and concepts pages.
   `cruxible_get`, SDK `get`) said `[unknown]` for a note section that
   `backlinks` called `[unchanged]`; it now checks section rows against the
   workspace the same way.
+- **Reviews show what a new field, guidance link or note says.** `proposal
+  review` printed only `created` for them. A new ClaimType now shows its value
+  type, cardinality, kinds, roles, evidence requirement and admitted contracts
+  (public names); a Document its title and links (`guides ClaimType:...`); a
+  note its section and the Subjects it is about. The review cache rebuilds once
+  (format 5).
 
 ## [0.3.2] - 2026-08-06
 
