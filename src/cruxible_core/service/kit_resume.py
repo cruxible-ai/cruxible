@@ -438,8 +438,8 @@ def kit_resume_statuses(instance: PlaybillInstance) -> tuple[KitResumeStatus, ..
     with retained_records(instance, write=False) as connection:
         rows = _rows(
             connection,
-            "SELECT kit_id,version,state,actor_id,recorded_at,proposal_id,detail,source "
-            "FROM kit_resumes ORDER BY kit_id",
+            "SELECT kit_id,version,state,actor_id,recorded_at,proposal_id,detail,source,"
+            "request_digest FROM kit_resumes ORDER BY kit_id",
         )
         waits = _rows(connection, "SELECT kit_id,provider_id FROM kit_resume_waits")
     waiting: dict[str, list[str]] = {}
@@ -456,9 +456,30 @@ def kit_resume_statuses(instance: PlaybillInstance) -> tuple[KitResumeStatus, ..
             proposal_id=proposal_id,
             detail=detail,
             source=source,
+            content_digest=_recorded_content_digest(instance, request_digest),
         )
-        for kit_id, version, state, actor_id, recorded_at, proposal_id, detail, source in rows
+        for (
+            kit_id,
+            version,
+            state,
+            actor_id,
+            recorded_at,
+            proposal_id,
+            detail,
+            source,
+            request_digest,
+        ) in rows
     )
+
+
+def _recorded_content_digest(instance: PlaybillInstance, request_digest: str) -> str | None:
+    """The recorded kit add's release content digest: one body read per kit row."""
+
+    try:
+        raw = instance.body_store().read(request_digest, access=_REQUEST_ACCESS)
+        return KitAddRequest.model_validate_json(raw).bundle.manifest.content_digest
+    except (CoreError, OSError, ValueError):
+        return None
 
 
 def blocked_kit_resumes(instance: PlaybillInstance) -> tuple[KitResumeStatus, ...]:

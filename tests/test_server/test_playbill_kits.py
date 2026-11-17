@@ -3161,3 +3161,15 @@ def test_a_kit_with_an_emptied_receipt_that_was_never_removed_is_not_refused(
     monkeypatch.setattr(kits, "_read_receipt", emptied)
     preview = playbill_api.playbill_kit_add(consumer.instance_id, KitAddRequest(bundle=release))
     assert "was removed here" not in (preview.detail or "")
+
+
+def test_kit_status_carries_the_recorded_release_content_digest(
+    strict_worlds: tuple[_World, _World],
+) -> None:
+    """Round-two F-009: a client tells the bundled base kit by id and content digest."""
+
+    from cruxible_core.kits.base_kit_pin import BASE_KIT_PIN
+
+    _publisher, consumer = strict_worlds
+    (base,) = playbill_api.playbill_kit_status(consumer.instance_id).resumes
+    assert (base.kit_id, base.content_digest) == (BASE_KIT_PIN.kit_id, BASE_KIT_PIN.content_digest)

@@ -925,6 +925,7 @@ def test_kit_status_shows_a_pending_kit_and_the_command_that_approves_it(
     kit's install proposal waited; init had reported it."""
 
     from cruxible_client.contracts.kits import KitResumeStatus
+    from cruxible_core.kits.base_kit_pin import BASE_KIT_PIN
 
     proposal = "sha256:" + "c" * 64
 
@@ -958,7 +959,20 @@ def test_kit_status_shows_a_pending_kit_and_the_command_that_approves_it(
                         recorded_at="2026-11-15T00:00:00Z",
                         proposal_id="sha256:" + "a" * 64,
                         proposal_awaiting_readmit=True,
-                        source="./kits/ops",
+                        # A local directory named base records "base" as its origin.
+                        source="base",
+                        content_digest="sha256:" + "b" * 64,
+                    ),
+                    KitResumeStatus(
+                        kit_id="base",
+                        version=BASE_KIT_PIN.version,
+                        state="proposed",
+                        actor_id="owner",
+                        recorded_at="2026-11-15T00:00:00Z",
+                        proposal_id="sha256:" + "9" * 64,
+                        proposal_awaiting_readmit=True,
+                        source="bundled",
+                        content_digest=BASE_KIT_PIN.content_digest,
                     ),
                 )
             )
@@ -976,10 +990,16 @@ def test_kit_status_shows_a_pending_kit_and_the_command_that_approves_it(
     )
     # A proposal no longer open names no approve step.
     assert result.output.count("next: cruxible proposal approve") == 1
-    # One awaiting readmit is re-run at its recorded source (review F-009).
+    # One awaiting readmit names the add to re-run: the concrete `base` operand only
+    # for the bundled base kit (id and content digest), else the placeholder with
+    # the recorded origin beside it (review F-009).
     assert (
         "  awaiting readmit: accepted state changed what it touches; "
-        "next: cruxible kit add ./kits/ops\n" in result.output
+        "next: cruxible kit add '<KIT>' (recorded origin: base)\n" in result.output
+    )
+    assert (
+        "  awaiting readmit: accepted state changed what it touches; "
+        "next: cruxible kit add base\n" in result.output
     )
 
 

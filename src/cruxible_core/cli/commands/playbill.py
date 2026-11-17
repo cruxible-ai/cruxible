@@ -2810,17 +2810,21 @@ def kit_status(offline: bool, output_json: bool) -> None:
                 "--key FILE (the approval that completes it activates it)"
             )
         elif resume.proposal_awaiting_readmit:
+            from cruxible_core.kits.base_kit_pin import BASE_KIT_PIN
+
             # The head changed what it touches: the add is planned again at the head.
-            if resume.kit_id == "base" and resume.source in (None, "bundled"):
-                reference = "base"
-            elif resume.source is not None:
-                reference = shlex.quote(resume.source)
+            # `base` names the bundled base kit, so it is printed only for that exact
+            # release (id and content digest); another origin label could name any kit.
+            if (resume.kit_id, resume.content_digest) == (
+                BASE_KIT_PIN.kit_id,
+                BASE_KIT_PIN.content_digest,
+            ):
+                rerun = "cruxible kit add base"
             else:
-                reference = "'<KIT>'"
-            click.echo(
-                "  awaiting readmit: accepted state changed what it touches; "
-                f"next: cruxible kit add {reference}"
-            )
+                rerun = "cruxible kit add '<KIT>'"
+                if resume.source is not None:
+                    rerun += f" (recorded origin: {printable(resume.source)})"
+            click.echo(f"  awaiting readmit: accepted state changed what it touches; next: {rerun}")
     for kit in result.kits:
         available = ""
         if kit.update_check == "checked" and kit.latest_available is not None:
