@@ -1264,8 +1264,9 @@ class KitResumeStatus(_Strict):
     detail: str | None = None
     #: Where the bundle came from, as the kit add recorded it.
     source: str | None = None
-    #: The recorded release's content digest (what kit add pins), so a client can
-    #: tell the bundled base kit from another kit labelled the same way.
+    #: The recorded release's content digest (what kit add pins), set for the base
+    #: kit's row awaiting readmit, so a client tells the bundled base kit from
+    #: another kit labelled the same way before naming ``kit add base``.
     content_digest: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
 

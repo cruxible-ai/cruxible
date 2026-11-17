@@ -3515,6 +3515,7 @@ def _pending_resumes(
     proposed row (at most one row per kit).
     """
 
+    from cruxible_core.service.kit_resume import recorded_content_digest
     from cruxible_core.service.proposals.proposals import proposal_inventory_status
 
     pending = []
@@ -3530,7 +3531,18 @@ def _pending_resumes(
         if status == "open":
             pending.append(resume.model_copy(update={"proposal_open": True}))
         elif status == "awaiting_readmit":
-            pending.append(resume.model_copy(update={"proposal_awaiting_readmit": True}))
+            # Its repair names `base` only for the bundled base kit, told by its
+            # content digest: one body read, for the base kit's row only.
+            digest = (
+                recorded_content_digest(instance, resume.kit_id)
+                if resume.kit_id == BASE_KIT_ID
+                else None
+            )
+            pending.append(
+                resume.model_copy(
+                    update={"proposal_awaiting_readmit": True, "content_digest": digest}
+                )
+            )
     return tuple(pending)
 
 

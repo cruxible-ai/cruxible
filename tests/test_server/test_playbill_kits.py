@@ -3033,13 +3033,20 @@ def test_kit_status_keeps_a_kit_add_whose_proposal_awaits_readmit(
     assert base.proposal_awaiting_readmit and not base.proposal_open
 
 
-def test_kit_status_carries_the_recorded_release_content_digest(
-    strict_worlds: tuple[_World, _World],
+def test_kit_status_carries_the_base_kit_digest_only_where_its_repair_is_printed(
+    strict_worlds: tuple[_World, _World], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Round-two F-009: a client tells the bundled base kit by id and content digest."""
+    """Round-two F-009: a client tells the bundled base kit by id and content digest;
+    the recorded body is read only for the base kit's row awaiting readmit."""
 
     from cruxible_core.kits.base_kit_pin import BASE_KIT_PIN
+    from cruxible_core.service.proposals import proposals
 
     _publisher, consumer = strict_worlds
+    (open_row,) = playbill_api.playbill_kit_status(consumer.instance_id).resumes
+    assert open_row.proposal_open and open_row.content_digest is None
+    monkeypatch.setattr(
+        proposals, "proposal_inventory_status", lambda _instance, _id: "awaiting_readmit"
+    )
     (base,) = playbill_api.playbill_kit_status(consumer.instance_id).resumes
     assert (base.kit_id, base.content_digest) == (BASE_KIT_PIN.kit_id, BASE_KIT_PIN.content_digest)
