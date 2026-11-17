@@ -1076,6 +1076,9 @@ def test_an_unchanged_derive_reuses_its_capture_at_3_and_24_pages(
         assert grown[24][0] == grown[3][0], grown
         assert bytes_slope < 16, grown
         assert grown[3][2] == grown[24][2] == 0, grown
+        # The complete delta, nothing subtracted (review 2f #5).
+        total = {size: grown[size][1] + grown[size][2] for size in grown}
+        assert (total[24] - total[3]) / 21 < 16, total
     else:
         assert bytes_slope > 100 and shared_slope > 100, grown
 
