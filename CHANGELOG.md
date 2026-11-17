@@ -497,6 +497,12 @@ quickstart and concepts pages.
 - **CLI `proposal approve` with no principal refuses as every proposal act
   does** (`cruxible.identity.principal_unconfigured` or `credential_unbound`),
   adding that `--principal-id ID --key FILE` signs as that principal.
+- **A lost or replaced re-observation journal no longer fails reads.** When
+  the journal under `exhaust/claim-reobservations/` is behind its projection,
+  or is not the one the projection was built from, the projection rebuilds
+  from the journal instead of applying new records under reused sequences or
+  refusing `orient`, `next`, `get` and `query` with
+  `cruxible.claim.reobservation_journal_corrupt`.
 
 ## [0.3.2] - 2026-08-06
 

@@ -54,6 +54,7 @@ from cruxible_core.exhaust.backends import LocalJournalBackend, journal_log_path
 from cruxible_core.exhaust.records import (
     CLAIM_REOBSERVATION_JOURNAL_FAMILY,
     JournalStreamIdentityV1,
+    StoredProcedureJournalRecordV1,
     parse_journal_payload,
 )
 from cruxible_core.exhaust.writer import ProcedureExhaustWriter
@@ -101,7 +102,7 @@ ROW_MAP_BODY = "cruxible-row-map-v1"
 #: The row maps of one extract step's Captures (run-free).
 ROW_MAPS_BODY = "cruxible-row-maps-v1"
 _ACCESS = BodyAccessContext(principal_id="claim-reobservation", can_read_body=True)
-_SCHEMA_VERSION = 20
+_SCHEMA_VERSION = 21
 REOBSERVATION_DIRECTORY = "claim-reobservations"
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 # ``reobservations`` keeps the full history (audit, historical verification).
@@ -118,9 +119,16 @@ _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 # admitted, so a version's latest observation by a given instant is one seek on
 # ``reobservations_by_version`` (prediction settlement), however many records of
 # the lineage, or of that version observed later, there are.
+# ``applied`` names the journal record the projection was last caught up to,
+# by sequence and record digest (which commits the whole journal prefix): an
+# open finds a journal that is behind it, or does not continue it (lost or
+# replaced under a kept projection), by one head read, and rebuilds.
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS progress (
  singleton INTEGER PRIMARY KEY, sequence INTEGER NOT NULL, recorded_us INTEGER NOT NULL
+) STRICT;
+CREATE TABLE IF NOT EXISTS applied (
+ singleton INTEGER PRIMARY KEY, sequence INTEGER NOT NULL, record_digest TEXT NOT NULL
 ) STRICT;
 CREATE TABLE IF NOT EXISTS reobservations (
  claim_id TEXT NOT NULL, capture_digest TEXT NOT NULL, contract_digest TEXT NOT NULL,
@@ -558,42 +566,11 @@ class ClaimReobservationStore:
             conn = sqlite3.connect(self.path) if self.root.is_dir() else sqlite3.connect(":memory:")
             try:
                 if conn.execute("PRAGMA user_version").fetchone()[0] != _SCHEMA_VERSION:
-                    conn.execute("DROP TABLE IF EXISTS progress")
-                    conn.execute("DROP TABLE IF EXISTS reobservations")
-                    conn.execute("DROP TABLE IF EXISTS reobservation_points")
-                    for table in (
-                        "observed_sets",
-                        "instants",
-                        "limits",
-                        "delay_buckets",
-                        "observation_sets",
-                        "observation_points",
-                        "set_peaks",
-                        "source_heads",
-                        "key_sources",
-                        "key_heads",
-                        "capture_rows",
-                        "capture_maps",
-                        "seen_maps",
-                        "row_sets",
-                        "switches",
-                        "absence_members",
-                        "absence_points",
-                        "transitions",
-                        "transition_exceptions",
-                    ):
-                        conn.execute(f"DROP TABLE IF EXISTS {table}")
-                    conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
+                    self._reset(conn)
                 conn.executescript(_SCHEMA)
-                row = conn.execute("SELECT sequence FROM progress WHERE singleton=1").fetchone()
-                start = row[0] + 1 if row else 1
-                for stored in (
-                    ()
-                    if journal is None
-                    else journal.select_records(
-                        self.stream, partition_id=_PARTITION, first_sequence=start
-                    )
-                ):
+                last = None
+                for stored in self._unapplied(conn, journal):
+                    last = stored
                     payload = parse_journal_payload(
                         self.instance.body_store().read(
                             stored.record.payload_digest, access=_ACCESS
@@ -628,11 +605,100 @@ class ClaimReobservationStore:
                             ),
                         }
                     self._apply(conn, payload, stored.record.sequence, stored.record.recorded_at)
+                if last is not None:
+                    self._mark_applied(conn, last)
                 conn.commit()
                 yield conn
                 conn.commit()
             finally:
                 conn.close()
+
+    @staticmethod
+    def _reset(conn: sqlite3.Connection) -> None:
+        """Drop every projected table: the next catch-up rebuilds from the journal's start."""
+
+        for table in (
+            "progress",
+            "applied",
+            "reobservations",
+            "reobservation_points",
+            "observed_sets",
+            "instants",
+            "limits",
+            "delay_buckets",
+            "observation_sets",
+            "observation_points",
+            "set_peaks",
+            "source_heads",
+            "key_sources",
+            "key_heads",
+            "capture_rows",
+            "capture_maps",
+            "seen_maps",
+            "row_sets",
+            "switches",
+            "absence_members",
+            "absence_points",
+            "transitions",
+            "transition_exceptions",
+        ):
+            conn.execute(f"DROP TABLE IF EXISTS {table}")
+        conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
+
+    def _unapplied(
+        self, conn: sqlite3.Connection, journal: LocalJournalBackend | None
+    ) -> tuple[StoredProcedureJournalRecordV1, ...]:
+        """The journal records the projection has yet to apply, in order.
+
+        The projection is disposable and the journal the authority: when the
+        journal is behind the record last applied, or does not continue it (the
+        journal was lost or replaced and the projection kept), everything
+        projected is dropped and every record returned, so no record is ever
+        applied under a sequence another record held, and no read fails for it.
+        The check is one head read; the rebuild runs only when it trips.
+        """
+
+        if journal is None:
+            return ()
+        row = conn.execute("SELECT sequence FROM progress WHERE singleton=1").fetchone()
+        start = int(row[0]) + 1 if row else 1
+        mark = conn.execute(
+            "SELECT sequence, record_digest FROM applied WHERE singleton=1"
+        ).fetchone()
+        if mark is None:
+            return journal.select_records(
+                self.stream, partition_id=_PARTITION, first_sequence=start
+            )
+        applied, digest = int(mark[0]), str(mark[1])
+        head = journal.read_head(self.stream, _PARTITION)
+        if head.sequence == applied and head.record_digest == digest:
+            return ()
+        records: tuple[StoredProcedureJournalRecordV1, ...] = ()
+        continues = head.sequence > applied
+        if continues:
+            records = journal.select_records(
+                self.stream, partition_id=_PARTITION, first_sequence=start
+            )
+            # The first record past the mark commits to the record before it.
+            continues = not (
+                records
+                and records[0].record.sequence == applied + 1
+                and records[0].record.previous_record_digest != digest
+            )
+        if continues:
+            return records
+        self._reset(conn)
+        conn.executescript(_SCHEMA)
+        return journal.select_records(self.stream, partition_id=_PARTITION, first_sequence=1)
+
+    @staticmethod
+    def _mark_applied(conn: sqlite3.Connection, stored: StoredProcedureJournalRecordV1) -> None:
+        """Name the journal record the projection now stands at."""
+
+        conn.execute(
+            "INSERT OR REPLACE INTO applied VALUES(1,?,?)",
+            (stored.record.sequence, stored.record_digest),
+        )
 
     def _version_at(self, claim_id: str, git_oid: str) -> str:
         """The artifact digest of the Claim version at one accepted head ('' when absent)."""
@@ -1384,6 +1450,7 @@ class ClaimReobservationStore:
             # verdict-input fingerprint (``reobservation_journal_signature``)
             # already see it, whatever happens to the projection below.
             self._apply(conn, payload, stored.record.sequence, stored.record.recorded_at)
+            self._mark_applied(conn, stored)
             conn.commit()
         return record
 
@@ -1505,6 +1572,7 @@ class ClaimReobservationStore:
                 journal, bodies, head, payload, accepted=accepted, actor_id=actor_id, now=stamp
             )
             self._apply_batch(conn, payload, stored.record.sequence, stored.record.recorded_at)
+            self._mark_applied(conn, stored)
             conn.commit()
         return refused
 
@@ -1845,6 +1913,7 @@ class ClaimReobservationStore:
                 stored.record.sequence,
                 stored.record.recorded_at,
             )
+            self._mark_applied(conn, stored)
             conn.commit()
             return stored.record.sequence
 
@@ -2187,6 +2256,9 @@ class ReobservationReader:
             instance_id=self.instance.descriptor.instance_id,
         )
         if signature is None:
+            # No journal: whatever returns later is caught up to (or rebuilt
+            # from) again, even the very log last read.
+            self._signature = None
             return None
         identity = self._projection_identity()
         if self._conn is None or identity is None or identity != self._projection:
@@ -2203,8 +2275,9 @@ class ReobservationReader:
             self._shared = None
         elif signature != self._signature:
             with self.store._locked():
-                pass  # catch the projection up from the journal
+                pass  # catch the projection up from the journal (or rebuild it)
             self._signature = signature
+            self._shared = None
         return self._conn
 
     def sequence(self, claim_id: str, keys: Sequence[ReobservationKey] = ()) -> int:

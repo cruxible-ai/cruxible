@@ -1051,6 +1051,7 @@ def _append_batch(store, recorded: datetime, groups: list[dict[str, Any]]) -> No
             now=recorded,
         )
         store._apply_batch(conn, payload, stored.record.sequence, stored.record.recorded_at)
+        store._mark_applied(conn, stored)
 
 
 def test_a_delayed_older_absence_call_keeps_its_history_repeat_and_settlement(
@@ -1133,3 +1134,103 @@ def test_a_delayed_older_absence_call_keeps_its_history_repeat_and_settlement(
     incremental = _dump(store)
     store.path.unlink()
     assert _dump(store) == incremental
+
+
+# -- a journal lost or replaced under a kept projection (journal-loss P1s) -----
+
+
+def _move_journal(store, aside: Path) -> None:  # type: ignore[no-untyped-def]
+    """Move the journal (its log and its locator index) out of the store's
+    directory; the projection stays."""
+
+    aside.mkdir()
+    for entry in list(store.root.iterdir()):
+        if not entry.name.startswith(store.path.name):
+            entry.rename(aside / entry.name)
+
+
+def _restore_journal(store, aside: Path) -> None:  # type: ignore[no-untyped-def]
+    import shutil
+
+    for entry in list(aside.iterdir()):
+        current = store.root / entry.name
+        if current.is_dir():
+            shutil.rmtree(current)
+        elif current.exists():
+            current.unlink()
+        entry.rename(current)
+
+
+def test_a_journal_lost_then_restored_under_a_kept_projection_rebuilds_it(
+    tmp_path: Path,
+) -> None:
+    """The projection is disposable: a journal behind what it applied, or one
+    that does not continue it, rebuilds it from the journal. New records are
+    never applied under sequences the lost journal's records held, and the
+    restored journal is read again without a refusal."""
+
+    from cruxible_core.evidence.claim_reobservations import ReobservationReader
+
+    (tmp_path / "world").mkdir()
+    instance, _owner = _freshness_world(tmp_path / "world", stale_after=_HOUR)
+    claim_id = _current_claim(instance).identity.name
+    store = ClaimReobservationStore(instance)
+    reader = ReobservationReader.of(instance)
+    for minute in (20, 40, 50):
+        _reobserve(instance, _START + timedelta(minutes=minute))
+    original = _dump(store)
+    assert reader.sequence(claim_id) == 3
+    assert _verdict(instance, _START + timedelta(minutes=100)).verdict == "supported"
+
+    # The journal is lost and the projection kept: nothing is recorded any more.
+    _move_journal(store, tmp_path / "aside")
+    assert reader.sequence(claim_id) == 0
+    assert _verdict(instance, _START + timedelta(minutes=100)).verdict == "stale_evidence"
+    assert store.history(claim_id) == ()
+
+    # A new record starts the new journal at sequence 1: it is the only record
+    # the projection holds, exactly as a projection built from that journal.
+    _reobserve(instance, _START + timedelta(minutes=110))
+    (only,) = store.history(claim_id)
+    assert only.observed_at == _START + timedelta(minutes=110)
+    assert reader.sequence(claim_id) == 1
+    verdict = _verdict(instance, _START + timedelta(minutes=130))
+    assert verdict.verdict == "supported", verdict
+    replaced = _dump(store)
+    store.path.unlink()
+    assert _dump(store) == replaced
+
+    # The lost journal is put back over the new one: its three records are not
+    # a continuation of the one applied. Reads rebuild, and never refuse.
+    _restore_journal(store, tmp_path / "aside")
+    assert reader.sequence(claim_id) == 3
+    assert _verdict(instance, _START + timedelta(minutes=100)).verdict == "supported"
+    assert sorted(item.observed_at for item in store.history(claim_id)) == [
+        _START + timedelta(minutes=minute) for minute in (20, 40, 50)
+    ]
+    assert _dump(store) == original
+    # And the store appends to it again.
+    _reobserve(instance, _START + timedelta(minutes=140))
+    assert reader.sequence(claim_id) == 4
+    assert len(store.history(claim_id)) == 4
+
+
+def test_a_warmed_reader_rereads_a_journal_that_went_away_and_came_back(tmp_path: Path) -> None:
+    """The reader last read the journal that is restored: it still catches up,
+    because the projection was rebuilt for another journal while it was gone."""
+
+    from cruxible_core.evidence.claim_reobservations import ReobservationReader
+
+    (tmp_path / "world").mkdir()
+    instance, _owner = _freshness_world(tmp_path / "world", stale_after=_HOUR)
+    claim_id = _current_claim(instance).identity.name
+    store = ClaimReobservationStore(instance)
+    reader = ReobservationReader.of(instance)
+    for minute in (20, 40, 50):
+        _reobserve(instance, _START + timedelta(minutes=minute))
+    assert reader.sequence(claim_id) == 3
+    _move_journal(store, tmp_path / "aside")
+    assert reader.sequence(claim_id) == 0
+    _reobserve(instance, _START + timedelta(minutes=110))  # the projection now holds 1 record
+    _restore_journal(store, tmp_path / "aside")
+    assert reader.sequence(claim_id) == 3

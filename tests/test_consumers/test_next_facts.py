@@ -482,6 +482,58 @@ def test_expiry_fires_and_reobservations_recompute_only_their_claim(tmp_path: Pa
     assert work.claims[claim] == 1
 
 
+def test_a_reobservation_journal_lost_then_restored_is_followed_without_a_repair(
+    tmp_path: Path,
+) -> None:
+    """Journal-loss findings 1-3: the re-observation journal is lost (its
+    projection kept), a record is written to the new journal, then the lost
+    journal is put back. No pass fails, so no failed target pins the worker:
+    the cursors name another journal, the facts rebuild, and reads serve from
+    them again with no manual step."""
+
+    from tests.test_evidence.test_claim_reobservations import _move_journal, _restore_journal
+
+    (tmp_path / "world").mkdir()
+    instance, owner = _freshness_world(tmp_path / "world")
+    at = datetime(2026, 8, 16, 20, 0, 9, 800000, tzinfo=UTC)
+    store = ClaimReobservationStore(instance)
+
+    def followed() -> None:
+        _catch_up(instance, at)
+        _assert_rebuilt(instance, at)
+        with sqlite3.connect(facts._STATE.path(instance)) as connection:
+            assert connection.execute("SELECT failed,last_error FROM progress").fetchone() == (
+                None,
+                None,
+            )
+        # Served from the stored state: a fold would return None here.
+        assert facts._serving(
+            instance,
+            coordinate=None,
+            door_head=None,
+            evaluation_time=at,
+            read=lambda _connection, _coordinate: True,
+        )
+
+    for stamp in ("2026-08-16T20:00:07.000000Z", "2026-08-16T20:00:08.000000Z"):
+        _refresh_claim(instance, owner, timestamp=stamp)
+    followed()
+    assert store.head_sequence() == 2
+
+    _move_journal(store, tmp_path / "aside")
+    followed()
+    _refresh_claim(instance, owner, timestamp="2026-08-16T20:00:09.000000Z")
+    assert store.head_sequence() == 1
+    followed()
+
+    _restore_journal(store, tmp_path / "aside")
+    assert store.head_sequence() == 2
+    followed()
+    # The next record continues the restored journal and reaches its Claim.
+    _refresh_claim(instance, owner, timestamp="2026-08-16T20:00:09.500000Z")
+    followed()
+
+
 def test_invalid_cursors_and_a_new_format_rebuild_from_nothing(tmp_path: Path) -> None:
     instance, _owner = seed_claims(tmp_path)
     at = EVALUATION_TIME
