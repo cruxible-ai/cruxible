@@ -722,6 +722,9 @@ def service_prepare_playbill_approval(
     ``reviewed_candidate_digest`` binds the challenge to the candidate the
     signer reviewed: a challenge for any other candidate, the landed one
     included, is refused, naming the proposal and candidate there is now.
+    Unbound, the landed challenge is returned only when its members are
+    identical to the named proposal's; a landing that changed them refuses the
+    same way, so no client signs changed members it was never shown.
     """
 
     from cruxible_core.service.authoring.documents import (
@@ -754,12 +757,17 @@ def service_prepare_playbill_approval(
                 )
             landed = land_for_signer(instance, review.proposal_id, triggered_by=land())
             assert landed.proposal_id is not None and landed.candidate_digest is not None
-            if reviewed_candidate_digest is not None:
+            if reviewed_candidate_digest is not None or not landed.members_identical:
                 # Landed, then refused: the reviewer's next review is of the
-                # successor this names, and nothing was signed for it.
+                # successor this names, and nothing was signed for it. Bound to
+                # a reviewed candidate, always; unbound, whenever the landed
+                # members differ from those of the proposal the signer named,
+                # because a challenge returned here is signed without a review.
                 raise ReviewedCandidateChanged(
                     review.proposal_id,
-                    reviewed_candidate_digest=reviewed_candidate_digest,
+                    reviewed_candidate_digest=(
+                        reviewed_candidate_digest or str(review.candidate_digest)
+                    ),
                     current_proposal_id=landed.proposal_id,
                     current_candidate_digest=landed.candidate_digest,
                     members_identical=landed.members_identical,

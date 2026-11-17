@@ -209,6 +209,63 @@ def test_cli_approval_signs_exact_challenge_without_transmitting_key(
     assert "private_key" not in serialized
 
 
+def test_cli_approval_signs_nothing_when_the_challenge_refuses_changed_members(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Review F-001: landing a proposal for a late signer changed its members, so
+    the daemon refuses the challenge. With no digest passed the CLI still signs
+    and submits nothing, and prints the successor to review."""
+
+    from cruxible_client.contracts.errors import ReviewedCandidateChanged
+    from cruxible_core.governance.keys import generate_client_principal_key
+
+    key = generate_client_principal_key(
+        tmp_path / "keys", principal_id="late", kind="ordinary", forbidden_roots=()
+    )
+    submitted: list[object] = []
+
+    class StubClient:
+        def resolve_proposal_selector(self, instance_id: str, selector: str):  # type: ignore[no-untyped-def]
+            return contracts.ProposalSelectorResult(selector=selector, proposal_id=selector)
+
+        def prepare_approval(self, instance_id, selected, **options):  # type: ignore[no-untyped-def]
+            assert options["reviewed_candidate_digest"] is None
+            raise ReviewedCandidateChanged(
+                selected,
+                reviewed_candidate_digest="sha256:" + "3" * 64,
+                current_proposal_id="sha256:" + "8" * 64,
+                current_candidate_digest="sha256:" + "4" * 64,
+                members_identical=False,
+            )
+
+        def submit_approval(self, *args: Any, **kwargs: Any) -> Any:
+            submitted.append(kwargs)
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://playbill.invalid",
+            "--instance-id",
+            "inst_cli",
+            "proposal",
+            "approve",
+            "sha256:" + "7" * 64,
+            "--signer-id",
+            "late",
+            "--key",
+            str(key.private_key_path),
+            "--yes",
+        ],
+    )
+
+    assert result.exit_code != 0 and submitted == []
+    assert "members identical: false; nothing was signed" in result.output
+    assert f"cruxible proposal review sha256:{'8' * 64}" in result.output
+    assert "Approved" not in result.output
+
+
 @pytest.mark.parametrize("pinned", [False, True])
 def test_cli_approval_signs_the_landed_candidate(tmp_path: Path, monkeypatch, pinned: bool) -> None:
     """Nothing it touches changed since its base: one approve lands it and activates it.

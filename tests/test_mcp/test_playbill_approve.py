@@ -289,6 +289,36 @@ def test_approve_with_a_reviewed_digest_never_signs_the_successor(tmp_path, monk
     assert result == _landed() and answered == ["PROP-1"]
 
 
+def test_approve_signs_nothing_when_the_challenge_refuses_changed_members(
+    tmp_path, monkeypatch
+) -> None:
+    """Review F-001: the daemon refuses the challenge when landing a proposal for
+    a late signer changed its members; the key is never used and nothing is
+    submitted, with or without a reviewed digest."""
+
+    world = _world(tmp_path, monkeypatch, "late")
+
+    def refuse(instance_id: str, proposal_id: str, **options: Any) -> Any:
+        raise ReviewedCandidateChanged(
+            proposal_id,
+            reviewed_candidate_digest=CANDIDATE,
+            current_proposal_id="PROP-2",
+            current_candidate_digest=LANDED_CANDIDATE,
+            members_identical=False,
+        )
+
+    monkeypatch.setattr(handlers, "handle_playbill_prepare_approval", refuse)
+    signed: list[object] = []
+    monkeypatch.setattr(
+        handlers.LocalEd25519ApprovalSigner,
+        "open",
+        classmethod(lambda cls, **options: signed.append(options)),
+    )
+    with pytest.raises(ReviewedCandidateChanged, match="members identical: false"):
+        handlers.handle_playbill_approve("inst_1", "PROP-1", signer_id=None, candidate_digest=None)
+    assert signed == [] and world["calls"]["submitted"] == []
+
+
 def test_approve_submits_to_the_proposal_the_challenge_landed(tmp_path, monkeypatch) -> None:
     """F3 / coldmcp-01: for a signer registered after the proposal's base, the
     challenge lands the proposal at the head and names the landed one; the

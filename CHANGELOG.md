@@ -218,7 +218,8 @@ quickstart and concepts pages.
   `cruxible.approval.reviewed_candidate_changed`, naming the new proposal and
   whether its members are identical. MCP used to sign the new candidate, and
   the SDK returned it unsigned. With no digest, the CLI and MCP sign the new
-  candidate when its members are identical, as before. The HTTP approval
+  candidate when its members are identical, as before, and refuse the same
+  way when a landing for a late-registered signer changed them. The HTTP approval
   challenge and approval requests take an optional
   `reviewed_candidate_digest`.
 - **A proposal proposed again at the head closes as `superseded`, not

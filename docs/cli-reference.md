@@ -5133,7 +5133,8 @@ any other refuses `cruxible.approval.signer_after_base` with the author's
 `proposal readmit` as the repair. An approval bound to the reviewed candidate
 (`--candidate-digest`, MCP `candidate_digest`, the SDK) lands it and refuses
 `cruxible.approval.reviewed_candidate_changed`, naming the landed proposal to
-review.
+review; so does an unbound one when the landed members differ from the
+source's, since nothing with changed members is signed unreviewed.
 A change set the author's readmit would recompile (retained authoring input,
 including one holding a ClaimType) lands at the head the same way for such a
 signer. A kit change or a generated ClaimType migration does not: it was

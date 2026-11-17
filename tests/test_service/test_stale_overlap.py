@@ -313,6 +313,114 @@ def test_two_writes_defining_one_identical_contract_do_not_conflict(tmp_path: Pa
     assert _approve(instance, reviewer, landed.proposal_id).activation.status == "accepted"  # type: ignore[union-attr]
 
 
+def test_a_late_signer_never_gets_a_challenge_for_changed_members(tmp_path: Path) -> None:
+    """Review F-001: a signer registered after the base has the proposal landed
+    at the head by its challenge. Unbound, CLI and MCP sign whatever challenge
+    comes back, so a landing whose members differ must refuse instead: the
+    second of two writes sharing a CaptureContract lands without the contract
+    once the first is accepted."""
+
+    from cruxible_client.authoring.doc_writes import write_workspace
+    from cruxible_client.contracts.errors import ReviewedCandidateChanged
+    from cruxible_client.contracts.write import WriteRequest
+    from cruxible_core.governance.keys import generate_client_principal_key
+    from cruxible_core.service.authoring.documents import (
+        service_propose_playbill_principal_change,
+    )
+    from cruxible_core.service.authoring.write_verbs import service_playbill_write
+    from tests.core_support._write_support import caller
+
+    instance, owner = seed_write_surface(tmp_path, self_approval=False)
+    reviewer = client_material(tmp_path, instance)
+    workspace = tmp_path / "cited"
+    workspace.mkdir()
+    (workspace / "notes.md").write_text("# Notes\n\nfirst anchor\n\nsecond anchor\n", "utf-8")
+
+    def cite(subject: str, anchor: str) -> str:
+        request = WriteRequest.model_validate(
+            {
+                "because": "The writer checked it.",
+                "changes": [
+                    _set(
+                        subject,
+                        "title",
+                        anchor,
+                        evidence={"kind": "file", "file": f"notes.md#{anchor}"},
+                    )
+                ],
+            }
+        )
+        outcome = write_workspace(
+            request,
+            workspace=workspace,
+            submit=lambda observed: service_playbill_write(
+                instance, request=observed, caller=caller()
+            ),
+        )
+        assert outcome.proposal is not None, outcome
+        return outcome.proposal.proposal_id
+
+    first = cite(f"{KIND}/wi-1", "first anchor")
+    source_id = cite(f"{KIND}/wi-2", "second anchor")
+    assert _approve(instance, reviewer, first).activation.status == "accepted"  # type: ignore[union-attr]
+    late = generate_client_principal_key(
+        tmp_path / "late-keys",
+        principal_id="late",
+        kind="ordinary",
+        forbidden_roots=(instance.root,),
+    )
+    registration = service_propose_playbill_principal_change(
+        instance,
+        principal=late.principal,
+        actor_id="owner",
+        proposal_name="register-late",
+        timestamp="2026-09-29T12:40:00.000000Z",
+    ).proposal
+    assert registration.candidate is not None
+    for material in (owner, reviewer):
+        service_submit_playbill_approval(
+            instance,
+            proposal_id=registration.admission.proposal_id,
+            attestation=_sign(
+                material,
+                registration.candidate.candidate_digest,
+                registration.candidate.candidate.parent_semantic_root,
+            ).attestation,
+            authenticated_submitter=material.principal.principal_id,
+            activate_when_complete=True,
+            may_activate=True,
+        )
+    source = _proposal_result(instance, source_id)
+    assert source.candidate is not None
+
+    with pytest.raises(ReviewedCandidateChanged) as refused:
+        service_prepare_playbill_approval(
+            instance,
+            proposal_id=source_id,
+            signer_id="late",
+            access=BodyAccessContext(principal_id="late", can_read_body=True),
+            land=lambda: "late",
+        )
+
+    successor_id = refused.value.current_proposal_id
+    assert successor_id != source_id and refused.value.members_identical is False
+    assert "members identical: false; nothing was signed" in str(refused.value)
+    assert refused.value.reviewed_candidate_digest == source.candidate.candidate_digest
+    assert refused.value.repair.arguments == {"proposal_id": successor_id}
+    successor = _proposal_result(instance, successor_id)
+    assert successor.candidate is not None
+    assert not instance.proposal_evidence().read_approvals(successor.candidate.candidate_digest)
+    # Reviewed, the successor is on the head, where the late signer is registered.
+    challenge = service_prepare_playbill_approval(
+        instance,
+        proposal_id=successor_id,
+        signer_id="late",
+        access=BodyAccessContext(principal_id="late", can_read_body=True),
+        reviewed_candidate_digest=successor.candidate.candidate_digest,
+    )
+    assert challenge.proposal_id == successor_id
+
+
 def test_a_different_artifact_at_a_proposed_path_is_still_a_conflict(tmp_path: Path) -> None:
     """Only the exact artifact the change set proposes is no conflict: a path
     the head holds a different version of names itself, as before."""
