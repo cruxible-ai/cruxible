@@ -229,11 +229,21 @@ def render_orient(result: Mapping[str, Any]) -> str:
             )
     elif section is not None and not result[section]:
         lines.append(f"(no {section.replace('_', ' ')})")
+    if section == "lines" and result["lines"]:
+        # Fixed columns under a header: optional fields read "-", never shift cells.
+        lines.append("LINE  LIFECYCLE  PROCEDURE  AUTHORITY  TRIGGER  ENABLEMENT  DUE  WAITING")
+        for row in result["lines"]:
+            enablement = row.get("enablement") or (
+                "not enabled" if row.get("triggers_inactive") else "-"
+            )
+            lines.append(
+                f"{row['line']}  {row['lifecycle']}  {row['procedure']}  {row['authority']}  "
+                f"{row['trigger']}  {enablement}  {row.get('due', 0)}  {row.get('waiting', 0)}"
+            )
     if section in {
         "documents",
         "procedures",
         "runs",
-        "lines",
         "captures",
         "capture_contracts",
         "predictions",

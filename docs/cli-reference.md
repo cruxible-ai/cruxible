@@ -4389,7 +4389,8 @@ predicate (full, or a dotted tail such as `status` or `work_item.status` that
 names exactly one live predicate) or `ClaimType:<predicate>` (the same tails),
 `Document:<name>`, `Procedure:<name>` (each slot with the capability it
 names), `Capability:<name>@N`, `Contract:<name>@N`, `query:<name>`,
-`CaptureContract:<name>`, `Trigger:<name>`, `Principal:<id>`,
+`CaptureContract:<name>`, `Trigger:<name>` (a live cadence or cron Trigger
+adds `next_fire`, its next instant after the read), `Principal:<id>`,
 `Provider:<name>` (each operation with what it serves and its source),
 `ApprovalPolicy:instance`, `ProcedureRuntimePolicy:instance`, an artifact path,
 or a proposal id or prefix (a proposal's status, and for a refusal its code,
@@ -4546,8 +4547,10 @@ enablement that admitted it, and the receipt digest once it is terminal. Per-nod
 durations are not shown: every journal record of a run carries the run's
 evaluation instant.
 The other operational sections page the same way: `lines` (each Line's
-Procedure, trigger, authority, latest enablement state, `triggers_inactive`
-when its Triggers do nothing because it is not enabled, and due/waiting counts),
+Procedure, trigger -- its Triggers' schedule kinds, `runbook Trigger:NAME` when
+only a Runbook's Trigger runs it, or `manual` -- authority, latest enablement
+state, `triggers_inactive` when its Triggers do nothing because it is not
+enabled, and due/waiting counts; the text prints them under a header row),
 `captures` (the Captures accepted Claims cite, newest first, keyset-paged,
 each as its `CAP-` handle), `capture_contracts` (version, grade, how many
 ClaimTypes admit each), `predictions` (each live ResolutionContract with its

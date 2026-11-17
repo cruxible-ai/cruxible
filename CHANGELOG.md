@@ -494,6 +494,11 @@ quickstart and concepts pages.
   activated after the head moved landed by its own bytes with no rationale, so
   `get --detail history` and the successor's review showed no `reason:` for
   it. The landed proposal now carries its source's `--because`.
+- **A Runbook's schedule shows on the Lines it runs.** `orient --section
+  lines` read `manual` for a Line only a Runbook's Trigger runs; it now reads
+  `runbook Trigger:NAME`, and the text prints the section under a header row
+  with `-` for an empty cell. A live cadence or cron Trigger's card carries
+  `next_fire`, its next instant after the read.
 - **SDK results print short text.** `print()` on `cx.whoami()`, `cx.kits()`,
   `cx.proposals()`, a Runbook's `preview()` and `run()`, an approval or
   activation receipt, a Line enablement and `inbox().get()` (and an inbox

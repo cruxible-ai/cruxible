@@ -370,6 +370,23 @@ def runbook_schedules(projection: Any, line: str, *, limit: int) -> tuple[str, .
     return tuple(found)
 
 
+def runbook_trigger_names(projection: Any, line: str, *, limit: int) -> tuple[str, ...]:
+    """The Triggers that run ``line`` through a Runbook step, by name, at most ``limit``.
+
+    The same bounded seeks as ``runbook_schedules`` (Runbooks by Line, then each
+    Runbook's Triggers), reading no Trigger body.
+    """
+
+    names: list[str] = []
+    for (runbook,) in projection.typed.connection.execute(
+        "SELECT source_identity FROM runbook_lines WHERE line=? ORDER BY source_identity LIMIT ?",
+        (line, limit),
+    ):
+        aimed = aimed_trigger_page(projection, (str(runbook),), limit=limit, target_kind="runbook")
+        names.extend(name for name in aimed[str(runbook)].identities if name not in names)
+    return tuple(names[:limit])
+
+
 def window_summary(window: object) -> str:
     if isinstance(window, FixedWindow):
         return (
@@ -653,6 +670,15 @@ def line_rows(
         triggers = aimed_trigger_page(
             projection, tuple(line.identity.qualified for line in lines), limit=0
         )
+        # A Line no Trigger aims at may still be run by a Runbook's Trigger:
+        # name that Trigger rather than call the Line manual (coldcli-12).
+        via_runbooks = {
+            line.identity.qualified: runbook_trigger_names(
+                projection, line.identity.qualified, limit=2
+            )
+            for line in lines
+            if not triggers[line.identity.qualified].total
+        }
     operations_by_line: dict[str, LineOperations] = {}
     if lines and dispatch_root(instance).exists():
         # One store session for every Line, not one replay per row.
@@ -676,7 +702,11 @@ def line_rows(
                 lifecycle="retired" if line.lifecycle.state == "retired" else "live",
                 procedure=line.procedure.target.qualified,
                 authority=line_authority(line),
-                trigger=trigger_kind(triggers[line.identity.qualified].schedule_kinds),
+                trigger=(
+                    "runbook " + ", ".join(via_runbooks[line.identity.qualified])
+                    if via_runbooks.get(line.identity.qualified)
+                    else trigger_kind(triggers[line.identity.qualified].schedule_kinds)
+                ),
                 enablement=operations.arm_state,
                 triggers_inactive=_triggers_inactive(
                     line, triggers[line.identity.qualified].total, operations.arm_state

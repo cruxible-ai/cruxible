@@ -343,3 +343,25 @@ def test_a_line_card_finds_its_runbook_past_ten_unrelated_triggered_ones(
 
     assert card.trigger == "runbook"
     assert card.sched == "cron 0 6 * * * (Trigger:test.zzz-daily via Runbook:test.zzz)"
+
+
+def test_a_line_a_runbook_trigger_runs_names_that_trigger_in_orient_with_a_header(
+    tmp_path: Path,
+) -> None:
+    """coldcli-12/coldmcp-07: orient said `manual` in unlabelled columns; the card no fire time."""
+
+    from cruxible_client.contracts.text_display import render_orient
+
+    instance, _root = _start_world(tmp_path)
+    when = datetime(2030, 1, 1, 12, tzinfo=UTC)
+    page = service_playbill_orient(instance, section="lines", evaluation_time=when)
+    by_line = {row.line: row.trigger for row in page.lines}
+    assert by_line[f"Line:{SETTLE}"] == "runbook Trigger:test.start-daily"
+    text = render_orient(page.model_dump(mode="json"))
+    rows = text.splitlines()
+    header = rows.index("LINE  LIFECYCLE  PROCEDURE  AUTHORITY  TRIGGER  ENABLEMENT  DUE  WAITING")
+    settle = next(row for row in rows[header:] if row.startswith(f"Line:{SETTLE}  "))
+    assert "  runbook Trigger:test.start-daily  -  0  0" in settle
+
+    card = _get(instance, "Trigger:test.start-daily", evaluation_time=when).card
+    assert card.next_fire == datetime(2030, 1, 2, 6, tzinfo=UTC)
