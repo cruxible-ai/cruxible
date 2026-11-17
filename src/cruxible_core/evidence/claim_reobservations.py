@@ -2160,11 +2160,17 @@ class ReobservationReader:
                     (capture_digest, spec_digest),
                 )
             ]
-        for digest in maps:
-            found = _row_map(self.instance, digest).get(locator)
-            if found is not None:
-                return found
-        return None
+        # Different selections and typings of one Capture and spec can each
+        # hold the locator, and a typing can make it another row (review 2e
+        # #3). The Claim's row is known only when every map holding the
+        # locator agrees; otherwise None, and the Claim depends on its cited
+        # content and its own records, never on a row it may not be.
+        found = {
+            held
+            for held in (_row_map(self.instance, digest).get(locator) for digest in maps)
+            if held is not None
+        }
+        return found.pop() if len(found) == 1 else None
 
     def content_observed(self) -> bool:
         """Whether any content or row observation was ever recorded (one probe)."""

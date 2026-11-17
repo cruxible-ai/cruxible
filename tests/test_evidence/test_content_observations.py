@@ -397,6 +397,39 @@ def test_an_unchanged_extract_step_hashes_no_row_and_follows_by_its_set(
     assert work[12] == work[300] == ([0, 0], [0, 0], 0, 1), work
 
 
+def test_a_record_two_typings_map_to_different_rows_has_no_row(tmp_path: Path) -> None:
+    """Review 2e #3: two extractions of one Capture and spec under different
+    typings can make one locator two rows. A Claim's row is then unknown (its
+    cited content and its own records carry it), never whichever map sorts
+    first; where every map agrees, that row."""
+
+    from cruxible_core.evidence.claim_reobservations import RowMap
+
+    instance, _owner = _freshness_world(tmp_path, stale_after=_HOUR)
+    _claim, cited, key = _cited(instance)
+    store = ClaimReobservationStore(instance)
+    spec = "sha256:" + "5" * 64
+    first, second = "sha256:" + "6" * 64, "sha256:" + "7" * 64
+    plan = (
+        ("t1", (("/0", first), ("/1", first))),
+        ("t2", (("/0", second), ("/1", first))),
+    )
+    for index, (typing, rows) in enumerate(plan):
+        at = _START + timedelta(hours=1 + index)
+        instance.recording_clock = lambda at=at: at
+        store.observe_rows(
+            (RowMap(cited, spec, key.contract_digest, rows, extraction=typing),),
+            earliest=at - timedelta(minutes=1),
+            latest=at,
+            run_id=f"RUN-{index}",
+            node_id="extract",
+            actor_id="o",
+        )
+    reader = ReobservationReader(instance)
+    assert reader.row_of(cited, spec, "/0") is None
+    assert reader.row_of(cited, spec, "/1") == (key.contract_digest, first)
+
+
 def test_a_journal_from_an_unreleased_transition_build_refuses_with_re_initialise(
     tmp_path: Path,
 ) -> None:
