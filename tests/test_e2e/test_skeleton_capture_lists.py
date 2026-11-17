@@ -982,12 +982,22 @@ def test_an_unchanged_derive_reuses_its_capture_at_3_and_24_pages(
         manifest = _manifest(instance, roots[-1][0])
         assert manifest.tag == "playbill-input-receipt-set-manifest-v2"
         assert len(manifest.input_capture_digests) == count
+        from cruxible_core.service.procedures.procedure_runs import _records_for_run
+
+        produced = [
+            item
+            for item in _records_for_run(instance, state.run_id)
+            if item.record.event_kind == "produced_capture"
+        ]
         if fixed:
             # The same Capture: whatever cites it (an inbox item, a Claim) cites
-            # the same digest every unchanged run.
+            # the same digest every unchanged run, and no Capture lands, so no
+            # Capture-landing Trigger fires for a Line (round 6 item 3).
             assert roots[0] == roots[1]
+            assert produced == []
         else:
             assert roots[0] != roots[1]
+            assert len(produced) == 1
     print("DERIVE_COST", "fixed" if fixed else "before", grown)
     bytes_slope = (grown[24][1] - grown[3][1]) / 21
     if fixed:
