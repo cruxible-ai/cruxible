@@ -3103,7 +3103,10 @@ def list_proposals(status: str | None, limit: int, cursor: str | None, output_js
             f"{entry.target_ref or '-'}  {entry.admitted_at or '-'}"
         )
         if entry.stale_paths:
-            shown = ", ".join(entry.stale_paths[:5])
+            from cruxible_client.contracts.get_text import definition_path_name
+
+            # Public kind-qualified names; --json keeps the exact paths.
+            shown = ", ".join(definition_path_name(path) for path in entry.stale_paths[:5])
             more = len(entry.stale_paths) - 5
             click.echo(
                 f"  changed since its base: {shown}" + (f" and {more} more" if more > 0 else "")

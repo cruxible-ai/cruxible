@@ -44,6 +44,51 @@ def file_shown(name: str, file_paths: Mapping[str, str] | None, *, public: bool 
     return public_name(name) if public else name
 
 
+#: A one-file-per-name definition family and the kind its names are qualified by.
+_NAMED_FAMILIES = {
+    "capture-contracts/": "CaptureContract",
+    "subject-kinds/": "SubjectKind",
+    "query-definitions/": "QueryDefinition",
+    "procedures/": "Procedure",
+    "procedure-mandates/": "Mandate",
+    "lines/": "Line",
+    "triggers/": "Trigger",
+    "runbooks/": "Runbook",
+    "documents/": "Document",
+    "notes/": "Note",
+    "resolution-contracts/": "ResolutionContract",
+}
+
+
+def definition_path_name(path: str) -> str:
+    """A ledger path as the kind-qualified public name a reader types (``ClaimType:p``,
+    ``CaptureContract:cruxible.…``, ``Contract:name@N``, ``kind/id``); any other path
+    unchanged. Display only: structured answers keep the exact path."""
+
+    if not path.endswith(".json"):
+        return path
+    stem = path[: -len(".json")]
+    family, _, rest = stem.partition("/")
+    if not rest:
+        return path
+    if family == "claim-types" and "/" in rest:
+        namespace, _, name = rest.rpartition("/")
+        return f"ClaimType:{namespace}.{name}"
+    if family in ("contracts", "capabilities") and "/v" in rest:
+        name, _, version = rest.rpartition("/v")
+        if version.isdigit():
+            versioned = "Contract" if family == "contracts" else "Capability"
+            return public_name(f"{versioned}:{name}") + f"@{version}"
+    if family == "subjects" and "/" in rest:
+        return rest
+    if family == "claims" and "/" in rest:
+        return rest.rpartition("/")[2]
+    named = _NAMED_FAMILIES.get(family + "/")
+    if named is None or "/" in rest:
+        return path
+    return public_name(f"{named}:{rest}")
+
+
 def file_ref_shown(ref: str, file_paths: Mapping[str, str] | None) -> str:
     """``NAME#Heading/Path`` (or a bare NAME) with NAME shown as its workspace path."""
 

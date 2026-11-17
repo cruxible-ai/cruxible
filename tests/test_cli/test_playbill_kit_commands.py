@@ -1212,3 +1212,58 @@ def test_kit_add_counts_unchanged_paths_and_lists_them_only_with_detail(
     assert payload["unchanged"] == 175 and len(payload["plan"]) == 1
     compact = compact_kit_change(answer)
     assert compact.unchanged == 175 and compact_kit_change(compact) == compact
+
+
+def test_proposal_list_names_changed_paths_by_their_public_names(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review F-007: the awaiting-readmit row printed a playbill. path."""
+
+    from cruxible_client import contracts
+    from cruxible_client.contracts.get_text import definition_path_name
+
+    paths = (
+        "capture-contracts/playbill.coordinator-self-source-v1.json",
+        "claim-types/dev.roadmap_item/owner.json",
+        "contracts/acme.row/v2.json",
+        "subjects/dev.item/x.json",
+        "governance/approval-policy.json",
+    )
+
+    class StubClient:
+        def list_proposals(self, instance_id: str, **_: Any) -> contracts.ProposalList:
+            return contracts.ProposalList(
+                coordinate=contracts.AcceptedCoordinate(
+                    git_oid="a" * 40,
+                    semantic_root="sha256:" + "1" * 64,
+                    generation_root="sha256:" + "2" * 64,
+                    compiler_digest="sha256:" + "3" * 64,
+                ),
+                entries=[
+                    contracts.ProposalListEntry(
+                        proposal_id="sha256:" + "e" * 64,
+                        actor_id="owner",
+                        target_ref="refs/proposals/owner/x",
+                        admitted_at=None,
+                        verdict="candidate",
+                        status="awaiting_readmit",
+                        stale_paths=paths,
+                    )
+                ],
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+
+    server = BASE[:-1]
+    text = CliRunner().invoke(cli, [*server, "proposal", "list"])
+    shown = CliRunner().invoke(cli, [*server, "proposal", "list", "--json"])
+
+    assert text.exit_code == 0, text.output
+    assert "playbill." not in text.output
+    assert (
+        "changed since its base: CaptureContract:cruxible.coordinator-self-source-v1, "
+        "ClaimType:dev.roadmap_item.owner, Contract:acme.row@2, dev.item/x, "
+        "governance/approval-policy.json" in text.output
+    )
+    assert json.loads(shown.output)["entries"][0]["stale_paths"] == list(paths)
+    assert definition_path_name("notes/NOTE-" + "1" * 32 + ".json") == "Note:NOTE-" + "1" * 32
