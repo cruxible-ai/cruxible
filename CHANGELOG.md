@@ -494,6 +494,15 @@ quickstart and concepts pages.
   activated after the head moved landed by its own bytes with no rationale, so
   `get --detail history` and the successor's review showed no `reason:` for
   it. The landed proposal now carries its source's `--because`.
+- **Query cards and `now` refusals read plainly.** `get query:NAME` printed a
+  cut Python repr of its definition (`from_=`, `params_contract=none`); it now
+  prints each authored clause (`from`, `where` with any `now - 3d`, `fields`,
+  ...) on its own line. `now` against a `date`, string or enum field refuses
+  `cruxible.query.value_type_mismatch` with "now compares only with a datetime
+  field", instead of `cannot compare string with timestamp` or the field's
+  operator list; a field type of `timestamp` (or `integer`, `boolean`, ...)
+  names the type meant (`datetime`); and a refused preflight's CLI line no
+  longer repeats a refusal code or adds the blocked check that refusal caused.
 - **A Runbook's schedule shows on the Lines it runs.** `orient --section
   lines` read `manual` for a Line only a Runbook's Trigger runs; it now reads
   `runbook Trigger:NAME`, and the text prints the section under a header row

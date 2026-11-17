@@ -177,6 +177,32 @@ def run_outcomes_text(outcomes: Sequence[Mapping[str, Any]]) -> str:
     return f"{len(outcomes)} (" + ", ".join(f"{k} {n}" for k, n in sorted(counts.items())) + ")"
 
 
+def query_definition_lines(definition: Any) -> list[str] | None:
+    """An authored QueryDefinition as its clauses, one per line, as its author wrote them.
+
+    ``from``, ``where`` (with any ``now - 3d``), ``hops``, ``fields`` and the
+    rest, by their authored names; a default left at its default is not shown,
+    and ``query`` and ``description`` are the card's own lines. ``None`` for a
+    definition with no authored form (the card shows it as stored).
+    """
+
+    if not hasattr(definition, "from_"):
+        return None
+    spec = definition.model_dump(mode="json", by_alias=True, exclude_defaults=True)
+    lines: list[str] = []
+    for name, part in spec.items():
+        if name in {"query", "description"} or part in (None, [], {}):
+            continue
+        if isinstance(part, dict):
+            text = ", ".join(f"{key}={_card_cell(item)}" for key, item in part.items())
+        elif isinstance(part, list):
+            text = ", ".join(_card_cell(item) for item in part)
+        else:
+            text = _card_cell(part)
+        lines.append(f"{name}: {printable(text)}")
+    return lines
+
+
 def provider_operation_line(row: dict[str, Any]) -> str:
     """One operation of a Provider card: name, signature, what it serves, where its code is."""
 
@@ -583,6 +609,11 @@ def render_get(
                         + get_value_text(_card_cell(value), width=200, evidence_hint=False)
                     )
                     continue
+                if key == "definition" and result.kind == "query" and value is not None:
+                    shown = query_definition_lines(result.card.definition)
+                    if shown is not None:
+                        lines.extend(shown)
+                        continue
                 if key == "authored" and result.kind == "procedure" and value is not None:
                     from cruxible_client.contracts.refs import concise
 

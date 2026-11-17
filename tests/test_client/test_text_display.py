@@ -921,3 +921,42 @@ def test_sdk_results_print_short_text_not_a_model_dump() -> None:
         f"activated sha256:{'1' * 64} by owner: accepted at 0123456789ab"
     )
     assert "tag=" not in str(receipt) + repr(receipt)
+
+
+def test_a_query_card_prints_its_clauses_by_their_authored_names() -> None:
+    """sec N11 / psw F8: the card was a cut repr (`from_=`, `params_contract=none`)."""
+
+    from cruxible_client.contracts.get_reads import GetResult
+    from cruxible_client.contracts.get_text import render_get
+
+    result = GetResult.model_validate(
+        {
+            "ref": "query:sec.old",
+            "kind": "query",
+            "detail": "summary",
+            "coordinate": {"git_oid": _OID[:12], "generation": 3},
+            "evaluation_time": "2026-11-15T00:00:00Z",
+            "card": {
+                "query": "sec.old",
+                "definition": {
+                    "query": "sec.old",
+                    "description": "Judgments older than three days.",
+                    "from": {"e": "security.app_exposure"},
+                    "where": "e.judged_at < now - 3d",
+                    "fields": ["e.verdict", {"name": "e.justification"}],
+                },
+                "description": "Judgments older than three days.",
+                "next": ["cruxible get query:sec.old --detail proof"],
+            },
+        }
+    )
+    text = render_get(result)
+    assert text is not None
+    assert text.splitlines() == [
+        "query: sec.old",
+        "from: e=security.app_exposure",
+        "where: e.judged_at < now - 3d",
+        'fields: e.verdict, {"name":"e.justification"}',
+        "description: Judgments older than three days.",
+        "next: cruxible get query:sec.old --detail proof",
+    ]

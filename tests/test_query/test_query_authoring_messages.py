@@ -129,3 +129,30 @@ def test_compact_where_accepts_single_quotes():
     assert parse_where("status in ('open', 'closed')") == parse_where(
         'status in ("open", "closed")'
     )
+
+
+@pytest.mark.parametrize(
+    "where",
+    [
+        "incident.name < now - 3d",  # a string field (a date reads as one too)
+        "incident.status > now - 3d",  # an enum field: refused before its operators
+        "now - 3d > incident.name",
+    ],
+)
+def test_now_on_a_field_that_is_not_datetime_says_to_declare_it_datetime(where, resolver):
+    """sec N9 / psw F18: the refusal said `cannot compare string with timestamp`."""
+
+    with pytest.raises(QuerySpecError) as caught:
+        lower_query_spec(spec(where=where), resolver)
+    assert caught.value.error_code == "cruxible.query.value_type_mismatch"
+    assert "now compares only with a datetime field" in str(caught.value)
+    assert "timestamp" not in str(caught.value)
+
+
+def test_a_timestamp_field_type_names_datetime():
+    """sec N9: `value: timestamp` refused with no word of `datetime`."""
+
+    from cruxible_client.contracts.shapes import ContractFormatError, parse_type
+
+    with pytest.raises(ContractFormatError, match="did you mean 'datetime'"):
+        parse_type("timestamp")

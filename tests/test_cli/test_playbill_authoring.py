@@ -1304,3 +1304,23 @@ def test_cli_lint_lines_carry_the_warnings_meaning_when_it_has_words() -> None:
         "never resolve"
     )
     assert _claim_type_lint_meaning("cruxible.claim_type.field_name_reserved") == ""
+
+
+def test_a_refused_preflight_line_says_each_refusal_once() -> None:
+    """psw F18: the code printed twice, then a blocked check that refusal caused."""
+
+    from cruxible_core.cli.commands.playbill import _preflight_refusal_reason
+
+    code = "cruxible.query.value_type_mismatch"
+    preflight = {
+        "frontier": {
+            "diagnostics": [{"code": code, "message": f"{code}: $.where: now compares only"}],
+            "blocked_checks": [
+                {"check": "proposal_evaluation", "reason": "Lowering first.", "blocked_by": [code]},
+                {"check": "other", "reason": "Budget.", "blocked_by": ["cruxible.x.budget"]},
+            ],
+        }
+    }
+    assert _preflight_refusal_reason(preflight) == (
+        f"{code}: $.where: now compares only; blocked other by cruxible.x.budget: Budget."
+    )

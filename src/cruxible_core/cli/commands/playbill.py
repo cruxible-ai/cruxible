@@ -5895,6 +5895,7 @@ def _preflight_refusal_reason(preflight: object) -> str:
     if not isinstance(diagnostics, list | tuple) and not isinstance(blocked_checks, list | tuple):
         return "preflight refused without a delivered diagnostic"
     rendered: list[str] = []
+    shown: set[str] = set()
     for diagnostic in diagnostics if isinstance(diagnostics, list | tuple) else ():
         if not isinstance(diagnostic, Mapping):
             continue
@@ -5903,7 +5904,11 @@ def _preflight_refusal_reason(preflight: object) -> str:
         if not isinstance(code, str) or not isinstance(message, str):
             continue
         one_line_message = " ".join(message.split())
-        rendered.append(f"{code}: {one_line_message}")
+        # A message that already leads with its code is not prefixed twice.
+        rendered.append(
+            one_line_message if one_line_message.startswith(code) else f"{code}: {one_line_message}"
+        )
+        shown.add(code)
     for blocked in blocked_checks if isinstance(blocked_checks, list | tuple) else ():
         if not isinstance(blocked, Mapping):
             continue
@@ -5917,6 +5922,8 @@ def _preflight_refusal_reason(preflight: object) -> str:
             or not all(isinstance(dependency, str) for dependency in blocked_by)
         ):
             continue
+        if blocked_by and set(blocked_by) <= shown:
+            continue  # blocked only by a refusal printed above: nothing new to say
         dependencies = ", ".join(blocked_by)
         one_line_reason = " ".join(reason.split())
         rendered.append(f"blocked {check} by {dependencies}: {one_line_reason}")
