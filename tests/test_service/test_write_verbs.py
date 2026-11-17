@@ -1584,6 +1584,31 @@ def test_a_contender_after_admission_refuses_activation_and_readmission(
     assert ready in _live_status_claims(instance)
 
 
+def test_a_readmitted_write_keeps_its_because_in_history(instance: PlaybillInstance) -> None:
+    """A write landed at the head by readmission still shows its --because (coldps-14)."""
+
+    from cruxible_client.contracts.get_reads import GetRequest, GetSubjectHistory
+    from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
+    from cruxible_core.service.discovery.get import service_playbill_get
+    from cruxible_core.storage.cas import BodyAccessContext
+
+    pending = _write(instance, _set(WI1, "status", "ready"), because="Moved.", accept="never")
+    assert pending.proposal is not None
+    _write(instance, _set(WI2, "title", "Elsewhere"))
+    # Activation meets it behind the head and lands the same bytes there.
+    service_activate_playbill_proposal(
+        instance, proposal_id=pending.proposal.proposal_id, activated_by="owner"
+    )
+    history = service_playbill_get(
+        instance,
+        request=GetRequest(ref=WI1, detail="history", field="status"),
+        access=BodyAccessContext(principal_id="reader", can_read_body=True),
+    ).history
+    assert isinstance(history, GetSubjectHistory)
+    (event,) = history.events
+    assert event.reason is not None and event.reason.text == "Moved."  # type: ignore[union-attr]
+
+
 def test_resetting_at_the_new_head_replaces_the_value(instance: PlaybillInstance) -> None:
     first = _write(instance, _set(WI1, "status", "ready"))
     second = _write(instance, _set(WI1, "status", "blocked"))
