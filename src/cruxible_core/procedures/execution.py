@@ -7300,8 +7300,8 @@ class ProcedureExecutor:
         # item of an unchanged generation keeps its manifest digest, and its
         # bodies, chunks and child receipts are the ones stored before. The
         # read's facts answer under either name.
-        identities = state.read_identities
-        for digest, identity in identities.items():
+        read_names = state.read_identities
+        for digest, identity in read_names.items():
             if digest in state.facts:
                 state.facts.setdefault(identity, state.facts[digest])
         for index, value in enumerate(values):
@@ -7313,8 +7313,8 @@ class ProcedureExecutor:
             )
             manifest = build_terminal_item_manifest_v2(
                 frozenset(
-                    accepted_state_token(identities[token.digest])
-                    if token.slot == "accepted_state" and token.digest in identities
+                    accepted_state_token(read_names[token.digest])
+                    if token.slot == "accepted_state" and token.digest in read_names
                     else token
                     for token in tokens
                 ),
