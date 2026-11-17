@@ -340,7 +340,7 @@ def test_a_context_that_cannot_be_saved_never_strands_the_initialized_folder(
     assert "initialized" in message and "could not remember the reviewer's settings" in message
     assert f". {reviewer_dir / 'cruxible.env'}; set +a" in message
     # The folder is complete: this session acts as the owner, with the original keys.
-    again = handlers.handle_init("owner", reviewer_key_dir=str(reviewer_dir))
+    again = handlers.handle_init("owner")
     assert (again.status, again.principal_id) == ("already_initialized", "owner")
     whoami = handlers.handle_playbill_whoami(require_instance_id())
     assert (whoami.identity_source, whoami.identity.actor_id) == ("folder", "owner")
@@ -375,3 +375,77 @@ def test_a_retry_completes_the_local_setup_an_interrupted_init_left(
 
     remembered = [entry for entry in load_cli_context().principals.values()]
     assert remembered and "reviewer" in remembered[0].settings
+
+
+def test_a_retry_completes_reviewer_setup_that_failed_after_the_owner_identity(
+    world: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review round 2, F-003: the reviewer's settings write failed after the owner
+    identity existed, and a retry answered `already_initialized` with the reviewer
+    neither set up nor remembered. The retry finishes it with the same keys."""
+
+    from cruxible_core.cli.context import load_cli_context
+    from cruxible_core.mcp import init as mcp_init
+
+    reviewer_dir = world["config"] / "reviewer-keys"
+    write = mcp_init.write_principal_settings
+
+    def owner_only(key_dir: Path, **kwargs: Any) -> Path:
+        if kwargs["principal_id"] == "reviewer":
+            raise OSError("cannot write reviewer cruxible.env")
+        return write(key_dir, **kwargs)
+
+    with monkeypatch.context() as patched:
+        patched.setattr(mcp_init, "write_principal_settings", owner_only)
+        with pytest.raises(OSError, match="cannot write reviewer"):
+            handlers.handle_init("owner", reviewer_key_dir=str(reviewer_dir))
+    assert (world["folder"] / ".cruxible" / "identity.json").is_file()
+    key = (reviewer_dir / "reviewer.ed25519").read_bytes()
+    assert not (reviewer_dir / "cruxible.env").exists()
+
+    again = handlers.handle_init("owner", reviewer_key_dir=str(reviewer_dir))
+
+    assert (again.status, again.principal_id) == ("already_initialized", "owner")
+    assert (reviewer_dir / "reviewer.ed25519").read_bytes() == key
+    assert "export CRUXIBLE_PRINCIPAL_ID=reviewer" in (reviewer_dir / "cruxible.env").read_text()
+    (remembered,) = load_cli_context().principals.values()
+    assert remembered.settings["reviewer"] == str((reviewer_dir / "cruxible.env").resolve())
+    # A third call finds everything in place and rewrites nothing.
+    stamp = (reviewer_dir / "cruxible.env").stat().st_mtime_ns
+    assert handlers.handle_init("owner", reviewer_key_dir=str(reviewer_dir)).status == (
+        "already_initialized"
+    )
+    assert (reviewer_dir / "cruxible.env").stat().st_mtime_ns == stamp
+
+
+def test_a_retry_that_cannot_finish_reviewer_setup_refuses_saying_what_is_left(
+    world: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Never `already_initialized` with the requested reviewer setup incomplete: a
+    context that still cannot be saved, or a directory that holds no reviewer key."""
+
+    from cruxible_core.mcp import init as mcp_init
+
+    def refuse(*_args: object, **_kwargs: object) -> None:
+        raise OSError("read-only context")
+
+    reviewer_dir = world["config"] / "reviewer keys"
+    monkeypatch.setattr(mcp_init, "save_cli_context", refuse)
+    with pytest.raises(ConfigError, match="could not remember"):
+        handlers.handle_init("owner", reviewer_key_dir=str(reviewer_dir))
+
+    with pytest.raises(ConfigError) as unfinished:
+        handlers.handle_init("owner", reviewer_key_dir=str(reviewer_dir))
+
+    message = str(unfinished.value)
+    assert "its settings are not remembered: read-only context" in message
+    # The repair survives the retry, with a path that has a space quoted for the shell.
+    assert f". '{reviewer_dir / 'cruxible.env'}'; set +a" in message
+    # Without the reviewer the folder itself is complete.
+    assert handlers.handle_init("owner").status == "already_initialized"
+
+    elsewhere = world["config"] / "no-such-reviewer"
+    with pytest.raises(ConfigError) as absent:
+        handlers.handle_init("owner", reviewer_key_dir=str(elsewhere))
+    assert "holds no reviewer key" in str(absent.value)
+    assert "cruxible principal add reviewer --key-dir" in str(absent.value)

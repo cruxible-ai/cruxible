@@ -12,13 +12,16 @@ MCP session authors as the owner on its next call. As `cruxible init` does,
 its key and settings file there (remembered for the CLI and the key lookup),
 and ``require_independent_approval`` makes every governed change, the base kit
 included, wait for a principal other than its author. A folder already
-initialized reports its instance and changes nothing. No key material ever
+initialized reports its instance; a retry completes any local setup an
+interrupted init left, from its existing keys, or refuses naming what is
+unfinished. No key material ever
 leaves this process: the result names the key directory only.
 """
 
 from __future__ import annotations
 
 import getpass
+import shlex
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, TypeVar
@@ -40,7 +43,11 @@ from cruxible_client.contracts.approval_policy import ApprovalPolicyMode
 from cruxible_client.contracts.principals import is_canonical_principal_id
 from cruxible_client.errors import CoreError as ClientCoreError
 from cruxible_core.cli.context import load_cli_context, principal_binding, save_cli_context
-from cruxible_core.cli.principal_settings import default_key_dir, write_principal_settings
+from cruxible_core.cli.principal_settings import (
+    default_key_dir,
+    read_principal_settings,
+    write_principal_settings,
+)
 from cruxible_core.errors import ConfigError, DataValidationError
 from cruxible_core.governance.init_custody import prepare_init_custody
 from cruxible_core.governance.keys import validate_client_principal_key_target
@@ -161,8 +168,8 @@ def _remember_reviewer(socket: str, instance_id: str, settings: Path) -> str | N
     except (ConfigError, OSError) as exc:
         return (
             f"{exc}. Repair: start the reviewer's process with its settings loaded "
-            f"(`set -a; . {settings}; set +a`), or fix the CLI context and run "
-            "`cruxible principal add` for any further principal"
+            f"(`set -a; . {shlex.quote(str(settings))}; set +a`), or fix the CLI context "
+            "and call cruxible_init again with the same reviewer_key_dir"
         )
     return None
 
@@ -172,16 +179,14 @@ def _complete_local_setup(
     instance_id: str,
     socket: str,
     principal_id: str | None,
-    reviewer_dir: Path | None,
 ) -> FolderIdentity | None:
     """Finish the local half of an init the daemon already committed.
 
     The owner's key that init generated is in the default key directory: its
     settings file and the folder's identity record are written again (both
-    idempotent), and so are the settings of a reviewer whose key init generated
-    in ``reviewer_dir``, which are remembered. With
-    no such key the folder stays as it is; the record is checked against the
-    daemon's registry when it is used, as every folder record is.
+    idempotent). With no such key the folder stays as it is; the record is
+    checked against the daemon's registry when it is used, as every folder
+    record is.
     """
 
     try:
@@ -204,19 +209,61 @@ def _complete_local_setup(
     write_folder_identity(
         root, instance_id=instance_id, principal_id=owner, key_dir=key_dir, replace=True
     )
-    reviewer_key = None if reviewer_dir is None else reviewer_dir / "reviewer.ed25519"
-    if reviewer_dir is not None and reviewer_key is not None and reviewer_key.is_file():
+    return read_folder_identity(root)
+
+
+def _complete_reviewer_setup(instance_id: str, socket: str, reviewer_dir: Path) -> None:
+    """Finish the reviewer's local setup on an initialized folder, or say what is unfinished.
+
+    From the reviewer key the first init generated in ``reviewer_dir``: its
+    settings file is written when missing and remembered when not already. No
+    key is generated here. Whatever cannot be completed refuses, naming it
+    and the repair: an initialized folder is never reported as done with the
+    reviewer setup this call asked for left incomplete.
+    """
+
+    key = reviewer_dir / "reviewer.ed25519"
+    if not key.is_file():
+        raise ConfigError(
+            f"cruxible_init: this folder is already initialized ({instance_id}) and "
+            f"{reviewer_dir} holds no reviewer key, so no reviewer was set up there. "
+            "Repair: on the CLI, `cruxible principal add reviewer --key-dir "
+            f"{shlex.quote(str(reviewer_dir))}`; or call cruxible_init without reviewer_key_dir"
+        )
+    settings = reviewer_dir / "cruxible.env"
+    try:
+        held = read_principal_settings(settings) if settings.is_file() else None
+    except (OSError, ValueError):
+        held = None
+    if held is not None and (held.instance_id, held.principal_id) != (instance_id, "reviewer"):
+        raise ConfigError(
+            f"cruxible_init: {settings} holds the settings of principal {held.principal_id} "
+            f"of {held.instance_id}, not this folder's reviewer; nothing was changed. "
+            "Repair: name the directory this folder's init was given"
+        )
+    if held is None:
         settings = write_principal_settings(
             reviewer_dir,
             ctx_obj={"server_socket": socket},
             instance_id=instance_id,
             principal_id="reviewer",
-            private_key_path=reviewer_key,
+            private_key_path=key,
             token=None,
             written_by="cruxible_init",
         )
-        _remember_reviewer(socket, instance_id, settings)
-    return read_folder_identity(root)
+    binding = principal_binding(f"unix://{socket}", instance_id)
+    try:
+        known = load_cli_context().principals.get(binding)
+    except ConfigError:
+        known = None
+    if known is not None and known.settings.get("reviewer") == str(settings.resolve()):
+        return
+    not_remembered = _remember_reviewer(socket, instance_id, settings)
+    if not_remembered is not None:
+        raise ConfigError(
+            f"cruxible_init: {instance_id} is initialized and the reviewer's key and settings "
+            f"are in {reviewer_dir}, but its settings are not remembered: {not_remembered}"
+        )
 
 
 def run_mcp_init(
@@ -267,7 +314,11 @@ def run_mcp_init(
             if record is None:
                 # An init that the daemon committed but whose local setup was
                 # interrupted: finish it from the keys that init left.
-                record = _complete_local_setup(root, bound, socket, principal_id, reviewer_dir)
+                record = _complete_local_setup(root, bound, socket, principal_id)
+            if reviewer_dir is not None:
+                # The reviewer setup this call asks for is complete, or refused
+                # with what is unfinished: never a success that leaves it half done.
+                _complete_reviewer_setup(bound, socket, reviewer_dir)
             return McpInitResult(
                 status="already_initialized",
                 instance_id=bound,
