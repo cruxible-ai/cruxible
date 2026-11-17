@@ -17,6 +17,7 @@ import json
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from typing import Any, Final, Literal, Protocol, cast
 
+from cruxible_client.contracts.approval_policy import APPROVAL_POLICY_PATH, parse_approval_policy
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import canonical_digest, pretty_canonical_bytes
 from cruxible_client.contracts.capabilities import (
@@ -2121,6 +2122,17 @@ def _submit(
     )
 
 
+def _policy_requires_approval(tree: Mapping[str, bytes]) -> bool:
+    """Whether the accepted approval policy makes every proposal here wait for an approver."""
+
+    content = tree.get(APPROVAL_POLICY_PATH)
+    return (
+        content is not None
+        and parse_approval_policy(content, path=APPROVAL_POLICY_PATH).mode
+        == "independent_approval_required"
+    )
+
+
 def _transition(installed: str | None, release: str) -> KitTransition:
     if installed is None:
         return "install"
@@ -2879,6 +2891,8 @@ def _add_kit(
                 status="blocked"
                 if any(step.action == "blocked" for step in pending)
                 else "awaiting_providers",
+                # The installs await an approver, and so will the definitions.
+                approval_required=any(step.action == "awaiting_approval" for step in pending),
                 detail="the kit's definitions are proposed once its bundled providers are "
                 "installed: "
                 + "; ".join(
@@ -3097,6 +3111,9 @@ def _add_kit(
             kit_id=manifest.kit_id,
             version=manifest.version,
             status="would_propose",
+            # Nothing is evaluated before the installs, so the instance's
+            # approval policy answers whether they and the definitions wait.
+            approval_required=_policy_requires_approval(tree),
             plan=plan,
             detail=KIT_PREVIEW_AWAITING_INSTALL,
             coordinate=mode.coordinate,

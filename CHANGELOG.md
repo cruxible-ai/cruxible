@@ -498,6 +498,9 @@ quickstart and concepts pages.
   approval, or a resumed kit add) was listed as proposed after it was accepted,
   rejected or the kit was removed; it is now listed only while its proposal is
   open, on the CLI (`--offline` too), SDK and MCP alike.
+- **A kit add whose provider installs await an approver says so.** Its preview
+  and its `awaiting_providers` commit answered `approval_required: false`
+  under `independent_approval_required`; both now answer true.
 
 ## [0.3.2] - 2026-08-06
 
