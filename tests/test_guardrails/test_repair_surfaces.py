@@ -127,6 +127,13 @@ COMPUTED_PRODUCERS: Mapping[tuple[str, str], Mapping[str, frozenset[str]]] = {
         "cruxible.kit.build": frozenset(),
         "cruxible.kit.add": frozenset({"kit"}),
     },
+    # The kit's reference when the instance holds one; a local folder's path is not sent.
+    ("src/cruxible_core/service/kits.py", "_add_required_kit"): {
+        "cruxible.kit.add": frozenset({"kit"})
+    },
+    ("src/cruxible_core/service/proposals/proposals.py", "author_repair"): {
+        "cruxible.kit.add": frozenset({"kit"})
+    },
     (
         "packages/cruxible-client/src/cruxible_client/contracts/errors.py",
         "ApprovalRequirementUnmet.__init__",
@@ -312,7 +319,11 @@ def test_every_producer_resolves_or_is_named() -> None:
 
 #: Operands the instance itself holds when it produces the repair: every producer
 #: carries one of them, so the line never shows a placeholder for it. A ``kit add``
-#: repair names its kit (``kit`` on the wire, ``reference`` from ``next``).
+#: repair names its kit (``kit`` on the wire, ``reference`` from ``next``). A
+#: producer that names it only when the instance holds a real reference (the
+#: bundled base kit, an exact registry reference; never one made up from a kit's
+#: id, and never a local folder's path, which the daemon is not sent) computes
+#: its arguments and is named in ``COMPUTED_PRODUCERS`` with the key it carries.
 INSTANCE_HELD_OPERANDS: Mapping[str, frozenset[str]] = {
     "cruxible.kit.add": frozenset({"kit", "reference"}),
     "cruxible.kit.remove": frozenset({"kit_id"}),

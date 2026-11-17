@@ -967,6 +967,19 @@ def _receipt_at(
     return shell, receipt
 
 
+def proposed_kit_receipt(
+    instance: PlaybillInstance, tree_oid: str, kit_id: str, *, proposal_id: str
+) -> KitReceipt | None:
+    """The receipt a kit proposal writes for ``kit_id``: one blob of its own tree."""
+
+    path = f"{_RECEIPT_PATH_PREFIX}{kit_id}.json"
+    raw = instance.proposal_blobs(tree_oid, [path], proposal_id=proposal_id).get(path)
+    if raw is None:
+        return None
+    held = _receipt_at(instance, path, raw, kit_id)
+    return None if held is None else held[1]
+
+
 def _read_receipt(
     instance: PlaybillInstance, tree: Mapping[str, bytes], kit_id: str
 ) -> tuple[DocumentShell, KitReceipt] | None:
@@ -2388,6 +2401,20 @@ def _holds_bundled_base(receipt: KitReceipt) -> bool:
     return any(bundled.get(entry.path) == entry.release_digest for entry in receipt.artifacts)
 
 
+def _add_required_kit(requirement: KitRequirement) -> RepairOperation:
+    """``kit add`` of a required kit: named only when the instance knows its reference.
+
+    The bundled base kit is ``base``. For any other kit the requirement names
+    an id and a minimum version, which identify no release a registry is known
+    to hold, so its reference or build path stays the caller's to name.
+    """
+
+    reference = required_kit_reference(requirement)
+    return RepairOperation(
+        operation="cruxible.kit.add", arguments={} if reference is None else {"kit": reference}
+    )
+
+
 def _pending_kit_proposal(instance: PlaybillInstance, kit_id: str) -> str | None:
     """The open proposal that adds ``kit_id`` here, when its add stopped at one.
 
@@ -2436,10 +2463,7 @@ def _required_receipts(
                         arguments={"proposal_id": pending},
                     )
                     if pending is not None
-                    else RepairOperation(
-                        operation="cruxible.kit.add",
-                        arguments={"kit": required_kit_reference(requirement)},
-                    )
+                    else _add_required_kit(requirement)
                 ),
             )
     return {item.kit_id: installed[item.kit_id] for item in manifest.requires}
@@ -3447,10 +3471,7 @@ def _refuse_unmet_requires(
                 raise RequestRefusedError(
                     KIT_REQUIRES_MISSING,
                     requires_missing_message(kit_id, receipt.version, requirement, version),
-                    repair=RepairOperation(
-                        operation="cruxible.kit.add",
-                        arguments={"kit": required_kit_reference(requirement)},
-                    ),
+                    repair=_add_required_kit(requirement),
                 )
 
 

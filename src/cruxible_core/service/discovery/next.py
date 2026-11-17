@@ -4994,8 +4994,7 @@ def _kit_resume_items(
                 operation="cruxible.kit.add",
                 target=f"kit:{resume.kit_id}",
                 required_change="resolve_the_refusal_then_add_the_kit_again",
-                # Always the kit, by name: the reference its add named, else its release.
-                arguments={"reference": resume.source or f"{resume.kit_id}:{resume.version}"},
+                arguments={} if resume.source is None else {"reference": resume.source},
             ),
         )
         for resume in blocked_kit_resumes(instance)

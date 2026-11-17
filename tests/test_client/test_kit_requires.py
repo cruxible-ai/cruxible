@@ -113,13 +113,15 @@ def test_the_refusals_name_the_kit_and_the_repair() -> None:
         "Kit security 1.3.0 requires kit base 1.0.0 or later; this instance holds base 0.9.0. "
         "Upgrade it first: kit add base (or the path of a local build of base 1.0.0 or later)."
     )
-    # coldps-01: the repair printed a literal '<KIT>'. Any other kit is named by the
-    # release that meets the requirement.
+    # coldps-01: the base kit's repair printed a literal '<KIT>'; it is bundled, so it
+    # is named. Review F-002: any other kit's id and minimum version name no release
+    # a registry is known to hold, so no reference is invented for it.
     web = KitRequirement(kit_id="web", min_version="2.1.0")
     assert required_kit_reference(base) == "base"
-    assert required_kit_reference(web) == "web:2.1.0"
+    assert required_kit_reference(web) is None
     assert requires_missing_message("acme", "1.0.0", web, None).endswith(
-        "Add it first: kit add web:2.1.0 (or the path of a local build of web 2.1.0 or later)."
+        "Add it first: kit add with the registry reference of a release of web 2.1.0 or "
+        "later, or the path of a local build."
     )
     # The required kit's own add awaits approval: approving it is the repair.
     assert requires_missing_message(

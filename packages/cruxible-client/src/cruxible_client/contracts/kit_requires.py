@@ -93,16 +93,15 @@ KitRequires: TypeAlias = Annotated[
 BUNDLED_BASE_KIT_ID = "base"
 
 
-def required_kit_reference(requirement: KitRequirement) -> str:
-    """The ``kit add`` reference that names a required kit: never a placeholder.
+def required_kit_reference(requirement: KitRequirement) -> str | None:
+    """The ``kit add`` reference of a required kit, when one is known without a registry.
 
-    The bundled base kit is ``base``; any other is the release that meets the
-    requirement, ``ID:MIN_VERSION`` (a local build's path adds it as well).
+    The bundled base kit is ``base``. For any other kit an id and a minimum
+    version name no release a registry is known to hold (it may be unpublished,
+    or published under another namespace), so none is invented.
     """
 
-    if requirement.kit_id == BUNDLED_BASE_KIT_ID:
-        return BUNDLED_BASE_KIT_ID
-    return f"{requirement.kit_id}:{requirement.min_version}"
+    return BUNDLED_BASE_KIT_ID if requirement.kit_id == BUNDLED_BASE_KIT_ID else None
 
 
 def requires_missing_message(
@@ -130,9 +129,15 @@ def requires_missing_message(
             f"approve it first, then add kit {kit_id} again."
         )
     verb = "Add" if installed is None else "Upgrade"
+    wanted = f"{requirement.kit_id} {requirement.min_version} or later"
+    reference = required_kit_reference(requirement)
+    if reference is None:
+        return (
+            f"{lead} {verb} it first: kit add with the registry reference of a release of "
+            f"{wanted}, or the path of a local build."
+        )
     return (
-        f"{lead} {verb} it first: kit add {required_kit_reference(requirement)} (or the "
-        f"path of a local build of {requirement.kit_id} {requirement.min_version} or later)."
+        f"{lead} {verb} it first: kit add {reference} (or the path of a local build of {wanted})."
     )
 
 

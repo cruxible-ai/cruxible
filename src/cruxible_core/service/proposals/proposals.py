@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 import sqlite3
 from collections import defaultdict
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -12,6 +11,7 @@ from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from cruxible_client._error_base import CoreError as CruxibleCoreError
 from cruxible_client.contracts.candidates import CandidateRecord
 from cruxible_client.contracts.canonical import ProposalDigest
 from cruxible_client.contracts.errors import (
@@ -27,6 +27,7 @@ from cruxible_client.contracts.errors import (
     ProposalStale,
     ProposalWithdrawNotAuthor,
 )
+from cruxible_client.contracts.kits import KitReceipt
 from cruxible_client.contracts.principals import AuthoringRefusal
 from cruxible_client.contracts.procedures.node_summary import (
     ReobservationRefusalReason,
@@ -1406,7 +1407,8 @@ def requires_resubmission(
         return ProposalReadmitRequiresResubmission(repair=author_repair(source, instance))
     return ProposalReadmitRequiresResubmission(
         f"proposal {source.admission.proposal_id} {why}, so it is not readmitted or "
-        f"landed by its old bytes; its author {source.admission.actor_id!r} {command}",
+        f"landed by its old bytes; its author {source.admission.actor_id!r} {command}"
+        + kit_source_note(source, instance),
         repair=author_repair(source, instance),
     )
 
@@ -1450,52 +1452,87 @@ def author_repair(
     """The author's command that remakes a change set its bytes cannot carry to the head.
 
     A kit change is its kit's own commit again: ``kit remove`` with the kit's id
-    for a removal, ``kit add`` naming the kit for an addition (``_kit_reference``:
-    never a placeholder); a migration, or another closure, is authored again.
+    for a removal, ``kit add`` for an addition, naming the reference the
+    instance holds for it (``_kit_reference``: ``base``, or the exact registry
+    reference it was added from) and leaving a local folder's path to its
+    author; a migration, or another closure, is authored again.
     """
 
     kit_id = _kit_id(source)
     if kit_id is not None:
         if _is_kit_removal(source):
             return RepairOperation(operation="cruxible.kit.remove", arguments={"kit_id": kit_id})
+        reference = _kit_reference(_proposed_kit_receipt(source, kit_id, instance), kit_id)
         return RepairOperation(
             operation="cruxible.kit.add",
-            arguments={"kit": _kit_reference(source, kit_id, instance)},
+            arguments={} if reference is None else {"kit": reference},
         )
     if _target_leaf(source).startswith("claim-type-migration-"):
         return RepairOperation(operation="cruxible.claim-type.migrate")
     return RepairOperation(operation="cruxible.authoring.list")
 
 
-_KIT_RATIONALE_VERSION = re.compile(r" (?P<version>[^ ]+)\.$")
+def _proposed_kit_receipt(
+    source: ProposalResult, kit_id: str, instance: PlaybillInstance | None
+) -> KitReceipt | None:
+    """The receipt a kit proposal installs, read from the proposal itself: one blob.
 
-
-def _kit_reference(source: ProposalResult, kit_id: str, instance: PlaybillInstance | None) -> str:
-    """The ``kit add`` reference that remakes a kit proposal: the kit, by name.
-
-    The reference its author's add named, when this instance recorded that add
-    for this proposal (the base kit's, or one resumed after its providers
-    landed); else the release the proposal installs, ``ID:VERSION`` from its
-    rationale (``Install kit ID VERSION.``); else the kit id. Read only when
-    the refusal is raised.
+    It records the release (``version``) and where the author's client read the
+    kit (``source``). None when it cannot be read; the repair then names less.
     """
 
+    if instance is None:
+        return None
+    from cruxible_core.service.kits import proposed_kit_receipt
+
+    try:
+        return proposed_kit_receipt(
+            instance,
+            source.admission.candidate_tree_oid,
+            kit_id,
+            proposal_id=source.admission.proposal_id,
+        )
+    except (CruxibleCoreError, ValueError, KeyError):
+        return None
+
+
+def _kit_reference(receipt: KitReceipt | None, kit_id: str) -> str | None:
+    """The ``kit add`` reference that remakes a kit proposal, when the instance holds one.
+
+    The bundled base kit is ``base``; a kit added from a registry recorded its
+    exact pinned reference. A kit added from a directory or a layout recorded
+    only that folder's name: the daemon receives a kit's bytes, never its
+    path, so the path stays the author's to name and no reference is invented
+    from the kit's id.
+    """
+
+    from cruxible_client.kits import registry_source
     from cruxible_core.kits.base_kit import BASE_KIT_REFERENCE, BUNDLED_KIT_SOURCE
 
-    if instance is not None:
-        from cruxible_core.service.kit_resume import kit_resume_statuses
-
-        for resume in kit_resume_statuses(instance):
-            if (
-                resume.kit_id == kit_id
-                and resume.proposal_id == source.admission.proposal_id
-                and resume.source
-            ):
-                return BASE_KIT_REFERENCE if resume.source == BUNDLED_KIT_SOURCE else resume.source
-    if kit_id == BASE_KIT_REFERENCE:
+    recorded = None if receipt is None else receipt.source
+    if recorded == BUNDLED_KIT_SOURCE or (recorded is None and kit_id == BASE_KIT_REFERENCE):
         return BASE_KIT_REFERENCE
-    version = _KIT_RATIONALE_VERSION.search(source.admission.rationale or "")
-    return kit_id if version is None else f"{kit_id}:{version['version']}"
+    return recorded if registry_source(recorded) else None
+
+
+def kit_source_note(source: ProposalResult, instance: PlaybillInstance | None) -> str:
+    """What a stale kit addition's refusal adds when its kit came from a local folder.
+
+    The repair cannot spell that path, so the message says which release it
+    was and the folder name its author's client recorded.
+    """
+
+    kit_id = _kit_id(source)
+    if kit_id is None or _is_kit_removal(source):
+        return ""
+    receipt = _proposed_kit_receipt(source, kit_id, instance)
+    if receipt is None or _kit_reference(receipt, kit_id) is not None:
+        return ""
+    folder = f" (recorded as {receipt.source})" if receipt.source else ""
+    return (
+        f": kit {kit_id} {receipt.version}, from the kit directory or layout it was added "
+        f"from{folder}; that path is the author's, the daemon holds only the kit's bytes"
+    )
 
 
 def _readmit_exact_bytes(

@@ -2835,14 +2835,38 @@ def test_a_late_signer_on_a_kit_change_is_told_the_kits_own_command(
     else:
         assert wire["repair"]["operation"] == "cruxible.kit.add", wire
         assert "adds kit acme again at the current head (kit add)" in wire["message"]
-        # coldps-01: the repair names the kit it adds again, never a literal '<KIT>'.
-        named = wire["repair"]["arguments"]["kit"]
-        assert named.startswith("acme:"), wire
-        assert f"cruxible kit add {named}" in cli_text
-        assert f'cruxible_kit_add(reference="{named}")' in mcp_text
-        assert "<KIT>" not in cli_text + mcp_text
+        # Review F-002: this kit came from a local folder (source "test"). The daemon
+        # holds its bytes, not its path, and no registry reference is invented from
+        # its id: the message names the release and the recorded folder, and the
+        # path stays the author's operand.
+        assert wire["repair"]["arguments"] == {}, wire
+        assert (
+            "kit acme 1.0.0, from the kit directory or layout it was added from "
+            "(recorded as test)" in wire["message"]
+        )
+        assert "acme:1.0.0" not in wire["message"] + cli_text + mcp_text
+        assert "cruxible kit add '<KIT>'" in cli_text
         for text in (wire["message"], cli_text, mcp_text):
             assert "kit remove" not in text and "cruxible_kit_remove" not in text
+
+
+def test_a_stale_kit_repair_names_only_a_reference_the_instance_holds() -> None:
+    """coldps-01 and review F-002: the bundled base kit and a kit pulled from a registry
+    are named exactly; a local folder's name is no reference and none is made up."""
+
+    from cruxible_client.contracts.kits import KitReceipt
+    from cruxible_core.service.proposals.proposals import _kit_reference
+
+    def receipt(source: str | None) -> KitReceipt:
+        return KitReceipt.model_construct(kit_id="acme", version="1.2.3", source=source)
+
+    pinned = "registry.example/team/kits/acme@sha256:" + "b" * 64
+    assert _kit_reference(receipt(pinned), "acme") == pinned
+    assert _kit_reference(receipt("bundled"), "base") == "base"
+    assert _kit_reference(None, "base") == "base"
+    for local in ("acme-build", "acme-layout@sha256:" + "c" * 64, None):
+        assert _kit_reference(receipt(local), "acme") is None
+    assert _kit_reference(None, "acme") is None
 
 
 def _retire(world: _World, predicate: str) -> tuple[str, ...]:
