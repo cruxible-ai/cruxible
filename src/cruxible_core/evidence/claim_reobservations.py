@@ -26,7 +26,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 from cruxible_client.contracts.captures import (
     CaptureEnvelopeAny,
@@ -87,7 +87,7 @@ ROW_MAP_BODY = "cruxible-row-map-v1"
 #: The row maps of one extract step's Captures (run-free).
 ROW_MAPS_BODY = "cruxible-row-maps-v1"
 _ACCESS = BodyAccessContext(principal_id="claim-reobservation", can_read_body=True)
-_SCHEMA_VERSION = 9
+_SCHEMA_VERSION = 10
 REOBSERVATION_DIRECTORY = "claim-reobservations"
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 # ``reobservations`` keeps the full history (audit, historical verification).
@@ -132,13 +132,9 @@ CREATE TABLE IF NOT EXISTS observed_sets (
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS observed_sets_by_set ON observed_sets (set_digest);
 CREATE TABLE IF NOT EXISTS instants (
- sequence INTEGER PRIMARY KEY, recorded_us INTEGER NOT NULL, generation INTEGER NOT NULL,
- latest_us INTEGER NOT NULL, bucket INTEGER NOT NULL
+ sequence INTEGER PRIMARY KEY, recorded_us INTEGER NOT NULL
 ) STRICT;
 CREATE INDEX IF NOT EXISTS instants_by_recorded ON instants (recorded_us, sequence);
-CREATE INDEX IF NOT EXISTS instants_by_generation ON instants (generation, sequence);
-CREATE INDEX IF NOT EXISTS instants_by_delay ON instants (bucket, latest_us);
-CREATE TABLE IF NOT EXISTS delay_buckets (bucket INTEGER PRIMARY KEY) STRICT;
 CREATE TABLE IF NOT EXISTS observation_sets (
  set_digest TEXT PRIMARY KEY, procedure TEXT NOT NULL, last_sequence INTEGER NOT NULL,
  earliest_us INTEGER NOT NULL, earliest_recorded_us INTEGER NOT NULL,
@@ -181,9 +177,8 @@ CREATE TABLE IF NOT EXISTS seen_maps (digest TEXT PRIMARY KEY) STRICT, WITHOUT R
 #
 # ``observed_sets`` holds one row per member of each distinct observed set,
 # written once when the set first appears. Every observation writes one
-# ``observation_points`` row (the history, for bounded windows only), one
-# ``instants`` row (its recording instant and the accepted generation it was
-# made at) and moves its set's ``observation_sets`` head, which keeps the set's
+# ``observation_points`` row (the history), one ``instants`` row (its
+# recording instant) and moves its set's ``observation_sets`` head, which keeps the set's
 # running maxima: the greatest call-earliest instant (with the record that set
 # it) and the greatest call-latest instant. ``set_peaks`` holds one row per
 # change of those maxima, by sequence: a set's maxima through any journal
@@ -200,8 +195,7 @@ CREATE TABLE IF NOT EXISTS seen_maps (digest TEXT PRIMARY KEY) STRICT, WITHOUT R
 # through a position is then, per source, one seek on ``key_heads`` and one on
 # ``set_peaks``: never a walk over the sets or calls that ever held it (F-004).
 # Recorded order is journal order, so a recording instant maps to a journal
-# position by one seek on ``instants``; so does an accepted generation (the
-# head a record was made at only moves forward).
+# position by one seek on ``instants``.
 _LAST_POINT = (
     "SELECT capture_digest, observed_us, recorded_us FROM reobservation_points "
     "WHERE claim_id=? AND contract_digest=? AND observed_content_digest=? AND recorded_us<=? "
@@ -460,7 +454,6 @@ class ClaimReobservationStore:
                 conn.executescript(_SCHEMA)
                 row = conn.execute("SELECT sequence FROM progress WHERE singleton=1").fetchone()
                 start = row[0] + 1 if row else 1
-                generations: dict[str, int] = {}
                 for stored in (
                     ()
                     if journal is None
@@ -479,9 +472,6 @@ class ClaimReobservationStore:
                             payload,
                             stored.record.sequence,
                             stored.record.recorded_at,
-                            generation=self._generation(
-                                stored.record.accepted_coordinate.git_oid, generations
-                            ),
                         )
                         continue
                     if not isinstance(payload, dict) or payload.get("tag") != _EVENT_TAG:
@@ -548,26 +538,12 @@ class ClaimReobservationStore:
                 )
         conn.execute("INSERT OR REPLACE INTO progress VALUES(1,?,?)", (sequence, recorded_us))
 
-    def _generation(self, git_oid: str, known: dict[str, int]) -> int:
-        """The accepted generation a record was made at (-1 when not in the history).
-
-        One indexed lookup per record (``known`` remembers them for one catch-up).
-        """
-
-        if git_oid not in known:
-            with self.instance.accepted_history_reader() as history:
-                location = history.generation_for_oid(git_oid)
-            known[git_oid] = -1 if location is None else int(location.sequence)
-        return known[git_oid]
-
     def _apply_shared(
         self,
         conn: sqlite3.Connection,
         payload: Mapping[str, Any],
         sequence: int,
         recorded_at: datetime,
-        *,
-        generation: int,
     ) -> None:
         """Project one content or row observation: rows for what changed only.
 
@@ -584,12 +560,7 @@ class ClaimReobservationStore:
         recorded_us = _ordered(conn, sequence, recorded_at)
         earliest_us = _micros(_instant(payload["earliest"]))
         latest_us = _micros(_instant(payload["latest"]))
-        bucket = max(0, recorded_us - latest_us).bit_length()
-        conn.execute(
-            "INSERT OR REPLACE INTO instants VALUES (?,?,?,?,?)",
-            (sequence, recorded_us, generation, latest_us, bucket),
-        )
-        conn.execute("INSERT OR IGNORE INTO delay_buckets VALUES (?)", (bucket,))
+        conn.execute("INSERT OR REPLACE INTO instants VALUES (?,?)", (sequence, recorded_us))
         rows_tag = payload["tag"] == ROW_OBSERVATION_TAG
         set_digest = str(payload["set_digest"])
         head = conn.execute(
@@ -1357,7 +1328,6 @@ class ClaimReobservationStore:
                 payload,
                 stored.record.sequence,
                 stored.record.recorded_at,
-                generation=self._generation(stored.record.accepted_coordinate.git_oid, {}),
             )
             conn.commit()
             return stored.record.sequence
@@ -1782,33 +1752,11 @@ class ReobservationReader:
         ).fetchone()
         return 0 if row is None else int(row[0])
 
-    def _window(
-        self,
-        conn: sqlite3.Connection,
-        *,
-        at_us: int,
-        through: int,
-        deadline_us: int = _NEVER,
-        lo: int = 0,
-        hi: int = _NEVER,
-    ) -> "_Window":
-        """The journal positions a read admits, as sequence bounds.
+    def _window(self, conn: sqlite3.Connection, *, at_us: int, through: int) -> "_Window":
+        """The journal positions a read admits: recorded by ``at_us`` and through
+        the read position (recorded order is journal order: one seek)."""
 
-        Everything recorded by the deadline ended by it (a record is never made
-        before its call ends): ``through``. With a deadline, ``upper`` bounds
-        the calls that ended by it but were recorded after it, found by their
-        recording delay class (``_late_points``), never by a range over time.
-        """
-
-        upper = min(through, hi, self._position(conn, at_us))
-        if deadline_us >= _NEVER:
-            return _Window(through=upper, lo=lo, upper=upper)
-        return _Window(
-            through=min(upper, self._position(conn, deadline_us)),
-            lo=lo,
-            deadline_us=deadline_us,
-            upper=upper,
-        )
+        return _Window(through=min(through, self._position(conn, at_us)))
 
     def _sources(self, conn: sqlite3.Connection, pair: tuple[str, str]) -> list[str]:
         """The sources (Procedure and step) whose calls ever observed the key."""
@@ -1866,22 +1814,6 @@ class ReobservationReader:
         if row is not None:
             into.add(_from_micros(row[0]))
 
-    def _point_at(
-        self, conn: sqlite3.Connection, pair: tuple[str, str], sequence: int
-    ) -> _Point | None:
-        """The observation recorded at ``sequence``, when its set holds the key (two seeks)."""
-
-        self.probes += 1
-        row = conn.execute(
-            "SELECT earliest_us, latest_us, recorded_us, sequence, set_digest "
-            "FROM observation_points WHERE sequence=?",
-            (sequence,),
-        ).fetchone()
-        if row is None:
-            return None
-        capture = self._capture(conn, pair, str(row[4]))
-        return None if not capture else _point_row(row[:4], capture)
-
     def _key_point(
         self,
         conn: sqlite3.Connection,
@@ -1893,17 +1825,10 @@ class ReobservationReader:
 
         Per observing source, the best of its carried observation and its
         current set's maximum through the window (one seek each): the maximum
-        over everything recorded by then. When that maximum lies before a
-        Claim version's interval (``lo``), the exact maximum inside it: any
-        better observation was recorded after the latest in-interval call
-        began (an observation is recorded after it is made), so only records
-        made during that one call are visited (F-003). A deadline adds the
-        calls that ended by it but were recorded after it. Ties prefer the
-        larger Capture digest.
+        over everything recorded by then. Ties prefer the larger Capture digest.
         """
 
         best: _Point | None = None
-        last: _Point | None = None
         for source in self._sources(conn, pair):
             head = self._head(conn, pair, source, window.through)
             if boundaries is not None:
@@ -1938,80 +1863,6 @@ class ReobservationReader:
             for point in found:
                 if best is None or point.rank() > best.rank():
                     best = point
-            if window.lo > 0:
-                # The source's latest observation of the key by then: its
-                # current set's last point (the head row is that set's first).
-                self.probes += 1
-                row = conn.execute(
-                    "SELECT earliest_us, latest_us, recorded_us, sequence FROM observation_points "
-                    "WHERE set_digest=? AND sequence<=? ORDER BY sequence DESC LIMIT 1",
-                    (set_digest, window.through),
-                ).fetchone()
-                if row is not None and int(row[3]) >= window.lo:
-                    point = _point_row(row, capture)
-                    if last is None or point.sequence > last.sequence:
-                        last = point
-        if best is not None and best.sequence < window.lo:
-            best = None if last is None else self._within(conn, pair, window, last)
-        if window.deadline_us < _NEVER:
-            late = self._late_point(conn, pair, window)
-            if late is not None and (best is None or late.rank() > best.rank()):
-                best = late
-        return best
-
-    def _within(
-        self, conn: sqlite3.Connection, pair: tuple[str, str], window: "_Window", last: _Point
-    ) -> _Point:
-        """The best observation in ``[lo, through]`` given the latest one there.
-
-        A better one was made after ``last``'s call began and recorded by
-        ``last``'s record: only the records of that span are visited.
-        """
-
-        best = last
-        self.probes += 1
-        for (sequence,) in conn.execute(
-            "SELECT sequence FROM instants WHERE recorded_us>? AND recorded_us<=? "
-            "AND sequence>=? AND sequence<?",
-            (last.observed_us, last.recorded_us, window.lo, last.sequence),
-        ).fetchall():
-            point = self._point_at(conn, pair, int(sequence))
-            if point is not None and point.rank() > best.rank():
-                best = point
-        return best
-
-    def _late_point(
-        self, conn: sqlite3.Connection, pair: tuple[str, str], window: "_Window"
-    ) -> _Point | None:
-        """The best call of the key that ended by the deadline but was recorded after it.
-
-        Each record keeps its recording delay's power-of-two class; a record of
-        class ``b`` that straddles the deadline ended within ``2**(b+1)`` of
-        it, so each class is one range over the records that ended that close
-        to the deadline (sized by recording rate times that class's delay,
-        never by history), checked for the key.
-        """
-
-        best: _Point | None = None
-        deadline = window.deadline_us
-        for (bucket,) in conn.execute("SELECT bucket FROM delay_buckets").fetchall():
-            self.probes += 1
-            for (sequence,) in conn.execute(
-                "SELECT sequence FROM instants WHERE bucket=? AND latest_us<=? AND latest_us>? "
-                "AND recorded_us>? AND sequence>? AND sequence<=? AND sequence>=?",
-                (
-                    int(bucket),
-                    deadline,
-                    deadline - (1 << (int(bucket) + 1)),
-                    deadline,
-                    window.through,
-                    window.upper,
-                    window.lo,
-                ),
-            ).fetchall():
-                point = self._point_at(conn, pair, int(sequence))
-                if point is not None and (best is None or point.rank() > best.rank()):
-                    best = point
         return best
 
     def _key_sequence(self, conn: sqlite3.Connection, pair: tuple[str, str], through: int) -> int:
@@ -2036,130 +1887,33 @@ class ReobservationReader:
                 found = max(found, int(last[0]))
         return found
 
-    def _version_window(
-        self, conn: sqlite3.Connection, claim_id: str, version: str, live_at: str
-    ) -> tuple[int, int] | None:
-        """The journal positions made while one Claim version was live at the head.
-
-        ``live_at`` is an accepted head the version was live at. The version's
-        first and last generations are two seeks on the lineage path's history
-        from there, and each bound one seek on ``instants`` by generation:
-        never a walk over the lineage's versions (F-007). None when no
-        observation was made while it was live.
-        """
-
-        with self.instance.accepted_history_reader() as history:
-            bounds = history.member_version_bounds(claim_path(claim_id), version, live_at)
-        if bounds is None:
-            return None
-        start, end = bounds
-        self.probes += 1
-        low = conn.execute(
-            "SELECT sequence FROM instants WHERE generation>=? ORDER BY generation, sequence "
-            "LIMIT 1",
-            (start,),
-        ).fetchone()
-        if low is None:
-            return None
-        if end is None:
-            return int(low[0]), _NEVER
-        self.probes += 1
-        high = conn.execute(
-            "SELECT sequence FROM instants WHERE generation<? "
-            "ORDER BY generation DESC, sequence DESC LIMIT 1",
-            (end,),
-        ).fetchone()
-        if high is None or int(high[0]) < int(low[0]):
-            return None
-        return int(low[0]), int(high[0])
-
     def latest_version_record(
-        self,
-        claim_id: str,
-        version: str,
-        *,
-        observed_by: datetime,
-        live_at: str,
-        keys: Sequence[ReobservationKey] = (),
+        self, claim_id: str, version: str, *, observed_by: datetime
     ) -> RecordedReobservation | None:
-        """One Claim version's latest recorded observation observed by ``observed_by``.
+        """One Claim version's latest recorded re-observation observed by ``observed_by``.
 
-        ``version`` is the Claim's artifact digest, live at the accepted head
-        ``live_at``. The lineage's own records count only when admitted while
-        that exact version was live: one seek on ``reobservations_by_version``.
-        The content and row observations of the keys the version depends on
-        count when recorded while it was live at the head (its live interval,
-        as journal positions) and their call ended by ``observed_by`` (ruling
-        1b); the instant reported is the call's earliest. The greatest eligible
-        one is selected within those bounds (F-002, F-003). The latest of
-        these wins; its journal record is read by its sequence.
+        ``version`` is the Claim's artifact digest: only records admitted while
+        that exact version was live count. One
+        seek on ``reobservations_by_version`` and one journal record read by
+        its sequence: records observed after ``observed_by``, and the lineage's
+        other versions, are never visited.
         """
 
-        observed_us = _micros(observed_by)
         self._guard_fork()
         with self._lock:
             conn = self._connection()
             if conn is None:
                 return None
-            through = _through()
             self.probes += 1
             row = conn.execute(
-                _VERSION_RECORD, (claim_id, version, observed_us, through)
+                _VERSION_RECORD,
+                (claim_id, version, _micros(observed_by), _through()),
             ).fetchone()
-            content: list[tuple[_Point, tuple[str, str]]] = []
-            live = (
-                self._version_window(conn, claim_id, version, live_at)
-                if keys and self._content_observed(conn)
-                else None
-            )
-            if live is not None:
-                window = self._window(
-                    conn,
-                    at_us=_NEVER,
-                    through=through,
-                    deadline_us=observed_us,
-                    lo=live[0],
-                    hi=live[1],
-                )
-                for pair in sorted(
-                    {(key.contract_digest, key.observed_content_digest) for key in keys}
-                ):
-                    point = self._key_point(conn, pair, window)
-                    if point is not None:
-                        content.append((point, pair))
-        candidates: list[tuple[tuple[int, str], ReobservationRecord, int]] = []
-        if row is not None:
-            record = ReobservationRecord(
-                claim_id=claim_id,
-                capture_digest=str(row[0]),
-                contract_digest=str(row[1]),
-                observed_content_digest=str(row[2]),
-                observed_at=_instant(row[3]),
-                recorded_at=_instant(row[4]),
-            )
-            candidates.append(
-                ((_micros(record.observed_at), record.capture_digest), record, int(row[5]))
-            )
-        for point, (contract, observed_content_digest) in content:
-            candidates.append(
-                (
-                    point.rank(),
-                    ReobservationRecord(
-                        claim_id=claim_id,
-                        capture_digest=point.capture_digest,
-                        contract_digest=contract,
-                        observed_content_digest=observed_content_digest,
-                        observed_at=_from_micros(point.observed_us),
-                        recorded_at=_from_micros(point.recorded_us),
-                    ),
-                    point.sequence,
-                )
-            )
-        if not candidates:
+        if row is None:
             return None
-        _rank, record, sequence = max(candidates, key=lambda item: item[0])
-        journal = self.store._journal(create=False)
         self.rows_read += 1
+        sequence = int(row[5])
+        journal = self.store._journal(create=False)
         stored = (
             ()
             if journal is None
@@ -2169,6 +1923,14 @@ class ReobservationReader:
                 first_sequence=sequence,
                 last_sequence=sequence,
             )
+        )
+        record = ReobservationRecord(
+            claim_id=claim_id,
+            capture_digest=str(row[0]),
+            contract_digest=str(row[1]),
+            observed_content_digest=str(row[2]),
+            observed_at=_instant(row[3]),
+            recorded_at=_instant(row[4]),
         )
         if (
             len(stored) != 1
@@ -2277,27 +2039,11 @@ class ReobservationReader:
         )
 
 
-def _point_row(row: Sequence[object], capture: str) -> _Point:
-    """A point from an (earliest, latest, recorded, sequence) row."""
-
-    earliest, latest, recorded, sequence = (int(cast(int, item)) for item in row)
-    return _Point(earliest, latest, recorded, sequence, capture)
-
-
 @dataclass(frozen=True)
 class _Window:
-    """The journal positions one read admits.
-
-    ``through`` is the last position whose records all count (by the read's
-    instant, read position, version interval end and deadline); ``lo`` the
-    first a Claim version's interval admits; ``upper`` the last any record
-    counts at (a deadline's late-recorded calls lie between them).
-    """
+    """The journal positions one read admits: every record through ``through``."""
 
     through: int
-    lo: int = 0
-    deadline_us: int = _NEVER
-    upper: int = 0
 
 
 def _after_fork_in_child() -> None:

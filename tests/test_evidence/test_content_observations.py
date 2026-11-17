@@ -14,7 +14,6 @@ from pathlib import Path
 
 from cruxible_client.contracts.claims import claim_citation_references
 from cruxible_core.evidence.claim_reobservations import (
-    ClaimReobservationJournalCorrupt,
     ClaimReobservationStore,
     ObservedContent,
     ReobservationReader,
@@ -186,75 +185,6 @@ def test_an_older_call_recorded_later_never_moves_freshness_back(tmp_path: Path)
     assert reader.latest_observation(key.contract_digest, key.observed_content_digest) == hours(2.5)
 
 
-def test_a_settlement_selects_the_observation_made_while_the_version_was_live(
-    tmp_path: Path,
-) -> None:
-    """F-002: an observation after the version's retirement never hides an
-    earlier one made while it was live; neither counts for a deadline before it."""
-
-    from cruxible_client.contracts.claims import claim_artifact_digest
-    from tests.core_support._published_world import retire_claim
-
-    instance, owner = _freshness_world(tmp_path, stale_after=_HOUR)
-    claim, cited, key = _cited(instance)
-    version = claim_artifact_digest(claim).tagged
-    store = ClaimReobservationStore(instance)
-    mine = [ObservedContent(key.contract_digest, key.observed_content_digest, cited)]
-    hours = lambda value: _START + timedelta(hours=value)  # noqa: E731
-    live_at = instance.accepted_coordinate().git_oid
-    _observe(store, hours(2.2), mine, earliest=hours(2), latest=hours(2.1))
-    retire_claim(instance, owner, claim.identity.name)
-    _observe(store, hours(3.2), mine, earliest=hours(3), latest=hours(3.1))
-    reader = ReobservationReader(instance)
-    found = reader.latest_version_record(
-        claim.identity.name, version, observed_by=hours(4), live_at=live_at, keys=(key,)
-    )
-    assert found is not None and found.record.observed_at == hours(2)
-    assert (
-        reader.latest_version_record(
-            claim.identity.name, version, observed_by=hours(2.05), live_at=live_at, keys=(key,)
-        )
-        is None
-    )
-
-
-def test_a_settlement_finds_the_best_observation_inside_a_later_live_interval(
-    tmp_path: Path,
-) -> None:
-    """Review 2b F-003: the global best lies before the version's interval.
-
-    The version (here the retired artifact, live from its generation on) saw
-    a delayed call with an older earliest instant after a fresher one; the
-    settlement reads the fresher (90), never the latest-recorded (50), and
-    never the one before the interval (100).
-    """
-
-    from cruxible_client.contracts.claims import claim_artifact_digest, claim_path, parse_claim
-    from tests.core_support._published_world import retire_claim
-
-    instance, owner = _freshness_world(tmp_path, stale_after=_HOUR)
-    claim, cited, key = _cited(instance)
-    store = ClaimReobservationStore(instance)
-    mine = [ObservedContent(key.contract_digest, key.observed_content_digest, cited)]
-    hours = lambda value: _START + timedelta(hours=value)  # noqa: E731
-    _observe(store, hours(1.2), mine, earliest=hours(1), latest=hours(1.1))
-    retire_claim(instance, owner, claim.identity.name)
-    head = instance.accepted_coordinate()
-    path = claim_path(claim.identity.name)
-    version = claim_artifact_digest(parse_claim(instance.tree_at(head.git_oid)[path], path=path))
-    _observe(store, hours(1.5), mine, earliest=hours(0.9), latest=hours(1.4))
-    _observe(store, hours(1.6), mine, earliest=hours(0.5), latest=hours(1.5))
-    reader = ReobservationReader(instance)
-    found = reader.latest_version_record(
-        claim.identity.name,
-        version.tagged,
-        observed_by=hours(3),
-        live_at=head.git_oid,
-        keys=(key,),
-    )
-    assert found is not None and found.record.observed_at == hours(0.9)
-
-
 def _vm_steps(reader: ReobservationReader, call):  # type: ignore[no-untyped-def]
     """SQLite VM steps one reader call costs (the progress handler at every op)."""
 
@@ -276,10 +206,9 @@ def _vm_steps(reader: ReobservationReader, call):  # type: ignore[no-untyped-def
 
 
 def test_freshness_reads_do_not_grow_with_observation_history(tmp_path: Path) -> None:
-    """F-004: head freshness, the remembered-verdict sequence, retention and a
-    settlement read do the same SQLite work at 100 and 1,000 unchanged calls."""
+    """F-004: head freshness, a historical read, the remembered-verdict sequence
+    and retention do the same SQLite work at 100 and 1,000 unchanged calls."""
 
-    from cruxible_client.contracts.claims import claim_artifact_digest
     from cruxible_client.contracts.temporal import format_datetime
 
     costs = {}
@@ -311,7 +240,6 @@ def test_freshness_reads_do_not_grow_with_observation_history(tmp_path: Path) ->
         assert sequence is not None
         # The same call's history, projected as unchanged calls would leave it.
         with store._locked() as conn:  # noqa: SLF001
-            generation = conn.execute("SELECT generation FROM instants LIMIT 1").fetchone()[0]
             for index in range(1, size):
                 at = _START + timedelta(minutes=index)
                 store._apply_shared(  # noqa: SLF001
@@ -325,12 +253,9 @@ def test_freshness_reads_do_not_grow_with_observation_history(tmp_path: Path) ->
                     },
                     sequence + index,
                     at,
-                    generation=generation,
                 )
         reader = ReobservationReader(instance)
         name = claim.identity.name
-        version = claim_artifact_digest(claim).tagged
-        live_at = instance.accepted_coordinate().git_oid
         end = _START + timedelta(days=30)
         costs[size] = {
             "latest": _vm_steps(reader, lambda: reader.latest(name, (key,), end)),
@@ -344,21 +269,6 @@ def test_freshness_reads_do_not_grow_with_observation_history(tmp_path: Path) ->
             ),
         }
 
-        # A settlement read's SQL; the record it selects is a projected one with
-        # no journal record behind it, which the read then refuses.
-        def settle() -> None:
-            try:
-                reader.latest_version_record(
-                    name,
-                    version,
-                    observed_by=_START + timedelta(minutes=40),
-                    live_at=live_at,
-                    keys=(key,),
-                )
-            except ClaimReobservationJournalCorrupt:
-                pass
-
-        costs[size]["settlement"] = _vm_steps(reader, settle)
     for name, small in costs[100].items():
         assert small > 0, (name, costs)
         assert costs[1_000][name] <= small + 64, (name, costs)

@@ -1738,9 +1738,9 @@ projection exactly, and a journal out of recorded order is refused as corrupt
 observation of a cited contract and content is read with a few seeks per
 observing Procedure call at the evaluation instant, however long its history
 (kept in full for audit), however many runs observed it, or however many
-different result sets held it. A prediction settles on the best observation
-made while the predicted Claim version was live whose call ended by the
-deadline, never on one made after the version was retired. An observation
+different result sets held it. A prediction settles on the predicted Claim
+version's own per-Claim re-observations, never on a shared content or row
+observation. An observation
 that set an expiry is named in
 the verdict's `freshness_expirations` entry (`reobserved_by`,
 `reobserved_at`). A Capture's minimum retention counts from the latest
