@@ -691,18 +691,22 @@ def handle_playbill_approve(
 def _approval_signer_key(instance_id: str, signer_id: str | None) -> tuple[str, Path]:
     """Who signs and with which local key, by the lookup the CLI and the SDK share.
 
-    The signer is ``signer_id``, else the principal this server acts as (the
-    folder's, or ``CRUXIBLE_PRINCIPAL_ID``), else the one key in
+    The signer is ``signer_id``, else the principal this server acts as on the
+    instance the call targets (the folder's when the folder is bound to that
+    instance, or ``CRUXIBLE_PRINCIPAL_ID``), else the one key in
     ``CRUXIBLE_MCP_KEY_DIR``. Its key is ``<signer>.ed25519`` in
-    ``CRUXIBLE_MCP_KEY_DIR`` or the folder record's key directory when it is
-    the folder's principal; else ``CRUXIBLE_PRINCIPAL_KEY`` as the signer's
-    ``cruxible.env`` sets it (never when the environment names another
-    principal), else the signer's remembered settings. Never another
-    principal's key: with none found the refusal names this server's repair.
+    ``CRUXIBLE_MCP_KEY_DIR``, the operator's explicit directory; otherwise the
+    shared lookup decides, for the targeted instance: ``CRUXIBLE_PRINCIPAL_KEY``
+    (never when the environment names another principal), the signer's
+    remembered settings for that instance, then the folder record when it is
+    that instance's and names the signer. A folder bound to another instance
+    is no source: its same-named principal has another key.
     """
 
     folder = _folder_identity()
     key_dir = mcp_approval_key_dir() if os.environ.get(MCP_KEY_DIR_ENV) else None
+    if folder is not None and folder.identity.instance_id != instance_id:
+        folder = None
     signer = signer_id
     if signer is None and folder is not None:
         signer = folder.principal_id
@@ -722,18 +726,16 @@ def _approval_signer_key(instance_id: str, signer_id: str | None) -> tuple[str, 
         governance_identifier(signer, label="signer_id")
     except ValueError as exc:
         raise DataValidationError(f"cruxible_proposal_approve: {exc}") from exc
-    for directory in (
-        key_dir,
-        folder.key_dir if folder is not None and folder.principal_id == signer else None,
-    ):
-        if directory is not None and (directory / f"{signer}.ed25519").is_file():
-            return signer, directory / f"{signer}.ed25519"
+    if key_dir is not None and (key_dir / f"{signer}.ed25519").is_file():
+        return signer, key_dir / f"{signer}.ed25519"
     client = _get_client()
     found = principal_key(
         signer,
         instance_id=instance_id,
         server_url=client.base_url,
         server_socket=client.socket_path,
+        # The bound folder's root (its record is .cruxible/identity.json).
+        folder=None if folder is None else folder.record_path.parent.parent,
     )
     if found is None:
         raise ConfigError(

@@ -294,3 +294,93 @@ def test_approve_submits_to_the_proposal_the_challenge_landed(tmp_path, monkeypa
     )
     assert receipt == "receipt"
     assert submitted_to == ["PROP-LANDED"]
+
+
+def _folder_bound_to(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, world: dict[str, Any], instance_id: str
+) -> Path:
+    """The MCP workspace acting by a verified folder record for ``instance_id``'s owner,
+    whose key directory is ``folder-keys`` (a key of its own, not the registered one)."""
+
+    from cruxible_client.authoring.folder_identity import FolderIdentity, VerifiedFolderIdentity
+
+    folder_keys = tmp_path / "folder-keys"
+    generate_client_principal_key(
+        folder_keys, principal_id="owner", kind="ordinary", forbidden_roots=()
+    )
+    record = world["workspace"] / ".cruxible" / "identity.json"
+    record.parent.mkdir()
+    identity = FolderIdentity(
+        instance_id=instance_id, principal_id="owner", key_dir=str(folder_keys)
+    )
+    record.write_text(identity.model_dump_json())
+    monkeypatch.setattr(
+        handlers,
+        "_folder_identity",
+        lambda: VerifiedFolderIdentity(
+            identity=identity, record_path=record, principal=world["principals"]["owner"]
+        ),
+    )
+    return folder_keys
+
+
+def _remember(tmp_path: Path, instance_id: str, directory: Path, principal: str) -> None:
+    import json
+
+    socket = tmp_path / "daemon.sock"
+    settings = directory / "cruxible.env"
+    settings.write_text(
+        f"export CRUXIBLE_SERVER_SOCKET={socket}\n"
+        f"export CRUXIBLE_INSTANCE_ID={instance_id}\n"
+        f"export CRUXIBLE_PRINCIPAL_ID={principal}\n"
+        f"export CRUXIBLE_PRINCIPAL_KEY={directory / f'{principal}.ed25519'}\n"
+    )
+    binding = f"{instance_id}@unix://{socket.resolve()}"
+    (tmp_path / "context.json").write_text(
+        json.dumps({"principals": {binding: {"settings": {principal: str(settings)}}}})
+    )
+
+
+def test_approve_on_another_instance_never_uses_the_bound_folders_key(
+    tmp_path, monkeypatch
+) -> None:
+    """Review F-013: the folder is bound to inst_a; the call targets inst_b, where a
+    same-named `owner` has another key, remembered. The folder shortcut picked the
+    folder's key by principal name alone, and the approval on inst_b refused."""
+
+    world = _world(tmp_path, monkeypatch, "owner")
+    _no_identity(tmp_path, monkeypatch)
+    _folder_bound_to(tmp_path, monkeypatch, world, "inst_a")
+    _remember(tmp_path, "inst_b", world["keys"], "owner")
+
+    handlers.handle_playbill_approve("inst_b", "PROP-1", signer_id="owner", candidate_digest=None)
+
+    # Signed with the key inst_b's `owner` is registered with (world["keys"]): the
+    # folder's own key would have failed the signer's public-key check.
+    assert world["calls"]["submitted"][0]["signer_id"] == "owner"
+
+    # With no signer named, the folder of another instance names no default either.
+    with pytest.raises(ConfigError, match="acts as no principal"):
+        handlers.handle_playbill_approve("inst_b", "PROP-2", signer_id=None, candidate_digest=None)
+
+
+def test_approve_prefers_remembered_settings_to_the_same_instance_folder_record(
+    tmp_path, monkeypatch
+) -> None:
+    """The shared order holds on MCP: the signer's remembered settings for the instance
+    come before the folder record, which is the fallback when nothing is remembered."""
+
+    world = _world(tmp_path, monkeypatch, "owner")
+    _no_identity(tmp_path, monkeypatch)
+    folder_keys = _folder_bound_to(tmp_path, monkeypatch, world, "inst_a")
+    _remember(tmp_path, "inst_a", world["keys"], "owner")
+
+    handlers.handle_playbill_approve("inst_a", "PROP-1", signer_id=None, candidate_digest=None)
+    assert len(world["calls"]["submitted"]) == 1
+
+    # Nothing remembered: the folder record's key is the one found, and refused by
+    # the public-key check because this folder's key is not the registered one.
+    (tmp_path / "context.json").unlink()
+    with pytest.raises(SigningKeyError, match="does not match"):
+        handlers.handle_playbill_approve("inst_a", "PROP-2", signer_id=None, candidate_digest=None)
+    assert (folder_keys / "owner.ed25519").is_file()
