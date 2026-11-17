@@ -89,21 +89,6 @@ KitRequires: TypeAlias = Annotated[
 ]
 
 
-#: The kit every core bundles; ``kit add base`` installs it from the package.
-BUNDLED_BASE_KIT_ID = "base"
-
-
-def required_kit_reference(requirement: KitRequirement) -> str | None:
-    """The ``kit add`` reference of a required kit, when one is known without a registry.
-
-    The bundled base kit is ``base``. For any other kit an id and a minimum
-    version name no release a registry is known to hold (it may be unpublished,
-    or published under another namespace), so none is invented.
-    """
-
-    return BUNDLED_BASE_KIT_ID if requirement.kit_id == BUNDLED_BASE_KIT_ID else None
-
-
 def requires_missing_message(
     kit_id: str,
     version: str,
@@ -111,11 +96,16 @@ def requires_missing_message(
     installed: str | None,
     *,
     pending_proposal: str | None = None,
+    reference: str | None = None,
 ) -> str:
     """``cruxible.kit.requires_missing``: a required kit is absent or older than required.
 
     ``pending_proposal``: the required kit's own add is proposed and awaits
-    approval, so approving that proposal is what installs it.
+    approval, so approving that proposal is what installs it. ``reference``:
+    the ``kit add`` reference the instance itself vouches for (the base kit
+    this core bundles, when it meets the requirement); with none, the message
+    asks for a release's registry reference or a local build's path, since a
+    kit id and a minimum version name no release a registry is known to hold.
     """
 
     held = "none" if installed is None else f"{requirement.kit_id} {installed}"
@@ -130,7 +120,6 @@ def requires_missing_message(
         )
     verb = "Add" if installed is None else "Upgrade"
     wanted = f"{requirement.kit_id} {requirement.min_version} or later"
-    reference = required_kit_reference(requirement)
     if reference is None:
         return (
             f"{lead} {verb} it first: kit add with the registry reference of a release of "
@@ -193,7 +182,6 @@ __all__ = [
     "KitRequiresRefusalCode",
     "remove_required_message",
     "requires_lowered_message",
-    "required_kit_reference",
     "requires_missing_message",
     "requires_unresolved_message",
     "validate_kit_requires",

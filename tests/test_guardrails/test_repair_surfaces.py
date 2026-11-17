@@ -128,6 +128,9 @@ COMPUTED_PRODUCERS: Mapping[tuple[str, str], Mapping[str, frozenset[str]]] = {
         "cruxible.kit.add": frozenset({"kit"}),
     },
     # The kit's reference when the instance holds one; a local folder's path is not sent.
+    ("src/cruxible_core/service/kits.py", "_require_document_bodies"): {
+        "cruxible.kit.add": frozenset({"kit"})
+    },
     ("src/cruxible_core/service/kits.py", "_add_required_kit"): {
         "cruxible.kit.add": frozenset({"kit"})
     },
@@ -324,6 +327,7 @@ def test_every_producer_resolves_or_is_named() -> None:
 #: bundled base kit, an exact registry reference; never one made up from a kit's
 #: id, and never a local folder's path, which the daemon is not sent) computes
 #: its arguments and is named in ``COMPUTED_PRODUCERS`` with the key it carries.
+#: That reference is the base kit the daemon recognizes by content, never a label.
 INSTANCE_HELD_OPERANDS: Mapping[str, frozenset[str]] = {
     "cruxible.kit.add": frozenset({"kit", "reference"}),
     "cruxible.kit.remove": frozenset({"kit_id"}),

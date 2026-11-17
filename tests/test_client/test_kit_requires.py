@@ -12,7 +12,6 @@ from cruxible_client.contracts.kit_requires import (
     KitRequires,
     KitRequiresRefusalCode,
     remove_required_message,
-    required_kit_reference,
     requires_lowered_message,
     requires_missing_message,
     requires_unresolved_message,
@@ -105,20 +104,19 @@ def test_the_refusal_codes_are_a_closed_vocabulary() -> None:
 def test_the_refusals_name_the_kit_and_the_repair() -> None:
     base = KitRequirement(kit_id="base", min_version="1.0.0")
 
-    assert requires_missing_message("security", "1.3.0", base, None) == (
+    # coldps-01: the base kit's repair printed a literal '<KIT>'. With the reference
+    # the daemon vouches for (the base kit it bundles) the message names it.
+    assert requires_missing_message("security", "1.3.0", base, None, reference="base") == (
         "Kit security 1.3.0 requires kit base 1.0.0 or later; this instance holds none. "
         "Add it first: kit add base (or the path of a local build of base 1.0.0 or later)."
     )
-    assert requires_missing_message("security", "1.3.0", base, "0.9.0") == (
+    assert requires_missing_message("security", "1.3.0", base, "0.9.0", reference="base") == (
         "Kit security 1.3.0 requires kit base 1.0.0 or later; this instance holds base 0.9.0. "
         "Upgrade it first: kit add base (or the path of a local build of base 1.0.0 or later)."
     )
-    # coldps-01: the base kit's repair printed a literal '<KIT>'; it is bundled, so it
-    # is named. Review F-002: any other kit's id and minimum version name no release
-    # a registry is known to hold, so no reference is invented for it.
+    # Review F-002: with no such reference (any other kit, or a base requirement the
+    # bundled kit does not meet) an id and a minimum version name no known release.
     web = KitRequirement(kit_id="web", min_version="2.1.0")
-    assert required_kit_reference(base) == "base"
-    assert required_kit_reference(web) is None
     assert requires_missing_message("acme", "1.0.0", web, None).endswith(
         "Add it first: kit add with the registry reference of a release of web 2.1.0 or "
         "later, or the path of a local build."

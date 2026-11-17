@@ -47,7 +47,6 @@ from cruxible_client.contracts.kit_requires import (
     KIT_REQUIRES_UNRESOLVED,
     KitRequirement,
     remove_required_message,
-    required_kit_reference,
     requires_lowered_message,
     requires_missing_message,
     requires_unresolved_message,
@@ -457,11 +456,12 @@ def _require_staged(
 
 
 def _require_document_bodies(
-    instance: PlaybillInstance, contents: Mapping[str, bytes], *, kit: str
+    instance: PlaybillInstance, contents: Mapping[str, bytes], *, kit: str | None
 ) -> None:
     """Refuse unless every kit Document's body is in the body store (staged by the adapter).
 
-    ``kit`` is the reference the repair adds again: the one this add named.
+    ``kit`` is the reference the repair adds again, when the instance vouches
+    for one (``bundled_base_reference``); a client's source label is not one.
     """
 
     store = instance.body_store()
@@ -475,7 +475,9 @@ def _require_document_bodies(
             "cruxible.kit.document_bodies_not_staged",
             f"{', '.join(missing)}: the Document body is not in this instance's body store; "
             "stage each body first (the CLI and MCP kit add adapters stage what they send)",
-            repair=RepairOperation(operation="cruxible.kit.add", arguments={"kit": kit}),
+            repair=RepairOperation(
+                operation="cruxible.kit.add", arguments={} if kit is None else {"kit": kit}
+            ),
         )
 
 
@@ -2401,15 +2403,43 @@ def _holds_bundled_base(receipt: KitReceipt) -> bool:
     return any(bundled.get(entry.path) == entry.release_digest for entry in receipt.artifacts)
 
 
-def _add_required_kit(requirement: KitRequirement) -> RepairOperation:
-    """``kit add`` of a required kit: named only when the instance knows its reference.
+def bundled_base_reference(kit_id: str, content_digest: str) -> str | None:
+    """``base`` when a kit is exactly the base kit this core bundles, else None.
 
-    The bundled base kit is ``base``. For any other kit the requirement names
-    an id and a minimum version, which identify no release a registry is known
-    to hold, so its reference or build path stays the caller's to name.
+    Decided by the kit's id and content digest, which the daemon holds, never
+    by the free-form source label a client recorded: a folder named
+    ``bundled`` is not the bundled kit, and ``kit add base`` adds only this one.
     """
 
-    reference = required_kit_reference(requirement)
+    from cruxible_core.kits.base_kit import BASE_KIT_REFERENCE, bundled_base_kit
+
+    bundled = bundled_base_kit().manifest
+    if (kit_id, content_digest) == (bundled.kit_id, bundled.content_digest):
+        return BASE_KIT_REFERENCE
+    return None
+
+
+def _required_kit_reference(requirement: KitRequirement) -> str | None:
+    """``base`` when the bundled base kit is the required kit and meets the requirement."""
+
+    from cruxible_core.kits.base_kit import BASE_KIT_REFERENCE, bundled_base_kit
+
+    bundled = bundled_base_kit().manifest
+    if requirement.kit_id == bundled.kit_id and requirement.met_by(bundled.version):
+        return BASE_KIT_REFERENCE
+    return None
+
+
+def _add_required_kit(requirement: KitRequirement) -> RepairOperation:
+    """``kit add`` of a required kit: named only when the instance vouches for a reference.
+
+    That is the bundled base kit, when it meets the requirement. For any other
+    kit the requirement names an id and a minimum version, which identify no
+    release a registry is known to hold, so its reference or build path stays
+    the caller's to name.
+    """
+
+    reference = _required_kit_reference(requirement)
     return RepairOperation(
         operation="cruxible.kit.add", arguments={} if reference is None else {"kit": reference}
     )
@@ -2456,6 +2486,7 @@ def _required_receipts(
                     requirement,
                     version,
                     pending_proposal=pending,
+                    reference=_required_kit_reference(requirement),
                 ),
                 repair=(
                     RepairOperation(
@@ -2588,7 +2619,7 @@ def _early_refusals(
 
 
 def _inspect_staged(
-    instance: PlaybillInstance, manifest: KitManifest, *, kit: str
+    instance: PlaybillInstance, manifest: KitManifest, *, kit: str | None
 ) -> dict[str, InspectedProviderPackage]:
     """Each bundled package read from the body store and resolved for this host.
 
@@ -2799,7 +2830,11 @@ def _add_kit(
                     f"kit Document body {body.digest} differs from its digest"
                 )
     # Every governed Document's body is staged before anything is planned.
-    _require_document_bodies(instance, contents, kit=request.source or manifest.kit_id)
+    _require_document_bodies(
+        instance,
+        contents,
+        kit=bundled_base_reference(manifest.kit_id, manifest.content_digest),
+    )
     tree = instance.immutable_tree_at(mode.head.git_oid)
     found = _read_receipt(instance, tree, manifest.kit_id)
     shell, receipt = (None, None) if found is None else found
@@ -2869,7 +2904,11 @@ def _add_kit(
     inspected = (
         None
         if mode.previewing or not manifest.providers
-        else _inspect_staged(instance, manifest, kit=request.source or manifest.kit_id)
+        else _inspect_staged(
+            instance,
+            manifest,
+            kit=bundled_base_reference(manifest.kit_id, manifest.content_digest),
+        )
     )
     for provider in manifest.providers:
         # The staged bytes must reproduce what the manifest says they are.
@@ -3470,7 +3509,13 @@ def _refuse_unmet_requires(
             if not requirement.met_by(version):
                 raise RequestRefusedError(
                     KIT_REQUIRES_MISSING,
-                    requires_missing_message(kit_id, receipt.version, requirement, version),
+                    requires_missing_message(
+                        kit_id,
+                        receipt.version,
+                        requirement,
+                        version,
+                        reference=_required_kit_reference(requirement),
+                    ),
                     repair=_add_required_kit(requirement),
                 )
 

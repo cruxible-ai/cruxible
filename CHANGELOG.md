@@ -510,16 +510,15 @@ quickstart and concepts pages.
 - **SDK `cx.signer(ID)`** opens a principal's approval signer from the same
   lookup (`cx.signer()` for the connection's own principal); the SDK's `next`
   spells `approve(signer=cx.signer("reviewer"), ...)`.
-- **A kit repair names the kit when the instance holds its reference.**
-  `cruxible.kit.requires_missing` for the bundled base kit and a stale kit
-  proposal's `readmit_requires_resubmission` printed `cruxible kit add
-  '<KIT>'`. The base kit is now named (`kit add base`), and a stale kit that
-  was added from a registry is named by its exact pinned reference. A kit
-  added from a local folder keeps the placeholder, because the daemon is sent
-  its bytes and never its path; the message names the release and the folder
-  name its author's client recorded. A kit that requires a kit whose own add
-  awaits approval (the base kit under independent approval) is refused with
-  that proposal's approval as the repair.
+- **A kit repair names the base kit, and never invents a reference.**
+  `cruxible.kit.requires_missing` for the bundled base kit and a stale base
+  kit proposal's `readmit_requires_resubmission` printed `cruxible kit add
+  '<KIT>'`; they now print `kit add base`, recognized by the kit's id and
+  content. Any other kit keeps the placeholder, because the daemon holds the
+  kit's bytes and a free-form source label, not a reference it can vouch for;
+  the message names the release and that label. A kit that requires a kit
+  whose own add awaits approval, in a release that meets the requirement, is
+  refused with that proposal's approval as the repair.
 - **`link --guides` on an unregistered page names the caller's own repair**:
   `cx.files.add(...)` on the SDK, and on MCP the CLI command marked as the
   CLI's (no MCP tool edits the file catalog).

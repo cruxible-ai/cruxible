@@ -26,7 +26,7 @@ from cruxible_client.contracts.errors import (
     ProposalStale,
     ProposalWithdrawNotAuthor,
 )
-from cruxible_client.contracts.kits import KitReceipt, registry_source
+from cruxible_client.contracts.kits import KitReceipt
 from cruxible_client.contracts.principals import AuthoringRefusal
 from cruxible_client.contracts.procedures.node_summary import (
     ReobservationRefusalReason,
@@ -1452,10 +1452,9 @@ def author_repair(
     """The author's command that remakes a change set its bytes cannot carry to the head.
 
     A kit change is its kit's own commit again: ``kit remove`` with the kit's id
-    for a removal, ``kit add`` for an addition, naming the reference the
-    instance holds for it (``_kit_reference``: ``base``, or the exact registry
-    reference it was added from) and leaving a local folder's path to its
-    author; a migration, or another closure, is authored again.
+    for a removal, ``kit add`` for an addition, naming ``base`` when it is the
+    bundled base kit (``_kit_reference``) and otherwise leaving the kit operand
+    to its author; a migration, or another closure, is authored again.
     """
 
     kit_id = _kit_id(source)
@@ -1497,28 +1496,27 @@ def _proposed_kit_receipt(
 
 
 def _kit_reference(receipt: KitReceipt | None, kit_id: str) -> str | None:
-    """The ``kit add`` reference that remakes a kit proposal, when the instance holds one.
+    """The ``kit add`` reference that remakes a kit proposal, when the daemon vouches for one.
 
-    The bundled base kit is ``base``; a kit added from a registry recorded its
-    exact pinned reference. A kit added from a directory or a layout recorded
-    only that folder's name: the daemon receives a kit's bytes, never its
-    path, so the path stays the author's to name and no reference is invented
-    from the kit's id.
+    Only the base kit this core bundles, recognized by its id and content
+    digest (``kit add base`` adds exactly that). The source a client recorded
+    is a free-form label (a folder's name, a ``--source`` value, a registry
+    reference the daemon never resolved): it is shown in the message for the
+    author to read and is never rendered as a command.
     """
 
-    from cruxible_core.kits.base_kit import BASE_KIT_REFERENCE, BUNDLED_KIT_SOURCE
+    if receipt is None:
+        return None
+    from cruxible_core.service.kits import bundled_base_reference
 
-    recorded = None if receipt is None else receipt.source
-    if recorded == BUNDLED_KIT_SOURCE or (recorded is None and kit_id == BASE_KIT_REFERENCE):
-        return BASE_KIT_REFERENCE
-    return recorded if registry_source(recorded) else None
+    return bundled_base_reference(kit_id, receipt.content_digest)
 
 
 def kit_source_note(source: ProposalResult, instance: PlaybillInstance | None) -> str:
-    """What a stale kit addition's refusal adds when its kit came from a local folder.
+    """What a stale kit addition's refusal adds when the repair cannot name its kit.
 
-    The repair cannot spell that path, so the message says which release it
-    was and the folder name its author's client recorded.
+    The release it was and the source label its author's client recorded, for
+    the author to choose the directory, layout or registry reference again.
     """
 
     kit_id = _kit_id(source)
@@ -1527,10 +1525,11 @@ def kit_source_note(source: ProposalResult, instance: PlaybillInstance | None) -
     receipt = _proposed_kit_receipt(source, kit_id, instance)
     if receipt is None or _kit_reference(receipt, kit_id) is not None:
         return ""
-    folder = f" (recorded as {receipt.source})" if receipt.source else ""
+    recorded = f" (recorded as {receipt.source})" if receipt.source else ""
     return (
-        f": kit {kit_id} {receipt.version}, from the kit directory or layout it was added "
-        f"from{folder}; that path is the author's, the daemon holds only the kit's bytes"
+        f": kit {kit_id} {receipt.version}, from the kit directory, layout or registry "
+        f"reference it was added from{recorded}; the daemon holds the kit's bytes and "
+        "that label, not a reference it can vouch for"
     )
 
 

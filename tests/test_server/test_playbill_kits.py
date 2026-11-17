@@ -2841,8 +2841,8 @@ def test_a_late_signer_on_a_kit_change_is_told_the_kits_own_command(
         # path stays the author's operand.
         assert wire["repair"]["arguments"] == {}, wire
         assert (
-            "kit acme 1.0.0, from the kit directory or layout it was added from "
-            "(recorded as test)" in wire["message"]
+            "kit acme 1.0.0, from the kit directory, layout or registry reference it was "
+            "added from (recorded as test)" in wire["message"]
         )
         assert "acme:1.0.0" not in wire["message"] + cli_text + mcp_text
         assert "cruxible kit add '<KIT>'" in cli_text
@@ -2850,23 +2850,42 @@ def test_a_late_signer_on_a_kit_change_is_told_the_kits_own_command(
             assert "kit remove" not in text and "cruxible_kit_remove" not in text
 
 
-def test_a_stale_kit_repair_names_only_a_reference_the_instance_holds() -> None:
-    """coldps-01 and review F-002: the bundled base kit and a kit pulled from a registry
-    are named exactly; a local folder's name is no reference and none is made up."""
+def test_a_stale_kit_repair_names_only_the_bundled_base_kit_the_daemon_recognizes() -> None:
+    """coldps-01, review F-002 and F-015: `kit add base` is printed only for the base kit
+    this core bundles, recognized by id and content digest. A recorded source is a
+    free-form label and is never a command: not a folder named `bundled`, not a
+    slash-bearing `--source` value, not a registry reference the daemon never resolved."""
 
+    from cruxible_client.contracts.kit_requires import KitRequirement
     from cruxible_client.contracts.kits import KitReceipt
+    from cruxible_core.kits.base_kit import bundled_base_kit
+    from cruxible_core.service.kits import _required_kit_reference, bundled_base_reference
     from cruxible_core.service.proposals.proposals import _kit_reference
 
-    def receipt(source: str | None) -> KitReceipt:
-        return KitReceipt.model_construct(kit_id="acme", version="1.2.3", source=source)
+    bundled = bundled_base_kit().manifest
+    other = "sha256:" + "a" * 64
 
-    pinned = "registry.example/team/kits/acme@sha256:" + "b" * 64
-    assert _kit_reference(receipt(pinned), "acme") == pinned
-    assert _kit_reference(receipt("bundled"), "base") == "base"
-    assert _kit_reference(None, "base") == "base"
-    for local in ("acme-build", "acme-layout@sha256:" + "c" * 64, None):
-        assert _kit_reference(receipt(local), "acme") is None
-    assert _kit_reference(None, "acme") is None
+    def receipt(kit_id: str, digest: str, source: str | None) -> KitReceipt:
+        return KitReceipt.model_construct(
+            kit_id=kit_id, version="1.2.3", content_digest=digest, source=source
+        )
+
+    for label in ("bundled", "anything", None):
+        assert _kit_reference(receipt("base", bundled.content_digest, label), "base") == "base"
+    # A non-base kit from a directory named `bundled`, and a kit that is only named base.
+    assert _kit_reference(receipt("acme", other, "bundled"), "acme") is None
+    assert _kit_reference(receipt("base", other, "bundled"), "base") is None
+    for label in ("acme-build", "team/acme", "registry.example/kits/acme@sha256:" + "b" * 64):
+        assert _kit_reference(receipt("acme", other, label), "acme") is None
+    assert _kit_reference(None, "base") is None
+    # The same rule where a kit add repairs itself (staged bytes missing).
+    assert bundled_base_reference("base", bundled.content_digest) == "base"
+    assert bundled_base_reference("acme", bundled.content_digest) is None
+    # A required kit: `base` only when the bundled kit meets the requirement.
+    met = KitRequirement(kit_id="base", min_version=bundled.version)
+    assert _required_kit_reference(met) == "base"
+    assert _required_kit_reference(KitRequirement(kit_id="base", min_version="999.0.0")) is None
+    assert _required_kit_reference(KitRequirement(kit_id="web", min_version="1.0.0")) is None
 
 
 def _retire(world: _World, predicate: str) -> tuple[str, ...]:
