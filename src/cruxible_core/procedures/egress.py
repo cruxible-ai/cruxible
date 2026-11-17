@@ -627,6 +627,18 @@ class TerminalEgressRequestV1(_StrictEgressModel):
     def _prepared_at(cls, value: datetime) -> datetime:
         return ensure_utc(value)
 
+    @model_validator(mode="before")
+    @classmethod
+    def _retired_fields(cls, value: object) -> object:
+        if isinstance(value, dict) and "observation_spans" in value:
+            # Only unreleased builds journaled it (ruling 2026-11-16 (3)).
+            raise ValueError(
+                "this terminal request was journaled by an unreleased development build "
+                "(observation_spans) and is not read; re-initialise this instance "
+                "(cruxible init) to use this build"
+            )
+        return value
+
     @field_validator("observation_latest")
     @classmethod
     def _observation_latest(cls, value: dict[str, datetime]) -> dict[str, datetime]:

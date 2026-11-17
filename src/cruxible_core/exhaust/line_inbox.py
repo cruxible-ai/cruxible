@@ -84,7 +84,11 @@ _PREVIEW: TypeAdapter[ShownValue] = TypeAdapter(ShownValue)
 #: body of its items; a layout-6 projection gains the table in place.
 #: 8: a batch is one sighting of its group (``inbox_groups``); an item names its
 #: group and is not rewritten when the group is sighted again. Gained in place.
-_SCHEMA_VERSION = 8
+#: 9: a group's window keeps only sightings in posting order (out-of-order
+#: batches fold into members). A layout-8 projection, which only unreleased
+#: builds wrote and which may have lost first/latest sightings, is replayed
+#: from the journal; layouts 5-7 gain the group tables in place.
+_SCHEMA_VERSION = 9
 _TABLES = (
     "progress",
     "items",

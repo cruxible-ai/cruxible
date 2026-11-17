@@ -489,6 +489,8 @@ class ClaimReobservationStore:
                             stored.record.recorded_at,
                         )
                         continue
+                    if isinstance(payload, dict) and payload.get("tag") != _EVENT_TAG:
+                        _refuse_retired_tag(payload.get("tag"))
                     if not isinstance(payload, dict) or payload.get("tag") != _EVENT_TAG:
                         raise ValueError("invalid Claim re-observation record")
                     if "claim_artifact_digest" not in payload:

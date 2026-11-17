@@ -426,8 +426,8 @@ def test_a_layout_5_projection_gains_the_split_in_place_with_earlier_postings_un
     assert store.posted_by_run("RUN-1") == (1, None)
     assert store.posted_by_run("RUN-2") == (1, 0)
     connection = sqlite3.connect(store.path)
-    # Layout 5 moves in place to 8 (the columns, then the batch and group tables).
-    assert connection.execute("PRAGMA user_version").fetchone()[0] == 8
+    # Layout 5 moves in place to 9 (the columns, then the batch and group tables).
+    assert connection.execute("PRAGMA user_version").fetchone()[0] == 9
     connection.close()
 
 
@@ -468,7 +468,7 @@ def test_an_upgrade_stopped_before_its_version_moves_leaves_layout_5_and_reopens
 
     def stopped_before_the_version(*_args: object) -> int:
         action, first, second = _args[:3]
-        if action == sqlite3.SQLITE_PRAGMA and first == "user_version" and second == "8":
+        if action == sqlite3.SQLITE_PRAGMA and first == "user_version" and second == "9":
             return sqlite3.SQLITE_DENY
         return sqlite3.SQLITE_OK
 
@@ -650,3 +650,34 @@ def test_grouped_sightings_keep_their_true_first_and_latest_after_out_of_order_r
                 NOW + timedelta(minutes=minute) for minute in newest
             ], name
             assert store.get(envelope.item_id).envelope == envelope
+
+
+def test_a_layout_8_projection_is_replayed_from_the_journal(tmp_path: Path) -> None:
+    """Review 2c #9: a layout-8 projection (unreleased builds only) may hold a
+    group window that lost its first or latest sighting; it is replayed from
+    the journal, which restores both."""
+
+    import sqlite3
+
+    _instance, store, write = _world(tmp_path)
+    items = [{"cve": "CVE-0"}]
+    for index, minute in enumerate((10, 100)):
+        store.post(
+            [
+                _posting(item, run_id=f"RUN-{index}", at=NOW + timedelta(minutes=minute))
+                for item in items
+            ],
+            **write,  # type: ignore[arg-type]
+        )
+    connection = sqlite3.connect(store.path)
+    try:
+        # A lost latest, as the earlier algorithm could leave it, at layout 8.
+        connection.execute("UPDATE inbox_groups SET recent='[]', last_seen=?", ("x",))
+        connection.execute("PRAGMA user_version=8")
+        connection.commit()
+    finally:
+        connection.close()
+    entries, _cursor = store.page(line=None, status=None, limit=10, cursor=None)
+    (entry,) = entries
+    assert entry.envelope.last_sighting.posted_at == NOW + timedelta(minutes=100)
+    assert entry.envelope.occurrences == 2
