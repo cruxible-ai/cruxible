@@ -1888,6 +1888,7 @@ def handle_playbill_link(
             dry_run=dry_run,
             accept=accept,
             at=at,
+            surface="mcp",
         ),
         operation_name="cruxible_link",
     )

@@ -47,6 +47,7 @@ from cruxible_client.contracts.kit_requires import (
     KIT_REQUIRES_UNRESOLVED,
     KitRequirement,
     remove_required_message,
+    required_kit_reference,
     requires_lowered_message,
     requires_missing_message,
     requires_unresolved_message,
@@ -427,8 +428,17 @@ def _dependency_order(
         yield from visit(path)
 
 
-def _require_staged(instance: PlaybillInstance, files: Mapping[str, str], operation: str) -> None:
-    """Refuse unless every named file (name -> sha256) is in the body store."""
+def _require_staged(
+    instance: PlaybillInstance,
+    files: Mapping[str, str],
+    operation: str,
+    *,
+    kit: str | None = None,
+) -> None:
+    """Refuse unless every named file (name -> sha256) is in the body store.
+
+    ``kit`` names the kit a ``kit add`` repair adds again (its own reference).
+    """
 
     missing = sorted(
         name
@@ -440,12 +450,19 @@ def _require_staged(instance: PlaybillInstance, files: Mapping[str, str], operat
             "cruxible.kit.provider_files_not_staged",
             f"{', '.join(missing)} not in this instance's body store; stage each file first "
             f"(the CLI and MCP {operation.rpartition('.')[2]} adapters stage what they send)",
-            repair=RepairOperation(operation=operation),
+            repair=RepairOperation(
+                operation=operation, arguments={} if kit is None else {"kit": kit}
+            ),
         )
 
 
-def _require_document_bodies(instance: PlaybillInstance, contents: Mapping[str, bytes]) -> None:
-    """Refuse unless every kit Document's body is in the body store (staged by the adapter)."""
+def _require_document_bodies(
+    instance: PlaybillInstance, contents: Mapping[str, bytes], *, kit: str
+) -> None:
+    """Refuse unless every kit Document's body is in the body store (staged by the adapter).
+
+    ``kit`` is the reference the repair adds again: the one this add named.
+    """
 
     store = instance.body_store()
     missing = sorted(
@@ -458,7 +475,7 @@ def _require_document_bodies(instance: PlaybillInstance, contents: Mapping[str, 
             "cruxible.kit.document_bodies_not_staged",
             f"{', '.join(missing)}: the Document body is not in this instance's body store; "
             "stage each body first (the CLI and MCP kit add adapters stage what they send)",
-            repair=RepairOperation(operation="cruxible.kit.add"),
+            repair=RepairOperation(operation="cruxible.kit.add", arguments={"kit": kit}),
         )
 
 
@@ -2371,12 +2388,31 @@ def _holds_bundled_base(receipt: KitReceipt) -> bool:
     return any(bundled.get(entry.path) == entry.release_digest for entry in receipt.artifacts)
 
 
+def _pending_kit_proposal(instance: PlaybillInstance, kit_id: str) -> str | None:
+    """The open proposal that adds ``kit_id`` here, when its add stopped at one.
+
+    Read only on the refusal path: the kit's one recorded add, then one indexed
+    proposal lookup.
+    """
+
+    from cruxible_core.service.kit_resume import kit_resume_statuses
+    from cruxible_core.service.proposals.proposals import proposal_is_open
+
+    for resume in kit_resume_statuses(instance):
+        if resume.kit_id == kit_id and resume.state == "proposed" and resume.proposal_id:
+            return resume.proposal_id if proposal_is_open(instance, resume.proposal_id) else None
+    return None
+
+
 def _required_receipts(
-    manifest: KitManifest, receipts: tuple[KitReceipt, ...]
+    instance: PlaybillInstance, manifest: KitManifest, receipts: tuple[KitReceipt, ...]
 ) -> dict[str, KitReceipt]:
     """Each kit the release requires, installed here at ``min_version`` or later.
 
-    Refuses ``cruxible.kit.requires_missing`` naming the first that is not.
+    Refuses ``cruxible.kit.requires_missing`` naming the first that is not, and
+    the repair that installs it: the approval of its own pending add (the base
+    kit of an instance under independent approval), else ``kit add`` of the
+    release that meets the requirement.
     """
 
     installed = {receipt.kit_id: receipt for receipt in receipts if receipt.artifacts}
@@ -2384,12 +2420,27 @@ def _required_receipts(
         receipt = installed.get(requirement.kit_id)
         version = None if receipt is None else receipt.version
         if not requirement.met_by(version):
+            pending = _pending_kit_proposal(instance, requirement.kit_id)
             raise RequestRefusedError(
                 KIT_REQUIRES_MISSING,
-                requires_missing_message(manifest.kit_id, manifest.version, requirement, version),
-                # The kit id alone names no release a registry is known to hold;
-                # the reference or build path is the caller's to name (KIT).
-                repair=RepairOperation(operation="cruxible.kit.add"),
+                requires_missing_message(
+                    manifest.kit_id,
+                    manifest.version,
+                    requirement,
+                    version,
+                    pending_proposal=pending,
+                ),
+                repair=(
+                    RepairOperation(
+                        operation="cruxible.proposal.approve",
+                        arguments={"proposal_id": pending},
+                    )
+                    if pending is not None
+                    else RepairOperation(
+                        operation="cruxible.kit.add",
+                        arguments={"kit": required_kit_reference(requirement)},
+                    )
+                ),
             )
     return {item.kit_id: installed[item.kit_id] for item in manifest.requires}
 
@@ -2513,14 +2564,14 @@ def _early_refusals(
 
 
 def _inspect_staged(
-    instance: PlaybillInstance, manifest: KitManifest
+    instance: PlaybillInstance, manifest: KitManifest, *, kit: str
 ) -> dict[str, InspectedProviderPackage]:
     """Each bundled package read from the body store and resolved for this host.
 
     Metadata only, through the toolchain's readers: no provider code runs.
     """
 
-    _require_staged(instance, manifest.provider_files(), "cruxible.kit.add")
+    _require_staged(instance, manifest.provider_files(), "cruxible.kit.add", kit=kit)
 
     def read(name: str) -> bytes:
         return instance.body_store().read(
@@ -2724,7 +2775,7 @@ def _add_kit(
                     f"kit Document body {body.digest} differs from its digest"
                 )
     # Every governed Document's body is staged before anything is planned.
-    _require_document_bodies(instance, contents)
+    _require_document_bodies(instance, contents, kit=request.source or manifest.kit_id)
     tree = instance.immutable_tree_at(mode.head.git_oid)
     found = _read_receipt(instance, tree, manifest.kit_id)
     shell, receipt = (None, None) if found is None else found
@@ -2764,7 +2815,7 @@ def _add_kit(
     receipts = tuple(_receipts(instance, tree))
     # The kits this release requires, then every pin it left out to their
     # definitions: both before anything is installed or proposed.
-    required = _required_receipts(manifest, receipts)
+    required = _required_receipts(instance, manifest, receipts)
     _refuse_lowering_below_dependents(
         manifest.kit_id, manifest.version, (receipt for receipt in receipts if receipt.artifacts)
     )
@@ -2792,7 +2843,9 @@ def _add_kit(
     # so a bundled build counts as installed only with its whole dependency
     # closure; a preview has no files and compares wheel and lock.
     inspected = (
-        None if mode.previewing or not manifest.providers else _inspect_staged(instance, manifest)
+        None
+        if mode.previewing or not manifest.providers
+        else _inspect_staged(instance, manifest, kit=request.source or manifest.kit_id)
     )
     for provider in manifest.providers:
         # The staged bytes must reproduce what the manifest says they are.
@@ -3394,7 +3447,10 @@ def _refuse_unmet_requires(
                 raise RequestRefusedError(
                     KIT_REQUIRES_MISSING,
                     requires_missing_message(kit_id, receipt.version, requirement, version),
-                    repair=RepairOperation(operation="cruxible.kit.add"),
+                    repair=RepairOperation(
+                        operation="cruxible.kit.add",
+                        arguments={"kit": required_kit_reference(requirement)},
+                    ),
                 )
 
 

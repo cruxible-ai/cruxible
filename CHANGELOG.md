@@ -514,6 +514,16 @@ quickstart and concepts pages.
   `require_independent_approval`**, as `cruxible init` does: it creates the
   `reviewer` principal with its key and settings file, and returns the base
   kit's proposal when it awaits that reviewer.
+- **A kit repair names its kit.** `cruxible.kit.requires_missing` and a stale
+  kit proposal's `readmit_requires_resubmission` printed `cruxible kit add
+  '<KIT>'`; they now name the kit (`kit add base`, `kit add ID:VERSION`, or
+  the reference the add named when the instance recorded it). A kit that
+  requires a kit whose own add awaits approval (the base kit under
+  independent approval) is refused with that proposal's approval as the
+  repair.
+- **`link --guides` on an unregistered page names the caller's own repair**:
+  `cx.files.add(...)` on the SDK, and on MCP the CLI command marked as the
+  CLI's (no MCP tool edits the file catalog).
 
 ## [0.3.2] - 2026-08-06
 

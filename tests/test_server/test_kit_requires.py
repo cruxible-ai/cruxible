@@ -150,6 +150,39 @@ def test_build_leaves_the_required_kits_definitions_out_and_requires_it(
     )
 
 
+def test_add_while_the_required_kit_awaits_approval_says_to_approve_it_first(
+    tmp_path: Path, dependent: KitBundle
+) -> None:
+    """coldps-01: under independent approval the base kit waits at a proposal. A kit
+    that requires it is refused before anything is proposed, and the repair is that
+    proposal's approval, not another `kit add` of the base kit."""
+
+    from cruxible_core.service.kit_resume import record_proposed_kit
+
+    world = _instance(tmp_path / "world")
+    request = KitAddRequest(bundle=_base(), dry_run=False, source="bundled")
+    proposed = service_add_kit(
+        world, request, actor_id="owner", timestamp=STAMP, may_activate=False
+    )
+    assert proposed.status == "proposed" and proposed.proposal_id is not None
+    # What creation records for the base kit it leaves at a proposal.
+    record_proposed_kit(world, request, actor_id="owner", proposal_id=proposed.proposal_id)
+
+    with pytest.raises(RequestRefusedError) as refused:
+        _add(world, dependent)
+
+    assert refused.value.error_code == "cruxible.kit.requires_missing"
+    assert str(refused.value).endswith(
+        f"this instance holds none. Kit base awaits approval as proposal {proposed.proposal_id}: "
+        "approve it first, then add kit acme again."
+    )
+    repair = refused.value.repair  # type: ignore[attr-defined]
+    assert (repair.operation, repair.arguments) == (
+        "cruxible.proposal.approve",
+        {"proposal_id": proposed.proposal_id},
+    )
+
+
 def test_a_kit_that_requires_nothing_keeps_its_bytes_and_digest() -> None:
     manifest = KitManifest(
         kit_id="acme",
@@ -196,11 +229,10 @@ def test_add_refuses_without_the_required_kit_and_accepts_beside_it(
     assert missing.value.error_code == "cruxible.kit.requires_missing"
     assert str(missing.value).endswith(
         "Kit acme 0.1.0 requires kit base 1.0.0 or later; this instance holds none. "
-        "Add it first, from a release or a local build of base 1.0.0 or later: kit add '<KIT>', "
-        "where <KIT> is that release's reference or the built kit's path."
+        "Add it first: kit add base (or the path of a local build of base 1.0.0 or later)."
     )
-    # No bare kit id: one names no release a registry is known to hold (gapd-F25).
-    assert missing.value.repair.arguments == {}  # type: ignore[attr-defined]
+    # coldps-01: the repair names the kit (the bundled base kit's reference), never '<KIT>'.
+    assert missing.value.repair.arguments == {"kit": "base"}  # type: ignore[attr-defined]
     # A preview refuses the same way: nothing is proposed.
     with pytest.raises(RequestRefusedError):
         service_add_kit(bare, KitAddRequest(bundle=dependent), actor_id="owner", timestamp=STAMP)
@@ -209,7 +241,7 @@ def test_add_refuses_without_the_required_kit_and_accepts_beside_it(
     with pytest.raises(RequestRefusedError) as behind:
         _add(older, dependent)
     assert behind.value.error_code == "cruxible.kit.requires_missing"
-    assert "this instance holds base 0.9.0. Upgrade it first, from a release" in str(behind.value)
+    assert "this instance holds base 0.9.0. Upgrade it first: kit add base " in str(behind.value)
 
     present = _instance(tmp_path / "present", _base())
     met = (

@@ -2835,8 +2835,12 @@ def test_a_late_signer_on_a_kit_change_is_told_the_kits_own_command(
     else:
         assert wire["repair"]["operation"] == "cruxible.kit.add", wire
         assert "adds kit acme again at the current head (kit add)" in wire["message"]
-        assert "cruxible kit add" in cli_text
-        assert "cruxible_kit_add" in mcp_text
+        # coldps-01: the repair names the kit it adds again, never a literal '<KIT>'.
+        named = wire["repair"]["arguments"]["kit"]
+        assert named.startswith("acme:"), wire
+        assert f"cruxible kit add {named}" in cli_text
+        assert f'cruxible_kit_add(reference="{named}")' in mcp_text
+        assert "<KIT>" not in cli_text + mcp_text
         for text in (wire["message"], cli_text, mcp_text):
             assert "kit remove" not in text and "cruxible_kit_remove" not in text
 

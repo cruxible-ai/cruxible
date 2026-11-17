@@ -3960,6 +3960,7 @@ class Cruxible:
             dry_run=dry_run,
             accept=write_accept(accept),
             at=pinned.git_oid if isinstance(pinned, api.AcceptedCoordinate) else pinned,
+            surface="sdk",
         )
         landed = guided.proposal.outcome
         if isinstance(landed, api.AuthoringLanded):

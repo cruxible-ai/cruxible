@@ -89,18 +89,50 @@ KitRequires: TypeAlias = Annotated[
 ]
 
 
+#: The kit every core bundles; ``kit add base`` installs it from the package.
+BUNDLED_BASE_KIT_ID = "base"
+
+
+def required_kit_reference(requirement: KitRequirement) -> str:
+    """The ``kit add`` reference that names a required kit: never a placeholder.
+
+    The bundled base kit is ``base``; any other is the release that meets the
+    requirement, ``ID:MIN_VERSION`` (a local build's path adds it as well).
+    """
+
+    if requirement.kit_id == BUNDLED_BASE_KIT_ID:
+        return BUNDLED_BASE_KIT_ID
+    return f"{requirement.kit_id}:{requirement.min_version}"
+
+
 def requires_missing_message(
-    kit_id: str, version: str, requirement: KitRequirement, installed: str | None
+    kit_id: str,
+    version: str,
+    requirement: KitRequirement,
+    installed: str | None,
+    *,
+    pending_proposal: str | None = None,
 ) -> str:
-    """``cruxible.kit.requires_missing``: a required kit is absent or older than required."""
+    """``cruxible.kit.requires_missing``: a required kit is absent or older than required.
+
+    ``pending_proposal``: the required kit's own add is proposed and awaits
+    approval, so approving that proposal is what installs it.
+    """
 
     held = "none" if installed is None else f"{requirement.kit_id} {installed}"
+    lead = (
+        f"Kit {kit_id} {version} requires kit {requirement.kit_id} {requirement.min_version} "
+        f"or later; this instance holds {held}."
+    )
+    if pending_proposal is not None:
+        return (
+            f"{lead} Kit {requirement.kit_id} awaits approval as proposal {pending_proposal}: "
+            f"approve it first, then add kit {kit_id} again."
+        )
     verb = "Add" if installed is None else "Upgrade"
     return (
-        f"Kit {kit_id} {version} requires kit {requirement.kit_id} {requirement.min_version} "
-        f"or later; this instance holds {held}. {verb} it first, from a release or a local "
-        f"build of {requirement.kit_id} {requirement.min_version} or later: kit add '<KIT>', "
-        "where <KIT> is that release's reference or the built kit's path."
+        f"{lead} {verb} it first: kit add {required_kit_reference(requirement)} (or the "
+        f"path of a local build of {requirement.kit_id} {requirement.min_version} or later)."
     )
 
 
@@ -156,6 +188,7 @@ __all__ = [
     "KitRequiresRefusalCode",
     "remove_required_message",
     "requires_lowered_message",
+    "required_kit_reference",
     "requires_missing_message",
     "requires_unresolved_message",
     "validate_kit_requires",

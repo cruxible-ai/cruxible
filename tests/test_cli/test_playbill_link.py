@@ -421,3 +421,39 @@ def test_an_overlay_made_unreadable_after_admission_keeps_the_receipt(
     assert outcome["catalog_conflict"] and not outcome["catalog_written"]
     assert outcome["proposal"]["outcome"]["status"] == "landed"
     assert (tmp_path / ".cruxible" / "files.yaml").read_text() == before
+
+
+@pytest.mark.parametrize(
+    ("surface", "repair"),
+    [
+        ("cli", "Register it first: cruxible files add loose.md"),
+        ("sdk", 'Register it first: cx.files.add("loose.md")'),
+        (
+            "mcp",
+            "Register it first: cruxible files add loose.md  (on the CLI; MCP has no tool "
+            "that edits the file catalog)",
+        ),
+    ],
+)
+def test_an_unregistered_page_names_the_callers_own_way_to_register_it(
+    tmp_path: Path, surface: Any, repair: str
+) -> None:
+    """coldmcp-08, coldsdk-15: the SDK and the MCP server printed `cruxible files add`
+    as if their caller could run it; the SDK has `cx.files.add`, and MCP has no tool."""
+
+    from cruxible_client.authoring.links import link_guides
+    from cruxible_client.contracts.errors import WriteRefusalError
+
+    (tmp_path / "loose.md").write_text("# Loose\n")
+    with pytest.raises(WriteRefusalError) as refused:
+        link_guides(
+            object(),  # type: ignore[arg-type]
+            "inst",
+            workspace=tmp_path,
+            source="loose.md",
+            guides=(STATUS,),
+            surface=surface,
+        )
+
+    assert refused.value.error_code == "cruxible.link.file_unregistered"
+    assert refused.value.repair_line == repair

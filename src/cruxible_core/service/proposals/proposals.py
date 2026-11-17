@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from collections import defaultdict
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -1311,7 +1312,7 @@ def _readmit(
             reobservations_refused=recompiled.reobservations_refused,
         )
     if exact_bytes_cannot_rebase(source):
-        raise requires_resubmission(source)
+        raise requires_resubmission(source, instance)
     if landing and not mode.previewing:
         landed = land_exact_bytes(instance, source, mode=mode)
         assert isinstance(landed, ProposalResult)
@@ -1393,18 +1394,20 @@ def exact_bytes_cannot_rebase(source: ProposalResult) -> bool:
     return cannot_rebase(source) is not None
 
 
-def requires_resubmission(source: ProposalResult) -> ProposalReadmitRequiresResubmission:
+def requires_resubmission(
+    source: ProposalResult, instance: PlaybillInstance | None = None
+) -> ProposalReadmitRequiresResubmission:
     """The refusal for a change set that cannot be rebased by its bytes, by kind."""
 
     reason = cannot_rebase(source)
     assert reason is not None
     why, command = reason
     if why.startswith("is a generated"):
-        return ProposalReadmitRequiresResubmission(repair=author_repair(source))
+        return ProposalReadmitRequiresResubmission(repair=author_repair(source, instance))
     return ProposalReadmitRequiresResubmission(
         f"proposal {source.admission.proposal_id} {why}, so it is not readmitted or "
         f"landed by its old bytes; its author {source.admission.actor_id!r} {command}",
-        repair=author_repair(source),
+        repair=author_repair(source, instance),
     )
 
 
@@ -1441,23 +1444,58 @@ def _is_kit_removal(source: ProposalResult) -> bool:
     )
 
 
-def author_repair(source: ProposalResult) -> RepairOperation:
+def author_repair(
+    source: ProposalResult, instance: PlaybillInstance | None = None
+) -> RepairOperation:
     """The author's command that remakes a change set its bytes cannot carry to the head.
 
     A kit change is its kit's own commit again: ``kit remove`` with the kit's id
-    for a removal, ``kit add`` for an addition (which release or build to add is
-    the author's, so its reference is left to name); a migration, or another
-    closure, is authored again.
+    for a removal, ``kit add`` naming the kit for an addition (``_kit_reference``:
+    never a placeholder); a migration, or another closure, is authored again.
     """
 
     kit_id = _kit_id(source)
     if kit_id is not None:
         if _is_kit_removal(source):
             return RepairOperation(operation="cruxible.kit.remove", arguments={"kit_id": kit_id})
-        return RepairOperation(operation="cruxible.kit.add")
+        return RepairOperation(
+            operation="cruxible.kit.add",
+            arguments={"kit": _kit_reference(source, kit_id, instance)},
+        )
     if _target_leaf(source).startswith("claim-type-migration-"):
         return RepairOperation(operation="cruxible.claim-type.migrate")
     return RepairOperation(operation="cruxible.authoring.list")
+
+
+_KIT_RATIONALE_VERSION = re.compile(r" (?P<version>[^ ]+)\.$")
+
+
+def _kit_reference(source: ProposalResult, kit_id: str, instance: PlaybillInstance | None) -> str:
+    """The ``kit add`` reference that remakes a kit proposal: the kit, by name.
+
+    The reference its author's add named, when this instance recorded that add
+    for this proposal (the base kit's, or one resumed after its providers
+    landed); else the release the proposal installs, ``ID:VERSION`` from its
+    rationale (``Install kit ID VERSION.``); else the kit id. Read only when
+    the refusal is raised.
+    """
+
+    from cruxible_core.kits.base_kit import BASE_KIT_REFERENCE, BUNDLED_KIT_SOURCE
+
+    if instance is not None:
+        from cruxible_core.service.kit_resume import kit_resume_statuses
+
+        for resume in kit_resume_statuses(instance):
+            if (
+                resume.kit_id == kit_id
+                and resume.proposal_id == source.admission.proposal_id
+                and resume.source
+            ):
+                return BASE_KIT_REFERENCE if resume.source == BUNDLED_KIT_SOURCE else resume.source
+    if kit_id == BASE_KIT_REFERENCE:
+        return BASE_KIT_REFERENCE
+    version = _KIT_RATIONALE_VERSION.search(source.admission.rationale or "")
+    return kit_id if version is None else f"{kit_id}:{version['version']}"
 
 
 def _readmit_exact_bytes(
@@ -1599,7 +1637,7 @@ def land_exact_bytes(
             return carried
         instance.proposal_evidence().refuse_closed(source_id)
         if exact_bytes_cannot_rebase(source):
-            raise requires_resubmission(source)
+            raise requires_resubmission(source, instance)
         binding: dict[str, Any] = {}
         if check_first:
             with preview_guards(True):

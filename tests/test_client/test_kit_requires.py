@@ -12,6 +12,7 @@ from cruxible_client.contracts.kit_requires import (
     KitRequires,
     KitRequiresRefusalCode,
     remove_required_message,
+    required_kit_reference,
     requires_lowered_message,
     requires_missing_message,
     requires_unresolved_message,
@@ -106,13 +107,26 @@ def test_the_refusals_name_the_kit_and_the_repair() -> None:
 
     assert requires_missing_message("security", "1.3.0", base, None) == (
         "Kit security 1.3.0 requires kit base 1.0.0 or later; this instance holds none. "
-        "Add it first, from a release or a local build of base 1.0.0 or later: kit add '<KIT>', "
-        "where <KIT> is that release's reference or the built kit's path."
+        "Add it first: kit add base (or the path of a local build of base 1.0.0 or later)."
     )
     assert requires_missing_message("security", "1.3.0", base, "0.9.0") == (
         "Kit security 1.3.0 requires kit base 1.0.0 or later; this instance holds base 0.9.0. "
-        "Upgrade it first, from a release or a local build of base 1.0.0 or later: kit add "
-        "'<KIT>', where <KIT> is that release's reference or the built kit's path."
+        "Upgrade it first: kit add base (or the path of a local build of base 1.0.0 or later)."
+    )
+    # coldps-01: the repair printed a literal '<KIT>'. Any other kit is named by the
+    # release that meets the requirement.
+    web = KitRequirement(kit_id="web", min_version="2.1.0")
+    assert required_kit_reference(base) == "base"
+    assert required_kit_reference(web) == "web:2.1.0"
+    assert requires_missing_message("acme", "1.0.0", web, None).endswith(
+        "Add it first: kit add web:2.1.0 (or the path of a local build of web 2.1.0 or later)."
+    )
+    # The required kit's own add awaits approval: approving it is the repair.
+    assert requires_missing_message(
+        "security", "1.3.0", base, None, pending_proposal="sha256:ab"
+    ).endswith(
+        "this instance holds none. Kit base awaits approval as proposal sha256:ab: approve "
+        "it first, then add kit security again."
     )
     assert requires_unresolved_message(
         "security", "1.3.0", "base", "Capability:web.fetch/v1", exact=True

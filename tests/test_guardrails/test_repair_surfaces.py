@@ -14,7 +14,14 @@ trusting it:
     the SDK call binds to the method's signature;
 (c) placeholders -- a line rendered with its required operands missing, run
     unchanged on its own client against a recording daemon, refuses, and no
-    request carrying a placeholder leaves the client.
+    request carrying a placeholder leaves the client;
+(d) named operands -- a producer never leaves out an operand the instance
+    itself holds (the kit a ``kit add`` repair adds), so no repair prints a
+    placeholder the refusal gave the caller nothing to fill (``'<KIT>'``);
+(e) the caller's client -- a refusal raised in the library all three clients
+    share never words its repair as a bare CLI command: the SDK and the MCP
+    server would print a command their caller cannot run. It is worded for the
+    caller's surface, and a command only the CLI has says so.
 
 Producer arguments are collected from every ``operation="..."`` producer in
 the source; an argument a producer computes (a dict splat) cannot be read
@@ -118,7 +125,7 @@ COMPUTED_PRODUCERS: Mapping[tuple[str, str], Mapping[str, frozenset[str]]] = {
     },
     ("src/cruxible_core/service/kits.py", "_require_staged"): {
         "cruxible.kit.build": frozenset(),
-        "cruxible.kit.add": frozenset(),
+        "cruxible.kit.add": frozenset({"kit"}),
     },
     (
         "packages/cruxible-client/src/cruxible_client/contracts/errors.py",
@@ -301,6 +308,143 @@ def test_every_producer_resolves_or_is_named() -> None:
         if (path, function) not in present
     ]
     assert not stale, f"COMPUTED_PRODUCERS names producers that no longer exist: {stale}"
+
+
+#: Operands the instance itself holds when it produces the repair: every producer
+#: carries one of them, so the line never shows a placeholder for it. A ``kit add``
+#: repair names its kit (``kit`` on the wire, ``reference`` from ``next``).
+INSTANCE_HELD_OPERANDS: Mapping[str, frozenset[str]] = {
+    "cruxible.kit.add": frozenset({"kit", "reference"}),
+    "cruxible.kit.remove": frozenset({"kit_id"}),
+}
+
+
+def _carried_keys() -> Iterator[tuple[str, str, str, frozenset[str]]]:
+    """Each repair producer of an operation: (file, function, operation, argument keys)."""
+
+    for relative, function, call, callee in _producers():
+        if callee not in _REPAIR_CALLS:
+            continue
+        kw = {item.arg: item.value for item in call.keywords if item.arg}
+        op, arguments = kw["operation"], kw.get("arguments")
+        literal = isinstance(op, ast.Constant) and isinstance(op.value, str)
+        plain = arguments is None or (
+            isinstance(arguments, ast.Dict) and None not in arguments.keys
+        )
+        if not (literal and plain):
+            for operation, keys in COMPUTED_PRODUCERS.get((relative, function), {}).items():
+                yield relative, function, operation, keys
+            continue
+        assert isinstance(op, ast.Constant)
+        keys = (
+            frozenset()
+            if arguments is None
+            else frozenset(
+                key.value
+                for key in arguments.keys  # type: ignore[attr-defined]
+                if isinstance(key, ast.Constant) and isinstance(key.value, str)
+            )
+        )
+        yield relative, function, op.value, keys
+
+
+def test_a_repair_names_every_operand_the_instance_holds() -> None:
+    """coldps-01: a stale kit proposal's repair was `cruxible kit add '<KIT>'`.
+
+    The instance knew which kit; only the producer left it out. A placeholder
+    stays for what the caller alone holds (why, which signer, which file).
+    """
+
+    unnamed = sorted(
+        {
+            f"{relative}::{function} produces {operation} without one of "
+            f"{sorted(INSTANCE_HELD_OPERANDS[operation])}"
+            for relative, function, operation, keys in _carried_keys()
+            if operation in INSTANCE_HELD_OPERANDS and not keys & INSTANCE_HELD_OPERANDS[operation]
+        }
+    )
+    assert not unnamed, "\n".join(unnamed)
+    # The check sees the producers it is about.
+    seen = {operation for _file, _function, operation, _keys in _carried_keys()}
+    assert set(INSTANCE_HELD_OPERANDS) <= seen
+    for surface in _SURFACES:
+        line = render_repair(
+            RepairOperation(operation="cruxible.kit.add", arguments={"kit": "base"}),
+            surface=surface,  # type: ignore[arg-type]
+        )
+        assert line is not None and "base" in line and not PLACEHOLDER_PATTERN.search(line)
+
+
+#: The library the CLI, the SDK and the MCP server all run.
+_SHARED_CLIENT = _ROOT / "packages" / "cruxible-client" / "src" / "cruxible_client" / "authoring"
+_CLI_COMMAND = re.compile(r"\bcruxible [a-z][a-z-]+")
+#: Shared-library refusals still worded as a CLI command on every client, by file
+#: and function, with what each needs. Reviewed in the report; shrink, never grow.
+CLI_WORDED_SHARED_REPAIRS: Mapping[tuple[str, str], str] = {
+    ("doc_writes.py", "_write_workspace"): (
+        "`cruxible files add` for an uncatalogued file: word it with catalog_step(request.surface)"
+    ),
+    ("write_evidence.py", "observe_evidence"): (
+        "`cruxible files add` for an uncited file: takes no surface yet"
+    ),
+}
+
+
+def _cli_worded_shared_repairs() -> set[tuple[str, str]]:
+    """Each shared-library function passing a repair whose literal text is a CLI command."""
+
+    found: set[tuple[str, str]] = set()
+    for path in sorted(_SHARED_CLIENT.glob("*.py")):
+
+        def walk(node: ast.AST, scope: str) -> None:
+            for child in ast.iter_child_nodes(node):
+                inner = (
+                    child.name
+                    if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef) and not scope
+                    else scope
+                )
+                if isinstance(child, ast.keyword) and child.arg in {"repair", "repair_line"}:
+                    text = " ".join(
+                        item.value
+                        for item in ast.walk(child.value)
+                        if isinstance(item, ast.Constant) and isinstance(item.value, str)
+                    )
+                    if _CLI_COMMAND.search(text):
+                        found.add((path.name, scope))
+                walk(child, inner)
+
+        walk(ast.parse(path.read_text(encoding="utf-8")), "")
+    return found
+
+
+def test_a_shared_client_refusal_is_worded_for_the_callers_client() -> None:
+    """coldmcp-08, coldsdk-15: `link` on an unregistered page told an MCP caller and an
+    SDK caller to run `cruxible files add`, as if either could."""
+
+    from cruxible_client.authoring.files import catalog_step
+
+    found = _cli_worded_shared_repairs()
+    new = sorted(found - set(CLI_WORDED_SHARED_REPAIRS))
+    assert not new, (
+        "a refusal in the shared client library words its repair as a CLI command on "
+        f"every client: {new}; word it for the caller's surface (catalog_step, render_repair)"
+    )
+    stale = sorted(set(CLI_WORDED_SHARED_REPAIRS) - found)
+    assert not stale, f"CLI_WORDED_SHARED_REPAIRS names repairs now worded by surface: {stale}"
+
+    assert catalog_step("cli", "add", "notes/a b.md") == "cruxible files add 'notes/a b.md'"
+    assert catalog_step("sdk", "add", "notes/a b.md") == 'cx.files.add("notes/a b.md")'
+    assert catalog_step("sdk", "add", "doc-a", "a.md") == 'cx.files.add("doc-a", "a.md")'
+    # A command only the CLI has says so, as a rendered repair does.
+    on_mcp = catalog_step("mcp", "add", "a.md")
+    assert on_mcp.startswith("cruxible files add a.md") and "on the CLI; MCP has no tool" in on_mcp
+    for operation, spelling in REPAIR_SPELLINGS.items():
+        for surface, form in (("mcp", spelling.mcp), ("sdk", spelling.sdk)):
+            if form is not None or spelling.cli is None:
+                continue
+            line = render_repair(RepairOperation(operation=operation), surface=surface)  # type: ignore[arg-type]
+            if line is not None and line.startswith("cruxible "):
+                assert "on the CLI" in line, (operation, surface, line)
 
 
 def test_every_renderable_operation_has_a_declared_spelling() -> None:

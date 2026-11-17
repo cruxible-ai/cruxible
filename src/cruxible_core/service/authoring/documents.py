@@ -715,7 +715,7 @@ def land_for_signer(instance: PlaybillInstance, proposal_id: str) -> str:
             f"proposal {proposal_id} {why}, so it cannot be landed at the head for a signer "
             f"registered after its base; its author {proposal.admission.actor_id!r} "
             f"{command}, and you approve the new proposal",
-            repair=author_repair(proposal),
+            repair=author_repair(proposal, instance),
         )
     recompiled = _recompile_for_review(instance, proposal, approver=True)
     if recompiled is None:
