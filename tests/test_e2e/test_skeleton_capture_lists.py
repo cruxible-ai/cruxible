@@ -981,6 +981,77 @@ def test_a_successor_version_is_reconfirmed_on_a_capture_its_predecessor_was(
     assert admitted == [inverse] and len(store.history(inverse)) == 2
 
 
+def _areas(root: Path) -> dict[str, int]:
+    """Apparent bytes under an instance by area (CAS bodies, each exhaust family, rest)."""
+
+    sizes: dict[str, int] = {}
+    for path in root.rglob("*"):
+        if not path.is_file():
+            continue
+        parts = path.relative_to(root).parts
+        area = parts[0] if parts[0] != "exhaust" or len(parts) < 2 else "exhaust/" + parts[1]
+        sizes[area] = sizes.get(area, 0) + path.stat().st_size
+    return sizes
+
+
+def test_an_unchanged_run_stores_the_same_at_2_and_22_absences(tmp_path: Path) -> None:
+    """Round 9 (K and F): the whole unchanged run, every stored byte, at two
+    absence counts. Each held absence is reconfirmed every complete run; that
+    costs one batch journal record whose entries are each Claim's id and
+    version, and nothing else per Claim: the terminal's request items (the
+    reconfirmed items, their receipt and changes) and children are the bodies
+    stored before, and the projection keeps one current point per Claim."""
+
+    from datetime import timedelta
+
+    from cruxible_client.contracts.authoring.inputs import SubjectInput
+    from tests.support.operation_world import author
+
+    grown: dict[int, dict[str, int]] = {}
+    for extra in (0, 20):
+        root = tmp_path / str(extra)
+        root.mkdir()
+        instance = pages_world(root)
+        for index in range(extra):
+            author(
+                instance,
+                SubjectInput(
+                    kind="subject",
+                    subject_kind=VULN,
+                    key={"cve_id": f"CVE-2099-{index:05d}"},
+                    rationale="Watched.",
+                ),
+                name=f"extra-{index}",
+            )
+        install(instance, list_spec(), line="test.kev-pages-line")
+        delisted = split(catalog("kev-catalog-delisted"))
+        first = run_pages(instance, Pages(split(catalog())), line="test.kev-pages-line")
+        activate(instance, first)
+        second = run_pages(instance, Pages(delisted), line="test.kev-pages-line", minute=1)
+        activate(instance, second)
+        for minute in (2, 3):  # the first unchanged run warms up
+            before = _areas(instance.root)
+            state = run_pages(
+                instance,
+                Pages(delisted, observed=NOW + timedelta(minutes=minute)),
+                line="test.kev-pages-line",
+                minute=minute,
+            )
+            assert state.status == "succeeded", state.terminal
+            assert state.completeness is None
+            after = _areas(instance.root)
+        grown[extra] = {
+            area: after.get(area, 0) - before.get(area, 0)
+            for area in after
+            if after.get(area, 0) != before.get(area, 0)
+        }
+    print("UNCHANGED_RUN", grown)
+    # Bodies and journal: one batch entry per reconfirmed absence (its id and
+    # version); the terminal's items, receipt and children are reused.
+    stored = (grown[20].get("cas", 0) - grown[0].get("cas", 0)) / 20
+    assert stored < 400, (stored, grown)
+
+
 def _cas_files(root: Path) -> dict[str, int]:
     return {
         str(path): path.stat().st_size
