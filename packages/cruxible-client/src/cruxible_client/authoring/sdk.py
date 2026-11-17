@@ -292,6 +292,7 @@ from cruxible_client.transport.http import CruxibleClient, configured_principal_
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from cruxible_client.authoring.files import WorkspaceCatalog
+    from cruxible_client.authoring.links import GuidanceLinkOutcome
     from cruxible_client.authoring.vocabulary_file import Vocabulary
     from cruxible_client.authoring.world import World
 
@@ -3896,6 +3897,82 @@ class Cruxible:
                 full_coordinate=True,
             )
         )
+
+    def link(
+        self,
+        source: str,
+        *,
+        about: Sequence[str | SubjectRef] = (),
+        guides: Sequence[str | ClaimTypeRef] = (),
+        unlink: bool = False,
+        because: str | None = None,
+        proposal_name: str | None = None,
+        dry_run: bool = False,
+        accept: WriteAccept = "if_allowed",
+        at: WriteAt | _Unset = _UNSET,
+    ) -> WriteOutcome | GuidanceLinkOutcome:
+        """Link a section ``about`` Subjects (a note), or a registered page as guidance.
+
+        ``link("notes.md#Triage", about=[subject], because=...)`` links that
+        existing section about Subjects: a write (value lane), shown by
+        ``cx.backlinks(subject)``. ``link("guide.md", guides=["ClaimType:p"])``
+        links the whole registered page to a ClaimType or Procedure as its
+        review guidance (definition lane): recorded on the file's catalog entry
+        and proposed as the Document's next revision, shown by proposal review.
+        ``source`` names the file by path or catalog name. ``unlink=True``
+        removes the named links. Mismatched arguments raise
+        ``WriteRefusalError`` (``cruxible.link.*``) saying which link is which.
+        Next: ``cx.backlinks(...)``.
+        """
+
+        from cruxible_client.authoring.links import LINK_ONE_LANE, about_link_request, link_guides
+
+        if bool(about) == bool(guides):
+            raise WriteRefusalError(
+                LINK_ONE_LANE,
+                "link takes about= (a section's note) or guides= (a page's guidance), "
+                + ("not both" if about else "and got neither"),
+                repair_line='cx.link("FILE#Heading", about=[...], because=...) or '
+                'cx.link("FILE", guides=["ClaimType:NAME"])',
+            )
+        if about:
+            if because is None:
+                raise TypeError("an about= link records a note: give it because=")
+            return self._write(
+                about_link_request(
+                    source,
+                    subjects=tuple(_write_subject(item) for item in about),
+                    unlink=unlink,
+                    because=because,
+                    dry_run=dry_run,
+                    accept=write_accept(accept),
+                    at=self._write_at(at),
+                    surface="sdk",
+                ).model_copy(update={"full_coordinate": True})
+            )
+        if because is not None:
+            raise TypeError("because= goes with about=; a guides= link is a Document proposal")
+        # The context's coordinate by default, as every write; at=None opts out.
+        pinned = self._write_at(at)
+        guided = link_guides(
+            self._client,
+            self._instance_id,
+            workspace=self._workspace_root,
+            source=source,
+            guides=tuple(
+                f"ClaimType:{item.address}" if isinstance(item, ClaimTypeRef) else item
+                for item in guides
+            ),
+            unlink=unlink,
+            proposal_name=proposal_name,
+            dry_run=dry_run,
+            accept=write_accept(accept),
+            at=pinned.git_oid if isinstance(pinned, api.AcceptedCoordinate) else pinned,
+        )
+        landed = guided.proposal.outcome
+        if isinstance(landed, api.AuthoringLanded):
+            self._observe_read(_coordinate(landed.accepted_coordinate), expected=None)
+        return guided
 
     def backlinks(
         self,

@@ -748,6 +748,40 @@ list the note and say when the section changes after it.
 
 **Conditions and effects:** As `Cruxible.set`. Next: `cx.backlinks(subject)`.
 
+### `Cruxible.link`
+
+[Source](src/cruxible_client/authoring/sdk.py)
+
+```text
+link(
+    source: str,
+    *,
+    about: Sequence[str | SubjectRef] = (),
+    guides: Sequence[str | ClaimTypeRef] = (),
+    unlink: bool = False,
+    because: str | None = None,
+    proposal_name: str | None = None,
+    dry_run: bool = False,
+    accept: Literal['if_allowed', 'never'] = 'if_allowed',
+    at: AcceptedCoordinate | str | None = <this context's coordinate>,
+) -> WriteOutcome | GuidanceLinkOutcome
+```
+
+Links an existing section `about` Subjects, or a whole registered page as
+review guidance; the same as `cruxible link` on the CLI. `source` names the
+file by path or catalog name. `link("notes.md#Triage", about=[subject],
+because=...)` is one write (a note), shown by `cx.backlinks(subject)`.
+`link("guide.md", guides=["ClaimType:p"])` records the link on the file's
+catalog entry and proposes the Document's next revision from the file's bytes
+and its links (later `files propose` keeps them); it answers a
+`GuidanceLinkOutcome` (`catalog_written`, `links`, `proposal`). `unlink=True`
+removes the named links.
+
+**Conditions and effects:** Mismatched arguments raise `WriteRefusalError`
+(`cruxible.link.*`) before anything is sent, saying which link is which.
+`files.yaml` is written only once the guidance proposal stands. Next:
+`cx.backlinks(...)`.
+
 <a id="api-cruxible-query-definition"></a>
 
 ### `Cruxible.query_definition`

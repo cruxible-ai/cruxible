@@ -1033,6 +1033,11 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
     "note": _command(
         "playbill", "note", "Append a workspace section linked about Subjects (no Claim)."
     ),
+    "link": _command(
+        "playbill",
+        "link",
+        "Link a section about Subjects, or a registered page as a definition's guidance.",
+    ),
     "set": _command("playbill", "set_value", "Set one field of one Subject, replacing its value."),
     "add": _command(
         "playbill", "add_value", "Add one value to a many-valued field of one Subject."

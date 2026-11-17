@@ -35,6 +35,12 @@ from cruxible_client.authoring.folder_identity import (
     VerifiedFolderIdentity,
 )
 from cruxible_client.authoring.inputs import AuthoringInput, ClaimInput
+from cruxible_client.authoring.links import (
+    LINK_ONE_LANE,
+    GuidanceLinkOutcome,
+    about_link_request,
+    link_guides,
+)
 from cruxible_client.authoring.sdk_types import SourceSelectionError
 from cruxible_client.authoring.selectors import WorkspaceFiles
 from cruxible_client.authoring.signing import LocalEd25519ApprovalSigner
@@ -81,6 +87,7 @@ from cruxible_client.contracts.duplicates import (
     DUPLICATES_AUDIT_DEFAULT_LIMIT,
     DuplicatesAuditResult,
 )
+from cruxible_client.contracts.errors import WriteRefusalError
 from cruxible_client.contracts.file_catalog import FileCompilationBundle
 from cruxible_client.contracts.get_reads import (
     ByteRange,
@@ -125,6 +132,7 @@ from cruxible_client.contracts.write import (
     RetireRequest,
     SectionEvidence,
     SetRequest,
+    WriteAccept,
     WriteOutcome,
     WriteRequest,
     as_write_request,
@@ -1765,6 +1773,77 @@ def handle_playbill_write(instance_id: str, **fields: Any) -> WriteOutcome:
             operation_name="cruxible_write",
         ),
     )
+
+
+def handle_playbill_link(
+    instance_id: str,
+    *,
+    source: str,
+    about: Sequence[str] = (),
+    guides: Sequence[str] = (),
+    unlink: bool = False,
+    because: str | None = None,
+    proposal_name: str | None = None,
+    dry_run: bool = False,
+    accept: WriteAccept = "if_allowed",
+    at: str | None = None,
+) -> WriteOutcome | GuidanceLinkOutcome:
+    """Link a section about Subjects (a note), or a registered page as guidance.
+
+    The same code as ``cruxible link``: the about lane is one workspace write;
+    the guides lane records the links in this workspace's catalog and proposes
+    the Document's next revision, read and compiled here.
+    """
+
+    if bool(about) == bool(guides):
+        raise WriteRefusalError(
+            LINK_ONE_LANE,
+            "link takes about (a section's note) or guides (a page's guidance), "
+            + ("not both" if about else "and got neither"),
+            repair_line="pass about with source FILE#Heading, or guides with source FILE",
+        )
+    if about:
+        if because is None:
+            raise DataValidationError("an about link records a note: give it because")
+        request = about_link_request(
+            source,
+            subjects=about,
+            unlink=unlink,
+            because=because,
+            dry_run=dry_run,
+            accept=accept,
+            at=at,
+            surface="mcp",
+        )
+        return write_workspace(
+            request,
+            workspace=mcp_workspace_root(),
+            submit=lambda observed: _daemon_call(
+                lambda client: client.write(instance_id, request=observed),
+                operation_name="cruxible_link",
+            ),
+        )
+    if because is not None:
+        raise DataValidationError(
+            "because goes with about; a guides link is a Document proposal (name it with "
+            "proposal_name)"
+        )
+    outcome = _daemon_call(
+        lambda client: link_guides(
+            client,
+            instance_id,
+            workspace=mcp_workspace_root(),
+            source=source,
+            guides=guides,
+            unlink=unlink,
+            proposal_name=proposal_name,
+            dry_run=dry_run,
+            accept=accept,
+            at=at,
+        ),
+        operation_name="cruxible_link",
+    )
+    return outcome.model_copy(update={"proposal": _mcp_landing(outcome.proposal)})
 
 
 def handle_playbill_query_spec(

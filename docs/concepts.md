@@ -371,10 +371,10 @@ evidence, verdicts, freshness and attestations in full.
 
 The file catalog, `.cruxible/files.yaml`, gives each workspace file a stable
 name, a handle mapped to the file's current path so citations survive the file
-moving. You cite a file by its path; a write that cites a file the catalog
-does not name yet catalogues it under a name derived from the path, and
-`cruxible files add NAME PATH` chooses the name yourself. Two different things can rest on a
-catalogued file:
+moving. You cite a file by its path or by that name; a write that cites a
+file the catalog does not name yet catalogues it under a name derived from the
+path, and `cruxible files add NAME PATH` chooses the name yourself. Two
+different things can rest on a catalogued file:
 
 | | Citation | Document |
 |---|---|---|
@@ -385,7 +385,22 @@ catalogued file:
 
 Most usage is citations. A Document whose bytes are not a workspace file (for
 example bytes a remote agent supplies) goes through `body store` and
-`document propose` instead. `coverage resolve` answers which Claim citations
+`document propose` instead.
+
+### Notes and guidance
+
+Two kinds of link point prose at state, and `cruxible link` makes either:
+
+| | Note | Guidance |
+|---|---|---|
+| Links | a section of a page, `about` Subjects | a whole registered page, `guides` a ClaimType or Procedure |
+| Says | what that text is about | how to review values of that definition |
+| Lane | value: one write, same governance as `set` | definition: the page's Document revision |
+| Shown by | `backlinks` on the Subject | `proposal review` of changes touching it, and `backlinks ClaimType:NAME` |
+| Command | `cruxible link notes.md#Triage --about KIND/ID --because WHY` (or `note` to append the section too) | `cruxible link guide.md --guides ClaimType:NAME` |
+
+Guidance links are recorded on the page's catalog entry, so every later
+`files propose` carries them. `coverage resolve` answers which Claim citations
 occur in given file bytes: a whole file, a line range, or `grep -n` output on
 standard input.
 

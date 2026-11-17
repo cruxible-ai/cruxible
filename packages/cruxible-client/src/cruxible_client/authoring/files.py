@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -42,7 +42,9 @@ class WorkspaceFileError(DataValidationError):
 
 
 class FileContextClient(Protocol):
-    def file_context(self, instance_id: str) -> contracts.FileContext: ...
+    def file_context(
+        self, instance_id: str, *, documents: Sequence[str] | None = None
+    ) -> contracts.FileContext: ...
 
 
 def root_aliases(values: Iterable[str]) -> dict[str, Path]:
@@ -87,10 +89,20 @@ def compile_client_file_context(
     catalog: FileCatalog,
     repository_root: Path,
     aliases: Mapping[str, Path],
+    documents: Sequence[str] | None = None,
 ) -> FileCompilationBundle:
-    """Read local bytes against path-free accepted context from the daemon."""
+    """Read local bytes against path-free accepted context from the daemon.
 
-    context = client.file_context(instance_id)
+    ``documents`` names the only accepted Documents the catalog compiles
+    against (one file's, for ``link --guides``), so the daemon looks those up
+    instead of listing every Document; None asks for all of them.
+    """
+
+    context = (
+        client.file_context(instance_id)
+        if documents is None
+        else client.file_context(instance_id, documents=documents)
+    )
     accepted = {
         shell.document_id: shell
         for value in context.documents

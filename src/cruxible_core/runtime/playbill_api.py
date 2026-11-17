@@ -10,7 +10,7 @@ from __future__ import annotations
 import base64
 import json
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar, cast
@@ -1580,9 +1580,13 @@ def playbill_erase_capture(instance_id: str, request: CaptureEraseRequest) -> Ca
             )
 
 
-def playbill_file_context(instance_id: str) -> contracts.FileContext:
+def playbill_file_context(
+    instance_id: str, *, documents: Sequence[str] | None = None
+) -> contracts.FileContext:
     check_permission("cruxible_read", instance_id=instance_id)
-    result = service_playbill_file_context(get_playbill_manager().get(instance_id))
+    result = service_playbill_file_context(
+        get_playbill_manager().get(instance_id), documents=documents
+    )
     return contracts.FileContext.model_validate(result.model_dump(mode="json"))
 
 

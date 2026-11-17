@@ -283,6 +283,34 @@ Each new revision is proposed the same way, and lands under your approval
 policy like any change (`--no-accept` only proposes it). Most usage is
 citations; use a Document only when the wording itself is governed.
 
+## Linking notes and guidance
+
+A link points prose at state without changing either. `cruxible link` makes
+the two kinds, and a mismatched argument refuses with which is which:
+
+- **A note** links a *section* `about` Subjects: it says what that text is
+  about. It is a value-lane write, under the same governance as `set`, and
+  `backlinks` on the Subject lists it.
+
+  ~~~bash
+  cruxible link docs/fitment.md#'Fitment notes/Wiper blades' \
+    --about catalog.part/wb-500 --because "Shop notes on this blade"
+  ~~~
+
+- **Guidance** links a *whole registered page* to a ClaimType or Procedure as
+  its review guidance. The link is recorded on the page's catalog entry and the
+  page's Document revision is proposed with it; `proposal review` of a change
+  touching that field shows the page.
+
+  ~~~bash
+  cruxible link docs/fitment-review.md --guides ClaimType:catalog.part.fits
+  ~~~
+
+The file is named by its path or its catalog name. Later `files propose` runs
+keep the guidance links, and `--unlink` removes either kind. A page a write
+catalogued without a Document becomes one under its catalog name when it is
+first linked as guidance.
+
 ## Pages that reflect state: projection blocks
 
 A **projection block** is a marked passage of a page that reflects accepted

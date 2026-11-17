@@ -1144,8 +1144,15 @@ class CruxibleClient:
         )
         return self._parse_model(response, CaptureEraseResult)
 
-    def file_context(self, instance_id: str) -> contracts.FileContext:
-        response = self._client.get(f"/api/v1/{instance_id}/files/context")
+    def file_context(
+        self, instance_id: str, *, documents: Sequence[str] | None = None
+    ) -> contracts.FileContext:
+        """Accepted Documents for compiling files: all, or only the ``documents`` named."""
+
+        response = self._client.get(
+            f"/api/v1/{instance_id}/files/context",
+            params=None if documents is None else {"document": list(documents)},
+        )
         return self._parse_model(response, contracts.FileContext)
 
     def check_file_bundle(
