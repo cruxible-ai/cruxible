@@ -1690,12 +1690,14 @@ Each extract step also records its whole extracted row set as one row
 observation: every record is a row identified by its Capture's contract and
 logical source, its record key and its typed values (never where in the
 document it sat), and the set is the same whatever bytes carried the rows. A
-complete absence enumeration records one observation of its enumerated keys
-the same way. A Claim produced from an extracted record reads the latest
-observation of a row set holding its row as its freshness; an absence reads
-only complete enumerations with the same keys, never its first page's
-contents. Nothing is recorded per Claim: the same rows in new bytes are one
-head update.
+complete absence enumeration the run fetched whole records one observation of
+the Subjects it lacked the same way. A Claim produced from an extracted record
+reads the latest observation of a row set holding its row as its freshness; an
+absence reads only complete enumerations that lacked its Subject, never its
+first page's contents, so an unchanged enumeration refreshes every absence
+derived from it with one head update, and a held absence needs no per-Claim
+reconfirmation. Nothing is recorded per Claim: the same rows in new bytes are
+one head update.
 
 So an item restating a live Claim on the Capture it cites, on another Capture
 of the very content it cites, or on a record whose row this run's extract step

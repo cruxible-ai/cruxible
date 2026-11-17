@@ -126,7 +126,7 @@ class InstanceCaptureObservations:
         self,
         *,
         contract_digest: str,
-        enumeration: str,
+        lacks: tuple[str, ...],
         capture_digest: str,
         earliest: datetime,
         latest: datetime,
@@ -137,7 +137,7 @@ class InstanceCaptureObservations:
     ) -> None:
         ClaimReobservationStore(self.instance).observe_enumeration(
             contract_digest=contract_digest,
-            enumeration=enumeration,
+            lacks=lacks,
             capture_digest=capture_digest,
             earliest=earliest,
             latest=latest,

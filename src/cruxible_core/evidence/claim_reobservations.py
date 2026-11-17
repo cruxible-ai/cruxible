@@ -378,24 +378,22 @@ def row_digest(contract: str, source: str, key: object, fields: object) -> str:
     ).tagged
 
 
-def enumeration_digest(witness: AbsenceWitness) -> str:
-    """A complete absence enumeration's key: what an absence Claim depends on (F-001).
+def lack_digest(witness: AbsenceWitness, subject: str) -> str:
+    """ "A complete enumeration lacked this Subject": what an absence depends on.
 
-    The logical source, the extract specification and the digest of every
-    key the complete enumeration read: observed again only when a run's
-    whole enumeration is complete and enumerates the same keys.
+    Ruling 2026-11-16 (1): the logical source, the extract specification and
+    the Subject's path. Published only by a complete enumeration the run
+    fetched whole (F-001), so an unchanged complete enumeration refreshes
+    every absence derived from it with one head update, and a changed one that
+    still lacks the Subject refreshes it too, with no per-Claim record.
     """
 
     from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 
     return typed_digest(
         Sha256Value,
-        "cruxible-observed-enumeration-v1",
-        {
-            "source": witness.logical_source,
-            "spec": witness.extract_spec,
-            "keys": witness.enumerated_key_digest,
-        },
+        "cruxible-observed-lack-v1",
+        {"source": witness.logical_source, "spec": witness.extract_spec, "subject": subject},
     ).tagged
 
 
@@ -1244,7 +1242,7 @@ class ClaimReobservationStore:
         self,
         *,
         contract_digest: str,
-        enumeration: str,
+        lacks: Sequence[str],
         capture_digest: str,
         earliest: datetime,
         latest: datetime,
@@ -1253,11 +1251,12 @@ class ClaimReobservationStore:
         actor_id: str,
         lineage: Mapping[str, str] | None = None,
     ) -> int | None:
-        """Record a complete absence enumeration's observation (F-001).
+        """Record what a complete absence enumeration lacked (F-001, 2026-11-16 (1)).
 
-        ``enumeration`` is ``enumeration_digest`` of the run's complete witness:
-        an absence Claim citing an enumeration with the same keys is fresh as
-        of it. One shared record per complete enumeration, never per Claim;
+        ``lacks`` are ``lack_digest`` of each Subject the run's complete
+        enumeration lacked: an absence Claim about one of them is fresh as of
+        it. One shared record per complete enumeration, never per Claim; the
+        same lacks again are the same set, one head update.
         ``capture_digest`` is the witness's root Capture.
         """
 
@@ -1269,7 +1268,7 @@ class ClaimReobservationStore:
             {
                 "tag": OBSERVED_ROWS_BODY,
                 **({} if lineage is None else {"lineage": dict(lineage)}),
-                "rows": [[contract_digest, enumeration]],
+                "rows": [[contract_digest, lack] for lack in sorted(set(lacks))],
             }
         )
         return self._append_shared(
@@ -2126,8 +2125,9 @@ def claim_keys_on(
 ) -> tuple[ReobservationKey, ...]:
     """The keys one Claim's freshness depends on (ruling 2026-11-16).
 
-    An absence depends on its complete enumeration alone (F-001): the
-    contents of its root page say nothing about the others. A Claim produced
+    An absence depends on complete enumerations lacking its Subject alone
+    (F-001, 2026-11-16 (1)): the contents of its root page say nothing about
+    the others. A Claim produced
     from an extracted record depends on that record's row (looked up by its
     cited Capture, extract specification and record locator) and on the
     exact cited content too; any other Claim on the contents it cites (1d).
@@ -2141,9 +2141,8 @@ def claim_keys_on(
         root = by_capture.get(witness.capture)
         if root is None:
             return ()
-        return (
-            ReobservationKey(witness.capture, root.contract_digest, enumeration_digest(witness)),
-        )
+        lacked = lack_digest(witness, claim.statement.subject.artifact_path)
+        return (ReobservationKey(witness.capture, root.contract_digest, lacked),)
     value = getattr(evidence, "value", None)
     if isinstance(value, ExtractedBasis):
         row = reader.row_of(value.capture_digest, value.extract_spec_digest, value.record_locator)
@@ -2214,7 +2213,7 @@ __all__ = [
     "cited_reobservation_keys",
     "claim_keys_on",
     "claim_reobservation_keys",
-    "enumeration_digest",
+    "lack_digest",
     "row_digest",
     "reobservation_journal_identity",
     "reobservation_journal_signature",

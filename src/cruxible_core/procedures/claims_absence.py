@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Callable, Iterable, Literal, NoReturn, Sequence
 
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
@@ -283,7 +284,14 @@ def append_absence(
             expect_coordinate=admission.accepted_coordinate,
         )
         seal(witness)
-        _observe_enumeration(witness, executor=executor, admission=admission, state=state)
+    # A complete enumeration this run fetched whole is observed as the set of
+    # Subjects it lacked (ruling 2026-11-16 (1)): every absence derived from
+    # it reads that one observation, so a held absence needs no per-Claim
+    # reconfirmation (review 2c #3, #5).
+    observing = (
+        None if witness is None else _enumeration_span(witness, executor=executor, state=state)
+    )
+    lacked: set[str] = set()
     if not complete:
         diagnostics.add(
             ClaimsDiagnostic(
@@ -658,9 +666,10 @@ def append_absence(
                             )
                         continue
                     seen_changes.add(unit)
+                    lacked.add(path)
                     if claim is not None and isinstance(claim.statement.object, NoneClaimObject):
                         diagnostics.same += 1
-                        if capture not in claim.backing.capture_digests:
+                        if observing is None and capture not in claim.backing.capture_digests:
                             append(
                                 CoreReobservationChange(
                                     rationale="Re-confirmed complete source absence.",
@@ -719,35 +728,48 @@ def append_absence(
                                 "context": context,
                             },
                         )
+    if observing is not None and witness is not None and lacked:
+        _observe_lacks(witness, sorted(lacked), observing, executor=executor, admission=admission)
 
 
-def _observe_enumeration(
-    witness: AbsenceWitness, *, executor: Any, admission: Any, state: Any
-) -> None:
-    """Publish a complete enumeration's observation when this run fetched all of it (F-001).
+def _enumeration_span(
+    witness: AbsenceWitness, *, executor: Any, state: Any
+) -> tuple[str, datetime, datetime] | None:
+    """The contract and span a complete enumeration can be observed with, when
+    this run fetched every Capture it read (F-001); None otherwise."""
 
-    An absence Claim is fresh as of the latest complete enumeration with the
-    same keys (``enumeration_digest``), never as of one page's contents. One
-    shared record per complete enumeration; nothing when a witness Capture
-    was admitted rather than fetched now.
-    """
-
-    from cruxible_core.evidence.claim_reobservations import enumeration_digest
-
-    port = getattr(executor, "capture_observations", None)
     from cruxible_core.procedures.execution import _capture_span
 
+    if getattr(executor, "capture_observations", None) is None:
+        return None
     spans = [_capture_span(state, capture) for capture in witness.captures]
     contract = state.capture_contracts.get(witness.capture)
-    if port is None or contract is None or any(span is None for span in spans):
-        return
+    if contract is None or any(span is None for span in spans):
+        return None
     known = [span for span in spans if span is not None]
-    port.observe_enumeration(
+    return contract, min(span[0] for span in known), max(span[1] for span in known)
+
+
+def _observe_lacks(
+    witness: AbsenceWitness,
+    subjects: Sequence[str],
+    observing: tuple[str, datetime, datetime],
+    *,
+    executor: Any,
+    admission: Any,
+) -> None:
+    """Publish what the complete enumeration lacked: one shared record, keyed by
+    each lacked Subject (``lack_digest``); the same lacks again are one head update."""
+
+    from cruxible_core.evidence.claim_reobservations import lack_digest
+
+    contract, earliest, latest = observing
+    executor.capture_observations.observe_enumeration(
         contract_digest=contract,
-        enumeration=enumeration_digest(witness),
+        lacks=tuple(lack_digest(witness, subject) for subject in subjects),
         capture_digest=witness.capture,
-        earliest=min(span[0] for span in known),
-        latest=max(span[1] for span in known),
+        earliest=earliest,
+        latest=latest,
         run_id=admission.run_id,
         node_id=witness.node_id,
         actor_id=admission.actor_context.actor_id,

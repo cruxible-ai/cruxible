@@ -272,3 +272,42 @@ def test_freshness_reads_do_not_grow_with_observation_history(tmp_path: Path) ->
     for name, small in costs[100].items():
         assert small > 0, (name, costs)
         assert costs[1_000][name] <= small + 64, (name, costs)
+
+
+def test_an_unchanged_complete_enumeration_is_one_head_update_at_any_size(
+    tmp_path: Path,
+) -> None:
+    """Ruling 2026-11-16 (1): repeating the same lacks writes no member row and
+    the same journal work at 12 and 120 absences."""
+
+    added = {}
+    for size in (12, 120):
+        root = tmp_path / str(size)
+        root.mkdir()
+        instance, _owner = _freshness_world(root, stale_after=_HOUR)
+        _claim, cited, key = _cited(instance)
+        store = ClaimReobservationStore(instance)
+        lacks = tuple(f"sha256:{index:064x}" for index in range(size))
+
+        def observe(at: datetime) -> None:
+            instance.recording_clock = lambda: at
+            store.observe_enumeration(
+                contract_digest=key.contract_digest,
+                lacks=lacks,
+                capture_digest=cited,
+                earliest=at - timedelta(minutes=1),
+                latest=at,
+                run_id="RUN-x",
+                node_id="absence",
+                actor_id="o",
+            )
+
+        observe(_START + timedelta(hours=1))
+        with store._locked() as conn:  # noqa: SLF001
+            members = conn.execute("SELECT COUNT(*) FROM observed_sets").fetchone()[0]
+        files = sum(1 for path in (instance.root / "cas").rglob("*") if path.is_file())
+        observe(_START + timedelta(hours=2))
+        with store._locked() as conn:  # noqa: SLF001
+            assert conn.execute("SELECT COUNT(*) FROM observed_sets").fetchone()[0] == members
+        added[size] = sum(1 for path in (instance.root / "cas").rglob("*") if path.is_file()) - files
+    assert added[12] == added[120] == 1  # the repeat's own journal payload

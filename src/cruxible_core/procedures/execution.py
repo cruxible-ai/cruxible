@@ -1366,7 +1366,7 @@ class CaptureObservationsProtocol(Protocol):
         self,
         *,
         contract_digest: str,
-        enumeration: str,
+        lacks: tuple[str, ...],
         capture_digest: str,
         earliest: datetime,
         latest: datetime,
@@ -1375,7 +1375,7 @@ class CaptureObservationsProtocol(Protocol):
         actor_id: str,
         lineage: dict[str, str] | None = None,
     ) -> None:
-        """Record a complete absence enumeration's observation."""
+        """Record what a complete absence enumeration lacked."""
 
     def row_of(self, capture_digest: str, spec_digest: str, locator: str) -> str | None:
         """The row one extracted record of a Capture was observed as, if any."""
