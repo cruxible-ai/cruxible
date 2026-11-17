@@ -92,6 +92,8 @@ from cruxible_core.triggers.journal import (
 )
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
     from cruxible_core.service.discovery.next import PlaybillNextItemV1, _Holds
     from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext
@@ -3075,6 +3077,10 @@ def rebuilt_tables(instance: Any, *, at: datetime) -> dict[str, list[tuple[Any, 
 # -- the part ----------------------------------------------------------------------
 
 
+#: The states whose failed target this process has already tried again (``match``).
+_RETRIED: set[Path] = set()
+
+
 class ClaimFactsPart:
     name = "next"
 
@@ -3085,6 +3091,13 @@ class ClaimFactsPart:
         target = read_heads(instance).key()
         with _STATE.open(instance) as connection:
             assert connection is not None
+            path = _STATE.path(instance)
+            if path not in _RETRIED:
+                # A target that failed under an earlier process (an earlier
+                # build, for one) is tried once more by this one: what failed
+                # it may be repaired, and no head has to move for that.
+                _RETRIED.add(path)
+                connection.execute("UPDATE progress SET failed=NULL WHERE failed IS NOT NULL")
             row = connection.execute("SELECT target FROM progress").fetchone()
             if row is not None and row[0] == target:
                 return

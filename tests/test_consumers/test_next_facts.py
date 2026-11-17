@@ -651,6 +651,33 @@ def test_a_journal_tail_lost_in_place_and_regrown_before_a_pass_rebuilds_the_fac
         )
 
 
+def test_a_target_that_failed_under_an_earlier_process_is_tried_once_more(
+    tmp_path: Path,
+) -> None:
+    """Review finding 6: a pass failed and pinned its target; what failed it is
+    repaired without any head moving (an upgrade). The same process leaves the
+    target alone; the next process tries it once and stores the facts."""
+
+    instance, owner = _freshness_world(tmp_path)
+    at = datetime(2026, 8, 16, 20, 0, 9, 800000, tzinfo=UTC)
+    _catch_up(instance, at)
+    _refresh_claim(instance, owner, timestamp="2026-08-16T20:00:07.000000Z")
+    PART.match(instance, now=at, daemon_id="test")
+    with sqlite3.connect(facts._STATE.path(instance)) as connection:
+        connection.execute("UPDATE progress SET failed=target,last_error='CasError: gone'")
+    assert tuple(PART.due(instance, now=at)) == ()
+    PART.match(instance, now=at, daemon_id="test")
+    assert tuple(PART.due(instance, now=at)) == ()
+
+    facts._RETRIED.clear()  # another daemon process
+    _catch_up(instance, at)
+    _assert_rebuilt(instance, at)
+    with sqlite3.connect(facts._STATE.path(instance)) as connection:
+        assert connection.execute(
+            "SELECT failed,last_error,target=(SELECT heads FROM cursors) FROM progress"
+        ).fetchone() == (None, None, 1)
+
+
 def test_invalid_cursors_and_a_new_format_rebuild_from_nothing(tmp_path: Path) -> None:
     instance, _owner = seed_claims(tmp_path)
     at = EVALUATION_TIME
