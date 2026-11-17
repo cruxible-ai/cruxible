@@ -21,6 +21,7 @@ from fastapi.testclient import TestClient
 
 from cruxible_client import CruxibleClient
 from cruxible_core.cli.commands import _common, playbill
+from cruxible_core.cli.commands import context as context_commands
 from cruxible_core.cli.context import (
     CliContextState,
     RememberedPrincipals,
@@ -75,6 +76,11 @@ def daemon(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
         return real
 
     monkeypatch.setattr(_common, "_get_client", get_client)
+    # `context` binds `_get_client` by name when it is first imported. Imported
+    # above and patched here, it gets this stub only for the test: imported
+    # lazily under the patch, it kept the stub for the rest of the worker, and a
+    # later file's `context show` then skipped the folder identity check.
+    monkeypatch.setattr(context_commands, "_get_client", get_client)
     yield tmp_path
     get_playbill_manager().clear()
     reset_runtime_credential_store()
