@@ -45,7 +45,7 @@ from cruxible_client.contracts.claim_verdicts import (
     CaptureVerdictEvidence,
 )
 from cruxible_client.contracts.claims import claim_artifact_digest, claim_path, parse_claim
-from cruxible_client.contracts.errors import CruxibleError, ReadRefusalError
+from cruxible_client.contracts.errors import CasError, CruxibleError, ReadRefusalError
 from cruxible_client.contracts.primitives import new_id
 from cruxible_client.contracts.procedures.node_summary import ReobservationRefusalReason
 from cruxible_client.contracts.projection import AcceptedCoordinate
@@ -61,7 +61,7 @@ from cruxible_core.exhaust.writer import ProcedureExhaustWriter
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
-from cruxible_core.storage.cas import BodyAccessContext, CasError
+from cruxible_core.storage.cas import BodyAccessContext
 from cruxible_core.storage.preview_fence import is_previewing
 from cruxible_core.storage.read_positions import reobservations_through
 
