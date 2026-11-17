@@ -29,7 +29,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
-from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.canonical import canonical_bytes, canonical_digest
 from cruxible_client.contracts.captures import (
     CaptureEnvelopeAny,
     observed_content,
@@ -101,7 +101,7 @@ ROW_MAP_BODY = "cruxible-row-map-v1"
 #: The row maps of one extract step's Captures (run-free).
 ROW_MAPS_BODY = "cruxible-row-maps-v1"
 _ACCESS = BodyAccessContext(principal_id="claim-reobservation", can_read_body=True)
-_SCHEMA_VERSION = 18
+_SCHEMA_VERSION = 19
 REOBSERVATION_DIRECTORY = "claim-reobservations"
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 # ``reobservations`` keeps the full history (audit, historical verification).
@@ -194,7 +194,29 @@ CREATE TABLE IF NOT EXISTS row_sets (
 ) STRICT, WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS seen_maps (digest TEXT PRIMARY KEY) STRICT, WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS switches (sequence INTEGER PRIMARY KEY) STRICT;
+CREATE TABLE IF NOT EXISTS absence_members (
+ claim_id TEXT NOT NULL, claim_artifact_digest TEXT NOT NULL, contract_digest TEXT NOT NULL,
+ observed_content_digest TEXT NOT NULL, set_digest TEXT NOT NULL,
+ PRIMARY KEY(claim_id, claim_artifact_digest, contract_digest, observed_content_digest,
+  set_digest)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS absence_members_by_set ON absence_members (set_digest);
+CREATE TABLE IF NOT EXISTS absence_points (
+ set_digest TEXT NOT NULL, recorded_us INTEGER NOT NULL, observed_us INTEGER NOT NULL,
+ latest_us INTEGER NOT NULL, capture_digest TEXT NOT NULL, sequence INTEGER NOT NULL,
+ PRIMARY KEY(set_digest, recorded_us, observed_us, capture_digest)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS absence_points_by_capture
+ ON absence_points (set_digest, capture_digest, observed_us);
+CREATE INDEX IF NOT EXISTS absence_points_by_observed
+ ON absence_points (set_digest, observed_us, latest_us);
 """
+# A batch's absence reconfirmations (the 0.5.0 per-Claim fallback, round 9 F):
+# each is still its own Claim's admitted record, but the projection holds them
+# as the set of (Claim, version, contract, content) a group reconfirmed, its
+# members written once per distinct set, and one point per group per run. An
+# unchanged run's absences are the set before: one point row, however many
+# Claims it holds, and every historical instant still answers exactly.
 # Content observations (ruling 1a) and row observations (2026-11-16), as maintained heads.
 #
 # ``observed_sets`` holds one row per member of each distinct observed set,
@@ -367,6 +389,49 @@ def _ordered(conn: sqlite3.Connection, sequence: int, recorded_at: datetime) -> 
     return recorded_us
 
 
+def _absence_sets(
+    conn: sqlite3.Connection,
+    claim_id: str,
+    version: str | None = None,
+    pair: tuple[str, str] | None = None,
+) -> list[str]:
+    """The reconfirmation sets holding a Claim (one version, one cited content)."""
+
+    query = "SELECT DISTINCT set_digest FROM absence_members WHERE claim_id=?"
+    params: list[str] = [claim_id]
+    if version is not None:
+        query += " AND claim_artifact_digest=?"
+        params.append(version)
+        if pair is not None:
+            query += " AND contract_digest=? AND observed_content_digest=?"
+            params.extend(pair)
+    return [str(row[0]) for row in conn.execute(query, params)]
+
+
+def _absence_last(
+    conn: sqlite3.Connection, set_digest: str, *, at_us: int, through: int
+) -> tuple[str, int, int, int] | None:
+    """A set's last point recorded by ``at_us`` through ``through``:
+    (Capture, observed, recorded, sequence). One seek on its key."""
+
+    row = conn.execute(
+        "SELECT capture_digest, observed_us, recorded_us, sequence FROM absence_points "
+        "WHERE set_digest=? AND recorded_us<=? AND sequence<=? "
+        "ORDER BY recorded_us DESC, observed_us DESC, capture_digest DESC LIMIT 1",
+        (set_digest, at_us, through),
+    ).fetchone()
+    return None if row is None else (str(row[0]), int(row[1]), int(row[2]), int(row[3]))
+
+
+def _absence_member(conn: sqlite3.Connection, set_digest: str, claim_id: str) -> tuple[str, str]:
+    row = conn.execute(
+        "SELECT contract_digest, observed_content_digest FROM absence_members "
+        "WHERE set_digest=? AND claim_id=? LIMIT 1",
+        (set_digest, claim_id),
+    ).fetchone()
+    return str(row[0]), str(row[1])
+
+
 #: Records only unshipped dev/rc builds wrote (ruling 2026-11-16 (3)): an
 #: instance holding one is re-initialised, not migrated.
 _RETIRED_TAGS = frozenset({"cruxible-content-transition-v1"})
@@ -503,6 +568,8 @@ class ClaimReobservationStore:
                         "seen_maps",
                         "row_sets",
                         "switches",
+                        "absence_members",
+                        "absence_points",
                         "transitions",
                         "transition_exceptions",
                     ):
@@ -532,10 +599,9 @@ class ClaimReobservationStore:
                         )
                         continue
                     if isinstance(payload, dict) and payload.get("tag") == _BATCH_TAG:
-                        for item in _batch_records(payload):
-                            self._apply(
-                                conn, item, stored.record.sequence, stored.record.recorded_at
-                            )
+                        self._apply_batch(
+                            conn, payload, stored.record.sequence, stored.record.recorded_at
+                        )
                         continue
                     if isinstance(payload, dict) and payload.get("tag") != _EVENT_TAG:
                         _refuse_retired_tag(payload.get("tag"))
@@ -614,6 +680,59 @@ class ClaimReobservationStore:
                     "INSERT OR IGNORE INTO reobservation_points VALUES (?,?,?,?,?,?,?,?)",
                     (*key, recorded_us, observed_us, payload["capture_digest"], sequence),
                 )
+        conn.execute("INSERT OR REPLACE INTO progress VALUES(1,?,?)", (sequence, recorded_us))
+
+    def _apply_batch(
+        self,
+        conn: sqlite3.Connection,
+        payload: Mapping[str, Any],
+        sequence: int,
+        recorded_at: datetime,
+    ) -> None:
+        """Project one batch record: absence groups as sets, the rest per Claim."""
+
+        recorded_us = _ordered(conn, sequence, recorded_at)
+        for group in payload["groups"]:
+            extraction = group.get("extraction")
+            if not (isinstance(extraction, Mapping) and extraction.get("absence") is not None):
+                for item in _batch_records({"groups": [group]}):
+                    self._apply(conn, item, sequence, recorded_at)
+                continue
+            contract = str(group["contract_digest"])
+            content = str(group["observed_content_digest"])
+            members = sorted(
+                {(str(claim), str(version)) for claim, version in group["claims"]},
+                key=lambda pair: (pair[0].encode(), pair[1].encode()),
+            )
+            set_digest = canonical_digest(
+                "cruxible-absence-reconfirmation-set-v1",
+                {"contract": contract, "content": content, "members": [list(m) for m in members]},
+            )
+            if (
+                conn.execute(
+                    "SELECT 1 FROM absence_members WHERE set_digest=? LIMIT 1", (set_digest,)
+                ).fetchone()
+                is None
+            ):
+                conn.executemany(
+                    "INSERT OR IGNORE INTO absence_members VALUES (?,?,?,?,?)",
+                    [(claim, version, contract, content, set_digest) for claim, version in members],
+                )
+            observed_us = _micros(_instant(group["observed_at"]))
+            last = _absence_last(conn, set_digest, at_us=_NEVER, through=_NEVER)
+            if last is not None and observed_us < last[1]:
+                continue  # an older call recorded later never moves it back
+            conn.execute(
+                "INSERT OR IGNORE INTO absence_points VALUES (?,?,?,?,?,?)",
+                (
+                    set_digest,
+                    recorded_us,
+                    observed_us,
+                    _micros(_instant(group["latest"])),
+                    str(group["capture_digest"]),
+                    sequence,
+                ),
+            )
         conn.execute("INSERT OR REPLACE INTO progress VALUES(1,?,?)", (sequence, recorded_us))
 
     def _apply_shared(
@@ -1371,8 +1490,7 @@ class ClaimReobservationStore:
             stored = self._append(
                 journal, bodies, head, payload, accepted=accepted, actor_id=actor_id, now=stamp
             )
-            for item in _batch_records(payload):
-                self._apply(conn, item, stored.record.sequence, stored.record.recorded_at)
+            self._apply_batch(conn, payload, stored.record.sequence, stored.record.recorded_at)
             conn.commit()
         return refused
 
@@ -1400,7 +1518,28 @@ class ClaimReobservationStore:
                 None if call is None else _micros(call[0]),
             ),
         ).fetchone()
-        return None if row is None else tuple(row)
+        if row is not None:
+            return tuple(row)
+        # A batch's absence reconfirmation is held in its group's set.
+        for set_digest in _absence_sets(conn, claim_id, version):
+            point = conn.execute(
+                "SELECT observed_us, recorded_us FROM absence_points "
+                "INDEXED BY absence_points_by_capture "
+                "WHERE set_digest=? AND capture_digest=? AND (? IS NULL OR observed_us=?) LIMIT 1",
+                (
+                    set_digest,
+                    capture_digest,
+                    None if call is None else _micros(call[0]),
+                    None if call is None else _micros(call[0]),
+                ),
+            ).fetchone()
+            if point is not None:
+                return (
+                    *_absence_member(conn, set_digest, claim_id),
+                    format_datetime(_from_micros(point[0])),
+                    format_datetime(_from_micros(point[1])),
+                )
+        return None
 
     def _writer_head(self) -> tuple[LocalJournalBackend, Any, Any]:
         """Recover reserved material, then activate the writer at the journal head."""
@@ -1822,6 +1961,22 @@ class ClaimReobservationStore:
                 "ORDER BY capture_digest",
                 (claim_id,),
             ).fetchall()
+            for set_digest in _absence_sets(conn, claim_id):
+                contract, content = _absence_member(conn, set_digest, claim_id)
+                rows.extend(
+                    (
+                        point[0],
+                        contract,
+                        content,
+                        format_datetime(_from_micros(point[1])),
+                        format_datetime(_from_micros(point[2])),
+                    )
+                    for point in conn.execute(
+                        "SELECT capture_digest, observed_us, recorded_us FROM absence_points "
+                        "WHERE set_digest=? ORDER BY recorded_us",
+                        (set_digest,),
+                    )
+                )
         return tuple(
             ReobservationRecord(
                 claim_id=claim_id,
@@ -2054,6 +2209,7 @@ class ReobservationReader:
             self.probes += 1
             row = conn.execute(_LAST_SEQUENCE, (claim_id, through)).fetchone()
             found = 0 if row is None or row[0] is None else int(row[0])
+            found = max(found, self._absence_sequence(conn, claim_id, through))
             if keys and self._content_observed(conn):
                 for pair in {
                     (key.contract_digest, key.observed_content_digest)
@@ -2065,6 +2221,17 @@ class ReobservationReader:
                 # row it is from then on: it names the record set too.
                 for record in {key.row_record[:2] for key in keys if key.row_record is not None}:
                     found = max(found, self._maps_sequence(conn, *record, through))
+        return found
+
+    def _absence_sequence(self, conn: sqlite3.Connection, claim_id: str, through: int) -> int:
+        """The last journal sequence a reconfirmation set holding the Claim recorded."""
+
+        found = 0
+        for set_digest in _absence_sets(conn, claim_id):
+            self.probes += 1
+            last = _absence_last(conn, set_digest, at_us=_NEVER, through=through)
+            if last is not None:
+                found = max(found, last[3])
         return found
 
     def latest_observation(
@@ -2111,6 +2278,8 @@ class ReobservationReader:
             self.probes += 1
             row = conn.execute(_LAST_SEQUENCE, (claim_id, _NEVER)).fetchone()
             if row is not None and row[0] is not None:
+                return True
+            if _absence_sets(conn, claim_id):
                 return True
             for key in keys:
                 self.probes += 1
@@ -2475,10 +2644,34 @@ class ReobservationReader:
             if conn is None:
                 return None
             self.probes += 1
+            through = _through()
             row = conn.execute(
                 _VERSION_RECORD,
-                (claim_id, version, _micros(observed_by), _through(), _micros(observed_by)),
+                (claim_id, version, _micros(observed_by), through, _micros(observed_by)),
             ).fetchone()
+            # A batched absence reconfirmation of that version: per set holding it.
+            for set_digest in _absence_sets(conn, claim_id, version):
+                self.probes += 1
+                point = conn.execute(
+                    "SELECT capture_digest, observed_us, recorded_us, sequence FROM absence_points "
+                    "INDEXED BY absence_points_by_observed WHERE set_digest=? AND observed_us<=? "
+                    "AND latest_us<=? AND sequence<=? "
+                    "ORDER BY observed_us DESC, capture_digest DESC LIMIT 1",
+                    (set_digest, _micros(observed_by), _micros(observed_by), through),
+                ).fetchone()
+                if point is None:
+                    continue
+                if row is None or (int(point[1]), str(point[0])) > (
+                    _micros(_instant(row[3])),
+                    str(row[0]),
+                ):
+                    row = (
+                        str(point[0]),
+                        *_absence_member(conn, set_digest, claim_id),
+                        format_datetime(_from_micros(point[1])),
+                        format_datetime(_from_micros(point[2])),
+                        int(point[3]),
+                    )
         if row is None:
             return None
         self.rows_read += 1
@@ -2545,6 +2738,7 @@ class ReobservationReader:
             through = _through()
             row = conn.execute(_LAST_SEQUENCE, (claim_id, through)).fetchone()
             sequence = 0 if row is None or row[0] is None else int(row[0])
+            sequence = max(sequence, self._absence_sequence(conn, claim_id, through))
             shared = self._content_observed(conn)
             if not sequence and not shared:
                 return ReobservationReading()
@@ -2585,6 +2779,28 @@ class ReobservationReader:
                                 sequence=0,
                                 capture_digest=str(hit[0]),
                             )
+                        # Its batched absence reconfirmations: a seek per set
+                        # holding it (round 9 F), never one per run.
+                        for set_digest in _absence_sets(conn, claim_id, key.version, pair):
+                            self.probes += 2
+                            last = _absence_last(conn, set_digest, at_us=at_us, through=through)
+                            ahead = conn.execute(
+                                "SELECT recorded_us FROM absence_points WHERE set_digest=? "
+                                "AND recorded_us>? AND sequence<=? ORDER BY recorded_us LIMIT 1",
+                                (set_digest, at_us, through),
+                            ).fetchone()
+                            if ahead is not None:
+                                boundaries.add(_from_micros(ahead[0]))
+                            if last is not None:
+                                reconfirmed = _Point(
+                                    observed_us=last[1],
+                                    latest_us=last[1],
+                                    recorded_us=last[2],
+                                    sequence=0,
+                                    capture_digest=last[0],
+                                )
+                                if best is None or reconfirmed.rank() > best.rank():
+                                    best = reconfirmed
                     if window is not None and key.shared:
                         point = self._key_point(conn, pair, window, boundaries, held_sets)
                         if point is not None and (best is None or point.rank() > best.rank()):

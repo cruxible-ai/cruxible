@@ -917,7 +917,7 @@ def test_a_successor_version_is_reconfirmed_on_a_capture_its_predecessor_was(
     its successor's. The same Capture and call reconfirming the next version
     (after a revision) is judged and recorded for that version."""
 
-    from datetime import timedelta
+    from datetime import UTC, datetime, timedelta
 
     from cruxible_core.evidence.claim_reobservations import (
         ClaimReobservationStore,
@@ -952,7 +952,9 @@ def test_a_successor_version_is_reconfirmed_on_a_capture_its_predecessor_was(
     store = ClaimReobservationStore(instance)
     assert len(store.history(inverse)) == 1
     current = store._version_at(inverse, instance.accepted_coordinate().git_oid)  # noqa: SLF001
-    assert ReobservationReader(instance).rechecked(inverse, current) is not None
+    later = datetime.now(UTC) + timedelta(days=1)
+    reader = ReobservationReader(instance)
+    assert reader.latest_version_record(inverse, current, observed_by=later) is not None
     # The Claim is revised (its successor version is live); the same Capture
     # and call reconfirm it.
     successor = "sha256:" + "9" * 64
@@ -975,7 +977,7 @@ def test_a_successor_version_is_reconfirmed_on_a_capture_its_predecessor_was(
     assert store.record_many([real], actor_id="owner") == {}
     assert admitted == [inverse]  # judged for the successor, not taken as known
     assert len(store.history(inverse)) == 2
-    assert ReobservationReader(instance).rechecked(inverse, successor) is not None
+    assert reader.latest_version_record(inverse, successor, observed_by=later) is not None
     # A repeat for the successor itself is the record it already holds.
     assert store.record_many([real], actor_id="owner") == {}
     assert admitted == [inverse] and len(store.history(inverse)) == 2
@@ -1050,6 +1052,10 @@ def test_an_unchanged_run_stores_the_same_at_2_and_22_absences(tmp_path: Path) -
     # version); the terminal's items, receipt and children are reused.
     stored = (grown[20].get("cas", 0) - grown[0].get("cas", 0)) / 20
     assert stored < 400, (stored, grown)
+    # The whole run, every byte (round 9 F): the projection holds each run's
+    # absences as one point of the set it reconfirmed, never a row per Claim.
+    total = (sum(grown[20].values()) - sum(grown[0].values())) / 20
+    assert total < 400, (total, grown)
 
 
 def _cas_files(root: Path) -> dict[str, int]:
