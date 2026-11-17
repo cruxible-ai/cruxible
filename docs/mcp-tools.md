@@ -179,7 +179,8 @@ key directory: the key is found by the lookup the CLI and the SDK use (see
 principal's. With no key found, the tool refuses and says how to configure it.
 `cruxible_init` creates the owner only: cosign setup on an existing instance (a reviewer
 principal and no self-approval) is two CLI steps, in this order: `cruxible
-principal add reviewer --key-dir DIR --signer-key OWNER_KEY`, then submit the
+principal add reviewer --key-dir DIR --signer-key OWNER_KEY --mode graph_write`
+(the tier that may submit approvals when the daemon runs with auth), then submit the
 approval policy (`cruxible authoring example approval-policy > policy.json`,
 `cruxible authoring submit policy.json`; its mode is
 `independent_approval_required`). Add the reviewer first: once the policy
