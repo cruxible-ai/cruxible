@@ -514,7 +514,8 @@ quickstart and concepts pages.
 - **`vocabulary export` keeps what a field means in sight.** It left out
   `evidence_requirement: captured` and `permitted_roles` whenever lowering
   could derive them, and spelled reserved contracts `playbill.`; it now writes
-  both, and `cruxible.` names, and export then plan on an untouched vocabulary
+  `captured`, every field's `permitted_roles` (a sole `[normative]` too), and
+  `cruxible.` names, and export then plan on an untouched vocabulary
   still changes nothing. `proposal list` names an awaiting-readmit proposal's
   changed paths by their public kind-qualified names (`--json` keeps the
   paths).

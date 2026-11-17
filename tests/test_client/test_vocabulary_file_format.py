@@ -369,10 +369,9 @@ def test_exporting_the_security_kit_keeps_what_each_field_means_and_plans_no_cha
         stated = parsed.kinds[kind].fields[name].stated
         if claim_type.evidence_requirement == "captured":
             assert stated.get("evidence_requirement") == "captured", claim_type.predicate
-        if list(claim_type.permitted_roles) != ["normative"]:
-            assert stated.get("permitted_roles") == list(claim_type.permitted_roles), (
-                claim_type.predicate
-            )
+        assert stated.get("permitted_roles") == list(claim_type.permitted_roles), (
+            claim_type.predicate
+        )
     assert any(item.evidence_requirement == "captured" for item in accepted.claim_types.values())
     # An untouched file plans nothing: no Claims are read, so no client is needed.
     planned = _plan_members(cast(Any, None), parsed, accepted)

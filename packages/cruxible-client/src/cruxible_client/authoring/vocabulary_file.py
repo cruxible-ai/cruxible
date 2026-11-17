@@ -395,17 +395,15 @@ def _public_contract_names(value: object) -> object:
 def _legible(name: str, value: object) -> bool:
     """Whether export keeps this field although lowering would derive it.
 
-    ``evidence_requirement: captured`` and any ``permitted_roles`` but the bare
-    default follow from other fields only by rules a reader cannot see in the
-    file (captured from roles of exactly ``[observation]``, roles from
-    ``default_role``), so the file says them.
+    ``evidence_requirement: captured`` and ``permitted_roles`` follow from other
+    fields only by rules a reader cannot see in the file (captured from roles of
+    exactly ``[observation]``, roles from ``default_role``, else ``[normative]``),
+    so the file says them: the roles on every field.
     """
 
     if name == "evidence_requirement":
         return value == "captured"
-    if name == "permitted_roles":
-        return value != ["normative"]
-    return False
+    return name == "permitted_roles"
 
 
 def _shaped_contracts(policy: object) -> list[str]:
