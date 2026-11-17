@@ -522,6 +522,46 @@ quickstart and concepts pages.
   naming its author and the command that remakes it, and publishes nothing.
 - **Withdrawing or rejecting an accepted proposal says it is accepted**
   (`cruxible.proposal.already_accepted`, with its git oid and generation).
+- **A change set landed at the head keeps its reason.** A write approved or
+  activated after the head moved landed by its own bytes with no rationale, so
+  `get --detail history` and the successor's review showed no `reason:` for
+  it. The landed proposal now carries its source's `--because`.
+- **Query cards and `now` refusals read plainly.** `get query:NAME` printed a
+  cut Python repr of its definition (`from_=`, `params_contract=none`); it now
+  prints each authored clause (`from`, `where` with any `now - 3d`, `fields`,
+  ...) on its own line. `now` against a `date`, string or enum field refuses
+  `cruxible.query.value_type_mismatch` with "now compares only with a datetime
+  field", instead of `cannot compare string with timestamp` or the field's
+  operator list; a field type of `timestamp` (or `integer`, `boolean`, ...)
+  names the type meant (`datetime`); and a refused preflight's CLI line no
+  longer repeats a refusal code or adds the blocked check that refusal caused.
+- **A Runbook's schedule shows on the Lines it runs.** `orient --section
+  lines` read `manual` for a Line only a Runbook's Trigger runs; it now reads
+  `runbook Trigger:NAME`, and the text prints the section under a header row
+  with `-` for an empty cell. A live cadence or cron Trigger's card carries
+  `next_fire`, its next instant after the read.
+- **SDK results print short text.** `print()` on `cx.whoami()`, `cx.kits()`,
+  `cx.proposals()`, a Runbook's `preview()` and `run()`, an approval or
+  activation receipt, a Line enablement and `inbox().get()` (and an inbox
+  disposition) showed a one-line model dump thousands of characters long. Each
+  prints what the CLI prints for it (whoami, kit status and receipts a short
+  text of their own), and `repr()` is its first line. An approval receipt
+  names who signed and who sent it: `approved ... by reviewer (sent by
+  owner)`, then who activated.
+- **`get RUN-...` prints a short card.** A finished run's text listed every
+  outcome and terminal detail (120-380 KB on a security kit run). It now
+  prints the nodes block, outcome counts by kind, one line per terminal and a
+  cut result; `--detail proof` (and `--json`) keep everything.
+- **History and review name a re-cite one way.** `get SUBJECT --detail history
+  --field F` no longer prints the Subject's own `rev 1` line above the field.
+  A same-value `set` on new evidence prints `reobserve ... (value unchanged)`
+  in the write outcome and review (history: `reobserved`), and `rebind` is
+  used only when a held citation was replaced (history: `rebound`).
+- **One `write` re-cites every Claim an edited section drifted.** A `write`
+  file (CLI or MCP `cruxible_write`) holding `rebind` changes refused
+  `cruxible.write.file_evidence_unobserved`; the rebind's new text is now read
+  on the writer's side as a `set`'s evidence is, so N drifted Claims land as
+  one proposal.
 - **CLI `proposal approve` with no principal refuses as every proposal act
   does** (`cruxible.identity.principal_unconfigured` or `credential_unbound`),
   adding that `--principal-id ID --key FILE` signs as that principal.

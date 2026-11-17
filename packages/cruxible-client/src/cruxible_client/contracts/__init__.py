@@ -913,6 +913,21 @@ class ProposalList(BaseModel):
     truncated: bool = False
     next_cursor: str | None = None
 
+    def __str__(self) -> str:
+        """The page as ``cruxible proposal list`` prints it, next page in SDK syntax.
+
+        ``repr()`` counts it.
+        """
+
+        from cruxible_client.contracts.text_display import proposal_list_sdk_lines
+
+        return "\n".join(proposal_list_sdk_lines(self))
+
+    def __repr__(self) -> str:
+        from cruxible_client.contracts.text_display import proposal_list_summary
+
+        return proposal_list_summary(self)
+
 
 class ProposalSelectorResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -994,6 +1009,18 @@ class WhoAmI(BaseModel):
     # would return otherwise: the same code, detail and repair.
     can_author: bool
     authoring_refusal: AuthoringRefusal | None
+
+    def __str__(self) -> str:
+        """Who this connection acts as, as text; ``repr()`` is its first line."""
+
+        from cruxible_client.contracts.text_display import whoami_lines
+
+        return "\n".join(whoami_lines(self))
+
+    def __repr__(self) -> str:
+        from cruxible_client.contracts.text_display import one_line_repr
+
+        return one_line_repr(self)
 
 
 class SemanticFieldValue(BaseModel):
@@ -1155,6 +1182,18 @@ class ActivationReceipt(BaseModel):
     #: (a moved proposal an approval or activation landed): the one reviewed.
     readmits: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
+    def __str__(self) -> str:
+        """What activated, as text; ``repr()`` is its first line."""
+
+        from cruxible_client.contracts.text_display import approval_result_lines
+
+        return "\n".join(approval_result_lines(self))
+
+    def __repr__(self) -> str:
+        from cruxible_client.contracts.text_display import one_line_repr
+
+        return one_line_repr(self)
+
 
 #: Why an approval did not activate its candidate: the signer held activation
 #: for someone else, more approvals are required, the caller's tier may not
@@ -1190,6 +1229,18 @@ class ApprovalReceipt(BaseModel):
     #: proposer), and who may give the rest.
     required_signers: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
     eligible_signers: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
+
+    def __str__(self) -> str:
+        """Who signed and what activated, as text; ``repr()`` is its first line."""
+
+        from cruxible_client.contracts.text_display import approval_result_lines
+
+        return "\n".join(approval_result_lines(self))
+
+    def __repr__(self) -> str:
+        from cruxible_client.contracts.text_display import one_line_repr
+
+        return one_line_repr(self)
 
 
 ProposalActivationResult = ActivationReceipt | ProposalRecompiled

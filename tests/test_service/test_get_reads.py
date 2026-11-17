@@ -1202,8 +1202,11 @@ def test_a_subject_history_narrows_to_one_field_and_stops_at_the_read_coordinate
 ) -> None:
     instance, item = fields_world["instance"], fields_world["item"]
 
-    status = _events(_get(instance, item, detail="history", field="status"))
+    narrowed = _get(instance, item, detail="history", field="status")
+    status = _events(narrowed)
     assert [event.change for event in status] == ["retired", "changed", "stated"]
+    # One field's history: the Subject's own shell revisions are not that field's.
+    assert narrowed.history.revisions == ()  # type: ignore[union-attr]
     assert (
         _events(_get(instance, item, detail="history", field="project.work_item.status")) == status
     )

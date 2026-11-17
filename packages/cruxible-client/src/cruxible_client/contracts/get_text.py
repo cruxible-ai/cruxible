@@ -8,7 +8,8 @@ the result it is given: no request, no read.
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections import Counter
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 from typing import Any
 
@@ -147,6 +148,59 @@ def run_node_line(node: Mapping[str, Any]) -> str:
     head = f"{node.get('node')} {node.get('kind') or '?'} {node.get('verdict') or '?'}"
     summary = node.get("summary")
     return head + (f": {node_summary_text(summary)}" if isinstance(summary, Mapping) else "")
+
+
+def run_egress_line(egress: Mapping[str, Any]) -> str:
+    """One terminal of a run: ``<node> <kind> <verdict>`` and the one handle it produced."""
+
+    parts = [str(egress.get("node_id")), str(egress.get("kind")), str(egress.get("verdict"))]
+    if egress.get("settle_outcome") == "settled" and egress.get("accepted_git_oid"):
+        parts.append(f"settled {str(egress['accepted_git_oid'])[:12]}")
+    elif egress.get("proposal_id"):
+        parts.append(f"proposal {egress['proposal_id']}")
+    if egress.get("refusal_code"):
+        parts.append(str(egress["refusal_code"]))
+    children = egress.get("children") or ()
+    if children:
+        parts.append(f"children {len(children)}")
+    if egress.get("claims_same_count"):
+        parts.append(f"{egress['claims_same_count']} unchanged")
+    if egress.get("claims_diagnostics_count"):
+        parts.append(plural(int(egress["claims_diagnostics_count"]), "diagnostic"))
+    return "  ".join(parts)
+
+
+def run_outcomes_text(outcomes: Sequence[Mapping[str, Any]]) -> str:
+    """A finished run's outcomes as counts by kind; each one is in the run's proof."""
+
+    counts = Counter(str(item.get("event_kind")) for item in outcomes)
+    return f"{len(outcomes)} (" + ", ".join(f"{k} {n}" for k, n in sorted(counts.items())) + ")"
+
+
+def query_definition_lines(definition: Any) -> list[str] | None:
+    """An authored QueryDefinition as its clauses, one per line, as its author wrote them.
+
+    ``from``, ``where`` (with any ``now - 3d``), ``hops``, ``fields`` and the
+    rest, by their authored names; a default left at its default is not shown,
+    and ``query`` and ``description`` are the card's own lines. ``None`` for a
+    definition with no authored form (the card shows it as stored).
+    """
+
+    if not hasattr(definition, "from_"):
+        return None
+    spec = definition.model_dump(mode="json", by_alias=True, exclude_defaults=True)
+    lines: list[str] = []
+    for name, part in spec.items():
+        if name in {"query", "description"} or part in (None, [], {}):
+            continue
+        if isinstance(part, dict):
+            text = ", ".join(f"{key}={_card_cell(item)}" for key, item in part.items())
+        elif isinstance(part, list):
+            text = ", ".join(_card_cell(item) for item in part)
+        else:
+            text = _card_cell(part)
+        lines.append(f"{name}: {printable(text)}")
+    return lines
 
 
 def provider_operation_line(row: dict[str, Any]) -> str:
@@ -539,6 +593,27 @@ def render_get(
                     for node in value:
                         lines.append("  " + run_node_line(node))
                     continue
+                # A run's text stays short: outcomes as counts, each terminal on
+                # one line, the result cut; its proof (named in next:) has all.
+                if key == "outcomes" and result.kind == "procedure_run" and value:
+                    lines.append(f"outcomes: {run_outcomes_text(value)}")
+                    continue
+                if key == "terminal_egress" and result.kind == "procedure_run" and value:
+                    lines.append("terminals:")
+                    for egress in value:
+                        lines.append("  " + run_egress_line(egress))
+                    continue
+                if key == "result" and result.kind == "procedure_run" and value is not None:
+                    lines.append(
+                        "result: "
+                        + get_value_text(_card_cell(value), width=200, evidence_hint=False)
+                    )
+                    continue
+                if key == "definition" and result.kind == "query" and value is not None:
+                    clauses = query_definition_lines(result.card.definition)
+                    if clauses is not None:
+                        lines.extend(clauses)
+                        continue
                 if key == "authored" and result.kind == "procedure" and value is not None:
                     from cruxible_client.contracts.refs import concise
 

@@ -200,6 +200,20 @@ class QuerySpecError(FormatError):
         super().__init__(f"{path}: " + (f"column {column}: " if column else "") + message)
 
 
+def _now_needs_datetime(value_type: str) -> str:
+    """Why ``now`` (or ``now - 3d``) cannot compare with a field read as ``value_type``."""
+
+    kind = {
+        "string": "a string, enum or date field",
+        "integer": "an integer field",
+        "subject_reference": "a link field",
+    }.get(value_type, f"a {value_type} field")
+    return (
+        f"now compares only with a datetime field, and this is {kind}; declare the field "
+        "datetime, or compare a date field with a date literal ('2026-11-14')"
+    )
+
+
 @dataclass(frozen=True)
 class FilterOperand:
     kind: Literal["reference", "parameter", "literal", "name", "decimal"]
@@ -555,7 +569,11 @@ class _LowerQuery:
             if actual != value_type:
                 raise QuerySpecError(
                     "cruxible.query.value_type_mismatch",
-                    f"cannot compare {value_type} with {actual}",
+                    _now_needs_datetime(actual)
+                    if isinstance(left, QueryEvaluationTimeRef)
+                    else _now_needs_datetime(value_type)
+                    if isinstance(ref, QueryEvaluationTimeRef)
+                    else f"cannot compare {value_type} with {actual}",
                     path=path,
                 )
             return ref
@@ -627,6 +645,16 @@ class _LowerQuery:
                         path=path,
                     )
                 return QueryClaimPresenceFilter(binding=left.binding, predicate=left.predicate)
+            if value_type != "timestamp" and any(
+                item.kind == "reference" and item.value == "now" for item in expr.operands[1:]
+            ):
+                # Before the operator check, which would name the field's operators
+                # and never say that now reads only against a datetime field.
+                raise QuerySpecError(
+                    "cruxible.query.value_type_mismatch",
+                    _now_needs_datetime(value_type),
+                    path=path,
+                )
             if isinstance(left, QueryClaimValueRef):
                 self.resolver.operator(
                     left.predicate, "in" if expr.kind == "membership" else expr.operator, path=path

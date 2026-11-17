@@ -2082,10 +2082,40 @@ def _trigger_card(
     resolved: ResolvedRef,
     *,
     surface: ReadSurface,
+    evaluation_time: datetime,
 ) -> GetTriggerCard:
     with instance.bind_accepted_projection(coordinate) as projection:
         trigger = cast(Trigger, projection.typed.source(resolved.identity))
+    from cruxible_client.contracts.errors import ExecutionError
+    from cruxible_client.contracts.triggers import (
+        AcceptedTrigger,
+        schedule_is_timed,
+        trigger_digest,
+        trigger_path,
+    )
     from cruxible_core.service.discovery.operational import compact_schedule
+
+    next_fire: datetime | None = None
+    if trigger.lifecycle.state == "live" and schedule_is_timed(trigger.schedule):
+        from cruxible_core.service.procedures.procedure_runs import trigger_accepted_at
+        from cruxible_core.triggers.cadence import timer_due
+
+        # Its next instant from now; no Trigger fires before its own acceptance.
+        # A version history cannot place, or a cron that never fires, shows none.
+        try:
+            accepted_at = trigger_accepted_at(
+                instance,
+                AcceptedTrigger(
+                    path=trigger_path(trigger.identity.name),
+                    trigger=trigger,
+                    artifact_digest=trigger_digest(trigger).tagged,
+                ),
+            )
+            next_fire = timer_due(
+                trigger.schedule, accepted_at=accepted_at, last=max(evaluation_time, accepted_at)
+            )
+        except (ExecutionError, ValueError):
+            next_fire = None
 
     target = (
         trigger.line.qualified
@@ -2099,6 +2129,7 @@ def _trigger_card(
         lifecycle=trigger.lifecycle.state,
         schedule=trigger.schedule.model_dump(mode="json"),
         sched=compact_schedule(trigger.schedule),
+        next_fire=next_fire,
         target=target,
         next=(_render_get(surface, resolved.display, "history"),),
     )
@@ -2809,7 +2840,10 @@ def _history(
                 surface=surface,
                 reasons=reasons,
             )
-            for entry in (newest_first if resolved.kind == "subject" else ())
+            # A Subject's shell revisions, unless the read names one field.
+            for entry in (
+                newest_first if resolved.kind == "subject" and request.field is None else ()
+            )
         )
         if resolved.kind == "subject":
             return _subject_events(
@@ -3725,7 +3759,9 @@ def service_playbill_get(
         elif resolved.kind == "capture_contract":
             card = _capture_contract_card(instance, coordinate, resolved, surface=surface)
         elif resolved.kind == "trigger":
-            card = _trigger_card(instance, coordinate, resolved, surface=surface)
+            card = _trigger_card(
+                instance, coordinate, resolved, surface=surface, evaluation_time=evaluation_time
+            )
         elif resolved.kind == "subject_kind":
             card = _subject_kind_card(instance, coordinate, resolved, surface=surface)
         elif resolved.kind == "contract":

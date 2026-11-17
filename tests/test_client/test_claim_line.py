@@ -111,3 +111,18 @@ def test_history_names_who_approved_beside_who_accepted() -> None:
     )
     (field_line,) = [line for line in history_lines(history) if line.startswith("  seq")]
     assert "by owner, approved by alice  stated  42" in field_line
+
+
+def test_a_same_value_set_reads_as_a_reobservation_and_a_rebind_as_a_rebind() -> None:
+    """One word per re-cite: the outcome and review lines use history's (coldsdk-12)."""
+
+    from cruxible_client.contracts.text_display import change_outcome_line
+    from cruxible_client.contracts.write import ChangeOutcome
+
+    common = {"subject": "acme/widget", "field": "price", "claim": CLAIM}
+    same = ChangeOutcome(op="set", before=42, after=42, **common)
+    assert change_outcome_line(same).startswith("reobserve acme/widget price: 42 (value unchanged)")
+    moved = ChangeOutcome(op="set", before=41, after=42, **common)
+    assert change_outcome_line(moved).startswith("set acme/widget price: 41 -> 42")
+    rebind = ChangeOutcome(op="rebind", after=42, **common)
+    assert change_outcome_line(rebind).startswith("rebind acme/widget price: 42 (value unchanged)")

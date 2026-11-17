@@ -1533,6 +1533,8 @@ def _readmit_exact_bytes(
             ),
             source_compilation_digest=operation_digest,
             claim_type_expansions=source.admission.claim_type_expansions,
+            # The same change set, so the same reason: history and review read it here.
+            rationale=source.admission.rationale,
         )
         # Read as a delta over its accepted base: the bytes this proposal
         # changed, over a tree the instance already holds, never the whole

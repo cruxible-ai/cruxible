@@ -166,7 +166,6 @@ from cruxible_client.contracts.repair_spelling import render_repair
 from cruxible_client.contracts.repairs import RepairOperation
 from cruxible_client.contracts.resolution_contracts import ResolutionContractReference
 from cruxible_client.contracts.temporal import (
-    format_datetime,
     parse_datetime,
     parse_iso_duration_microseconds,
 )
@@ -180,7 +179,6 @@ from cruxible_client.contracts.text_display import (
     render_orient,
     render_review_summary,
     short_oid,
-    short_provider_build,
     write_outcome_lines,
 )
 from cruxible_client.contracts.text_display import (  # noqa: F401
@@ -3089,22 +3087,10 @@ def list_proposals(status: str | None, limit: int, cursor: str | None, output_js
     if output_json:
         _emit_json(result.model_dump(mode="json"))
         return
-    click.echo("STATUS  TERMINAL_REASON  PROPOSAL_ID  TARGET_REF  COORDINATE_TIME")
-    for entry in result.entries:
-        terminal = ",".join(entry.incomplete_reasons) or entry.terminal_reason or "-"
-        click.echo(
-            f"{entry.status}  {terminal}  {entry.proposal_id}  "
-            f"{entry.target_ref or '-'}  {entry.admitted_at or '-'}"
-        )
-        if entry.superseded_by is not None:
-            click.echo(f"  superseded_by: {entry.superseded_by}")
-        if entry.stale_paths:
-            shown = ", ".join(entry.stale_paths[:5])
-            more = len(entry.stale_paths) - 5
-            click.echo(
-                f"  changed since its base: {shown}" + (f" and {more} more" if more > 0 else "")
-            )
-    click.echo(f"Coordinate: {result.coordinate.git_oid}")
+    from cruxible_client.contracts.text_display import proposal_list_lines
+
+    for line in proposal_list_lines(result):
+        click.echo(line)
     _echo_list_continuation(result.next_cursor)
 
 
@@ -5947,6 +5933,7 @@ def _preflight_refusal_reason(preflight: object) -> str:
     if not isinstance(diagnostics, list | tuple) and not isinstance(blocked_checks, list | tuple):
         return "preflight refused without a delivered diagnostic"
     rendered: list[str] = []
+    shown: set[str] = set()
     for diagnostic in diagnostics if isinstance(diagnostics, list | tuple) else ():
         if not isinstance(diagnostic, Mapping):
             continue
@@ -5955,7 +5942,11 @@ def _preflight_refusal_reason(preflight: object) -> str:
         if not isinstance(code, str) or not isinstance(message, str):
             continue
         one_line_message = " ".join(message.split())
-        rendered.append(f"{code}: {one_line_message}")
+        # A message that already leads with its code is not prefixed twice.
+        rendered.append(
+            one_line_message if one_line_message.startswith(code) else f"{code}: {one_line_message}"
+        )
+        shown.add(code)
     for blocked in blocked_checks if isinstance(blocked_checks, list | tuple) else ():
         if not isinstance(blocked, Mapping):
             continue
@@ -5969,6 +5960,8 @@ def _preflight_refusal_reason(preflight: object) -> str:
             or not all(isinstance(dependency, str) for dependency in blocked_by)
         ):
             continue
+        if blocked_by and set(blocked_by) <= shown:
+            continue  # blocked only by a refusal printed above: nothing new to say
         dependencies = ", ".join(blocked_by)
         one_line_reason = " ".join(reason.split())
         rendered.append(f"blocked {check} by {dependencies}: {one_line_reason}")
@@ -8249,36 +8242,17 @@ def _cli_repair(repair: Any) -> str:
 
 
 def _inbox_counts_text(counts: Any) -> str:
-    """``inbox 0 new, 100 seen again``: new items apart from re-sightings, when known."""
+    from cruxible_client.contracts.text_display import inbox_counts_text
 
-    new, again = counts.inbox_new, counts.inbox_seen_again
-    if counts.inbox is None:
-        text = "inbox ?"
-    elif counts.inbox == 0 or new is None or again is None:
-        text = f"inbox {counts.inbox}"
-    else:
-        text = f"inbox {new} new" + (f", {again} seen again" if again else "")
-    return text + (f", {counts.inbox_unposted} over the cap" if counts.inbox_unposted else "")
+    return inbox_counts_text(counts)
 
 
 def _counts_text(counts: Any) -> str:
     """A run's counts on one line; incompleteness and refusals named."""
 
-    parts = [
-        f"written {counts.written} (settled {counts.settled}, proposed {counts.proposed})",
-        f"unchanged {counts.unchanged}",
-    ]
-    if counts.retired:
-        parts.append(f"retired {counts.retired}")
-    refused = f"refused {counts.refused}"
-    if counts.top_refusals:
-        refused += " (" + ", ".join(f"{i.code} {i.count}" for i in counts.top_refusals) + ")"
-    parts.append(refused)
-    parts.append(_inbox_counts_text(counts))
-    if not counts.complete:
-        reasons = ", ".join(f"{r.node} {r.kind}" for r in counts.incomplete_reasons)
-        parts.append("INCOMPLETE" + (f" ({reasons})" if reasons else ""))
-    return "; ".join(parts)
+    from cruxible_client.contracts.text_display import run_counts_text
+
+    return run_counts_text(counts)
 
 
 def _echo_run_outcome(result: contracts.ProcedureRunState, label: str) -> None:
@@ -8777,17 +8751,9 @@ def inbox_group() -> None:
 
 
 def _inbox_row(envelope: Any) -> str:
-    seen = f"x{envelope.occurrences}" if envelope.occurrences > 1 else "-"
-    # A decided item that recurred keeps its decision; say how often it was seen since.
-    prior = (
-        f" (+{envelope.recurred_since_disposition} since)"
-        if envelope.status != "unread" and envelope.recurred_since_disposition
-        else ""
-    )
-    return (
-        f"{envelope.status}{prior}  {envelope.item_id[:16]}  {envelope.line}  {seen}  "
-        f"{format_datetime(envelope.last_sighting.posted_at)}"
-    )
+    from cruxible_client.contracts.text_display import inbox_row
+
+    return inbox_row(envelope)
 
 
 @inbox_group.command("list")
@@ -8840,7 +8806,9 @@ def inbox_list(
 
 
 def _echo_inbox_disposition(result: Any) -> None:
-    click.echo(_inbox_row(result.item) + ("" if result.recorded else "  (unchanged)"))
+    from cruxible_client.contracts.text_display import inbox_disposition_line
+
+    click.echo(inbox_disposition_line(result))
 
 
 @inbox_group.command("get")
@@ -8857,33 +8825,10 @@ def inbox_get(item_id: str, output_json: bool) -> None:
     if output_json:
         _emit_json(result.model_dump(mode="json"))
         return
-    envelope = result.item
-    click.echo(_inbox_row(envelope))
-    click.echo(f"Item: {envelope.item_id}")
-    click.echo(f"Procedure: {envelope.procedure} node {envelope.node_id}")
-    click.echo(f"Seen {envelope.occurrences} time(s)")
-    for label, sighting in (
-        ("First", envelope.first_sighting),
-        *(("Recent", item) for item in envelope.recent_sightings),
-    ):
-        click.echo(
-            f"{label}: {sighting.run_id} at {format_datetime(sighting.posted_at)} captures "
-            f"{', '.join(sighting.source_capture_digests) or '-'}"
-        )
-    if envelope.disposition_count > len(result.recent_dispositions):
-        click.echo(
-            f"Dispositions: latest {len(result.recent_dispositions)} of "
-            f"{envelope.disposition_count}"
-        )
-    for disposition in result.recent_dispositions:
-        detail = getattr(disposition, "reason", None) or (
-            disposition.target.model_dump(mode="json") if hasattr(disposition, "target") else ""
-        )
-        click.echo(
-            f"Disposition: {disposition.disposition} by {disposition.actor_id} at "
-            f"{format_datetime(disposition.decided_at)} {detail}".rstrip()
-        )
-    click.echo(json.dumps(result.payload, indent=2, sort_keys=True))
+    from cruxible_client.contracts.text_display import inbox_item_lines
+
+    for line in inbox_item_lines(result):
+        click.echo(line)
 
 
 @inbox_group.command("ack")
@@ -8958,24 +8903,10 @@ def line_group() -> None:
 
 
 def _echo_line_enablement(result: Any) -> None:
-    state = "enabled" if result.state == "enabled" else f"stopped ({result.stop_reason})"
-    unchanged = {
-        "already_enabled": "already enabled",
-        "already_disabled": "already disabled",
-        "would_enable": "preview: would enable",
-        "would_reenable": "preview: would re-enable",
-        "would_disable": "preview: would disable",
-    }
-    note = unchanged.get(result.outcome or "")
-    click.echo(f"{result.line}: {state}" + (f" ({note}; nothing changed)" if note else ""))
-    click.echo(f"Enabled by: {result.enabled_by.label} at {result.enabled_at.isoformat()}")
-    click.echo(f"Matched through: {result.evaluated_until.isoformat()}")
-    click.echo(
-        f"Pending: {result.pending_automatic} automatic, "
-        f"{result.pending_explicit} awaiting explicit dispatch"
-    )
-    if result.detail:
-        click.echo(result.detail)
+    from cruxible_client.contracts.text_display import line_enablement_lines
+
+    for line in line_enablement_lines(result):
+        click.echo(line)
     echo_preview_next(result.outcome or "", result.coordinate)
 
 
@@ -9335,139 +9266,18 @@ def runbook_group() -> None:
     """
 
 
-def _target_text(target: Any) -> str:
-    return f"Line:{target.line.target.name}" if target.kind == "line" else f"action:{target.action}"
-
-
 def _echo_runbook_run(result: Any) -> None:
-    stopped = (
-        f"stopped at step {result.stopped_at_step} ({result.stop_reason})"
-        if result.status == "stopped"
-        else "completed"
-    )
-    if result.attention_steps:
-        listed = ", ".join(str(item) for item in result.attention_steps)
-        stopped += (
-            f"; needs attention: step{'s' if len(result.attention_steps) > 1 else ''} {listed}"
-        )
-    click.echo(f"Runbook {result.runbook}: {stopped}  [{result.run_id}]")
-    for step in result.steps:
-        extra = [
-            *([step.run_id] if step.run_id else []),
-            *(f"proposal {item}" for item in step.proposal_ids),
-            *([f"event {step.event_id}"] if step.event_id is not None else []),
-            *([step.code] if step.code else []),
-        ]
-        click.echo(
-            f"  {step.step:>2}  {step.status:<11} {_target_text(step.target)}"
-            + (f"  ({', '.join(extra)})" if extra else "")
-        )
-        if step.counts is not None:
-            mark = "!" if step.counts.needs_attention else " "
-            click.echo(f"    {mark} {_counts_text(step.counts)}")
+    from cruxible_client.contracts.text_display import runbook_run_lines
 
-
-def _byte_size_text(size: int) -> str:
-    """``1 MiB``, ``64 KiB``, ``300 bytes``: a byte count in the largest exact unit."""
-
-    for unit, scale in (("GiB", 1 << 30), ("MiB", 1 << 20), ("KiB", 1 << 10)):
-        if size >= scale and size % scale == 0:
-            return f"{size // scale} {unit}"
-    return f"{size} bytes"
-
-
-_RUNBOOK_INPUT_NOUNS = {
-    "workspace_file": "file",
-    "workspace_glob": "files",
-    "fetch": "fetch",
-    "trigger_capture": "capture",
-}
-
-
-def _runbook_input_lines(item: Any) -> list[str]:
-    """One step input: what, where, its format and limits, presence; its description as written."""
-
-    where = item.location
-    if item.kind == "trigger_capture":
-        where = f"{item.capture_contract} (handed over by its Trigger)"
-    elif where is None:
-        where = "(set by the run)"
-    facts = [item.format] if item.format else []
-    limits = item.limits
-    if limits.max_files is not None:
-        facts.append(f"at most {limits.max_files} files")
-    if limits.max_bytes is not None:
-        each = " each" if limits.max_files is not None else ""
-        # coldcli-15: the budget is the CaptureContract's; a fetch's own
-        # max_bytes (the Line parameter) is a separate, request-side limit.
-        facts.append(f"at most {_byte_size_text(limits.max_bytes)}{each} per its CaptureContract")
-    if limits.request_max_bytes is not None and limits.request_max_bytes != limits.max_bytes:
-        facts.append(f"request max_bytes {_byte_size_text(limits.request_max_bytes)}")
-    if item.parameter is not None:
-        facts.append(f"parameter {item.parameter}")
-    text = f"needs  {_RUNBOOK_INPUT_NOUNS[item.kind]} {where}"
-    if facts:
-        text += f" ({', '.join(facts)})"
-    if item.state is not None:
-        text += f": {item.state}" + (f" ({item.refused})" if item.refused else "")
-    lines = [text]
-    if item.origins is not None:
-        lines.append(f"  origins {', '.join(item.origins)}")
-    if item.description is not None:
-        lines.append(f"  {item.description}")
-    return lines
+    for line in runbook_run_lines(result):
+        click.echo(line)
 
 
 def _echo_runbook_preview(preview: Any) -> None:
-    click.echo(
-        f"Runbook {preview.runbook} "
-        "(preview: definitions, and whether each workspace file is there; nothing ran)"
-    )
-    for step in preview.steps:
-        head = f"  {step.step:>2}  {_target_text(step.target)}"
-        if step.unavailable:
-            click.echo(head + "  unavailable: the run would stop here")
-            continue
-        if step.action_effect is not None:
-            click.echo(head + f"  effect {step.action_effect}")
-            continue
-        click.echo(head + (f"  {step.procedure}" if step.procedure else ""))
-        for read in step.reads:
-            source = f"query {read.query}" if read.query else "claims"
-            late = " (late)" if read.late else ""
-            click.echo(f"      reads  {source}{late}: {', '.join(read.claim_types)}")
-        for write in step.writes:
-            click.echo(f"      writes {write.subject_kind}: {', '.join(write.claim_types)}")
-        for call in step.calls:
-            bound = (
-                f" -> Provider:{short_provider_build(call.build)} {call.operation}"
-                if call.build
-                else ""
-            )
-            capability = f"  (capability {call.capability})" if call.capability else ""
-            click.echo(f"      calls  {call.slot}{bound}{capability}")
-        for item in step.inputs:
-            for line in _runbook_input_lines(item):
-                click.echo(f"      {line}")
-        if step.authority is not None:
-            authority = step.authority
-            settles = ", ".join(item.claim_type for item in authority.settles) or "nothing"
-            proposes = ", ".join((*authority.proposes, *authority.proposes_creation)) or "nothing"
-            click.echo(f"      settles {settles}; proposes {proposes}")
-            if authority.may_stop_run:
-                click.echo("      may stop the run: writes can go to review")
-        for cascade in step.cascades:
-            where = "in runbook" if cascade.in_runbook else "outside"
-            click.echo(
-                f"      fires  {cascade.trigger} ({cascade.schedule}) -> {cascade.target} [{where}]"
-            )
-    for problem in preview.order_problems:
-        detail = (
-            f"written only by later step(s) {', '.join(map(str, problem.written_by_steps))}"
-            if problem.kind == "reads_later_write"
-            else "written by no Line (direct entry only)"
-        )
-        click.echo(f"  order: step {problem.step} reads {problem.claim_type}: {detail}")
+    from cruxible_client.contracts.text_display import runbook_preview_lines
+
+    for line in runbook_preview_lines(preview):
+        click.echo(line)
 
 
 @runbook_group.command("run")

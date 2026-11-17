@@ -2704,8 +2704,9 @@ observation under its replayability and age policy.
 
 `get Procedure:NAME` names the unsupported nodes behind its `runnable` answer
 before anything runs. Runs append replay-verifiable journal records, and
-`cruxible get ProcedureRun:RUN-…` reads a run's state, outcomes and terminal
-detail from those records. `--at FILE` binds the run to an accepted coordinate:
+`cruxible get ProcedureRun:RUN-…` reads a run's state from those records: its
+nodes, outcome counts by kind and one line per terminal (`--detail proof` holds
+every outcome and terminal detail). `--at FILE` binds the run to an accepted coordinate:
 it runs only while the Procedure is still current there.
 
 ### Measurements and readings
@@ -4388,7 +4389,8 @@ predicate (full, or a dotted tail such as `status` or `work_item.status` that
 names exactly one live predicate) or `ClaimType:<predicate>` (the same tails),
 `Document:<name>`, `Procedure:<name>` (each slot with the capability it
 names), `Capability:<name>@N`, `Contract:<name>@N`, `query:<name>`,
-`CaptureContract:<name>`, `Trigger:<name>`, `Principal:<id>`,
+`CaptureContract:<name>`, `Trigger:<name>` (a live cadence or cron Trigger
+adds `next_fire`, its next instant after the read), `Principal:<id>`,
 `Provider:<name>` (each operation with what it serves and its source),
 `ApprovalPolicy:instance`, `ProcedureRuntimePolicy:instance`, an artifact path,
 or a proposal id or prefix (a proposal's status, and for a refusal its code,
@@ -4440,7 +4442,8 @@ or none when no single admission accepted it. A Subject's history is its
 fields' events: its shell's own revisions, then one page of changes to its
 fields grouped by field, each field's value timeline (`changed  grace ->
 linus`, `stated ... (contends with a live value)` for a competing value in a
-single-value field); `--field FIELD` narrows them to one field. Locating a page
+single-value field); `--field FIELD` narrows them to that field's events, without the
+shell's revisions. Locating a page
 reads the Subject's own Claims and revisions; only the page's revisions are
 read. A body over 64 KiB needs `--range`. A summary cuts a string
 value over 500 characters, says how long it is, and names the read that shows
@@ -4548,8 +4551,10 @@ enablement that admitted it, and the receipt digest once it is terminal. Per-nod
 durations are not shown: every journal record of a run carries the run's
 evaluation instant.
 The other operational sections page the same way: `lines` (each Line's
-Procedure, trigger, authority, latest enablement state, `triggers_inactive`
-when its Triggers do nothing because it is not enabled, and due/waiting counts),
+Procedure, trigger -- its Triggers' schedule kinds, `runbook Trigger:NAME` when
+only a Runbook's Trigger runs it, or `manual` -- authority, latest enablement
+state, `triggers_inactive` when its Triggers do nothing because it is not
+enabled, and due/waiting counts; the text prints them under a header row),
 `captures` (the Captures accepted Claims cite, newest first, keyset-paged,
 each as its `CAP-` handle), `capture_contracts` (version, grade, how many
 ClaimTypes admit each), `predictions` (each live ResolutionContract with its

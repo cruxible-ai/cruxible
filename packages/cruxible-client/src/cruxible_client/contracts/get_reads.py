@@ -569,6 +569,9 @@ class GetTriggerCard(_StrictGetModel):
     schedule: dict[str, Any]
     #: The schedule, compact: ``cron 0 14 * * *``, ``every 3600s``, ``when ... lands``.
     sched: str | None = Field(default=None, exclude_if=_omit_none)
+    #: A live timer's (cadence or cron) next instant after the read's evaluation
+    #: time, counted from this version's acceptance; absent for other schedules.
+    next_fire: datetime | None = Field(default=None, exclude_if=_omit_none)
     #: ``Line:<name>``, ``Runbook:<name>`` or the internal action it fires.
     target: str
     next: tuple[str, ...] = ()
@@ -1015,9 +1018,10 @@ class GetSubjectHistory(_StrictGetModel):
     """A Subject's history: its shell's revisions, and one page of its field events.
 
     ``revisions`` are the Subject shell's own (created, pins, retired), all of
-    them. ``events`` are its fields' changes, newest first, one page: each
-    revision of each Claim about the Subject, with what it did and why. Group
-    them by ``field`` for each field's value timeline.
+    them, or none when the read names a ``field``. ``events`` are its fields'
+    changes, newest first, one page: each revision of each Claim about the
+    Subject, with what it did and why. Group them by ``field`` for each field's
+    value timeline.
     """
 
     kind: Literal["subject"] = "subject"

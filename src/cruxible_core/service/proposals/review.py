@@ -945,10 +945,12 @@ def _claim_change_line(member: ReviewedMember) -> str | None:
         "object"
     ):
         # Same value on new evidence (a re-read file is new content): say so,
-        # rather than print `true -> true` as if the value moved.
-        line = (
-            f"refresh evidence {subject} {field}: {_claim_object_text(statement)} (value unchanged)"
-        )
+        # rather than print `true -> true` as if the value moved; the word is
+        # history's (a re-bind leaves a held citation out, a re-observation adds).
+        from cruxible_core.service.proposals.review_view import drops_citation
+
+        verb = "rebind" if drops_citation(base, candidate) else "reobserve"
+        line = f"{verb} {subject} {field}: {_claim_object_text(statement)} (value unchanged)"
     elif isinstance(base_statement, Mapping):
         line = (
             f"set {subject} {field}: {_claim_object_text(base_statement)} -> "

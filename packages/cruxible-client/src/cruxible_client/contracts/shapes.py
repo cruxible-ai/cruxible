@@ -648,7 +648,23 @@ def _read_type(reader: _Spelling, depth: int = 0) -> dict[str, Any]:
         ref = _read_ref(reader)
         reader.take("sym", ">")
         return {"kind": name, "contract": ref}
-    raise ContractFormatError(f"unknown field type {name!r}")
+    hint = _FIELD_TYPE_HINTS.get(name)
+    raise ContractFormatError(
+        f"unknown field type {name!r}" + (f"; did you mean {hint!r}?" if hint else "")
+    )
+
+
+#: Type names other systems use, and the field type that means the same here.
+_FIELD_TYPE_HINTS = {
+    "timestamp": "datetime",
+    "instant": "datetime",
+    "time": "datetime",
+    "integer": "int",
+    "boolean": "bool",
+    "float": "decimal",
+    "text": "string",
+    "str": "string",
+}
 
 
 def _ref(name: str, version: str) -> dict[str, Any]:

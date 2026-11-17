@@ -60,6 +60,7 @@ from cruxible_client.contracts.write import (
     DocOp,
     DocOutcome,
     FileEvidence,
+    RebindChange,
     ReplaceSection,
     SectionEvidence,
     SetChange,
@@ -447,9 +448,11 @@ def _write_workspace(
                 evidence = SectionEvidence(
                     file=target[0], section=target[1], own_words=evidence.own_words
                 )
-            if isinstance(change, SetChange | AddChange | CreateChange) and isinstance(
-                evidence, SectionEvidence | FileEvidence
-            ):
+            # A rebind's new text is read here too, so one write re-cites every
+            # Claim an edited section drifted (and sees this write's own edits).
+            if isinstance(
+                change, SetChange | AddChange | CreateChange | RebindChange
+            ) and isinstance(evidence, SectionEvidence | FileEvidence):
                 cited = evidence.file if isinstance(evidence, SectionEvidence) else evidence.path
                 state = load(cited, citing=True)
                 if state.current is None:

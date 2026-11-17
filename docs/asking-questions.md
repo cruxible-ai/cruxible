@@ -165,8 +165,10 @@ precedence. Quote text literals, in double or single quotes (`"open"` and
 twelve hours, or overdue). Units are `d`, `h`, `m` and `s`, all fixed length and
 in UTC; months and years vary in length and refuse with
 `cruxible.query.time_offset_unit_unsupported` (write `now - 90d`), and ISO
-durations such as `P3D` are not read. A shifted `now` is a timestamp, so it
-compares only with a timestamp field. The offset is stored in whole seconds:
+durations such as `P3D` are not read. `now`, shifted or not, compares only with
+a field of ClaimType type `datetime` (a query parameter spells it `timestamp`);
+on a `date`, string or enum field it refuses with
+`cruxible.query.value_type_mismatch`, saying so. The offset is stored in whole seconds:
 `now - 72h` and `now - 3d` are one definition, and `get` shows it in the largest
 unit that divides it (`now - 3d`). A query that shifts `now` is stored as
 `cruxible-query-definition-v4`; one that does not stays
