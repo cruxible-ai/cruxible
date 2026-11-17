@@ -800,3 +800,84 @@ def test_a_named_workspace_that_does_not_exist_refuses_on_every_surface(
     assert result.exit_code != 0
     assert "workspace_missing" in result.output
     assert not missing.exists()
+
+
+def test_a_signer_is_found_in_the_context_the_connection_was_opened_with(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Review F-014: `Cruxible.connect(context=FILE)` selected the reviewer from FILE,
+    and `cx.signer("reviewer")` on that connection read the process-default context,
+    found nothing and raised. The connection keeps the context it was opened with."""
+
+    from types import SimpleNamespace
+
+    from cruxible_client.contracts.errors import SigningKeyError
+    from cruxible_core.governance.keys import generate_client_principal_key
+
+    _clear_target_env(monkeypatch)
+    for name in ("CRUXIBLE_PRINCIPAL_ID", "CRUXIBLE_PRINCIPAL_KEY", "CRUXIBLE_SERVER_BEARER_TOKEN"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    socket = (tmp_path / "d.sock").resolve()
+    keys = tmp_path / "elsewhere" / "reviewer-keys"
+    generate_client_principal_key(
+        keys, principal_id="reviewer", kind="ordinary", forbidden_roots=()
+    )
+    settings = keys / "cruxible.env"
+    settings.write_text(
+        f"export CRUXIBLE_SERVER_SOCKET={socket}\n"
+        "export CRUXIBLE_INSTANCE_ID=inst_a\n"
+        "export CRUXIBLE_PRINCIPAL_ID=reviewer\n"
+        f"export CRUXIBLE_PRINCIPAL_KEY={keys / 'reviewer.ed25519'}\n",
+        encoding="utf-8",
+    )
+    binding = {"active": "reviewer", "settings": {"reviewer": str(settings)}}
+    custom = tmp_path / "custom-context.json"
+    custom.write_text(
+        json.dumps(
+            {
+                "server_socket": str(socket),
+                "instance_id": "inst_a",
+                "principals": {f"inst_a@unix://{socket}": binding},
+            }
+        ),
+        encoding="utf-8",
+    )
+    # The process default knows the daemon and nothing about the reviewer.
+    default = tmp_path / "default-context.json"
+    default.write_text(json.dumps({"server_socket": str(socket), "instance_id": "inst_a"}))
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(default))
+    head = contracts.AcceptedCoordinate(
+        git_oid="a" * 40,
+        semantic_root="sha256:" + "1" * 64,
+        generation_root="sha256:" + "2" * 64,
+        compiler_digest="sha256:" + "3" * 64,
+    )
+
+    class StubClient:
+        def __init__(self, **values: object) -> None:
+            self.base_url = values.get("base_url")
+            self.socket_path = values.get("socket_path")
+            self.principal_id = values.get("principal_id")
+
+        def _version_info(self) -> tuple[str, str]:
+            return AUTHORING_SDK_VERSION, SDK_CONTRACT_SNAPSHOT_DIGEST
+
+        def whoami(self, instance_id: str) -> object:
+            return SimpleNamespace(coordinate=head, actor_id=self.principal_id)
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr("cruxible_client.authoring.sdk.CruxibleClient", StubClient)
+
+    cx = Cruxible.connect(context=custom, workspace=workspace)
+
+    assert cx._client.principal_id == "reviewer"
+    assert cx.signer("reviewer").private_key_path == (keys / "reviewer.ed25519").resolve()
+    assert cx.signer().signer_id == "reviewer"
+    # A connection opened with the default context does not see the custom one.
+    with pytest.raises(SigningKeyError, match="no signing key for principal reviewer"):
+        Cruxible.connect(workspace=workspace).signer("reviewer")

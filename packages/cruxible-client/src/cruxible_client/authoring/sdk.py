@@ -38,6 +38,7 @@ from cruxible_client.authoring.doc_writes import write_workspace
 from cruxible_client.authoring.principal_settings import (
     principal_key,
     principal_key_missing,
+    remembered_context,
     remembered_principal_settings,
 )
 from cruxible_client.authoring.procedures import Sequence as ProcedureSequence
@@ -2803,6 +2804,8 @@ class Cruxible:
         self._coordinate: AcceptedCoordinate | None = None
         self._pinned = False
         self._owns_client = True
+        # The context file ``connect`` was opened with; None reads the default.
+        self._context_path: Path | None = None
         # An accepted ClaimType at an exact coordinate never changes, so one read
         # answers every Claim this connection drafts under that predicate there.
         self._claim_type_envelopes: dict[tuple[str, str], Mapping[str, object]] = {}
@@ -2920,6 +2923,7 @@ class Cruxible:
             # A session needs only the current head, not an orientation of the
             # whole accepted world: one identity read names it. Orient
             # explicitly (``orient()`` / ``refresh()``) when the overview is wanted.
+            result._context_path = context_path
             if at is None:
                 result._coordinate = AcceptedCoordinate.model_validate(
                     client.whoami(resolved.instance_id).coordinate.model_dump(mode="json")
@@ -4999,6 +5003,8 @@ class Cruxible:
             server_url=self._client.base_url,
             server_socket=self._client.socket_path,
             explicit=key,
+            # The context this connection was opened with, as it reads now.
+            remembered=remembered_context(path=self._context_path),
             folder=self._workspace,
         )
         if found is None:

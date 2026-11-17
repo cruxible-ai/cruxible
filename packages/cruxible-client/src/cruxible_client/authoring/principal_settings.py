@@ -78,16 +78,20 @@ def read_principal_settings(path: Path) -> PrincipalSettings:
     )
 
 
-def remembered_context(environ: Mapping[str, str] | None = None) -> dict[str, object]:
-    """The CLI context file (``CRUXIBLE_CLI_CONTEXT_PATH``, else the per-user one), or nothing.
+def remembered_context(
+    environ: Mapping[str, str] | None = None, *, path: Path | None = None
+) -> dict[str, object]:
+    """The CLI context file (``path``, else ``CRUXIBLE_CLI_CONTEXT_PATH``, else the
+    per-user one), or nothing.
 
     An unreadable or malformed file reads as nothing remembered: a key lookup
     then goes on to its next source and names the repair if none has the key.
     """
 
     env = os.environ if environ is None else environ
-    raw = env.get("CRUXIBLE_CLI_CONTEXT_PATH")
-    path = Path(raw).expanduser() if raw else Path.home() / ".cruxible" / "client-context.json"
+    if path is None:
+        raw = env.get("CRUXIBLE_CLI_CONTEXT_PATH")
+        path = Path(raw).expanduser() if raw else Path.home() / ".cruxible" / "client-context.json"
     try:
         loaded = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
