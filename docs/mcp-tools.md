@@ -13,7 +13,7 @@ everyday agent loop:
   one kind in full, or one paged section), `cruxible_query` (any
   question as rows of values with verdict flags) and `cruxible_get`
   (one thing by any reference; `detail` picks summary, evidence, why, history,
-  a Subject's incoming edges or pairs, a Line's runs, proof, or a Document body range);
+  a Subject's incoming edges or pairs, a Line's runs, backlinks, proof, or a Document body range);
 - the work queue: `cruxible_next`;
 - the write verbs: `cruxible_set` (one value in one field, replacing
   the live value), `cruxible_retire` (end one live Claim), and
@@ -53,10 +53,13 @@ one); there is no `commit` argument, so `cruxible_kit_add` previews (status
 `would_propose`) until `dry_run` is `false`. `cruxible_kit_remove` and
 `cruxible_capture_read` take their arguments nested under `request`.
 `cruxible_runbook_preview` and `cruxible_runbook_run` take the Runbook's name as
-`runbook`. Today a tool ignores an argument its schema does not declare instead
-of refusing it: a misspelled argument (`commit: true`, `name: ...`) does
-nothing, and the call runs with its defaults or reports the real argument
-missing. Check the result's status.
+`runbook`. A tool refuses an argument its schema does not declare
+(`cruxible.mcp.argument_unknown`) and lists the arguments it takes, so a
+misspelled one (`commit: true`, `name: ...`) never runs with defaults:
+
+~~~text
+cruxible.mcp.argument_unknown: tool 'cruxible_kit_add' takes no argument 'commit'; its arguments: instance_id, reference, bundle, keep, keep_local_edits, retire_dependents, keep_build, allow_downgrade, detail, dry_run, at
+~~~
 
 ## The daemon
 
@@ -151,6 +154,14 @@ for a record that is not this folder's, remove it or record it again. The
 environment variables above override the record in every case. `whoami`'s `identity_source` says which applied:
 `environment`, `folder` or `none`.
 
+So an MCP server started in an initialized project acts as its owner by
+default. A reviewer's server is a second server whose `env` block sets
+`CRUXIBLE_PRINCIPAL_ID=reviewer`; nothing else is needed on the machine where
+`cruxible init --reviewer-key-dir` or `cruxible principal add` made the
+reviewer, because its key is found from its remembered settings. Cosign
+between agents on one machine is a convention, not a security boundary: any
+process of the OS user can read both keys.
+
 `CRUXIBLE_MCP_WORKSPACE_ROOT` selects the client-owned workspace for tools that
 read or write local files. The stdio MCP process is the client-side adapter; the
 workspace defaults to its working directory.
@@ -174,15 +185,33 @@ server's environment; no tool argument can name a key path. The tool signs as
 only key. A server started with a principal's `cruxible.env`
 (`CRUXIBLE_PRINCIPAL_ID` and `CRUXIBLE_PRINCIPAL_KEY`) needs no key directory:
 the key is found by the lookup the CLI and the SDK use (see `principal add` in
-the [CLI reference](cli-reference.md)), never another principal's. With no key
-found, the tool refuses and says how to configure it.
+the [CLI reference](cli-reference.md)), never another principal's. The order
+is: `<signer>.ed25519` in `CRUXIBLE_MCP_KEY_DIR`; `CRUXIBLE_PRINCIPAL_KEY`
+(never when `CRUXIBLE_PRINCIPAL_ID` names another principal); the settings
+remembered for that principal on this instance; the folder identity record,
+if it names that principal; the default key directory `cruxible init` uses.
+With no key found, the tool refuses and says how to configure it:
+
+~~~text
+cruxible_proposal_approve: no signing key for principal nobody here; repair: start this MCP server with nobody's settings in its environment (CRUXIBLE_PRINCIPAL_ID and CRUXIBLE_PRINCIPAL_KEY, as its cruxible.env sets them, in the env block of the MCP client config), or set CRUXIBLE_MCP_KEY_DIR to the directory holding nobody.ed25519. A remote signer uses cruxible_proposal_approve_prepare and cruxible_proposal_approve_submit (profile full)
+~~~
+
 Passing the reviewed `candidate_digest` binds the approval to that candidate:
 if accepted state moved and the daemon proposed the change again at the head,
 the tool refuses `cruxible.approval.reviewed_candidate_changed`, naming the
 new proposal and whether its members are identical, and signs nothing; review
 that proposal and approve it. Without `candidate_digest`, a proposal proposed
-again at the head with identical members is signed in the same call.
-`cruxible_init` creates the owner only: cosign setup on an existing instance (a reviewer
+again at the head with identical members is signed in the same call (the
+receipt names the replaced proposal in `readmits`). The replaced proposal
+reads `settled` with `terminal_reason: superseded`, `superseded_by` and
+`closed_by` in `cruxible_proposal_list` and `cruxible_get`.
+
+~~~text
+cruxible.approval.reviewed_candidate_changed: proposal sha256:5ed08a4a… was proposed again at the head as sha256:04bf2c9f… (candidate sha256:391b803f…), not the reviewed sha256:612bcb60…; members identical: true; nothing was signed. Review sha256:04bf2c9f… and approve it Repair: cruxible_proposal_review(proposal_id="sha256:04bf2c9f…")
+~~~
+
+`cruxible_init` takes one argument, `principal_id`, and creates the owner only, under
+`self_approval_allowed`: cosign setup on an existing instance (a reviewer
 principal and no self-approval) is two CLI steps, in this order: `cruxible
 principal add reviewer --key-dir DIR --signer-key OWNER_KEY --mode graph_write`
 (the tier that may submit approvals when the daemon runs with auth), then submit the
@@ -230,7 +259,7 @@ that starts reaching one more operation moves the pin.
 | Tool | Purpose | Permission |
 |---|---|---|
 | `cruxible_server_info` | Return the adapter and daemon versions with daemon metadata; an instance-scoped credential gets its own instance's host and identity instead of a refusal | `READ_ONLY` |
-| `cruxible_init` | Make the workspace folder an instance over the local daemon socket, as `cruxible init`: create the host attached to the folder, the binding, the owner principal (`principal_id`, default your OS username) and its key in the default key directory outside the folder, and the folder identity record; this session then authors as the owner. An initialized folder reports its instance and changes nothing. Returns the instance, principal, key directory and approval policy, never key material | `ADMIN` |
+| `cruxible_init` | Make the workspace folder an instance over the local daemon socket, as a plain `cruxible init`: create the host attached to the folder, the binding, the owner principal (`principal_id`, its only argument, default your OS username) and its key in the default key directory outside the folder, and the folder identity record; this session then authors as the owner. The policy is `self_approval_allowed`; a reviewer and independent approval are CLI steps (see [the adapter environment](#instances-and-the-adapter-environment)). An initialized folder reports its instance (`status: already_initialized`) and changes nothing. Returns the instance, principal, key directory and approval policy, never key material | `ADMIN` |
 | `cruxible_console` | Open the read-only console for the instance in the user's browser: the same loopback listener `cruxible console` serves, run on a background thread of this MCP server (one per instance; it ends with the server, or `stop=true` stops it). The tool opens the one-time sign-in link itself and returns only the address `http://127.0.0.1:<port>/i/<instance>`; the link is never returned. When no browser can be opened (`browser_opened: false`), a listener the call started is stopped (`status: no_browser`) and `message` tells the user to run `cruxible console` in their own terminal, which prints the link to them only. A second call reuses the running listener and opens a fresh link | `READ_ONLY` |
 | `cruxible_whoami` | Name the resolved instance, the credential-derived actor's identity and registration there, whether it can author (and the repair when not), the server's `mode_cap` and `effective_permission_mode`, and the adapter and daemon versions | `READ_ONLY` |
 
@@ -240,7 +269,12 @@ Setting up a host (`cruxible init`, or `cruxible host create` to allocate one
 without becoming its owner), releasing its worktree (`cruxible workspace
 detach`), decommissioning an instance (`cruxible instance decommission`) and
 rebuilding the `next` worker's state (`cruxible instance rebuild-next`) are
-operator acts with no MCP tool.
+operator acts with no MCP tool. So are making a principal's key (`cruxible
+principal add NAME --key-dir DIR`; `cruxible_principal_propose` proposes a
+registration for a public key made elsewhere), registering a file in the file
+catalog (`cruxible files add PATH`), and stopping the daemon (`cruxible server
+stop`). An agent that needs one of these names the CLI step to its operator,
+or runs it in a shell.
 
 | Tool | Purpose | Permission |
 |---|---|---|
@@ -327,7 +361,9 @@ The catalog is discovered as every other command finds it
 `catalog_path` names another. The adapter owns local path traversal and digest
 construction, so an agent supplies a file catalog name, not compilation wire or file
 bytes. A catalog entry with only `name` and `locator` is evidence-only: it can be
-cited and covered but not proposed.
+cited and covered but not proposed. No MCP tool adds a catalog entry: a write
+that cites or creates a file catalogues it, and registering one otherwise is
+the CLI's `cruxible files add PATH`.
 
 ## Principals
 
@@ -349,10 +385,10 @@ The principal registry is `orient(section="principals")`; one record is
 | `cruxible_claim_attest` | Sign and append a support, contradict, or unsure observation of the current exact Claim; `because` cites your own words and `evidence` takes one of write's evidence options (self, section with `own_words`, file, capture, contract), made into Captures before signing; with neither, it cites the Claim's own evidence. Never a proposal | `GOVERNED_WRITE` |
 | `cruxible_set` | Put one value in one field of one Subject (`kind/id`), replacing the live value without its Claim ID; a missing Subject of a known kind is added; `evidence` defaults to `because` as self evidence (an exact-content value is its own evidence); accepts in the same call when policy and tier allow it, else answers `awaiting_approval` with the eligible approvers and the approve call; `dry_run` writes nothing; `at` refuses `cruxible.write.slot_changed` if the field moved since; each change carries its `verdict`, and a verdict other than `supported` comes with a warning and its repair | `GOVERNED_WRITE` |
 | `cruxible_retire` | End one live Claim, by Claim ID or by Subject and single-value field, with its dependent Claims, in one change set | `GOVERNED_WRITE` |
-| `cruxible_write` | Apply `create`, `set`, `add` (one more value in a many-valued field) and `retire` changes as one change set, accepted or refused together. A `create` (`label`, `subject_kind`, `key`: a one-key value, `{field: value}` for each key field, the full `[{predicate, value}]` form, or none for a minted kind) makes a Subject the other changes name `{"created": label}` in any order; a key one live Subject holds lands on it (`resolved: existing`) unless `expect_new`. File or section evidence cites a workspace file by path; one the catalog does not name is catalogued once the write is admitted (`catalogued` in the outcome) | `GOVERNED_WRITE` |
-| `cruxible_link` | Link a section (`source` `FILE#Heading/Path`) `about` Subjects with `because` (a note, one write), or a whole registered page (`source` `FILE`) `guides` a ClaimType or Procedure (recorded on its catalog entry and proposed as its Document's next revision); `unlink` removes the named links. FILE is a path or a catalog name; mismatched arguments refuse `cruxible.link.*`, saying which link is which | `GOVERNED_WRITE` |
-| `cruxible_backlinks` | What points into one target: `ref` a Subject (`kind/id`) for the notes and Documents linked `about` it and the workspace sections its live Claims cite; a ClaimType or Procedure for the Documents linked `guides` it (review guidance); `file` and `section` for the live Claims resting on that section. Keyset pages (`limit`, `cursor`); each section row carries `drift` (`changed_since_cited`, `unchanged`, `unknown`) checked against the MCP workspace. Notes are written with `cruxible_write` about changes | `READ_ONLY` |
-| `cruxible_get` | Read one thing by any reference (Claim id or prefix, `kind/id` or `Subject:kind/id`, predicate (a dotted tail like `work_item.status` matches live predicates only; an exact predicate reads any lifecycle), `ClaimType:`/`Document:`/`Procedure:`/`Capability:NAME@N`/`Contract:NAME@N`/`query:`/`CaptureContract:`/`Trigger:`/`Principal:`/`Provider:NAME[/BUILD]`, `ApprovalPolicy:instance`, `ProcedureRuntimePolicy:instance`, artifact path, proposal id, or an operational reference: `ProcedureRun:RUN-...`, `Line:<name>` or the Line identity digest `next` names, `CAP-<12+ hex>`/`Capture:<digest>`, `ResolutionContract:<name>`, `Mandate:<name>`; their operational parts are read live at the head whatever `at` names, and the answer marks them with `live: {as_of, fields}`); `detail` is `summary` (values-first card with verdict flags; a string value over 500 characters is a TruncatedText preview `{truncated: true, preview, length, read_whole}`, never the value, and an object value is shown whole as `{object: {...}}`, where `read_whole` is the exact `cruxible_get` call `{ref, detail, at}` that returns it whole at the generation it was previewed at, and Subject rows name each value's `claim`), `evidence` (with the whole value), `why` (a Claim's verdict and law evidence, or a Subject's or Document's governance and provenance), `history` (newest first, paged by `limit` and `cursor`: a Claim's revisions each with `change` -- `stated`, `changed`, `reobserved` or `retired` with its `retirement` -- and `reason`, its Procedure item's reason or its change set's rationale; a Subject's `{kind: "subject", revisions, events}`, each event one field change with `before` for a changed value and `contended` for a competing one, `field` narrowing to one field), `incoming` (a Subject's pointing edges: one page, by `limit` and `cursor`, of the live Claims whose subject-valued object it is, each `{claim, subject, predicate, qualifier}` naming the asserting Subject), `pairs` (the pair Subjects a Subject is an end of: one page, by `limit` and `cursor`, of `groups`, each `{kind, part, pairs, hidden}` in pair kind, part and id order, listing only pairs holding a visible (supported, current, positive) fact and counting the rest as `hidden`; a page examines at most `2 * limit + 8` candidates, so it may hold fewer rows than `limit` while `truncated`; a summary card lists at most five per group with `more`, and a pair's card lists its `ends`), `runs` (a Line's Procedure runs, newest admission first, paged by `limit` and `cursor` over the run journal's per-Line index, read live), `proof` (the full accepted envelope and facts, with the full `accepted_coordinate`; on a Claim a summary `{verdict, captures, full}`, each cited Capture on one line), `proof_full` (a Claim's whole envelope and facts), or `body` with a byte `range` and the whole `body_digest`; other answers carry a compact `coordinate` (12-hex git oid prefix and `generation`), either of which `at` accepts back (a history row carries both; an all-digit `at` of 11 or fewer characters is always a generation); evidence names Captures by `CAP-<12 hex>` handles; a wrong name refuses with the nearest names | `READ_ONLY` |
+| `cruxible_write` | Apply `create`, `set`, `add` (one more value in a many-valued field), `retire`, `rebind` and `about` (a note: link a section about Subjects) changes as one change set, accepted or refused together. A `create` (`label`, `subject_kind`, `key`: a one-key value, `{field: value}` for each key field, the full `[{predicate, value}]` form, or none for a minted kind) makes a Subject the other changes name `{"created": label}` in any order; a key one live Subject holds lands on it (`resolved: existing`) unless `expect_new`. File or section evidence cites a workspace file by path; one the catalog does not name is catalogued once the write is admitted (`catalogued` in the outcome) | `GOVERNED_WRITE` |
+| `cruxible_link` | Link a section (`source` `FILE#Heading/Path`) `about` Subjects with `because` (a note, one write), or a whole registered page (`source` `FILE`) `guides` a ClaimType or Procedure (recorded on its catalog entry and proposed as its Document's next revision); `unlink` removes the named links. FILE is a path or a catalog name and must be in the file catalog: a page that is not refuses `cruxible.link.file_unregistered` (a section, `cruxible.doc.file_uncatalogued`) with the CLI repair `cruxible files add PATH`. Mismatched arguments refuse `cruxible.link.*`, saying which link is which | `GOVERNED_WRITE` |
+| `cruxible_backlinks` | What points into one target: `ref` a Subject (`kind/id`) for the notes and Documents linked `about` it and the workspace sections its live Claims cite; a ClaimType or Procedure for the Documents linked `guides` it (review guidance); `file` and `section` for the live Claims resting on that section. Keyset pages (`limit`, `cursor`); each section row carries `drift` (`changed_since_cited`, `unchanged`, `unknown`) checked against the MCP workspace. Notes are written with `cruxible_link` or a `cruxible_write` `about` change, and read by handle with `cruxible_get(ref="NOTE-...")` | `READ_ONLY` |
+| `cruxible_get` | Read one thing by any reference (Claim id or prefix, `kind/id` or `Subject:kind/id`, predicate (a dotted tail like `work_item.status` matches live predicates only; an exact predicate reads any lifecycle), `ClaimType:`/`Document:`/`Procedure:`/`Capability:NAME@N`/`Contract:NAME@N`/`query:`/`CaptureContract:`/`Trigger:`/`Principal:`/`Provider:NAME[/BUILD]`, `ApprovalPolicy:instance`, `ProcedureRuntimePolicy:instance`, artifact path, proposal id, a note handle `NOTE-...`, or an operational reference: `ProcedureRun:RUN-...`, `Line:<name>` or the Line identity digest `next` names, `CAP-<12+ hex>`/`Capture:<digest>`, `ResolutionContract:<name>`, `Mandate:<name>`; their operational parts are read live at the head whatever `at` names, and the answer marks them with `live: {as_of, fields}`); `detail` is `summary` (values-first card with verdict flags; a string value over 500 characters is a TruncatedText preview `{truncated: true, preview, length, read_whole}`, never the value, and an object value is shown whole as `{object: {...}}`, where `read_whole` is the exact `cruxible_get` call `{ref, detail, at}` that returns it whole at the generation it was previewed at, and Subject rows name each value's `claim`), `evidence` (with the whole value), `why` (a Claim's verdict and law evidence, or a Subject's or Document's governance and provenance), `history` (newest first, paged by `limit` and `cursor`: a Claim's revisions each with `change` -- `stated`, `changed`, `reobserved` or `retired` with its `retirement` -- and `reason`, its Procedure item's reason or its change set's rationale; a Subject's `{kind: "subject", revisions, events}`, each event one field change with `before` for a changed value and `contended` for a competing one, `field` narrowing to one field), `incoming` (a Subject's pointing edges: one page, by `limit` and `cursor`, of the live Claims whose subject-valued object it is, each `{claim, subject, predicate, qualifier}` naming the asserting Subject), `pairs` (the pair Subjects a Subject is an end of: one page, by `limit` and `cursor`, of `groups`, each `{kind, part, pairs, hidden}` in pair kind, part and id order, listing only pairs holding a visible (supported, current, positive) fact and counting the rest as `hidden`; a page examines at most `2 * limit + 8` candidates, so it may hold fewer rows than `limit` while `truncated`; a summary card lists at most five per group with `more`, and a pair's card lists its `ends`), `runs` (a Line's Procedure runs, newest admission first, paged by `limit` and `cursor` over the run journal's per-Line index, read live), `backlinks` (what points at a Subject, ClaimType or Procedure, as `cruxible_backlinks`), `proof` (the full accepted envelope and facts, with the full `accepted_coordinate`; on a Claim a summary `{verdict, captures, full}`, each cited Capture on one line), `proof_full` (a Claim's whole envelope and facts), or `body` with a byte `range` and the whole `body_digest`; other answers carry a compact `coordinate` (12-hex git oid prefix and `generation`), either of which `at` accepts back (a history row carries both; an all-digit `at` of 11 or fewer characters is always a generation); evidence names Captures by `CAP-<12 hex>` handles; a wrong name refuses with the nearest names | `READ_ONLY` |
 
 A proposal is not accepted state. A Claim's verdict is computed at read time
 from accepted law evidence, never carried forward from acceptance.
@@ -466,6 +502,8 @@ Prediction settlement records the activation and resolution in operational
 exhaust; it does not create or mutate Claims, and it does not create a second
 authority plane beside accepted state.
 
+<!-- TODO(0.5.0): freshness limits note -->
+
 ## Queries, orient and get
 
 `cruxible_query` takes exactly one mode: compact or a query `name`
@@ -523,7 +561,7 @@ read, traversal paths, bound parameters, verdict) and its execution receipt.
 |---|---|---|
 | `cruxible_query` | Answer any question over accepted state in one call: compact (`kind` -- a Subject kind or a definition kind: `ClaimType`, `Procedure`, `Trigger`, `Line`, `SubjectKind`, `CaptureContract`, `ProcedureMandate`, `QueryDefinition` -- and/or `contains`, with `where` filters shaped by operator, `select`, one-hop `follow`, `order_by`, `status`, `claims`) or a query `name` with `params` (`budgets`, `receipt`); rows of values with `flags`, paged by `limit` and `cursor` | `READ_ONLY` |
 | `cruxible_query_spec` | Run one full `QueryDefinitionSpec` inline (`spec`, `limit`, `cursor`, `at`, `evaluation_time`) with the same evaluation, rows, flags and paging as `cruxible_query`; `full` profile only | `READ_ONLY` |
-| `cruxible_orient` | Map accepted state in one call: each Subject kind with its live count and predicates (type, cardinality, enum members, accepted evidence as CaptureContract names), artifact counts, named queries, `you` (can this caller author, and why not), `attention` from the `next` queue (with `enablements`: the instance's Line enablements by state and the stalled or stopped Lines by name, no daemon scope needed), and `next` suggestions written as MCP tool calls; `kind` reads one kind in full with sample Subject IDs, `section` pages `documents`, `procedures`, `claim_types`, `subject_kinds` (each live SubjectKind's `rule`, `keys` and `uniqueness`: how a new Subject of the kind is named), `queries`, `capabilities` (each capability with its effect, request and result Contracts), `operations` (the provider operations a slot can bind to, with what each serves), `contracts`, `principals`, `policies` (every live standalone or embedded governed policy), `generations` (the ledger timeline: accepted generations newest first, each `{sequence, git_oid, proposed_at, changeset_digest, proposal, proposer, approvals, because, members}`, paged by sequence), `graph` (the Subject graph: `graph.nodes` `{subject, kind}` for each live Subject, then `graph.edges` `{claim, source, predicate, qualifier, target}` for each live Subject-valued Claim, keyset-paged at one coordinate, with `graph.totals.subjects`), `pins` (each live definition's required pins `{source, role, target, target_digest, current}`, keyset-paged: read by target, who uses a contract, ClaimType or Procedure), `activity` (what just happened, newest first: one row per `event` -- generations accepted, Line occurrences and enablement changes, runs started and finished, Captures landed and erased, inbox items posted and decided -- each with its `at` and the `ref` that reads it, read live and keyset-paged), `sources` (each logical source runs have landed Captures from, cited or not, by name: `{logical_source, landings, latest, contracts}`, its landing count, latest landing with its run, Line and Capture, and contract versions, read live and keyset-paged, with `sources_unattributed` for landings whose record can no longer be read), or an operational family -- `runs` (Procedure runs, newest admission first, paged by an immutable key) or `running` (only the runs still running; read one with `cruxible_get(ref="ProcedureRun:RUN-...")` for its live progress), `lines`, `captures`, `capture_contracts`, `predictions`, `mandates` -- which the map only counts under `artifacts` (`limit`, `cursor`); when the MCP workspace holds this instance's floor, `floor: {at, generations_behind}` says how far behind the head it is | `READ_ONLY` |
+| `cruxible_orient` | Map accepted state in one call, as a small index: each Subject kind with its live count, identity rule and field names (`fields`, with `more_fields` when cut), artifact counts, named queries, `you` (can this caller author, and why not), `attention` from the accepted-state part of the `next` queue (`next_scope: accepted_state`: `next_items` leaves out the rows `cruxible_next` adds from the workspace, such as drifted citations, modified Documents and stale blocks; with `enablements`: the instance's Line enablements by state and the stalled or stopped Lines by name, no daemon scope needed), and `next` suggestions written as MCP tool calls; `kind` reads one kind in full (each predicate's type, cardinality, enum members and accepted evidence as CaptureContract names) with sample Subject IDs, `section` pages `documents`, `procedures`, `claim_types`, `subject_kinds` (each live SubjectKind's `rule`, `keys` and `uniqueness`: how a new Subject of the kind is named), `queries`, `capabilities` (each capability with its effect, request and result Contracts), `operations` (the provider operations a slot can bind to, with what each serves), `contracts`, `principals`, `policies` (every live standalone or embedded governed policy), `generations` (the ledger timeline: accepted generations newest first, each `{sequence, git_oid, proposed_at, changeset_digest, proposal, proposer, approvals, because, members}`, paged by sequence), `graph` (the Subject graph: `graph.nodes` `{subject, kind}` for each live Subject, then `graph.edges` `{claim, source, predicate, qualifier, target}` for each live Subject-valued Claim, keyset-paged at one coordinate, with `graph.totals.subjects`), `pins` (each live definition's required pins `{source, role, target, target_digest, current}`, keyset-paged: read by target, who uses a contract, ClaimType or Procedure), `activity` (what just happened, newest first: one row per `event` -- generations accepted, Line occurrences and enablement changes, runs started and finished, Captures landed and erased, inbox items posted and decided -- each with its `at` and the `ref` that reads it, read live and keyset-paged), `sources` (each logical source runs have landed Captures from, cited or not, by name: `{logical_source, landings, latest, contracts}`, its landing count, latest landing with its run, Line and Capture, and contract versions, read live and keyset-paged, with `sources_unattributed` for landings whose record can no longer be read), or an operational family -- `runs` (Procedure runs, newest admission first, paged by an immutable key) or `running` (only the runs still running; read one with `cruxible_get(ref="ProcedureRun:RUN-...")` for its live progress), `lines`, `runbooks`, `captures`, `capture_contracts`, `predictions`, `mandates` -- which the map only counts under `artifacts` (`limit`, `cursor`); when the MCP workspace holds this instance's floor, `floor: {at, generations_behind}` says how far behind the head it is | `READ_ONLY` |
 | `cruxible_since` | Read signed accepted ChangeSet members after a generation | `READ_ONLY` |
 | `cruxible_next` | Rank outstanding repair work, each row with its exact next operation; observes the MCP workspace's floor and declared sources as `cruxible next` does | `READ_ONLY` |
 | `cruxible_duplicates` | List possible duplicates of one kind (`kind`, `limit`, `cursor`): Subjects and values equal under a broad comparison but distinct under the declared rules; a pure, bounded read | `READ_ONLY` |

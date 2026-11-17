@@ -11,7 +11,8 @@ wording is the thing that matters.
 
 This guide covers naming files so Cruxible can refer to them, writing notes
 with the Claims they back, citing what's already written, governing whole
-Documents, and keeping pages in step with projection blocks. It uses the car
+Documents, linking notes and guidance, and keeping pages in step with
+projection blocks. It uses the car
 parts example from Concepts.
 
 ## Naming files: the catalog
@@ -165,10 +166,11 @@ batch.add("governs", "catalog.vehicle/honda-civic-2019", evidence=why)
 batch.write()
 ~~~
 
-A value written later, in a write that does not produce the section, cannot
-cite it as its own words; it would rest on that later write's `because`, or
-cite the section as file evidence its field's rules must admit. So write a
-value and its date together with the reasoning they rest on.
+A value written later, in a write that does not produce the section, cites
+it by file and heading path instead, as in [Citing what's already
+written](#citing-whats-already-written). Writing a value and its date
+together with the reasoning they rest on keeps them one change: all of it
+lands, or none of it.
 
 To see what backs a decision, read its Claims: `cruxible query
 catalog.decision --select status,decided_on --claims` lists each cell's Claim
@@ -204,16 +206,21 @@ later.write()
 The four Claims citing the ruling stay current. Replace a section only when
 what it says has changed, and then re-check each Claim `next` brings back.
 
-Because it counts as your own words, a field that requires captured evidence
-refuses a section the same write produces (`cruxible.write.evidence_required`).
-Use two writes for those fields:
+A field that requires captured evidence refuses a section, whether the same
+write produces it or it already exists (`cruxible.write.evidence_required`):
+"captured" means a shaped payload under one of the field's CaptureContracts,
+and neither your own words nor a quote from a workspace file is one.
 
-1. Write the note: a write with only the document change (`append_section` or
-   `replace_section`).
-2. Write the Claim, citing the now-existing section by file and heading path
-   (`{kind: section, file: ..., section: [...]}`, not `ref`). That is evidence
-   from a file, as in [Citing what's already written](#citing-whats-already-written),
-   so the field's rules must admit that file's source.
+~~~text
+$ cruxible write price-from-note.yaml
+refused (generation 9, 7ad067b7d160)
+cruxible.write.evidence_required (change 0): price declares evidence_requirement 'captured' (web.search-results): a shaped payload under a declared contract; a file quote does not satisfy it
+  nearest: web.search-results
+  repair: Cite a Capture under web.search-results: contract evidence naming it (--evidence-contract) or a Capture handle (--capture); or add a shaped CaptureContract to price's evidence (evidence: [<contract name>, ...] in the vocabulary file)
+~~~
+
+Write the note for the reasoning, and back such a field with a Capture
+(Evidence and admission).
 
 A write can also change documents alone. When it does, Cruxible reminds you
 that nothing cites the text:
@@ -248,8 +255,10 @@ or cite an existing section by its heading path: in the SDK,
 from `cruxible_client.contracts.write`, or
 `{kind: section, file: docs/fitment.md, section: [Fitment notes, Wiper blades]}`
 in a write file.
-Either is evidence from a file, not your own words, so the field's rules must
-admit that file's source (Evidence and admission).
+Either is a citation of a workspace file. Every field admits file and section
+citations wherever it admits your own words, with no rule to write; only a
+field that requires captured evidence refuses them (Evidence and
+admission).
 A file the catalog does not name yet is catalogued when the write is admitted,
 and the outcome lists it under `catalogued` (a dry run says it would be), so
 there is no need to catalogue it first. The quoted anchor is text on one line,
@@ -283,6 +292,13 @@ Each new revision is proposed the same way, and lands under your approval
 policy like any change (`--no-accept` only proposes it). Most usage is
 citations; use a Document only when the wording itself is governed.
 
+The Document fields on `files add` go together: `--document-id`,
+`--document-kind`, `--title` and `--scope` (the media type comes from the file
+suffix unless `--media-type` gives it). Give all of them or none; an entry
+with only some refuses (`cruxible.files.catalog_edit_refused`) and the catalog
+is left as it was. An entry with none is a file to cite and to project blocks
+into, not a Document. `--replace` updates an entry that is already catalogued.
+
 ## Linking notes and guidance
 
 A link points prose at state without changing either. `cruxible link` makes
@@ -290,26 +306,75 @@ the two kinds, and a mismatched argument refuses with which is which:
 
 - **A note** links a *section* `about` Subjects: it says what that text is
   about. It is a value-lane write, under the same governance as `set`, and
-  `backlinks` on the Subject lists it.
+  `backlinks` on the Subject lists it. The note has its own handle, which
+  `get` reads:
 
-  ~~~bash
-  cruxible link docs/fitment.md#'Fitment notes/Wiper blades' \
-    --about catalog.part/wb-500 --because "Shop notes on this blade"
+  ~~~text
+  $ cruxible link docs/fitment.md#'Fitment notes/Wiper blades' \
+      --about catalog.part/wb-500 --because "Shop notes on this blade"
+  accepted (generation 10, 2d6011f047c5)
+    note docs/fitment.md#Fitment notes/Wiper blades about catalog.part/wb-500  [NOTE-7c16a8c253ba05b9d4f65e26f12287a4]
+  $ cruxible get NOTE-7c16a8c253ba05b9d4f65e26f12287a4
+  note: Note:NOTE-7c16a8c253ba05b9d4f65e26f12287a4
+  file: fitment
+  section: Fitment notes, Wiper blades
+  about: catalog.part/wb-500
+  capture: CAP-4a1fa58a26de
+  lifecycle: live
+  next: cruxible backlinks catalog.part/wb-500
+  next: cruxible get CAP-4a1fa58a26de --detail summary
+  ~~~
+
+  `cruxible note` writes the section and links it in one step: an append of
+  the text plus the `about` link, a note and never a Claim.
+
+  ~~~text
+  $ cruxible note docs/fitment.md --under 'Fitment notes' --heading "wb-500 squeak" \
+      --text "Squeaks on dry glass." --about catalog.part/wb-500 --because "Customer report."
+  accepted (generation 13, 7787f0c92c5e)
+    doc docs/fitment.md ['Fitment notes', 'wb-500 squeak']: written (sha256:cd024f87…)
+    note docs/fitment.md#Fitment notes/wb-500 squeak about catalog.part/wb-500  [NOTE-7fe0ae4f8df1e64027a67ea6017bcbe8]
+  ...
+  $ cruxible backlinks catalog.part/wb-500
+  backlinks of catalog.part/wb-500 (generation 13, 7787f0c92c5e): 2
+    about Note NOTE-7c16a8c253ba05b9d4f65e26f12287a4 docs/fitment.md#Fitment notes/Wiper blades  [unchanged]
+    about Note NOTE-7fe0ae4f8df1e64027a67ea6017bcbe8 docs/fitment.md#Fitment notes/wb-500 squeak  [unchanged]
   ~~~
 
 - **Guidance** links a *whole registered page* to a ClaimType or Procedure as
   its review guidance. The link is recorded on the page's catalog entry and the
   page's Document revision is proposed with it; `proposal review` of a change
-  touching that field shows the page.
+  touching that field shows the page. The page must be in the file catalog
+  first, so register it, then link it:
 
-  ~~~bash
-  cruxible link docs/fitment-review.md --guides ClaimType:catalog.part.fits
+  ~~~text
+  $ cruxible files add docs/fitment-review.md
+  Added file doc-docs-fitment-review.md-33671a52e1f3 -> docs/fitment-review.md (no Document: cite it, or project blocks into it) in .cruxible/files.yaml
+  $ cruxible link docs/fitment-review.md --guides ClaimType:catalog.part.fits
+  doc-docs-fitment-review.md-33671a52e1f3: guides ClaimType:catalog.part.fits (admitted)
+  Declared Document doc-docs-fitment-review.md-33671a52e1f3 on its catalog entry
+  Proposal: sha256:e973524e…
+  landed: accepted at 263de78e00c3
+  Recorded in files.yaml; files propose keeps these links
   ~~~
 
-The file is named by its path or its catalog name. Later `files propose` runs
-keep the guidance links, and `--unlink` removes either kind. A page a write
-catalogued without a Document becomes one under its catalog name when it is
-first linked as guidance.
+  Without the `files add`, the link refuses and names it:
+
+  ~~~text
+  $ cruxible link docs/fitment-review.md --guides ClaimType:catalog.part.fits
+  refused (not submitted)
+  cruxible.link.file_unregistered: docs/fitment-review.md is not a registered workspace file; guidance links a page in the file catalog, the one its Document compiles from
+    repair: Register it first: cruxible files add docs/fitment-review.md
+  ~~~
+
+The file is named by its path or its catalog name. Linking an existing section
+`--about` Subjects also needs the file in the catalog
+(`cruxible.doc.file_uncatalogued`, with the same `files add` repair); a section
+that `cruxible note` or a `write` appends catalogues its file itself. `files
+add` is a CLI step: MCP has no tool that edits the file catalog. Later `files
+propose` runs keep the guidance links, and `--unlink` removes either kind. A
+page catalogued without a Document becomes one under its catalog name when it
+is first linked as guidance.
 
 ## Pages that reflect state: projection blocks
 
@@ -361,8 +426,10 @@ kinds, and both are watched the same way.
    ~~~text
    $ cruxible next
    blocking  projection_backing_stale  civic#summary  next=cruxible.block.repin
+     repair: cruxible block repin civic summary
      also: blocking  projection_dirty  civic#summary
    warning  projection_backing_stale  civic#parts  next=cruxible.block.repin
+     repair: cruxible block repin civic parts
    ~~~
 
 4. **Bring it back in step.** `cruxible block sync --all` re-renders every
@@ -445,4 +512,4 @@ run first (`refused:block_still_published`).
 - Evidence and admission: what evidence a field
   admits.
 - The CLI reference for the marker grammar and every
-  `files`, `write` and `block` option.
+  `files`, `write`, `link`, `note` and `block` option.
