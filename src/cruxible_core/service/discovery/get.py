@@ -486,7 +486,7 @@ def resolve_get_ref(
             access=access,
         )
     except ReadRefusalError as exc:
-        stored = stored_name(value)
+        stored = _stored_spelling(value)
         if exc.error_code != "cruxible.get.ref_not_found" or stored == value:
             raise
         try:
@@ -501,6 +501,16 @@ def resolve_get_ref(
             )
         except ReadRefusalError:
             raise exc from None
+
+
+def _stored_spelling(value: str) -> str:
+    """A printed reserved name as stored; a version suffix (``Contract:NAME@N``, as
+    proposal list and cards print a versioned Contract) is kept apart from the name."""
+
+    head, at, version = value.rpartition("@")
+    if at and head and version.isdigit():
+        return f"{stored_name(head)}@{version}"
+    return stored_name(value)
 
 
 def _resolve_get_ref_as_written(

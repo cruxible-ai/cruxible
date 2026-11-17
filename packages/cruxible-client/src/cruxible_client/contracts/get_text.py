@@ -77,8 +77,9 @@ def definition_path_name(path: str) -> str:
     if family in ("contracts", "capabilities") and "/v" in rest:
         name, _, version = rest.rpartition("/v")
         if version.isdigit():
-            versioned = "Contract" if family == "contracts" else "Capability"
-            return public_name(f"{versioned}:{name}") + f"@{version}"
+            if family == "capabilities":
+                return f"Capability:{name}@{version}"
+            return public_name(f"Contract:{name}") + f"@{version}"
     if family == "subjects" and "/" in rest:
         return rest
     if family == "claims" and "/" in rest:
@@ -86,7 +87,9 @@ def definition_path_name(path: str) -> str:
     named = _NAMED_FAMILIES.get(family + "/")
     if named is None or "/" in rest:
         return path
-    return public_name(f"{named}:{rest}")
+    # Only the kinds that own reserved names are mapped: a Document may lawfully
+    # carry a name a reserved CaptureContract also has.
+    return public_name(f"{named}:{rest}") if named == "CaptureContract" else f"{named}:{rest}"
 
 
 def file_ref_shown(ref: str, file_paths: Mapping[str, str] | None) -> str:
