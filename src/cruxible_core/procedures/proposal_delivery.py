@@ -155,7 +155,7 @@ from cruxible_core.procedures.egress import (
 from cruxible_core.procedures.nested import ProcedureDelegation, authority_line
 from cruxible_core.procedures.terminal_dependencies import (
     CaptureRootCache,
-    TerminalItemDependencyManifestV1,
+    TerminalItemDependencyManifest,
     capture_root,
     citable_captures,
     witnessed_list_capture,
@@ -442,7 +442,7 @@ def proposal_items(request: TerminalEgressRequestV1) -> tuple[CoreClaimsChange, 
 
 def evidence_by_item(
     request: TerminalEgressRequestV1,
-    manifests: Mapping[str, TerminalItemDependencyManifestV1],
+    manifests: Mapping[str, TerminalItemDependencyManifest],
     *,
     derivations: Mapping[str, Collection[str]] | None = None,
     cache: CaptureRootCache | None = None,
@@ -1494,7 +1494,7 @@ class ProposalTerminalEgressSink:
         *,
         request: TerminalEgressRequestV1,
         admission: ProcedureRunAdmission,
-        manifests: Mapping[str, TerminalItemDependencyManifestV1] | None = None,
+        manifests: Mapping[str, TerminalItemDependencyManifest] | None = None,
         evidence: Mapping[str, str] | None = None,
         journaled: PreparedTerminalEgressV1 | None = None,
         recompiles: str | None = None,
@@ -1520,7 +1520,7 @@ class ProposalTerminalEgressSink:
         *,
         request: TerminalEgressRequestV1,
         admission: ProcedureRunAdmission,
-        manifests: Mapping[str, TerminalItemDependencyManifestV1] | None = None,
+        manifests: Mapping[str, TerminalItemDependencyManifest] | None = None,
         evidence: Mapping[str, str] | None = None,
         journaled: PreparedTerminalEgressV1 | None = None,
         derivations: Mapping[str, Collection[str]] | None = None,
@@ -2317,7 +2317,12 @@ class ProposalTerminalEgressSink:
         request: TerminalEgressRequestV1,
         unchanged: tuple[UnchangedChildReceiptAny, ...],
     ) -> dict[str, ReobservationRefusalReason]:
-        """Record each unchanged item's re-observation of content its Claim cites.
+        """Record each unchanged item's re-observation of a Claim whose row changed.
+
+        An item whose Claim's own row this run's extract step observed is never
+        here (the row observation is its freshness, 2026-11-16 c). One here
+        restated its Claim on a Capture whose row differs elsewhere but proves
+        the same value and key (D-R8): a per-Claim record, sized by the change.
 
         The store admits each one at the current head under its append lock
         (``ClaimReobservationStore.record``). One it refuses there -- the Claim
@@ -2347,6 +2352,7 @@ class ProposalTerminalEgressSink:
                     extraction=request.claims_evidence.get(child.item_key),
                     cited_envelopes=cited_envelopes,
                     verified_witnesses=verified_witnesses,
+                    call_latest=request.observation_latest.get(child.reobserving_capture_digest),
                     extracted_value=(
                         change.value
                         if isinstance(

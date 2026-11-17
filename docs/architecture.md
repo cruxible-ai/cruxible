@@ -284,19 +284,23 @@ paths, or signed format identifiers.
 
 ### Operational journal publication
 
-A terminal publishes its item-dependency records as one fenced append group.
-The records retain their individual sequence numbers, digests and hash chain.
-What every item's closure shares (the Captures and reads the whole terminal
-consumed) is stored once per terminal; each item record
-(`playbill-procedure-item-dependencies-v2`) names that shared set by digest and
-holds only what its item consumed beyond it, and reads join the two back into
-the exact manifest (an item's `manifest_digest` keeps its rule over the whole
-closure; v1 records stay readable). A Procedure's Query read stores its result
+A terminal journals its items' dependency closures as one `item_dependencies`
+record (`playbill-terminal-items-v1`) that cites run-free bodies: the shared set
+(the Captures and reads the whole terminal consumed), one body per item
+(`playbill-procedure-item-dependencies-v3`, what that item consumed beyond the
+shared set and its folded facts) and chunks of up to 64
+`(item_key, body digest, manifest digest)` entries. No body names the run, its
+time or a journal position, and an item's manifest
+(`playbill-terminal-item-dependencies-v2`) binds no run, so an item whose
+closure did not change stores nothing new; the citing record carries the run
+binding. Reads join each item body with the shared set into the exact manifest
+and check its digest. The per-item records of earlier builds (v1 inline, v2
+citing a shared set) stay readable. A Procedure's Query read stores its result
 body without its evaluation instant, in a small record that names the body and
 keeps the instant and result digest, so an identical read stores almost
 nothing new; replay restores the exact view and checks the result digest.
-One reservation sidecar names the group's CAS payloads before they are written;
-the sidecar is removed only after the complete group is appended and indexed.
+A reservation sidecar names a record's CAS payload before it is written; the
+sidecar is removed only after the record is appended and indexed.
 The journal remains authoritative and its SQLite indexes are rebuildable.
 
 Operational journal frames, payload bodies and reservation sidecars are

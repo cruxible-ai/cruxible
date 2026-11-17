@@ -140,8 +140,9 @@ def test_a_pair_of_existing_ends_is_created_once_and_then_found(tmp_path: Path) 
     # The ends exist now; a new pair of them is created, an existing one found.
     write_doc(root, "sbom", rows("web", [A]) + rows("api", [A]), inventory="web")
     second = run(instance, root, line=LINE, minute=1)
-    # api, (api, a) and its scope; (web, a) re-observed from the new bytes.
-    assert _changes(second) == ["claim", "reobservation", "subject", "subject"]
+    # api, (api, a) and its scope; (web, a)'s row is unchanged, so its row
+    # observation refreshes it with no item (ruling 2026-11-16 c).
+    assert _changes(second) == ["claim", "subject", "subject"]
     activate(instance, second)
     assert memberships(instance) == {"web": {A: "required"}, "api": {A: "required"}}
 
@@ -273,14 +274,16 @@ def test_absence_by_inventory_retires_the_scope_the_complete_sbom_no_longer_list
     write_doc(root, "sbom", rows("web", [A, C]), inventory="web")
     second = run(instance, root, line=LINE, minute=1)
     assert second.status == "succeeded", json.dumps(second.terminal.model_dump(mode="json"))
-    assert _changes(second) == ["claim", "reobservation", "retirement", "subject", "subject"]
+    # An unchanged row is refreshed by its row observation, with no item (2026-11-16 c).
+    assert _changes(second) == ["claim", "retirement", "subject", "subject"]
     activate(instance, second)
     assert memberships(instance) == {"web": {A: "required", C: "required"}}
     # B's occurrence stays, a historical shell: listed again, it is found, not re-created.
     assert set(occurrences) <= set(subjects_of(instance, OCCURRENCE))
     write_doc(root, "sbom", rows("web", [A, B, C]), inventory="web")
     third = run(instance, root, line=LINE, minute=2)
-    assert _changes(third) == ["claim", "reobservation", "reobservation"]
+    # A's and C's rows are unchanged: refreshed by the row observation (2026-11-16 c).
+    assert _changes(third) == ["claim"]
     activate(instance, third)
     assert len(subjects_of(instance, OCCURRENCE)) == 3
 
@@ -424,7 +427,8 @@ def test_absence_by_component_judges_that_components_occurrences_only(tmp_path: 
     activate(instance, run(instance, root, line=LINE))
     write_doc(root, "sbom", rows("web", [A]), component=A)
     state = run(instance, root, line=LINE, minute=1)
-    assert _changes(state) == ["reobservation", "retirement"]
+    # An unchanged row is refreshed by its row observation, with no item (2026-11-16 c).
+    assert _changes(state) == ["retirement"]
     activate(instance, state)
     assert memberships(instance) == {"web": {A: "required", B: "required"}}
 

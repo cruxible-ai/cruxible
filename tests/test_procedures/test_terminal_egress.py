@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -148,7 +149,8 @@ def test_terminal_without_a_sink_still_records_each_item_dependency(tmp_path) ->
     assert result.status == "refused"
     assert result.refusal is not None and result.refusal.code == "terminal_not_available"
     records = fixture.journal.all_records(fixture.stream, "runs")
-    assert [item.record.event_kind for item in records].count("item_dependencies") == 2
+    # One grouped record for the terminal's two items.
+    assert [item.record.event_kind for item in records].count("item_dependencies") == 1
     terminal = next(item for item in records if item.record.event_kind == "terminal_egress")
     payload = _payload(fixture, terminal.record.payload_digest)
     assert isinstance(payload, dict)
@@ -375,24 +377,26 @@ def test_terminal_fan_out_obeys_run_budget_with_scalar_return(tmp_path, kind):
     assert budget["field_path"] == "items"
 
 
-def _record_items_over_a_capture_list(tmp_path, *, captures: int, items: int, builds=None):  # type: ignore[no-untyped-def]
+def _record_items_over_a_capture_list(  # type: ignore[no-untyped-def]
+    tmp_path, *, captures: int, items: int, builds=None, repeat: int = 1
+):
     """Journal one terminal's ``items``, each derived from the same ``captures`` and one own.
 
     The shape of a list-fed terminal (an OSV-style fetch of one response per
-    advisory, every item derived from the whole list): returns each item
-    record's payload bytes, what the inline v1 shape would have stored, the
-    child receipts, the in-memory manifests and the bytes of every body stored.
+    advisory, every item derived from the whole list). The terminal is
+    journaled ``repeat`` times over the same closures, as unchanged runs
+    would. Returns each item body's size, the bytes and files every pass
+    stored, and the grouped record's payload.
     """
 
     from cruxible_client.contracts.procedures.models import iter_references
-    from cruxible_core.exhaust.records import journal_payload_bytes
     from cruxible_core.procedures import execution as execution_module
     from cruxible_core.procedures.terminal_dependencies import (
         AcquisitionInputOutcomeV1,
         DependencyEvidenceFactsV1,
         produced_capture_token,
         receipt_token,
-        resolve_item_dependencies,
+        resolve_terminal_items,
     )
 
     tmp_path.mkdir()
@@ -457,18 +461,21 @@ def _record_items_over_a_capture_list(tmp_path, *, captures: int, items: int, bu
     executor._append_event(  # noqa: SLF001
         admission, records, "admission_bound", prepared.bound_payload().model_dump(mode="json")
     )
-    before = {path.name for path in (tmp_path / "cas").rglob("*") if path.is_file()}
-    with _model_builds() as counted:
-        children, _values, manifests, _selected = executor._record_terminal_items(  # noqa: SLF001
-            node, admission=prepared.admission, state=state, records=records
-        )
-    if builds is not None:
-        builds.update(counted)
-    stored = sum(
-        path.stat().st_size
-        for path in (tmp_path / "cas").rglob("*")
-        if path.is_file() and path.name not in before
-    )
+    passes = []
+    for _ in range(repeat):
+        before = {path.name for path in (tmp_path / "cas").rglob("*") if path.is_file()}
+        with _model_builds() as counted:
+            bound = executor._record_terminal_items(  # noqa: SLF001
+                node, admission=prepared.admission, state=state, records=records
+            )
+        if builds is not None:
+            builds.update(counted)
+        added = [
+            path
+            for path in (tmp_path / "cas").rglob("*")
+            if path.is_file() and path.name not in before
+        ]
+        passes.append((sum(path.stat().st_size for path in added), len(added)))
     access = BodyAccessContext(principal_id="terminal-egress-test", can_read_body=True)
     read = lambda digest: fixture.bodies.read(digest, access=access)  # noqa: E731
     journaled = [
@@ -476,72 +483,79 @@ def _record_items_over_a_capture_list(tmp_path, *, captures: int, items: int, bu
         for item in fixture.journal.all_records(fixture.stream, "runs")
         if item.record.event_kind == "item_dependencies"
     ]
-    sizes, inline = [], []
-    for record, child in zip(journaled, children, strict=True):
-        payload = _payload(fixture, record.record.payload_digest)
-        assert isinstance(payload, dict)
-        assert payload["tag"] == "playbill-procedure-item-dependencies-v2"
-        manifest, derived = resolve_item_dependencies(payload, read)
+    assert len(journaled) == repeat  # one grouped record per terminal pass
+    payload = _payload(fixture, journaled[-1].record.payload_digest)
+    assert isinstance(payload, dict)
+    assert payload["tag"] == "playbill-terminal-items-v1"
+    assert bound.items_record_digest == journaled[-1].record_digest
+    restored = resolve_terminal_items(payload, read)
+    sizes = []
+    chunk_entries = [
+        entry for chunk in payload["chunks"] for entry in json.loads(read(chunk))["entries"]
+    ]
+    for (manifest, derived), child, entry in zip(
+        restored, bound.children, chunk_entries, strict=True
+    ):
         # Every reader resolves the same closure the run held, under the same digest.
-        assert manifest == manifests[child.item_key]
+        assert manifest == bound.manifests[child.item_key]
         assert derived.manifest_digest == child.manifest_digest
-        sizes.append(len(read(record.record.payload_digest)))
-        inline.append(
-            len(
-                journal_payload_bytes(
-                    {
-                        "tag": "playbill-procedure-item-dependencies-v1",
-                        "manifest": manifest.model_dump(mode="json"),
-                        "derived": derived.model_dump(mode="json"),
-                        "audit": payload["audit"],
-                    }
-                )
-            )
-        )
-    return sizes, inline, stored
+        sizes.append(len(read(entry[1])))
+    return sizes, passes, payload
 
 
 def test_an_item_record_does_not_grow_with_the_runs_capture_count(tmp_path) -> None:
-    """Notes fix 1a: a list-fed terminal's item records cite the shared list by digest.
+    """Notes fix 1a: a list-fed terminal's item bodies cite the shared list by digest.
 
     Before, every item record restated every Capture digest of the list three
     times (produced, receipt, coverage): records grew as items x captures.
     """
 
-    small, small_inline, small_stored = _record_items_over_a_capture_list(
+    small, small_passes, _ = _record_items_over_a_capture_list(
         tmp_path / "small", captures=10, items=3
     )
-    large, large_inline, large_stored = _record_items_over_a_capture_list(
+    large, large_passes, _ = _record_items_over_a_capture_list(
         tmp_path / "large", captures=300, items=3
     )
-    # A record's size is independent of the Capture count (only digest values differ).
+    # An item body's size is independent of the Capture count.
     assert small == large
-    # The inline shape grew by ~ 3 digests per Capture per item.
-    assert min(large_inline) - max(small_inline) > 290 * 3 * 64
     # What the run stores grows once per terminal (the shared set), never per item.
-    assert large_stored - small_stored < (300 - 10) * 3 * 80
-    print(
-        f"item record bytes: v2 {small[0]} at 10 and {large[0]} at 300 captures; "
-        f"v1 {small_inline[0]} -> {large_inline[0]}; "
-        f"terminal stored {small_stored} -> {large_stored}"
+    assert large_passes[0][0] - small_passes[0][0] < (300 - 10) * 3 * 80
+
+
+def test_an_unchanged_terminal_stores_no_new_body(tmp_path) -> None:
+    """Notes step 1a: item closures are run-free, so a repeat stores nothing new.
+
+    The grouped record, its chunks, the shared set and every item body are
+    functions of the closures alone: the second pass over the same closures
+    lands no CAS object (its journal record cites the same payload body).
+    """
+
+    _sizes, passes, _payload_value = _record_items_over_a_capture_list(
+        tmp_path / "repeat", captures=10, items=70, repeat=2
     )
+    first, second = passes
+    # 70 items over two chunks: a shared set, at most 70 item bodies, two
+    # chunks and the payload body on the first pass; nothing on the second.
+    assert 0 < first[1] <= 70 + 4
+    assert second == (0, 0)
 
 
 def test_journaling_item_records_builds_no_record_model_per_item(tmp_path) -> None:
-    """The shared-set split adds no model build per item (the settle scale guard's count).
+    """Grouping the closures adds no model build per item (the settle scale guard's count).
 
-    Each item's ``item_dependencies`` payload is built as JSON from its already
-    validated manifest and facts; the record, its digests, its audit and copies
-    of its facts are never constructed per item.
+    Each item's body is built as JSON from its already validated manifest and
+    facts; the record, its chunks, its digests and copies of its facts are
+    never constructed per item.
     """
 
     record_models = (
-        "TerminalItemDependencyRecordV2.",
+        "TerminalItemsRecordV1.",
+        "TerminalItemDependencyBodyV3.",
+        "TerminalItemChunkV1.",
         "TerminalDependencyDigestsV1.",
-        "TerminalItemDependencyAuditV1.",
         "TerminalSharedDependenciesV1.",
         "TerminalSharedCoverageV1.",
-        "TerminalItemDerivedFactsV1.model_copy",
+        "TerminalItemDerivedFactsV2.model_copy",
         "TerminalItemSourceCoverageV1.model_copy",
     )
     counts = {}

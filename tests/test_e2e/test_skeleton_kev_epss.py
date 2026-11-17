@@ -1269,7 +1269,9 @@ def test_a_derived_capture_records_its_inputs_and_is_each_claims_one_root(
     second, _ = _derive_run(instance, line="test.kev-derive-line", minute=1)
     assert second.status == "succeeded", second.terminal
     (written,) = _summaries(second, "claims")
-    assert written.written == 0 and written.re_observed >= len(listed)
+    # The same bytes reuse the held Captures (ruling 1c): every item restates
+    # what is live, so the terminal is unchanged and writes nothing.
+    assert written.written == 0 and written.revised == 0 and written.delivery == "unchanged"
 
 
 def _get_card(instance: Any, ref: str) -> Any:

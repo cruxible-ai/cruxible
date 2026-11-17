@@ -91,7 +91,7 @@ from cruxible_core.procedures.terminal_dependencies import (
     TAINT_OMITTED_OPTIONAL,
     TAINT_UNPROMOTED_EXHAUST,
     CaptureRootCache,
-    TerminalItemDependencyManifestV1,
+    TerminalItemDependencyManifest,
 )
 
 if TYPE_CHECKING:
@@ -613,6 +613,12 @@ class TerminalEgressRequestV1(_StrictEgressModel):
     claims_evidence: dict[str, ClaimEvidenceReceipt] = Field(
         default_factory=dict, exclude_if=lambda value: not value
     )
+    #: When the call that fetched each cited Capture ended (its last member's
+    #: instant, ruling 1b), for the Captures this run fetched: a per-Claim
+    #: re-observation recorded at delivery, or by recovery, carries it.
+    observation_latest: dict[str, datetime] = Field(
+        default_factory=dict, exclude_if=lambda value: not value
+    )
 
     _digests = field_validator("procedure_artifact_digest", "admission_binding_digest")(_tagged)
 
@@ -620,6 +626,23 @@ class TerminalEgressRequestV1(_StrictEgressModel):
     @classmethod
     def _prepared_at(cls, value: datetime) -> datetime:
         return ensure_utc(value)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _retired_fields(cls, value: object) -> object:
+        if isinstance(value, dict) and "observation_spans" in value:
+            # Only unreleased builds journaled it (ruling 2026-11-16 (3)).
+            raise ValueError(
+                "this terminal request was journaled by an unreleased development build "
+                "(observation_spans) and is not read; re-initialise this instance "
+                "(cruxible init) to use this build"
+            )
+        return value
+
+    @field_validator("observation_latest")
+    @classmethod
+    def _observation_latest(cls, value: dict[str, datetime]) -> dict[str, datetime]:
+        return {_tagged(digest): ensure_utc(latest) for digest, latest in value.items()}
 
     @model_validator(mode="after")
     def _shape(self) -> "TerminalEgressRequestV1":
@@ -640,7 +663,7 @@ class TerminalEgressRequestV1(_StrictEgressModel):
                 raise ValueError(
                     "claims egress requires the executor's typed changes; use a claims node"
                 )
-        elif self.claims_changes or self.claims_evidence:
+        elif self.claims_changes or self.claims_evidence or self.observation_latest:
             raise ValueError("only the claims executor produces Claim changes and evidence")
         if not self.items:
             raise ValueError("terminal egress requires at least one child item")
@@ -1437,7 +1460,7 @@ class TerminalEgressPreparerProtocol(Protocol):
         *,
         request: TerminalEgressRequestV1,
         admission: ProcedureRunAdmission,
-        manifests: Mapping[str, TerminalItemDependencyManifestV1] | None = None,
+        manifests: Mapping[str, TerminalItemDependencyManifest] | None = None,
         evidence: Mapping[str, str] | None = None,
         derivations: Mapping[str, Collection[str]] | None = None,
         capture_root_cache: CaptureRootCache | None = None,
@@ -1648,7 +1671,7 @@ class InboxEgressSinkProtocol(Protocol):
         self,
         *,
         request: TerminalEgressRequestV1,
-        manifests: Mapping[str, TerminalItemDependencyManifestV1],
+        manifests: Mapping[str, TerminalItemDependencyManifest],
     ) -> TerminalEgressReceiptV1: ...
 
 

@@ -180,7 +180,9 @@ def test_child_occurrences_have_exact_bindings_and_replay_without_execution(
         if kind == "child_invocation" and value["verdict"] == "completed"
     ]
     assert len(children) == (2 if positive else 1)
-    assert len(verification_reads) == 2 * len(children)
+    # Per child: its two verified records and its consumption, a run-free body
+    # its completion cites (version 2).
+    assert len(verification_reads) == 3 * len(children)
     assert len({item["receipt"]["run_id"] for item in children}) == len(children)
     for child_record in children:
         child_payloads = payloads(instance, child_record["receipt"]["run_id"])

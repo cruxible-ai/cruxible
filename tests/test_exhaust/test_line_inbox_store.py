@@ -418,7 +418,7 @@ def test_a_layout_5_projection_gains_the_split_in_place_with_earlier_postings_un
     import sqlite3
 
     _instance, store, write = _world(tmp_path)
-    store.post([_posting({"a": 1}, run_id="RUN-1")], **write)  # type: ignore[arg-type]
+    _post_inline(store, [_posting({"a": 1}, run_id="RUN-1")], write)
     _layout_5(store)
 
     store.post([_posting({"a": 1}, run_id="RUN-2")], **write)  # type: ignore[arg-type]
@@ -426,8 +426,20 @@ def test_a_layout_5_projection_gains_the_split_in_place_with_earlier_postings_un
     assert store.posted_by_run("RUN-1") == (1, None)
     assert store.posted_by_run("RUN-2") == (1, 0)
     connection = sqlite3.connect(store.path)
-    assert connection.execute("PRAGMA user_version").fetchone()[0] == 6
+    # Layout 5 moves in place to 9 (the columns, then the batch and group tables).
+    assert connection.execute("PRAGMA user_version").fetchone()[0] == 9
     connection.close()
+
+
+def _post_inline(store: LineInboxStore, postings: list[InboxPosting], write: dict) -> None:  # type: ignore[type-arg]
+    """Post as builds before posting batches did: every item inline, one row each."""
+
+    original = LineInboxStore._posted_data
+    LineInboxStore._posted_data = lambda self, fresh: {"items": fresh}  # type: ignore[method-assign]
+    try:
+        store.post(postings, **write)
+    finally:
+        LineInboxStore._posted_data = original  # type: ignore[method-assign]
 
 
 def _layout_5(store: LineInboxStore) -> None:
@@ -450,13 +462,13 @@ def test_an_upgrade_stopped_before_its_version_moves_leaves_layout_5_and_reopens
     import sqlite3
 
     _instance, store, write = _world(tmp_path)
-    store.post([_posting({"a": 1}, run_id="RUN-1")], **write)  # type: ignore[arg-type]
+    _post_inline(store, [_posting({"a": 1}, run_id="RUN-1")], write)
     _layout_5(store)
     open_projection = store._open_projection  # noqa: SLF001
 
     def stopped_before_the_version(*_args: object) -> int:
         action, first, second = _args[:3]
-        if action == sqlite3.SQLITE_PRAGMA and first == "user_version" and second == "6":
+        if action == sqlite3.SQLITE_PRAGMA and first == "user_version" and second == "9":
             return sqlite3.SQLITE_DENY
         return sqlite3.SQLITE_OK
 
@@ -484,7 +496,7 @@ def test_a_column_an_earlier_upgrade_left_at_layout_5_is_kept_not_added_twice(
     import sqlite3
 
     _instance, store, write = _world(tmp_path)
-    store.post([_posting({"a": 1}, run_id="RUN-1")], **write)  # type: ignore[arg-type]
+    _post_inline(store, [_posting({"a": 1}, run_id="RUN-1")], write)
     _layout_5(store)
     connection = sqlite3.connect(store.path)
     connection.execute("ALTER TABLE postings ADD COLUMN created INTEGER")
@@ -494,3 +506,178 @@ def test_a_column_an_earlier_upgrade_left_at_layout_5_is_kept_not_added_twice(
     assert store.posted_by_run("RUN-1") == (1, None)
     store.post([_posting({"a": 1}, run_id="RUN-2")], **write)  # type: ignore[arg-type]
     assert store.posted_by_run("RUN-2") == (1, 0)
+
+
+def test_a_terminal_reposting_the_same_items_journals_one_batch_and_no_item_row(
+    tmp_path: Path,
+) -> None:
+    """Codex 3.5: a re-sighting batch cites the body the first posting stored."""
+
+    import sqlite3
+
+    instance, store, write = _world(tmp_path)
+    items = [{"cve": f"CVE-{index}"} for index in range(5)]
+
+    def post(run_id: str, at: datetime) -> None:
+        store.post(
+            [
+                _posting(item, run_id=run_id, item_key=f"item-{index}", at=at)
+                for index, item in enumerate(items)
+            ],
+            **write,  # type: ignore[arg-type]
+        )
+
+    post("RUN-1", NOW)
+    cas = instance.root / "cas"
+    before = {path for path in cas.rglob("*") if path.is_file()}
+    post("RUN-2", NOW + timedelta(hours=1))
+    added = {path for path in cas.rglob("*") if path.is_file()} - before
+    # The run's journal record payload alone: the items body is the first run's.
+    assert len(added) == 1
+    assert store.posted_by_run("RUN-1") == (5, 5)
+    assert store.posted_by_run("RUN-2") == (5, 0)
+    # A recovered delivery of the same terminal counts once.
+    post("RUN-2", NOW + timedelta(hours=1))
+    assert store.posted_by_run("RUN-2") == (5, 0)
+    conn = sqlite3.connect(store.path)
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM postings").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM posting_batches").fetchone()[0] == 2
+    finally:
+        conn.close()
+    entries, _cursor = store.page(line=None, status=None, limit=10, cursor=None)
+    assert {entry.envelope.occurrences for entry in entries} == {2}
+
+
+def test_a_resighted_batch_writes_one_group_row_and_no_item_row_at_two_sizes(
+    tmp_path: Path,
+) -> None:
+    """Open question 3: a re-sighting is one row for its group; items are not rewritten.
+
+    Each item's occurrences, window and last sighting as read come from its
+    group's sightings since it joined.
+    """
+
+    import sqlite3
+
+    for size in (3, 30):
+        (tmp_path / str(size)).mkdir()
+        _instance, store, write = _world(tmp_path / str(size))
+        items = [{"cve": f"CVE-{index}"} for index in range(size)]
+
+        def post(run_id: str, at: datetime) -> None:
+            store.post(
+                [
+                    _posting(item, run_id=run_id, item_key=f"item-{index}", at=at)
+                    for index, item in enumerate(items)
+                ],
+                **write,  # type: ignore[arg-type]
+            )
+
+        post("RUN-1", NOW)
+
+        def stored() -> list[tuple[object, ...]]:
+            conn = sqlite3.connect(store.path)
+            try:
+                return conn.execute(
+                    "SELECT item_id,last_seen,envelope,group_base FROM items ORDER BY item_id"
+                ).fetchall()
+            finally:
+                conn.close()
+
+        before = stored()
+        post("RUN-2", NOW + timedelta(hours=1))
+        post("RUN-3", NOW + timedelta(hours=2))
+        assert stored() == before  # no item row rewritten
+        conn = sqlite3.connect(store.path)
+        try:
+            assert conn.execute("SELECT occurrences FROM inbox_groups").fetchall() == [(3,)]
+        finally:
+            conn.close()
+        entries, _cursor = store.page(line=None, status=None, limit=size, cursor=None)
+        assert len(entries) == size
+        for entry in entries:
+            envelope = entry.envelope
+            assert envelope.occurrences == 3
+            assert envelope.last_sighting.run_id == "RUN-3"
+            assert [item.run_id for item in envelope.recent_sightings][:3] == [
+                "RUN-3",
+                "RUN-2",
+                "RUN-1",
+            ]
+            assert store.get(envelope.item_id).envelope == envelope
+
+
+def test_grouped_sightings_keep_their_true_first_and_latest_after_out_of_order_recovery(
+    tmp_path: Path,
+) -> None:
+    """F-006: recovered batches posted earlier than the group's latest sighting.
+
+    More recovered batches than the recent window arrive after a newer
+    posting; separately a backdated batch predates the first. Each item still
+    reads the true latest and first postings, its count and its newest window.
+    """
+
+    items = [{"cve": f"CVE-{index}"} for index in range(3)]
+    for name, minutes in (
+        ("latest", (10, 100, 20, 21, 22, 23, 24)),
+        ("first", (100, 0, 200, 201, 202, 203, 204)),
+    ):
+        (tmp_path / name).mkdir()
+        _instance, store, write = _world(tmp_path / name)
+        for index, minute in enumerate(minutes):
+            store.post(
+                [
+                    _posting(
+                        item,
+                        run_id=f"RUN-{index}",
+                        item_key=f"item-{position}",
+                        at=NOW + timedelta(minutes=minute),
+                    )
+                    for position, item in enumerate(items)
+                ],
+                **write,  # type: ignore[arg-type]
+            )
+        entries, _cursor = store.page(line=None, status=None, limit=10, cursor=None)
+        assert len(entries) == len(items)
+        for entry in entries:
+            envelope = entry.envelope
+            assert envelope.occurrences == len(minutes), name
+            assert envelope.last_sighting.posted_at == NOW + timedelta(minutes=max(minutes)), name
+            assert envelope.first_sighting.posted_at == NOW + timedelta(minutes=min(minutes)), name
+            newest = sorted(minutes, reverse=True)[: len(envelope.recent_sightings)]
+            assert [item.posted_at for item in envelope.recent_sightings] == [
+                NOW + timedelta(minutes=minute) for minute in newest
+            ], name
+            assert store.get(envelope.item_id).envelope == envelope
+
+
+def test_a_layout_8_projection_is_replayed_from_the_journal(tmp_path: Path) -> None:
+    """Review 2c #9: a layout-8 projection (unreleased builds only) may hold a
+    group window that lost its first or latest sighting; it is replayed from
+    the journal, which restores both."""
+
+    import sqlite3
+
+    _instance, store, write = _world(tmp_path)
+    items = [{"cve": "CVE-0"}]
+    for index, minute in enumerate((10, 100)):
+        store.post(
+            [
+                _posting(item, run_id=f"RUN-{index}", at=NOW + timedelta(minutes=minute))
+                for item in items
+            ],
+            **write,  # type: ignore[arg-type]
+        )
+    connection = sqlite3.connect(store.path)
+    try:
+        # A lost latest, as the earlier algorithm could leave it, at layout 8.
+        connection.execute("UPDATE inbox_groups SET recent='[]', last_seen=?", ("x",))
+        connection.execute("PRAGMA user_version=8")
+        connection.commit()
+    finally:
+        connection.close()
+    entries, _cursor = store.page(line=None, status=None, limit=10, cursor=None)
+    (entry,) = entries
+    assert entry.envelope.last_sighting.posted_at == NOW + timedelta(minutes=100)
+    assert entry.envelope.occurrences == 2

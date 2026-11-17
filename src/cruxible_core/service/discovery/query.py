@@ -9,7 +9,7 @@ queried Claim and an explained Claim can never disagree about their verdict.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from contextlib import nullcontext
+from contextlib import ExitStack, nullcontext
 from datetime import datetime
 from typing import Any, Literal
 
@@ -48,7 +48,9 @@ from cruxible_client.contracts.query.results import (
 from cruxible_client.contracts.subjects import AcceptedSubject, parse_subject, subject_digest
 from cruxible_core.errors import DataValidationError
 from cruxible_core.evidence.claim_reobservations import (
+    ReobservationKey,
     ReobservationReader,
+    claim_keys_on,
     reobservations_at,
 )
 from cruxible_core.evidence.source_readers import ExternalSourceReaderProtocol
@@ -161,6 +163,7 @@ def _fact_row(
     reobserved: bool = False,
     bodies: dict[str, Any] | None = None,
     key_normalizers: dict[str, KeyNormalizer | None] | None = None,
+    reobservation_keys: Callable[..., tuple[ReobservationKey, ...] | None] | None = None,
 ) -> ClaimFactRowV1:
     """Assemble one Claim's verdict inputs exactly as the verdict service does.
 
@@ -229,15 +232,23 @@ def _fact_row(
         canonical_form=effective_canonical_form(claim_type),
         key_normalizer=_key_normalizer(tree, claim_type, key_normalizers),
     )
-    if reobserved and isinstance(instance, PlaybillInstance):
+    keys = None if reobservation_keys is None else reobservation_keys(claim, captures)
+    if keys is not None and isinstance(instance, PlaybillInstance):
+        # Only a Claim whose lineage or cited content was observed reads its
+        # freshness, at each evaluation instant, with the keys this build found.
+        reader = ReobservationReader.of(instance)
+        claim_id = claim.identity.name
+        cited = keys
+        row.attach_reobservations(lambda at: reader.latest(claim_id, cited, at).evidence)
+    elif reobserved and isinstance(instance, PlaybillInstance):
         # A re-observed lineage reads its freshness at each evaluation instant,
         # one indexed probe per cited (contract, content).
         live = instance
-        claim_id = claim.identity.name
+        held = claim
         row.attach_reobservations(
             lambda at: (
                 reobservations_at(
-                    live, coordinate=coordinate, claim_id=claim_id, captures=captures, at=at
+                    live, coordinate=coordinate, claim=held, captures=captures, at=at
                 ).evidence
             )
         )
@@ -570,43 +581,75 @@ class _AcceptedQueryFactsRead:
             if isinstance(self._instance, PlaybillInstance)
             else None
         )
-        for path in sorted(self._claim_paths, key=lambda item: item.encode("utf-8")):
-            # The full-history path historically looked up evidence before
-            # parsing the Claim; live-only reads parsed lifecycle first and
-            # never demanded evidence for retired heads. Keep both orders.
-            evidence = evidence_for(path) if include_retired else None
-            claim = self._claims.get(path)
-            if claim is None:
-                claim = parse_claim(tree[path], path=path)
-                self._claims[path] = claim
-            if self._predicates is not None and claim.statement.predicate not in self._predicates:
-                continue
-            if not include_retired and claim.lifecycle.state != "live":
-                continue
-            row = self._rows.get(path)
-            if row is None:
-                row = _fact_row(
-                    self._instance,
-                    path=path,
-                    tree=tree,
-                    coordinate=self._coordinate,
-                    readers=self._readers,
-                    evidence=evidence if evidence is not None else evidence_for(path),
-                    history=history,
-                    claim=claim,
-                    claim_types=self._claim_types,
-                    store=store,
-                    attestation_envelopes=tuple(
-                        self._attestations.get(
-                            (claim.identity.qualified, claim_artifact_digest(claim).tagged), ()
-                        )
-                    ),
-                    reobserved=reader is not None and bool(reader.sequence(claim.identity.name)),
-                    bodies=self._consulted_bodies,
-                    key_normalizers=self._key_normalizers,
+        # Content observations (one per acquiring call) can refresh any Claim
+        # citing observed content. Once any was recorded, each row's cited
+        # contents are looked up on ONE projection bind for the whole build,
+        # and a row reads freshness only when its lineage or a cited content
+        # was observed (a seek each), never a bind per row.
+        shared = reader is not None and reader.content_observed()
+        bound = ExitStack()
+        reobservation_keys = None
+        if shared and reader is not None and isinstance(self._instance, PlaybillInstance):
+            projection = bound.enter_context(
+                self._instance.bind_accepted_projection(self._coordinate)
+            )
+            observed = reader
+
+            def reobservation_keys(
+                claim: ClaimArtifact, captures: tuple[Any, ...]
+            ) -> tuple[ReobservationKey, ...] | None:
+                keys = claim_keys_on(
+                    projection.typed.connection,
+                    observed,
+                    claim,
+                    [item.capture_digest for item in captures],
                 )
-                self._rows[path] = row
-            rows.append(row)
+                return keys if observed.observed(claim.identity.name, keys) else None
+
+        with bound:
+            for path in sorted(self._claim_paths, key=lambda item: item.encode("utf-8")):
+                # The full-history path historically looked up evidence before
+                # parsing the Claim; live-only reads parsed lifecycle first and
+                # never demanded evidence for retired heads. Keep both orders.
+                evidence = evidence_for(path) if include_retired else None
+                claim = self._claims.get(path)
+                if claim is None:
+                    claim = parse_claim(tree[path], path=path)
+                    self._claims[path] = claim
+                if (
+                    self._predicates is not None
+                    and claim.statement.predicate not in self._predicates
+                ):
+                    continue
+                if not include_retired and claim.lifecycle.state != "live":
+                    continue
+                row = self._rows.get(path)
+                if row is None:
+                    row = _fact_row(
+                        self._instance,
+                        path=path,
+                        tree=tree,
+                        coordinate=self._coordinate,
+                        readers=self._readers,
+                        evidence=evidence if evidence is not None else evidence_for(path),
+                        history=history,
+                        claim=claim,
+                        claim_types=self._claim_types,
+                        store=store,
+                        attestation_envelopes=tuple(
+                            self._attestations.get(
+                                (claim.identity.qualified, claim_artifact_digest(claim).tagged), ()
+                            )
+                        ),
+                        reobserved=reader is not None
+                        and not shared
+                        and bool(reader.sequence(claim.identity.name)),
+                        reobservation_keys=reobservation_keys,
+                        bodies=self._consulted_bodies,
+                        key_normalizers=self._key_normalizers,
+                    )
+                    self._rows[path] = row
+                rows.append(row)
         assembled = next(iter(self._results.values()), None)
         if assembled is None:
             providers = accepted_claim_providers(self._instance, coordinate=self._coordinate)

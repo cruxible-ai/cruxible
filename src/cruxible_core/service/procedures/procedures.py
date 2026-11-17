@@ -39,6 +39,7 @@ from cruxible_core.procedures.egress import (
     TerminalEgressSinkProtocol,
 )
 from cruxible_core.procedures.execution import (
+    CaptureObservationsProtocol,
     ContractValidatorProtocol,
     PreparedProcedureRun,
     ProcedureActivationAuthorityProtocol,
@@ -545,6 +546,7 @@ def service_execute_direct_procedure(
     key_rules: KeyCanonicalizer | None = None,
     claims_context: ClaimsContext | None = None,
     state_reader: StateTapReaderProtocol | None = None,
+    capture_observations: CaptureObservationsProtocol | None = None,
 ) -> ProcedureRunResultV1:
     """Execute through the shared runtime; no transport duplicates orchestration.
 
@@ -583,6 +585,7 @@ def service_execute_direct_procedure(
             claims_context=claims_context,
             ephemeral_spec_digest=ephemeral_spec_digest,
             state_reader=state_reader,
+            capture_observations=capture_observations,
         ).execute(prepared, accepted)
     finally:
         index.close()

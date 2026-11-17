@@ -79,9 +79,12 @@ def test_kev_run_summarises_every_node(tmp_path: Path) -> None:
     again = run(instance, root, minute=1)
     restated = _summaries(again)["write"]
     (egress,) = again.terminal_egress
-    assert all(child.unchanged for child in egress.children)
+    # The same catalog bytes reuse the held Capture: every item restates
+    # exactly what is live, so the terminal has no child (ruling 1e) and the
+    # summary counts the restatements.
+    assert egress.children == ()
     assert restated.written == 0 and restated.delivery == "unchanged"
-    assert restated.re_observed == len(egress.children) == 8
+    assert (restated.no_op, restated.re_observed) == (8, 0)
 
 
 def test_invalid_field_and_duplicates_are_counted_where_they_arise(tmp_path: Path) -> None:
@@ -149,6 +152,8 @@ def test_a_refused_reobservation_is_reported_not_counted(
 ) -> None:
     """Delivery that cannot record a re-observation says so, by reason, in the summary."""
 
+    import json
+
     from cruxible_client.contracts.procedures.node_summary import run_counts
     from cruxible_core.evidence.claim_reobservations import (
         ClaimReobservationRefused,
@@ -157,6 +162,11 @@ def test_a_refused_reobservation_is_reported_not_counted(
 
     instance, root = pilot_world(tmp_path, "kev.json")
     activate(instance, run(instance, root))
+    # The catalog's bytes change elsewhere: every value is the same (D-R8).
+    path = root / "data/kev.json"
+    document = json.loads(path.read_text())
+    document["catalogVersion"] = "2026.11.01"
+    path.write_text(json.dumps(document))
     record = ClaimReobservationStore.record
     refused: list[str] = []
 
@@ -167,6 +177,11 @@ def test_a_refused_reobservation_is_reported_not_counted(
         return record(self, claim_id=claim_id, **kwargs)
 
     monkeypatch.setattr(ClaimReobservationStore, "record", refuse_two)
+    # The rows are taken to have changed elsewhere too, so each unchanged item
+    # reaches delivery (the same rows would be one row observation instead).
+    from cruxible_core.procedures import claims_terminal
+
+    monkeypatch.setattr(claims_terminal, "_observed_same_row", lambda *_a, **_k: False)
     again = run(instance, root, minute=1)
     restated = _summaries(again)["write"]
     (egress,) = again.terminal_egress

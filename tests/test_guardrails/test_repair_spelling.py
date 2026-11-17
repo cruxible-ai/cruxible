@@ -332,5 +332,6 @@ def test_next_rows_built_by_the_previous_derivation_are_rebuilt() -> None:
 
     from cruxible_core.consumers.next import facts
 
-    assert facts.FORMAT == 16
-    assert "CHECK(v=16)" in "".join(facts._SCHEMA)
+    # At least the rebuild that changed the rows' commands (16; 17 moved freshness).
+    assert facts.FORMAT >= 16
+    assert f"CHECK(v={facts.FORMAT})" in "".join(facts._SCHEMA)

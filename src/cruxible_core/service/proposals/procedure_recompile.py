@@ -24,6 +24,7 @@ from cruxible_core.procedures.execution import (
     parse_admission_payload,
 )
 from cruxible_core.procedures.proposal_delivery import ProposalTerminalEgressSink
+from cruxible_core.procedures.terminal_payloads import join_terminal_egress_read
 from cruxible_core.procedures.terminal_services import ProposalDeliveryRefused
 from cruxible_core.proposals.proposals import ProposalResult
 from cruxible_core.runtime.instance import PlaybillInstance
@@ -84,7 +85,11 @@ def _retained_run(
     for stored in journal.select_records(
         stream, run_id=reason.run_id, event_kind="terminal_egress"
     ):
-        payload = read_payload(bodies, stored.record.payload_digest, access=access)
+        payload = join_terminal_egress_read(
+            read_payload(bodies, stored.record.payload_digest, access=access),
+            bodies,
+            access=access,
+        )
         if (
             isinstance(payload, dict)
             and payload.get("node_id") == reason.terminal

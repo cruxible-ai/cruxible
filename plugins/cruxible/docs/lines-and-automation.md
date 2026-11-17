@@ -399,12 +399,14 @@ capture CAP-ca56e7030e1b  CaptureContract:catalog.acme-discontinued v1  source=a
 rationale: Listed in Acme's discontinued-parts file.
 ~~~
 
-A later run that finds nothing new proposes nothing, and says so:
+A later run that finds nothing new proposes nothing, and says so. The same
+bytes fetched again reuse the Capture already held, so the run records one
+observation of the content it fetched and nothing per Claim:
 
 ~~~text
 $ cruxible line run catalog.acme-discontinued
 ...
-Node step_3 claims succeeded: 2 re-observed; unchanged
+Node step_3 claims succeeded: 2 no-op; unchanged
 Terminal step_3: nothing changed (2 items restate accepted state)
 ~~~
 

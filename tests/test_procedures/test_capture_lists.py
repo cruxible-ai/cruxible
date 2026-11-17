@@ -212,6 +212,19 @@ def journal(instance: Any, run_id: str, event_kind: str) -> list[dict[str, Any]]
     return _journal(instance, run_id, event_kind)
 
 
+def _raw_records(instance: Any, run_id: str, event_kind: str) -> list[dict[str, Any]]:
+    from cruxible_core.exhaust.payloads import read_payload
+    from cruxible_core.service.procedures.measurements import _journal as journal_of
+    from cruxible_core.storage.cas import BodyAccessContext
+
+    journal, stream = journal_of(instance)
+    access = BodyAccessContext(principal_id="test", can_read_body=True)
+    return [
+        read_payload(instance.body_store(), stored.record.payload_digest, access=access)
+        for stored in journal.select_records(stream, run_id=run_id, event_kind=event_kind)
+    ]
+
+
 def test_each_list_member_is_its_own_capture_committed_in_order(tmp_path: Path) -> None:
     from cruxible_client.contracts.capture_reads import CaptureReadRequest
     from cruxible_client.contracts.captures import capture_contract_digest
@@ -243,6 +256,12 @@ def test_each_list_member_is_its_own_capture_committed_in_order(tmp_path: Path) 
         for item in journal(instance, state.run_id, "source_acquisition")
     ]
     assert decisions == [("pages/0", "selected"), ("pages/1", "selected"), ("pages/2", "selected")]
+    # The call journals ONE acquisition record citing its members, with the
+    # span its members were observed over.
+    (record,) = _raw_records(instance, state.run_id, "source_acquisition")
+    assert record["tag"] == "playbill-procedure-source-acquisition-v2"
+    assert record["count"] == 3 and record["node_id"] == "doc"
+    assert record["observed"]["earliest"] <= record["observed"]["latest"]
     (final,) = journal(instance, state.run_id, "attempt_finalized")
     assert final["capture_bytes"] == sum(len(body) for body in content)
     assert state.completeness is None
@@ -773,3 +792,150 @@ def test_a_later_witness_members_unreadable_envelope_refuses_as_unavailable(
         producer_receipt_resolver=None,
     )
     assert refusal == "Absence witness bytes are no longer retained; acquire the source again."
+
+
+def _run_at(instance: Any, members: list[dict[str, Any]], at: Any) -> Any:
+    from cruxible_core.service.procedures.procedure_runs import (
+        LineRunRequest,
+        service_run_playbill_line,
+    )
+    from tests.support.operation_world import Operator, actor
+    from tests.test_procedures.test_b2_operations import Clock
+
+    return service_run_playbill_line(
+        instance,
+        path_identity_digest=LINE_NAME,
+        request=LineRunRequest(line=LINE_NAME),
+        actor_context=actor().model_copy(update={"timestamp": at}),
+        caller_rung=2,
+        daemon_clock=Clock(at),
+        provider_runtime_operator=Operator(Invoker(output=answer(members))),  # type: ignore[arg-type]
+    )
+
+
+def test_an_acquisition_record_is_the_same_size_however_many_members_it_fetched(
+    tmp_path: Path,
+) -> None:
+    """F-005: the run-bound record cites one root; the chunk list is a run-free body."""
+
+    from cruxible_client.contracts.canonical import canonical_bytes
+
+    sizes = {}
+    for count in (3, 200):
+        (tmp_path / str(count)).mkdir()
+        instance = pages_world(tmp_path / str(count), max_items=count, capture_bytes=1 << 22)
+        members = [page(body, index) for index, body in enumerate(bodies(count))]
+        state, _ = run_line(instance, invoker=Invoker(output=answer(members)), name=LINE_NAME)
+        assert state.status == "succeeded", state.terminal
+        (record,) = _raw_records(instance, state.run_id, "source_acquisition")
+        assert record["count"] == count and "member_chunks" not in record
+        shape = {key: value for key, value in record.items() if key not in {"count", "listed"}}
+        sizes[count] = len(canonical_bytes(shape))
+    # Digests and instants render at fixed width: four chunks cost no more
+    # record bytes than one.
+    assert sizes[3] == sizes[200]
+
+
+def test_an_identical_refetch_reuses_each_held_capture_and_journals_no_landing(
+    tmp_path: Path,
+) -> None:
+    """Ruling 1c: the same contract, request, bytes and binding reuse the held Capture.
+
+    The rerun binds the Captures the first run produced and journals no
+    produced_capture (Capture-landing Triggers and tallies count new Captures
+    only); its acquisition members body is the first run's, and its fetch is
+    one content observation. A member whose held Capture is recorded missing
+    is built anew, never reused.
+    """
+
+    from datetime import timedelta
+
+    from cruxible_core.evidence.claim_reobservations import ClaimReobservationStore
+    from tests.support.operation_world import NOW
+
+    instance = pages_world(tmp_path)
+    members = [page(body, index) for index, body in enumerate(bodies(3))]
+    first, _ = run_line(instance, invoker=Invoker(output=answer(members)), name=LINE_NAME)
+    assert first.status == "succeeded", first.terminal
+    held = first.result["pages"]
+    observations = ClaimReobservationStore(instance).head_sequence()
+
+    again = _run_at(instance, members, NOW + timedelta(hours=1))
+
+    assert again.status == "succeeded", again.terminal
+    assert again.result["pages"] == held
+    assert journal(instance, again.run_id, "produced_capture") == []
+    (first_record,) = _raw_records(instance, first.run_id, "source_acquisition")
+    (second_record,) = _raw_records(instance, again.run_id, "source_acquisition")
+    assert second_record["members_digest"] == first_record["members_digest"]
+    assert ClaimReobservationStore(instance).head_sequence() == observations + 1
+    # The held envelope of the second member is recorded missing: that member
+    # is fetched into a new Capture, the others are still reused.
+    store = instance.body_store()
+    path = store._path(held[1])  # noqa: SLF001
+    path.chmod(0o600)
+    path.unlink()
+    store._damaged(held[1], "missing")  # noqa: SLF001
+    third = _run_at(instance, members, NOW + timedelta(hours=2))
+    assert third.status == "succeeded", third.terminal
+    pages = third.result["pages"]
+    assert pages[0] == held[0] and pages[2] == held[2] and pages[1] != held[1]
+    assert [
+        item["capture_digest"] for item in journal(instance, third.run_id, "produced_capture")
+    ] == [pages[1]]
+
+
+def test_a_finalize_record_does_not_grow_with_the_captures_a_call_fetched(
+    tmp_path: Path,
+) -> None:
+    """Each invocation's binding is inline; its (field, Capture) pairs are a run-free body."""
+
+    from cruxible_client.contracts.canonical import canonical_bytes
+    from cruxible_core.procedures.terminal_payloads import join_source_capture_associations
+    from cruxible_core.storage.cas import BodyAccessContext
+
+    sizes = {}
+    for count in (2, 20):
+        (tmp_path / str(count)).mkdir()
+        instance = pages_world(tmp_path / str(count), max_items=20)
+        members = [page(body, index) for index, body in enumerate(bodies(count))]
+        state, _ = run_line(instance, invoker=Invoker(output=answer(members)), name=LINE_NAME)
+        assert state.status == "succeeded", state.terminal
+        (final,) = journal(instance, state.run_id, "attempt_finalized")
+        (group,) = final["source_capture_association_groups"]
+        assert group["count"] == count
+        access = BodyAccessContext(principal_id="test", can_read_body=True)
+        joined = join_source_capture_associations(
+            final, lambda digest: instance.body_store().read(digest, access=access)
+        )
+        assert sorted(item["capture_digest"] for item in joined) == sorted(state.result["pages"])
+        sizes[count] = len(canonical_bytes(final["source_capture_association_groups"]))
+    # The same bytes but the count's digits: nothing per Capture is inline.
+    assert abs(sizes[20] - sizes[2]) <= 2
+
+
+def test_an_unchanged_procedures_observation_set_is_one_body_across_runs(tmp_path: Path) -> None:
+    """D-R14 lineage rides in the run-free set body: the same Procedure reproduces it."""
+
+    from datetime import timedelta
+
+    from cruxible_core.evidence.claim_reobservations import ClaimReobservationStore
+    from cruxible_core.exhaust.records import parse_journal_payload
+    from cruxible_core.storage.cas import BodyAccessContext
+    from tests.support.operation_world import NOW
+
+    instance = pages_world(tmp_path)
+    members = [page(body, index) for index, body in enumerate(bodies(3))]
+    run_line(instance, invoker=Invoker(output=answer(members)), name=LINE_NAME)
+    _run_at(instance, members, NOW + timedelta(hours=1))
+    store = ClaimReobservationStore(instance)
+    journal_ = store._journal(create=False)  # noqa: SLF001
+    assert journal_ is not None
+    access = BodyAccessContext(principal_id="test", can_read_body=True)
+    sets = [
+        parse_journal_payload(
+            instance.body_store().read(item.record.payload_digest, access=access)
+        )["set_digest"]
+        for item in journal_.select_records(store.stream, partition_id="reobservations")
+    ]
+    assert len(sets) == 2 and sets[0] == sets[1]

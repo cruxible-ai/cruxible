@@ -164,7 +164,9 @@ def split(entries: list[dict[str, Any]]) -> list[bytes]:
     ]
 
 
-def _wire(content: bytes, url: str, *, source: str = LOGICAL_SOURCE) -> dict[str, Any]:
+def _wire(
+    content: bytes, url: str, *, source: str = LOGICAL_SOURCE, observed: Any = None
+) -> dict[str, Any]:
     return {
         "source_identity": source,
         "coordinate_type": "http-response-v1",
@@ -183,7 +185,7 @@ def _wire(content: bytes, url: str, *, source: str = LOGICAL_SOURCE) -> dict[str
         "content_encoding": "base64",
         "byte_length": len(content),
         "bytes_digest": "sha256:" + hashlib.sha256(content).hexdigest(),
-        "observed_at": NOW.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "observed_at": (NOW if observed is None else observed).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
 
 
@@ -211,8 +213,10 @@ class Pages:
         urls: list[str] | None = None,
         sources: list[str] | None = None,
         incomplete_captures: list[str] | None = None,
+        observed: Any = None,
     ) -> None:
         self.pages = pages
+        self.observed = observed
         self.incomplete_captures = incomplete_captures or []
         self.urls = urls or [f"{ORIGIN}/kev/{index}" for index in range(len(pages))]
         self.sources = sources or [LOGICAL_SOURCE] * len(pages)
@@ -223,7 +227,7 @@ class Pages:
             if "feed" in context.input:
                 return {
                     "pages": [
-                        _wire(body, url, source=source)
+                        _wire(body, url, source=source, observed=self.observed)
                         for body, url, source in zip(
                             self.pages, self.urls, self.sources, strict=True
                         )
@@ -758,19 +762,15 @@ def test_acceptance_refuses_a_witness_whose_later_member_names_another_source(
     }, refused
 
 
-@pytest.mark.parametrize("defect", [None, "unavailable", "invalid", "other_source"])
-def test_an_absence_reobservation_verifies_every_member_of_its_witness(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, defect: str | None
-) -> None:
-    """A held inverse re-observed on a complete list records only when every page stands.
+def test_an_absence_on_new_bytes_is_refreshed_by_its_lack_not_per_claim(tmp_path: Path) -> None:
+    """Review 2c #5, ruling 2026-11-16 (1): the pages re-read in new bytes with
+    the same entries are a complete enumeration lacking the same Subjects. The
+    held absence reads that one shared observation; nothing is recorded or
+    delivered per absence, at a run whose bytes changed or at the repeat."""
 
-    Only the LAST page is defective: unavailable, failing verification, or naming another
-    logical source. The re-observation's receipt cites the first page, which is sound.
-    """
+    from datetime import timedelta
 
     from cruxible_core.evidence.claim_reobservations import ClaimReobservationStore
-    from cruxible_core.procedures.claims_context import AcceptedClaimsContext
-    from cruxible_core.service.evidence import capture_reads
 
     instance = pages_world(tmp_path)
     install(instance, list_spec(), line="test.kev-pages-line")
@@ -781,42 +781,97 @@ def test_an_absence_reobservation_verifies_every_member_of_its_witness(
     second = run_pages(instance, Pages(delisted), line="test.kev-pages-line", minute=1)
     activate(instance, second)
     inverse = held[(_cve(DELISTED), LISTED_IN)].identity.name
+    before = _inverse_freshness(instance, inverse)
+    restated = [
+        json.dumps({**json.loads(page), "fetched": "again"}, sort_keys=True).encode()
+        for page in delisted
+    ]
+    for minute in (2, 3):
+        state = run_pages(
+            instance,
+            Pages(restated, observed=NOW + timedelta(minutes=minute)),
+            line="test.kev-pages-line",
+            minute=minute,
+        )
+        assert state.status == "succeeded", state.terminal
+        (egress,) = state.terminal_egress
+        assert egress.proposal_id is None and egress.children == ()
+        after = _inverse_freshness(instance, inverse)
+        assert after is not None and (before is None or after > before)
+        before = after
     assert ClaimReobservationStore(instance).history(inverse) == ()
 
-    last = f"{ORIGIN}/kev/2"
-    sources = None
-    if defect == "other_source":
-        sources = [LOGICAL_SOURCE, LOGICAL_SOURCE, "other.source"]
-        real_source = AcceptedClaimsContext.logical_source
 
-        def blind(self: Any, capture: str) -> str | None:
-            found = real_source(self, capture)
-            return LOGICAL_SOURCE if found == "other.source" else found
+def _inverse_freshness(instance: Any, claim_id: str) -> Any:
+    """The latest instant the absence Claim's freshness reads (recorded, observed)."""
 
-        monkeypatch.setattr(AcceptedClaimsContext, "logical_source", blind)
-    elif defect is not None:
-        real_verify = capture_reads.verify_accepted_capture
+    from datetime import UTC, datetime, timedelta
 
-        def failing(instance: Any, coordinate: Any, digest: str, **kwargs: Any) -> Any:
-            verified = real_verify(instance, coordinate, digest, **kwargs)
-            if isinstance(verified, str) or verified.envelope.source.coordinate.get("url") != last:
-                return verified
-            if defect == "unavailable":
-                return "capture_unavailable"
-            raise capture_reads.CaptureReadInvalid("Capture verification failed: corrupt")
-
-        monkeypatch.setattr(capture_reads, "verify_accepted_capture", failing)
-    third = run_pages(
-        instance, Pages(delisted, sources=sources), line="test.kev-pages-line", minute=2
+    from cruxible_client.contracts.claims import claim_path, parse_claim
+    from cruxible_core.evidence.claim_reobservations import (
+        ReobservationReader,
+        claim_reobservation_keys,
     )
+
+    head = instance.accepted_coordinate()
+    claim = parse_claim(
+        instance.tree_at(head.git_oid)[claim_path(claim_id)], path=claim_path(claim_id)
+    )
+    keys = claim_reobservation_keys(
+        instance, coordinate=head, claim=claim, captures=claim.backing.capture_digests
+    )
+    reading = ReobservationReader.of(instance).latest(
+        claim_id, keys, datetime.now(UTC) + timedelta(days=1)
+    )
+    return max((item.recorded_at for item in reading.evidence), default=None)
+
+
+@pytest.mark.parametrize("later", ["complete", "failed", "changed"])
+def test_an_absence_is_refreshed_only_by_a_complete_enumeration(tmp_path: Path, later: str) -> None:
+    """Review 2b F-001 and 2c #3: the first page's contents never refresh an absence.
+
+    After the delisting is accepted, the same first page is fetched again. A
+    failed later page leaves the absence where it was; a complete enumeration
+    still lacking its Subject refreshes it, whether unchanged or with an
+    unrelated key added on a later page (the root page still cited).
+    """
+
+    instance = pages_world(tmp_path)
+    install(instance, list_spec(), line="test.kev-pages-line")
+    first = run_pages(instance, Pages(split(catalog())), line="test.kev-pages-line")
+    held = _by(proposed(instance, first))
+    activate(instance, first)
+    delisted = split(catalog("kev-catalog-delisted"))
+    second = run_pages(instance, Pages(delisted), line="test.kev-pages-line", minute=1)
+    activate(instance, second)
+    inverse = held[(_cve(DELISTED), LISTED_IN)].identity.name
+    before = _inverse_freshness(instance, inverse)
+    from datetime import timedelta
+
+    # Observed later than the run accepting the delisting.
+    observed = NOW + timedelta(minutes=2)
+    pages = Pages(list(delisted), observed=observed)
+    if later == "failed":
+        pages = Pages(list(delisted), incomplete_captures=["pages"], observed=observed)
+    elif later == "changed":
+        extra = json.loads(delisted[2])
+        extra["vulnerabilities"] = [
+            *extra["vulnerabilities"],
+            {**extra["vulnerabilities"][0], "cveID": "CVE-2099-0001"},
+        ]
+        pages = Pages(
+            [delisted[0], delisted[1], json.dumps(extra, sort_keys=True).encode()],
+            observed=observed,
+        )
+    third = run_pages(instance, pages, line="test.kev-pages-line", minute=2)
     assert third.status == "succeeded", third.terminal
-    (call,) = (node for node in third.nodes if node.node == "pages")
-    members = tuple(call.summary.capture_digests)
-    recorded = ClaimReobservationStore(instance).history(inverse)
-    if defect is None:
-        assert [record.capture_digest for record in recorded] == [members[0]]
+    after = _inverse_freshness(instance, inverse)
+    if later == "failed":
+        assert after == before
     else:
-        assert recorded == ()
+        # A complete enumeration that still lacks the Subject refreshes it,
+        # whether its pages are unchanged or another key was added (#3).
+        assert after is not None and (before is None or after > before)
 
 
 def test_a_list_the_provider_says_is_incomplete_never_retires(tmp_path: Path) -> None:
@@ -1041,3 +1096,51 @@ def test_a_real_failed_page_leaves_the_list_incomplete_and_suppresses_retirement
     assert any(
         item.kind == "claim_not_in_source" and item.source_incomplete for item in second.findings
     ), second.findings
+
+
+def test_a_derived_view_is_observed_only_through_the_pages_it_was_derived_from(
+    tmp_path: Path,
+) -> None:
+    """Review 2c #8: the derive's output is not a fetch. No content observation
+    names the view; its rows are observed with the span of the pages it read
+    (fetched by this run), never the derive's own instant."""
+
+    import json as _json
+    from datetime import timedelta
+
+    from cruxible_core.evidence.claim_reobservations import (
+        CONTENT_OBSERVATION_TAG,
+        ROW_OBSERVATION_TAG,
+        ClaimReobservationStore,
+    )
+    from cruxible_core.exhaust.records import parse_journal_payload
+    from cruxible_core.storage.cas import BodyAccessContext
+
+    instance = pages_world(tmp_path)
+    install(instance, list_spec(derive=True), line="test.kev-pages-derive-line", origins=True)
+    pages = Pages(split(catalog()), observed=NOW - timedelta(minutes=5))
+    state = run_pages(instance, pages, line="test.kev-pages-derive-line")
+    assert state.status == "succeeded", state.terminal
+    claims = _by(proposed(instance, state))
+    view = next(iter(claims.values())).backing.procedure_evidence.value.capture_digest
+    store = ClaimReobservationStore(instance)
+    journal = store._journal(create=False)  # noqa: SLF001
+    assert journal is not None
+    access = BodyAccessContext(principal_id="test", can_read_body=True)
+    payloads = [
+        parse_journal_payload(
+            instance.body_store().read(stored.record.payload_digest, access=access)
+        )
+        for stored in journal.select_records(store.stream, partition_id="reobservations")
+    ]
+    for payload in payloads:
+        if payload["tag"] == CONTENT_OBSERVATION_TAG:
+            body = _json.loads(instance.body_store().read(payload["set_digest"], access=access))
+            assert view not in {item[2] for item in body["contents"]}
+    rows = [payload for payload in payloads if payload["tag"] == ROW_OBSERVATION_TAG]
+    # The pages' instant, not the derive's (its wire says NOW).
+    from datetime import datetime as _datetime
+
+    assert rows and all(
+        _datetime.fromisoformat(payload["latest"]) == NOW - timedelta(minutes=5) for payload in rows
+    )

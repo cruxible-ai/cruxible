@@ -451,9 +451,13 @@ observation. What a new observation does to accepted state depends on what it
 shows:
 
 - **The same value again** changes no Claim. Re-checking the supplier's
-  catalog and finding the same fitment is recorded beside the Claim, and keeps
-  it fresh: a ClaimType's evidence age counts from the latest re-observation,
-  not the first Capture.
+  catalog is recorded once per fetch, keyed by the content it observed (an
+  identical re-fetch reuses the Capture already held), and keeps every Claim
+  citing that content fresh: a ClaimType's evidence age counts from the latest
+  observation of the content, not the first Capture. Each extract step also
+  records the rows it read: when the catalog's bytes changed but the fitment's
+  row did not, that one row observation keeps the Claim fresh, with nothing
+  recorded per Claim.
 - **A different value** is a new statement, proposed as a revision like any
   other change. Claims that depend on the old value are not revised for you:
   `next` resurfaces them, and an agent decides what the change means for each.
@@ -772,10 +776,12 @@ accepted observation inside the window can settle it, and once the window has
 closed `next` lists the prediction as `prediction_settleable` with the settle
 command. An observation counts at the time its Claim version was accepted, or
 at the time a later Capture re-observed that same unchanged version: when a
-run observes a value its live Claim already states, the re-observation is
-recorded, and settle uses that version's latest re-observation made by the
-window's close if it lies inside the window (a later one past the close does
-not hide it). The Claim itself does not change; the settlement cites the
+run records a per-Claim re-observation of a value its live Claim already
+states (a record whose other fields changed), settle uses that version's
+latest such re-observation whose call had ended by the window's close if it
+lies inside the window (a later one past the close does not hide it). Shared
+content and row observations keep Claims fresh but do not settle predictions
+yet. The Claim itself does not change; the settlement cites the
 re-observing Capture and its record. Settle names the bound an observation
 misses: `prediction_observation_predates_contract` when it was made at or
 before the prediction was accepted (an unchanged value stated earlier needs a

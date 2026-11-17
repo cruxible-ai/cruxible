@@ -49,6 +49,7 @@ from cruxible_client.contracts.procedures.line_specs import (
 from cruxible_client.contracts.procedures.results import ProcedureNodeRefusal
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell, render_subject, subject_path
+from cruxible_core.procedures.terminal_payloads import join_terminal_egress_payload
 from cruxible_core.procedures.terminal_services import proposal_terminal_ref
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import service_inspect_playbill_proposal
@@ -2104,7 +2105,8 @@ def test_a_rerun_carries_the_earlier_retirement_exactly_on_identical_bytes(
         parse_capture_envelope(instance.body_store().read(capture, access=access))
         for capture in captures
     ]
-    assert captures[0] != captures[1]
+    # Identical bytes reuse the held Capture (ruling 1c); other bytes are a new one.
+    assert (captures[0] == captures[1]) == same_bytes
     assert (envelopes[0].commitment.digest == envelopes[1].commitment.digest) == same_bytes
     if not same_bytes:
         assert child.prior_refusals == ()
@@ -2136,10 +2138,71 @@ def _accept_first_run(instance, owner, root, line):  # type: ignore[no-untyped-d
     return egress
 
 
+def _restate_in_new_bytes(root: Path, monkeypatch: pytest.MonkeyPatch | None = None) -> None:
+    """The document changes elsewhere: new bytes, the same severity (D-R8).
+
+    With ``monkeypatch``, the record's row is taken to have changed elsewhere
+    too (a field the Claim does not read): the item then reaches delivery and
+    is recorded per Claim, sized by the change (2026-11-16 c).
+    """
+
+    (root / fixtures.RELATIVE_PATH).write_bytes(
+        fixtures.canonical_bytes({"severity": "high", "note": "restated"})
+    )
+    if monkeypatch is not None:
+        from cruxible_core.procedures import claims_terminal
+
+        monkeypatch.setattr(claims_terminal, "_observed_same_row", lambda *_a, **_k: False)
+
+
+def _shared_records(instance: PlaybillInstance, tag: str) -> list[dict[str, Any]]:
+    """The re-observation journal's content records of one kind, in journal order."""
+
+    import json
+
+    from cruxible_core.evidence.claim_reobservations import ClaimReobservationStore
+    from cruxible_core.exhaust.records import parse_journal_payload
+
+    store = ClaimReobservationStore(instance)
+    journal = store._journal(create=False)  # noqa: SLF001
+    if journal is None:
+        return []
+    access = BodyAccessContext(principal_id="test", can_read_body=True)
+    found = []
+    for stored in journal.select_records(store.stream, partition_id="reobservations"):
+        payload = parse_journal_payload(
+            instance.body_store().read(stored.record.payload_digest, access=access)
+        )
+        if payload.get("tag") != tag:
+            continue
+        digest = payload.get("transitions_digest") or payload.get("set_digest")
+        found.append(
+            {
+                **payload,
+                "recorded_at": stored.record.recorded_at,
+                "body": json.loads(instance.body_store().read(digest, access=access)),
+            }
+        )
+    return found
+
+
 def test_a_terminal_that_restates_only_live_claims_completes_with_no_proposal(
     tmp_path: Path,
 ) -> None:
-    from cruxible_core.evidence.claim_reobservations import ClaimReobservationStore
+    """Rulings 1a, 1c, 1e: the same bytes re-read reuse the held Capture.
+
+    The run's fetch reproduces the Capture the live Claim cites, so the item
+    restates exactly what is live and the terminal has nothing to journal but
+    one short record: no prepared intent, no per-Claim record. The fetch is
+    one content observation, which the Claim's freshness reads.
+    """
+
+    from cruxible_core.evidence.claim_reobservations import (
+        CONTENT_OBSERVATION_TAG,
+        ClaimReobservationStore,
+        reobservations_at,
+    )
+    from cruxible_core.service.procedures.procedure_runs import _records_for_run
 
     instance, owner, root, line, _procedure = proposal_world(tmp_path)
     first = _accept_first_run(instance, owner, root, line)
@@ -2149,36 +2212,115 @@ def test_a_terminal_that_restates_only_live_claims_completes_with_no_proposal(
     live = parse_claim(tree[first_child.path], path=first_child.path)
     refs = _proposal_refs(instance)
 
-    # The same file read again an hour later: the same content, a new Capture.
+    # The same file read again an hour later: the same bytes, the held Capture.
     second = run_line(instance, root, line, at=NOW + timedelta(hours=1))
 
     assert second.status == "succeeded", second.terminal
     (egress,) = second.terminal_egress
     assert egress.verdict == "delivered"
     assert egress.proposal_id is None and egress.operation_key is None
-    assert egress.target_paths == ()
-    (child,) = egress.children
-    assert child.unchanged
-    assert child.path == first_child.path
-    assert child.egress_digest == claim_artifact_digest(live).tagged
+    assert egress.target_paths == () and egress.children == ()
     # No proposal, no second Claim, no new generation.
     assert _proposal_refs(instance) == refs
     assert instance.accepted_coordinate() == head
     (observation,) = second.source_observations
+    assert observation.capture_digest in live.backing.capture_digests
+    # Nothing is recorded per Claim, and the terminal prepared no intent.
+    assert ClaimReobservationStore(instance).history(live.identity.name) == ()
+    assert second.run_id is not None
+    verdicts = [
+        stored.record.event_kind
+        for stored in _records_for_run(instance, second.run_id)
+        if stored.record.event_kind in {"terminal_egress", "produced_capture"}
+    ]
+    assert verdicts == ["terminal_egress"]
+    # The fetch is one content observation of the cited content.
+    observed = [
+        record
+        for record in _shared_records(instance, CONTENT_OBSERVATION_TAG)
+        if record["run_id"] == second.run_id
+    ]
+    assert len(observed) == 1
+    (contents,) = [record["body"]["contents"] for record in observed]
+    assert [item[2] for item in contents] == [observation.capture_digest]
+    from cruxible_client.contracts.claim_verdicts import CaptureVerdictEvidence
+
+    reading = reobservations_at(
+        instance,
+        coordinate=head,
+        claim=live,
+        captures=(
+            CaptureVerdictEvidence.model_construct(capture_digest=observation.capture_digest),
+        ),
+        at=observed[0]["recorded_at"],
+    )
+    # The run's fetch observed its cited content (its row's observation is
+    # recorded just after, by the extract step).
+    assert {item.reobserving_capture_digest for item in reading.evidence} == {
+        observation.capture_digest
+    }
+    assert max(item.observed_at for item in reading.evidence) > NOW
+
+
+def test_a_terminal_restating_live_claims_on_new_bytes_records_its_rows_not_the_claims(
+    tmp_path: Path,
+) -> None:
+    """Ruling 2026-11-16 (c): new bytes holding the same rows are the same row set.
+
+    The extract step's one row observation refreshes the Claim produced from
+    its row; the terminal restates nothing, and nothing is written per Claim.
+    """
+
+    from cruxible_client.contracts.claim_verdicts import CaptureVerdictEvidence
+    from cruxible_core.evidence.claim_reobservations import (
+        ROW_OBSERVATION_TAG,
+        ClaimReobservationStore,
+        reobservations_at,
+    )
+
+    instance, owner, root, line, _procedure = proposal_world(tmp_path)
+    first = _accept_first_run(instance, owner, root, line)
+    (first_child,) = first.children
+    head = instance.accepted_coordinate()
+    live = parse_claim(instance.tree_at(head.git_oid)[first_child.path], path=first_child.path)
+    _restate_in_new_bytes(root)
+
+    second = run_line(instance, root, line, at=NOW + timedelta(hours=1))
+
+    assert second.status == "succeeded", second.terminal
+    (egress,) = second.terminal_egress
+    assert egress.proposal_id is None and egress.target_paths == ()
+    assert egress.children == ()
+    assert instance.accepted_coordinate() == head
+    (observation,) = second.source_observations
     assert observation.capture_digest not in live.backing.capture_digests
-    # The newer Capture is recorded as a re-observation of the cited content.
-    (record,) = ClaimReobservationStore(instance).history(live.identity.name)
-    assert record.capture_digest == observation.capture_digest
-    receipt = _journaled_receipt(instance, second.run_id)
-    assert receipt["tag"] == "playbill-terminal-egress-unchanged-receipt-v1"
-    (unchanged,) = receipt["children"]
-    assert unchanged["tag"] == "playbill-terminal-egress-child-receipt-v3"
-    assert unchanged["reobserving_capture_digest"] == observation.capture_digest
-    assert unchanged["reobserved_at"] is not None
+    assert ClaimReobservationStore(instance).history(live.identity.name) == ()
+    (rows,) = _run_records(instance, ROW_OBSERVATION_TAG, second.run_id)
+    first_rows = [
+        record
+        for record in _shared_records(instance, ROW_OBSERVATION_TAG)
+        if record["run_id"] != second.run_id
+    ]
+    assert [record["set_digest"] for record in first_rows] == [rows["set_digest"]]
+    reading = reobservations_at(
+        instance,
+        coordinate=head,
+        claim=live,
+        captures=tuple(
+            CaptureVerdictEvidence.model_construct(capture_digest=digest)
+            for digest in live.backing.capture_digests
+        ),
+        at=rows["recorded_at"],
+    )
+    assert max(item.observed_at for item in reading.evidence) > NOW
+
+
+def _run_records(instance: PlaybillInstance, tag: str, run_id: str | None) -> list[dict[str, Any]]:
+    return [record for record in _shared_records(instance, tag) if record["run_id"] == run_id]
 
 
 def test_a_mixed_terminal_proposes_the_change_and_reports_the_unchanged_item(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from tests.core_support._published_world import retire_claim
 
@@ -2200,6 +2342,7 @@ def test_a_mixed_terminal_proposes_the_change_and_reports_the_unchanged_item(
     }
     retired = parse_claim(tree[claims["reported"]], path=claims["reported"])
     retire_claim(instance, owner, retired.identity.name)
+    _restate_in_new_bytes(root, monkeypatch)
 
     second = run_line(instance, root, line, at=NOW + timedelta(hours=1))
 
@@ -2220,8 +2363,11 @@ def _journaled_receipt(instance: PlaybillInstance, run_id: str | None) -> dict[s
     assert run_id is not None
     access = BodyAccessContext(principal_id="test", can_read_body=True)
     for stored in _records_for_run(instance, run_id):
-        payload = parse_journal_payload(
-            instance.body_store().read(stored.record.payload_digest, access=access)
+        payload = join_terminal_egress_payload(
+            parse_journal_payload(
+                instance.body_store().read(stored.record.payload_digest, access=access)
+            ),
+            lambda digest: instance.body_store().read(digest, access=access),
         )
         if (
             stored.record.event_kind == "terminal_egress"
@@ -2294,6 +2440,7 @@ def test_a_terminal_canonicalizes_each_item_before_taking_its_identity(tmp_path:
     assert child.path == first_child.path
     assert egress.target_paths == ()
     assert egress.proposal_id is None
+    # The row changed (another spelling), the Claim did not: one per-Claim record.
     from cruxible_core.evidence.claim_reobservations import ClaimReobservationStore
 
     assert len(ClaimReobservationStore(instance).history(live.identity.name)) == 1
@@ -2379,6 +2526,7 @@ def test_an_unchanged_terminal_does_not_record_for_a_claim_retired_after_prepare
         return prepared
 
     monkeypatch.setattr(ProposalTerminalEgressSink, "prepare_terminal_egress", retire_after_prepare)
+    _restate_in_new_bytes(root, monkeypatch)
     second = run_line(instance, root, line, at=NOW + timedelta(hours=1))
 
     assert second.status == "succeeded", second.terminal
@@ -2388,7 +2536,9 @@ def test_an_unchanged_terminal_does_not_record_for_a_claim_retired_after_prepare
     assert ClaimReobservationStore(instance).history(claim_id) == ()
 
 
-def test_an_unchanged_terminal_is_accounted_as_delivered_and_finalized(tmp_path: Path) -> None:
+def test_an_unchanged_terminal_is_accounted_as_delivered_and_finalized(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Reviewer accounting probe: tallies, finalization and measurement grains."""
 
     from types import SimpleNamespace
@@ -2406,6 +2556,7 @@ def test_an_unchanged_terminal_is_accounted_as_delivered_and_finalized(tmp_path:
 
     instance, owner, root, line, _procedure = proposal_world(tmp_path)
     _accept_first_run(instance, owner, root, line)
+    _restate_in_new_bytes(root, monkeypatch)
     run = run_line(instance, root, line, at=NOW + timedelta(hours=1))
     assert run.status == "succeeded"
     assert run.run_id is not None
@@ -2422,8 +2573,11 @@ def test_an_unchanged_terminal_is_accounted_as_delivered_and_finalized(tmp_path:
         record = stored.record
         kinds.append(record.event_kind)
         if record.event_kind == "terminal_egress":
-            payload = parse_journal_payload(
-                instance.body_store().read(record.payload_digest, access=access)
+            payload = join_terminal_egress_payload(
+                parse_journal_payload(
+                    instance.body_store().read(record.payload_digest, access=access)
+                ),
+                lambda digest: instance.body_store().read(digest, access=access),
             )
             if payload.get("verdict") == "prepared":
                 continue  # the intent; the track record reads the outcome
@@ -2448,7 +2602,9 @@ def test_an_unchanged_terminal_is_accounted_as_delivered_and_finalized(tmp_path:
     )
 
 
-def test_an_unchanged_terminal_records_at_the_live_daemon_clock(tmp_path: Path) -> None:
+def test_an_unchanged_terminal_records_at_the_live_daemon_clock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Review F-021: the frozen evaluation clock never stamps a re-observation."""
 
     import inspect
@@ -2461,8 +2617,6 @@ def test_an_unchanged_terminal_records_at_the_live_daemon_clock(tmp_path: Path) 
     assert "clock" not in inspect.signature(ClaimReobservationStore.record).parameters
     assert "clock" not in inspect.signature(ProposalTerminalEgressSink.__init__).parameters
     instance, owner, root, line, _procedure = proposal_world(tmp_path)
-    first = _accept_first_run(instance, owner, root, line)
-    claim_id = PurePosixPath(first.children[0].path).stem
     live = {"now": NOW + timedelta(hours=3)}
 
     def advancing() -> datetime:
@@ -2470,6 +2624,9 @@ def test_an_unchanged_terminal_records_at_the_live_daemon_clock(tmp_path: Path) 
         return live["now"]
 
     instance.recording_clock = advancing
+    first = _accept_first_run(instance, owner, root, line)
+    claim_id = PurePosixPath(first.children[0].path).stem
+    _restate_in_new_bytes(root, monkeypatch)
     # The run's own (deterministic, frozen) clock reads NOW + 1 h throughout.
     second = run_line(instance, root, line, at=NOW + timedelta(hours=1))
     assert second.status == "succeeded", second.terminal
@@ -2510,12 +2667,12 @@ def test_an_interrupted_unchanged_terminal_is_recovered_without_a_proposal(
             original(self, **kwargs)
         raise _Crash()
 
+    _restate_in_new_bytes(root, monkeypatch)
     with monkeypatch.context() as patch:
         patch.setattr(ProposalTerminalEgressSink, "deliver_terminal_egress", crash)
         with pytest.raises(_Crash):
             run_line(instance, root, line, at=NOW + timedelta(hours=1))
-    store = ClaimReobservationStore(instance)
-    before = store.history(claim_id)
+    before = ClaimReobservationStore(instance).history(claim_id)
     assert len(before) == int(after_record)
     # The intent was journaled before any re-observation append.
     access = BodyAccessContext(principal_id="test", can_read_body=True)
@@ -2524,8 +2681,11 @@ def test_an_interrupted_unchanged_terminal_is_recovered_without_a_proposal(
         for stored in _records_for_run(instance, saved["run_id"])
         if stored.record.event_kind == "terminal_egress"
         for payload in (
-            parse_journal_payload(
-                instance.body_store().read(stored.record.payload_digest, access=access)
+            join_terminal_egress_payload(
+                parse_journal_payload(
+                    instance.body_store().read(stored.record.payload_digest, access=access)
+                ),
+                lambda digest: instance.body_store().read(digest, access=access),
             ),
         )
         if payload.get("verdict") == "prepared"
@@ -2608,6 +2768,7 @@ def _track(instance: PlaybillInstance, run_id: str, line: Any, procedure: Any) -
             procedure=procedure,
             artifact_digest=procedure_artifact_digest(procedure).tagged,
         ),
+        read_body=lambda digest: instance.body_store().read(digest, access=access),
     )
 
 
@@ -2644,6 +2805,7 @@ def test_a_failed_then_recovered_terminal_reads_as_one_delivery(
     instance, owner, root, line, procedure = proposal_world(tmp_path)
     if lane == "unchanged":
         _accept_first_run(instance, owner, root, line)
+        _restate_in_new_bytes(root, monkeypatch)
     with monkeypatch.context() as patch:
         saved = _die_at_delivery(patch, journal_failure=True)
         with pytest.raises(_Crash):
@@ -2665,6 +2827,7 @@ def test_a_prepared_only_terminal_reads_as_unresolved(
 ) -> None:
     instance, owner, root, line, procedure = proposal_world(tmp_path)
     _accept_first_run(instance, owner, root, line)
+    _restate_in_new_bytes(root, monkeypatch)
     with monkeypatch.context() as patch:
         saved = _die_at_delivery(patch, journal_failure=False)
         with pytest.raises(_Crash):
@@ -2674,9 +2837,12 @@ def test_a_prepared_only_terminal_reads_as_unresolved(
     assert (got.tally.unresolved, got.tally.delivered) == (1, 0)
 
 
-def test_a_prepared_then_delivered_terminal_reads_as_one_delivery(tmp_path: Path) -> None:
+def test_a_prepared_then_delivered_terminal_reads_as_one_delivery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     instance, owner, root, line, procedure = proposal_world(tmp_path)
     _accept_first_run(instance, owner, root, line)
+    _restate_in_new_bytes(root, monkeypatch)
     run = run_line(instance, root, line, at=NOW + timedelta(hours=1))
     assert run.run_id is not None
     got = _track(instance, run.run_id, line, procedure)
@@ -2689,3 +2855,59 @@ def test_a_prepared_then_delivered_terminal_reads_as_one_delivery(tmp_path: Path
         "pending",
         "capped_by_term",
     }
+
+
+@pytest.mark.parametrize("lane", ["delivered", "recovered"])
+def test_a_per_claim_record_counts_for_a_deadline_only_once_its_call_ended(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, lane: str
+) -> None:
+    """Review 2c #2: a per-Claim record keeps the fetching call's end (ruling 1b).
+
+    The run's call is widened to members ten minutes apart, the restated one
+    the earlier. The durable request carries the call's end, so the record
+    delivered (or recorded by recovery after a crash at the sink) counts for
+    a deadline only once that call ended.
+    """
+
+    from pathlib import PurePosixPath
+
+    from cruxible_core.evidence.claim_reobservations import ReobservationReader
+    from cruxible_core.procedures import execution
+    from cruxible_core.service.proposals.proposal_egress import service_recover_proposal_egress
+
+    instance, owner, root, line, _procedure = proposal_world(tmp_path)
+    first = _accept_first_run(instance, owner, root, line)
+    claim_id = PurePosixPath(first.children[0].path).stem
+    head = instance.accepted_coordinate()
+    version = claim_artifact_digest(
+        parse_claim(
+            instance.tree_at(head.git_oid)[first.children[0].path], path=first.children[0].path
+        )
+    ).tagged
+    _restate_in_new_bytes(root, monkeypatch)
+    span = execution._capture_span  # noqa: SLF001
+
+    def widened(state, capture, seen=frozenset()):  # type: ignore[no-untyped-def]
+        found = span(state, capture, seen)
+        return None if found is None else (found[0], found[0] + timedelta(minutes=10))
+
+    monkeypatch.setattr(execution, "_capture_span", widened)
+    at = NOW + timedelta(hours=1)
+    if lane == "delivered":
+        assert run_line(instance, root, line, at=at).status == "succeeded"
+    else:
+        with monkeypatch.context() as patch:
+            _die_at_delivery(patch, journal_failure=True)
+            with pytest.raises(_Crash):
+                run_line(instance, root, line, at=at)
+        service_recover_proposal_egress(instance, recorded_at=at + timedelta(hours=1))
+    from cruxible_core.evidence.claim_reobservations import ClaimReobservationStore
+
+    (record,) = ClaimReobservationStore(instance).history(claim_id)
+    reader = ReobservationReader(instance)
+    middle = record.observed_at + timedelta(minutes=5)
+    assert reader.latest_version_record(claim_id, version, observed_by=middle) is None
+    ended = reader.latest_version_record(
+        claim_id, version, observed_by=record.observed_at + timedelta(minutes=10)
+    )
+    assert ended is not None and ended.record.capture_digest == record.capture_digest

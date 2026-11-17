@@ -594,9 +594,10 @@ def test_a_created_targets_claim_keeps_one_identity_through_reobserve_revise_and
         node_id="write", subject=SemanticAddress.whole_artifact(vulnerability)
     )
 
-    # Re-observed: the same unit from new bytes.
+    # Re-observed: the same unit from new bytes. Its row is unchanged, so the
+    # extract step's row observation refreshes it with no item (2026-11-16 c).
     _write(root, entries, note="re-read")
-    assert _identities(instance, run(instance, root, minute=1)) == {claim_identity: "reobservation"}
+    assert _identities(instance, run(instance, root, minute=1)) == {}
     # Revised: the same unit, a new effective period.
     revised = [{**entries[0], "since": "2026-02-01T00:00:00Z"}]
     _write(root, revised)
@@ -805,12 +806,15 @@ def test_an_inverse_creates_its_missing_x_and_keeps_one_identity(tmp_path: Path,
     else:
         assert held.statement.object.of.address.artifact_path == vulnerability
 
-    # The same complete absence from new bytes re-confirms it, same identity.
+    # The same complete absence from new bytes: the complete enumeration still
+    # lacks the Subject, and that one shared observation refreshes the inverse
+    # with no per-Claim item (ruling 2026-11-16 (1)).
     _write(root, [], note="re-read")
     again = run(instance, root, minute=1)
     assert again.status == "succeeded", again.terminal
     assert not _subject_items(again)
-    assert _identities(instance, again) == {inverse_identity: "reobservation"}
+    assert _identities(instance, again) == {}
+    del inverse_identity
 
 
 def test_an_inverse_whose_x_is_missing_without_create_is_refused_per_item(
@@ -1126,7 +1130,8 @@ def test_expect_is_the_purls_a_header_lists(tmp_path: Path) -> None:
     second = run(instance, root, minute=1)
     assert second.status == "succeeded", second.terminal
     kinds = sorted(type(change).__name__ for change in state_changes(second))
-    assert kinds == ["CoreReobservationChange", "CoreRetirementChange"]  # a re-read, b retired
+    # b retired; a's row is unchanged, refreshed by its row observation (2026-11-16 c).
+    assert kinds == ["CoreRetirementChange"]
     activate(instance, second)
     assert _accepted_affected(instance) == {"CVE-2026-0001", "CVE-2026-0003"}
 

@@ -13,7 +13,6 @@ from cruxible_client.contracts.procedures.line_specs import LineFindings
 from cruxible_client.contracts.refs import step_ref
 from cruxible_core.evidence.claim_reobservations import (
     ClaimReobservationStore,
-    ReobservationKey,
     ReobservationReader,
 )
 from cruxible_core.procedures.execution import _resolve_reference
@@ -53,33 +52,51 @@ def test_same_kev_values_in_changed_catalog_reobserve_without_a_proposal(tmp_pat
     assert not again.terminal_egress[0].target_paths
     assert instance.accepted_coordinate() == before
     store = ClaimReobservationStore(instance)
-    from datetime import timedelta
+    from datetime import UTC, datetime, timedelta
 
-    from cruxible_client.contracts.captures import observed_content, parse_capture_envelope
+    from cruxible_client.contracts.captures import parse_capture_envelope
+    from cruxible_core.evidence.claim_reobservations import (
+        CONTENT_OBSERVATION_TAG,
+        ROW_OBSERVATION_TAG,
+        claim_reobservation_keys,
+    )
+    from cruxible_core.exhaust.records import parse_journal_payload
 
+    # Ruling 2026-11-16 (c): the changed catalog holds the same rows, so the
+    # extract step's one row observation refreshes every Claim; nothing per Claim.
+    later = datetime.now(UTC) + timedelta(days=1)
     for claim in claims:
-        (observation,) = store.history(claim.identity.name)
-        assert observation.capture_digest not in claim.backing.capture_digests
+        assert store.history(claim.identity.name) == ()
         original = parse_capture_envelope(
             instance.body_store().read(
                 claim.backing.procedure_evidence.value.capture_digest,
                 access=BodyAccessContext(principal_id="test", can_read_body=True),
             )
         )
-        reading = ReobservationReader.of(instance).latest(
-            claim.identity.name,
-            (
-                ReobservationKey(
-                    claim.backing.procedure_evidence.value.capture_digest,
-                    original.capture_contract_digest,
-                    observed_content(original).digest,
-                ),
-            ),
-            observation.recorded_at + timedelta(seconds=1),
+        keys = claim_reobservation_keys(
+            instance, coordinate=before, claim=claim, captures=claim.backing.capture_digests
         )
-        assert reading.evidence[0].observed_at > original.observed_at
-        assert reading.evidence[0].reobserving_capture_digest == observation.capture_digest
-    assert store.head_sequence() == len(claims)
+        reading = ReobservationReader.of(instance).latest(claim.identity.name, keys, later)
+        assert max(item.observed_at for item in reading.evidence) > original.observed_at
+    journal = store._journal(create=False)  # noqa: SLF001
+    assert journal is not None
+    payloads = [
+        parse_journal_payload(
+            instance.body_store().read(
+                stored.record.payload_digest,
+                access=BodyAccessContext(principal_id="test", can_read_body=True),
+            )
+        )
+        for stored in journal.select_records(store.stream, partition_id="reobservations")
+    ]
+    assert {payload["tag"] for payload in payloads} == {
+        CONTENT_OBSERVATION_TAG,
+        ROW_OBSERVATION_TAG,
+    }
+    row_sets = [
+        payload["set_digest"] for payload in payloads if payload["tag"] == ROW_OBSERVATION_TAG
+    ]
+    assert len(row_sets) == 2 and len(set(row_sets)) == 1  # the same rows: the same set
 
 
 @pytest.mark.parametrize("selected", [(), ("extract_refused",)])
@@ -259,9 +276,14 @@ def test_static_projection_preserves_the_projected_element_type() -> None:
 def test_reobservation_recovery_replays_the_core_changes_once(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A crash after one journal append resumes without losing or duplicating observations."""
+    """A crash after one journal append resumes without losing or duplicating observations.
+
+    The rows are taken to have changed elsewhere (a field no Claim reads), so
+    each unchanged item reaches delivery and is recorded per Claim.
+    """
     from datetime import timedelta
 
+    from cruxible_core.procedures import claims_terminal
     from cruxible_core.service.proposals.proposal_egress import service_recover_proposal_egress
     from tests.support.operation_world import NOW
 
@@ -274,6 +296,7 @@ def test_reobservation_recovery_replays_the_core_changes_once(
     document = json.loads(path.read_text())
     document["catalogVersion"] = "2026.11.01"
     path.write_text(json.dumps(document))
+    monkeypatch.setattr(claims_terminal, "_observed_same_row", lambda *_a, **_k: False)
 
     class Crash(BaseException):
         pass
@@ -284,17 +307,16 @@ def test_reobservation_recovery_replays_the_core_changes_once(
         original(self, **kwargs)
         raise Crash()
 
-    monkeypatch.setattr(ClaimReobservationStore, "record", crash_after_append)
-    with pytest.raises(Crash):
-        run(instance, root, minute=1)
-    monkeypatch.undo()
+    with monkeypatch.context() as patch:
+        patch.setattr(ClaimReobservationStore, "record", crash_after_append)
+        with pytest.raises(Crash):
+            run(instance, root, minute=1)
     recovered = service_recover_proposal_egress(instance, recorded_at=NOW + timedelta(minutes=2))
     assert set(recovered.values()) == {"delivered"}
     assert instance.accepted_coordinate() == before
     store = ClaimReobservationStore(instance)
     for claim in claims:
         assert len(store.history(claim.identity.name)) == 1
-    assert store.head_sequence() == len(claims)
 
 
 def test_duplicate_finding_bounds_locators_but_keeps_the_full_count(tmp_path: Path) -> None:

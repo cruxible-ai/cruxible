@@ -3,17 +3,23 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import time
-from collections import Counter
-from collections.abc import Collection, Iterable, Mapping, Sequence
+from collections import Counter, OrderedDict
+from collections.abc import Collection, Iterable, Iterator, Mapping, Sequence
 from contextlib import nullcontext
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Callable, Final, Literal, NoReturn, Protocol, cast
 
-from cruxible_client.contracts.captures import capture_retention_policy, parse_capture_envelope
+from cruxible_client.contracts.captures import (
+    capture_retention_policy,
+    observed_content,
+    parse_capture_envelope,
+)
+from cruxible_client.contracts.cas_contracts import CasObjectMetadata
 from cruxible_client.contracts.claim_evidence import (
     ClaimEvidenceReceipt,
     ClaimsDiagnostic,
@@ -42,6 +48,7 @@ from cruxible_core.procedures.claims_units import (
     claims_item_change_digest,
     finalize_creation_identities,
 )
+from cruxible_core.storage.capture_envelope_index import ENVELOPE_HEAD, capture_content_key
 
 if TYPE_CHECKING:
     from cruxible_core.procedures.nested import NestedProcedureRunner, ParentInvocationContext
@@ -59,9 +66,7 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.captures import (
-    CaptureContractAny as CaptureContract,
-)
-from cruxible_client.contracts.captures import (
+    CaptureBuildResult,
     CaptureDerivation,
     CaptureEnvelopeV1,
     CaptureFormatError,
@@ -73,8 +78,12 @@ from cruxible_client.contracts.captures import (
     derive_input_template_digest,
     validate_provider_external_capture_result,
 )
+from cruxible_client.contracts.captures import (
+    CaptureContractAny as CaptureContract,
+)
 from cruxible_client.contracts.errors import (
     CasError,
+    CruxibleError,
     ExecutionError,
     JournalConflictError,
     JournalError,
@@ -101,7 +110,7 @@ from cruxible_client.contracts.procedures.contracts import (
     ProcedureContractItemBudgetExceeded,
     ValidatedProcedureContract,
 )
-from cruxible_client.contracts.procedures.extract import ExtractNode
+from cruxible_client.contracts.procedures.extract import ExtractNode, extract_spec_digest
 from cruxible_client.contracts.procedures.graph import (
     analyze_procedure,
     late_state_taps,
@@ -336,12 +345,15 @@ from cruxible_core.procedures.terminal_dependencies import (
     CaptureRootCache,
     DependencyEvidenceFactsV1,
     DependencyToken,
-    TerminalChildReceiptV1,
+    TerminalChildReceiptV2,
     TerminalItemDependencyManifestV1,
-    TerminalItemDerivedFactsV1,
+    TerminalItemDependencyManifestV2,
+    TerminalItemDerivedFactsV2,
     accepted_state_token,
     admitted_capture_token,
     build_terminal_item_manifest,
+    build_terminal_item_manifest_v2,
+    build_terminal_items,
     capture_root,
     citable_captures,
     derive_terminal_item_facts,
@@ -350,11 +362,15 @@ from cruxible_core.procedures.terminal_dependencies import (
     policy_token,
     produced_capture_token,
     receipt_token,
-    render_shared_terminal_dependencies,
     shared_terminal_dependencies,
-    split_item_dependency_payloads,
     terminal_item_key,
     witnessed_list_capture,
+)
+from cruxible_core.procedures.terminal_payloads import (
+    split_derived_source_request,
+    split_source_capture_associations,
+    split_terminal_egress_payload,
+    splits_terminal_egress,
 )
 from cruxible_core.procedures.transforms import (
     TransformInputInvalid,
@@ -1327,6 +1343,87 @@ class ReadCeilingExceeded(ExecutionError):
     @classmethod
     def _value(cls, value: object) -> object:
         return normalize_canonical(value)
+
+
+class CaptureObservationsProtocol(Protocol):
+    """The instance's Capture reuse and content observations, for an acquiring call."""
+
+    def held_capture(self, content_key: str, *, commitment_digest: str) -> tuple[str, Any] | None:
+        """The held Capture (digest, envelope) of these contents, when it may be reused."""
+
+    def remember(self, content_key: str, capture_digest: str, *, proof: str) -> None:
+        """Name the new Capture these contents' next identical re-fetch reuses.
+
+        ``proof`` is the payload body of the record journaling its production.
+        """
+
+    def observe_rows(
+        self,
+        maps: tuple[Any, ...],
+        *,
+        earliest: datetime,
+        latest: datetime,
+        run_id: str,
+        node_id: str,
+        actor_id: str,
+        lineage: dict[str, str] | None = None,
+    ) -> None:
+        """Record one extract step's observation of its whole row set."""
+
+    def observe_enumeration(
+        self,
+        *,
+        contract_digest: str,
+        lacks: tuple[str, ...],
+        capture_digest: str,
+        earliest: datetime,
+        latest: datetime,
+        run_id: str,
+        node_id: str,
+        actor_id: str,
+        lineage: dict[str, str] | None = None,
+    ) -> None:
+        """Record what a complete absence enumeration lacked."""
+
+    def row_of(self, capture_digest: str, spec_digest: str, locator: str) -> str | None:
+        """The row one extracted record of a Capture was observed as, if any."""
+
+    def observe(
+        self,
+        contents: tuple[tuple[str, str, str], ...],
+        *,
+        earliest: datetime,
+        latest: datetime,
+        run_id: str,
+        node_id: str,
+        actor_id: str,
+        lineage: dict[str, str] | None = None,
+    ) -> None:
+        """Record one call's observation of (contract, content, Capture) contents."""
+
+
+class _DeferredEnvelopeStore:
+    """A Capture store that holds built envelopes back until they are known to be new."""
+
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+        self.envelopes: dict[str, bytes] = {}
+        self.reused: set[str] = set()
+
+    def store(self, content: bytes) -> CasObjectMetadata:
+        if content.startswith(ENVELOPE_HEAD):
+            digest = CasDigest(hashlib.sha256(content).hexdigest()).tagged
+            self.envelopes[digest] = bytes(content)
+            return CasObjectMetadata(
+                digest=digest, present=True, byte_length=len(content), redacted=False
+            )
+        return cast(CasObjectMetadata, self._inner.store(content))
+
+    def verify(self, digest: str) -> bool:
+        return bool(self._inner.verify(digest))
+
+    def read(self, digest: str, *, access: BodyAccessContext) -> bytes:
+        return bytes(self._inner.read(digest, access=access))
 
 
 class StateTapReaderProtocol(Protocol):
@@ -2487,7 +2584,41 @@ class _TransformInputInvalid(ExecutionError):
 
 #: The journaled consumption record's version. A node or final record without
 #: it was written before C14 provenance and is read as unknown (fail closed).
-CONSUMPTION_VERSION = 1
+#: Version 1 lists the consumed Captures inline; version 2 cites them as one
+#: run-free body (``CONSUMED_CAPTURES_BODY_V1``), so a run's node and final
+#: records no longer each restate every Capture it fetched.
+CONSUMPTION_VERSION = 2
+CONSUMED_CAPTURES_BODY_V1 = "playbill-consumed-captures-v1"
+
+
+def consumed_captures(consumption: object, read_body: Callable[[str], bytes]) -> list[str] | None:
+    """The Captures one journaled consumption names, either version; None when unknown.
+
+    ``read_body`` returns the verified CAS bytes of a digest; a version-2
+    record's body must be the canonical list it names. Unknown (no version,
+    another version, a malformed or noncanonical body) reads as None, and
+    every caller fails closed on it.
+    """
+
+    if not isinstance(consumption, Mapping):
+        return None
+    version = consumption.get("v")
+    if version == 1:
+        captures = consumption.get("captures")
+        return [str(item) for item in captures] if isinstance(captures, list) else None
+    if version != 2 or not isinstance(consumption.get("captures_digest"), str):
+        return None
+    content = read_body(str(consumption["captures_digest"]))
+    body = json.loads(content)
+    if (
+        not isinstance(body, dict)
+        or body.get("tag") != CONSUMED_CAPTURES_BODY_V1
+        or not isinstance(body.get("captures"), list)
+        or canonical_bytes(body) != content
+        or len(body["captures"]) != consumption.get("count")
+    ):
+        return None
+    return [str(item) for item in body["captures"]]
 
 
 def _fetched_captures(state: _RunState) -> list[str]:
@@ -2501,10 +2632,97 @@ def _fetched_captures(state: _RunState) -> list[str]:
     return sorted(digest for digest in state.fetched_captures)
 
 
-def _consumed(state: _RunState) -> dict[str, object]:
-    """The run's consumed Captures so far, versioned: an empty set is proven empty."""
+#: One call's ``source_acquisition`` record: its members body and observed span.
+SOURCE_ACQUISITION_RECORD_V2 = "playbill-procedure-source-acquisition-v2"
+#: A call's acquisition members, in field order: run-free, content-addressed.
+ACQUIRED_MEMBERS_BODY_V1 = "playbill-acquired-members-v1"
+#: How many members one members body holds: a run card shows at most 64.
+ACQUIRED_MEMBERS_CHUNK = 64
+#: The run-free root a v2 acquisition record cites: its member chunks, in order.
+ACQUIRED_MEMBER_CHUNKS_BODY_V1 = "playbill-acquired-member-chunks-v1"
 
-    return {"consumption": {"v": CONSUMPTION_VERSION, "captures": sorted(state.consumed_captures)}}
+
+#: Chunk digests one root page lists before citing the next page.
+ACQUIRED_MEMBER_CHUNKS_PAGE = 8
+
+
+def acquisition_member_chunks(
+    payload: Mapping[str, Any], read: Callable[[str], bytes]
+) -> Iterator[str] | None:
+    """The member chunk digests a v2 ``source_acquisition`` record cites, lazily.
+
+    None when the record cites no root. ``read`` returns a body's verified
+    bytes and raises when it cannot; an unreadable or malformed page ends the
+    chunks. The record cites one root page (F-005); each page lists a few
+    chunks and cites the next, so a bounded reader (a run card) reads only the
+    pages holding the chunks it shows (review 2b F-007).
+    """
+
+    digest = payload.get("members_digest")
+    if not isinstance(digest, str):
+        return None
+    return _member_chunk_pages(digest, read)
+
+
+def _member_chunk_pages(digest: str | None, read: Callable[[str], bytes]) -> Iterator[str]:
+    while isinstance(digest, str):
+        try:
+            page = json.loads(read(digest))
+        except (CruxibleError, OSError, ValueError):
+            return
+        chunks = page.get("chunks") if isinstance(page, dict) else None
+        if (
+            not isinstance(page, dict)
+            or page.get("tag") != ACQUIRED_MEMBER_CHUNKS_BODY_V1
+            or not isinstance(chunks, list)
+            or not all(isinstance(chunk, str) for chunk in chunks)
+        ):
+            return
+        yield from chunks
+        digest = page.get("next")
+
+
+def _acquired_member(
+    *,
+    field: str,
+    result: ProcedureSourceAcquisitionResultV1,
+    decision: AcquisitionInputDecision,
+    provider_refusal: object | None = None,
+    member_request_digest: str | None = None,
+) -> dict[str, object]:
+    """One capture output's acquisition attempt and decision, as its members-body entry.
+
+    The fields of a v1 per-member record less its run-bound ones (tag,
+    node, audit time): the result (without its Capture acquisition, which the
+    decision's selected digests name), the decision, and a list member's
+    request digest.
+    """
+
+    return {
+        "field": field,
+        "input_name": result.input_name,
+        "result": result.model_dump(mode="json", exclude={"acquisition", "node_id"}),
+        "decision": decision.model_dump(mode="json"),
+        **({} if provider_refusal is None else {"provider_refusal": provider_refusal}),
+        **(
+            {}
+            if member_request_digest is None
+            else {"member_request_digest": member_request_digest}
+        ),
+    }
+
+
+@dataclass(frozen=True)
+class _TerminalItems:
+    """One terminal's bound items: receipts, values, closures, and their one record."""
+
+    children: tuple[TerminalChildReceiptV2, ...]
+    values: tuple[CanonicalValue, ...]
+    manifests: dict[str, TerminalItemDependencyManifestV2]
+    #: How many items the terminal selected before an inbox cap clipped them.
+    selected: int
+    #: The terminal's grouped ``item_dependencies`` record; None with no items.
+    items_record_digest: str | None
 
 
 @dataclass
@@ -2558,6 +2776,8 @@ class _RunState:
     #: a child's. Journaled on every node_fired and on finalization, so a
     #: reader of a running or finished run knows what its values derive from (C14).
     consumed_captures: set[str] = dataclass_field(default_factory=set)
+    #: The consumed set the last consumption body was stored for, and its digest.
+    consumption_body: tuple[frozenset[str], str] | None = None
     #: Every Capture an acquiring call built this run, added when its builder
     #: returns, whether or not it went on to bind (D-R37 f1). Distinct from
     #: ``consumed_captures``: a Capture behind an out-Contract refusal, or a
@@ -2565,6 +2785,21 @@ class _RunState:
     #: halt must not erase it from the result digest just because it was never
     #: selected or consumed.
     fetched_captures: set[str] = dataclass_field(default_factory=set)
+    #: Each Capture this run fetched (built or reused), and the earliest and
+    #: latest instants its acquiring call observed its members (ruling 1b).
+    capture_spans: dict[str, tuple[datetime, datetime]] = dataclass_field(default_factory=dict)
+    #: Each fetched Capture's (contract, observed content) whose fetch this run
+    #: recorded as a content observation: an item restating a Claim on another
+    #: Capture of the same content observed nothing a Claim needs (ruling 1a).
+    observed_contents: dict[str, tuple[str, str]] = dataclass_field(default_factory=dict)
+    #: Each Capture this run stored new, by its reuse key: named reusable only
+    #: once its ``produced_capture`` is journaled (F-008).
+    pending_reuse_keys: dict[str, str] = dataclass_field(default_factory=dict)
+    #: Each fetched Capture's logical source: part of its rows' identity.
+    capture_sources: dict[str, str] = dataclass_field(default_factory=dict)
+    #: Each extracted Capture's rows by locator, per (Capture, extract spec):
+    #: an item whose Claim's own row this run observed restates nothing.
+    row_maps: dict[tuple[str, str], dict[str, str]] = dataclass_field(default_factory=dict)
     #: Which aliases hold incomplete values, and the control lineage's state.
     completeness: Completeness = dataclass_field(default_factory=Completeness)
     #: Acquiring calls whose Capture list dropped a failed member (D-R37 a4).
@@ -2698,8 +2933,11 @@ class ProcedureExecutor:
         key_rules: KeyCanonicalizer | None = None,
         claims_context: ClaimsContext | None = None,
         state_reader: StateTapReaderProtocol | None = None,
+        capture_observations: CaptureObservationsProtocol | None = None,
     ) -> None:
         self.journal = journal
+        # Capture reuse and content observations (rulings 1a, 1c), instance-bound.
+        self.capture_observations = capture_observations
         self.bodies = bodies
         self.material_reservations = ProcedureMaterialReservationStore(bodies.reservation_root)
         self.run_index = run_index
@@ -3077,7 +3315,7 @@ class ProcedureExecutor:
             "semantic_result_digest": semantic_result_digest,
             # What the run consumed, versioned, so a reader tells proven-empty from
             # a record written before C14 provenance (fail closed; D-R25 R4).
-            **_consumed(state),
+            **self._consumed(state),
             # The reads the run made mid-run (D-R38), apart from its admitted
             # inputs; recorded only when it made one, so other runs keep their bytes.
             **(
@@ -3093,16 +3331,12 @@ class ProcedureExecutor:
             "provider_calls": state.provider_calls,
             "capture_bytes": state.capture_bytes,
             "invocation_receipt_digests": state.invocation_receipt_digests,
-            "source_capture_associations": [
-                item.model_dump(mode="json")
-                for item in sorted(
-                    state.source_capture_associations,
-                    key=lambda item: (
-                        item.occurrence_path.encode("utf-8"),
-                        item.field.encode("utf-8"),
-                    ),
-                )
-            ],
+            # Each invocation's binding inline, its (field, Capture) pairs a
+            # run-free body: the record does not grow with fetched Captures.
+            "source_capture_association_groups": split_source_capture_associations(
+                [item.model_dump(mode="json") for item in state.source_capture_associations],
+                store=lambda content: self.bodies.store(content, journal_payload=True).digest,
+            ),
             "budget": ProcedureRunBudget(
                 declared=procedure_run_declared_budget(admission),
                 observed=ProcedureRunBudgetObserved(
@@ -3774,7 +4008,7 @@ class ProcedureExecutor:
                         "kind": node.kind,
                         "verdict": "succeeded",
                         **self._diagnostic_report(node.node_id, state),
-                        **_consumed(state),
+                        **self._consumed(state),
                         **({} if summary is None else {"summary": summary.model_dump(mode="json")}),
                     },
                 )
@@ -3790,7 +4024,7 @@ class ProcedureExecutor:
                         "kind": node.kind,
                         "verdict": "refused",
                         **self._diagnostic_report(node.node_id, state),
-                        **_consumed(state),
+                        **self._consumed(state),
                     },
                 )
                 raise
@@ -3806,7 +4040,7 @@ class ProcedureExecutor:
                         "kind": node.kind,
                         "verdict": "failed",
                         **self._diagnostic_report(node.node_id, state),
-                        **_consumed(state),
+                        **self._consumed(state),
                     },
                 )
                 raise
@@ -3967,7 +4201,7 @@ class ProcedureExecutor:
             )
             return None
         if isinstance(node, LayoutExtractNode):
-            self._run_extract(self._extract_spec(node), state=state)
+            self._run_extract(self._extract_spec(node), state=state, admission=admission)
             return None
         if isinstance(node, CallNode):
             self._run_provider_v4(
@@ -4621,6 +4855,7 @@ class ProcedureExecutor:
                     raise
                 unavailable: dict[str, ProcedureSourceAcquisitionResultV1] = {}
                 unavailable_decisions: dict[str, AcquisitionInputDecision] = {}
+                refused_members: list[dict[str, object]] = []
                 for field, rule in rules.items():
                     unavailable[field] = ProcedureSourceAcquisitionResultV1(
                         node_id=node.node_id,
@@ -4635,15 +4870,17 @@ class ProcedureExecutor:
                         default_authorized=rule.input_name in self.default_authorizations,
                         evaluation_time=admission.occurrence_evaluation_time,
                     )
-                    self._journal_acquisition(
-                        admission,
-                        records,
-                        node=node,
-                        field=field,
-                        result=unavailable[field],
-                        decision=unavailable_decisions[field],
-                        provider_refusal=exc.outcome.model_dump(mode="json"),
+                    refused_members.append(
+                        _acquired_member(
+                            field=field,
+                            result=unavailable[field],
+                            decision=unavailable_decisions[field],
+                            provider_refusal=exc.outcome.model_dump(mode="json"),
+                        )
                     )
+                self._journal_acquisition(
+                    admission, records, node=node, members=refused_members, observed=()
+                )
                 for field, rule in rules.items():
                     self._bind_omission(
                         admission=admission,
@@ -4810,7 +5047,21 @@ class ProcedureExecutor:
             reservations=self.material_reservations,
             admission=admission,
         )
+        # With an observations port, each built envelope is held back until it
+        # is known to be new: an identical re-fetch reuses the held Capture.
+        deferred = _DeferredEnvelopeStore(reserved_store)
+        building = reserved_store if self.capture_observations is None else deferred
+        # The exact request this call executed, run-free: what a reused Capture's
+        # producing run must also have executed (ruling 1c). A list member's own
+        # request is in its coordinate besides.
+        request_identity = run_value_digest(
+            "source-request",
+            resolved_request
+            if workspace_request is None
+            else workspace_request.model_dump(mode="json"),
+        )
         built: dict[str, Any] = {}
+        reused: set[str] = set()
         bodies: dict[str, bytes] = {}
         for field in fields:
             if field in dropped:
@@ -4835,7 +5086,7 @@ class ProcedureExecutor:
                 continue
             try:
                 built[field] = build_provider_external_capture_v2(
-                    store=reserved_store,
+                    store=building,
                     contract=contract,
                     result=wire,
                     receipt=receipts[field][0],
@@ -4847,6 +5098,16 @@ class ProcedureExecutor:
                     provider_output=outputs[field],
                     derivation=derivation if field in derived_fields else None,
                 )
+                if self.capture_observations is not None:
+                    built[field] = self._held_or_new(
+                        built[field],
+                        deferred,
+                        reserved_store,
+                        request=request_identity,
+                        pending=state.pending_reuse_keys,
+                    )
+                    if built[field].capture_digest in deferred.reused:
+                        reused.add(field)
                 # D-R37 f1: fetched the moment its builder returns, before
                 # the out-Contract check or any acquisition rule below can
                 # refuse; independent of selection and consumption. A derived
@@ -4933,6 +5194,9 @@ class ProcedureExecutor:
                 results[field],
                 default_authorized=rules[field].input_name in self.default_authorizations,
                 evaluation_time=admission.occurrence_evaluation_time,
+                # A reused Capture's envelope says when its contents were first
+                # observed; its age is this fetch's.
+                observed_at=wires[field].observed_at if field in built else None,
             )
             for field in fields
             if field not in dropped
@@ -4944,16 +5208,66 @@ class ProcedureExecutor:
                 disposition="omitted",
                 reason_codes=(reason,),
             )
-        for field in fields:
-            self._journal_acquisition(
-                admission,
-                records,
-                node=node,
-                field=field,
-                result=results[field],
-                decision=decisions[field],
-                member_request_digest=member_requests.get(field),
+        self._journal_acquisition(
+            admission,
+            records,
+            node=node,
+            members=[
+                _acquired_member(
+                    field=field,
+                    result=results[field],
+                    decision=decisions[field],
+                    member_request_digest=member_requests.get(field),
+                )
+                for field in fields
+            ],
+            # When the call's members were observed: their own fetch instants.
+            observed=tuple(wires[field].observed_at for field in built),
+        )
+        for item in built.values():
+            state.capture_sources[item.capture_digest] = str(
+                getattr(item.envelope.source, "source_identity", "")
             )
+        # Only what the call fetched was observed now: a derived output is a
+        # function of its inputs, observed when they all were (``_capture_span``
+        # derives its span from them), never stamped with the derive's own time
+        # (review 2c #8).
+        fetched = {field: item for field, item in built.items() if field not in derived_fields}
+        if fetched:
+            span = (
+                min(wires[field].observed_at for field in fetched),
+                max(wires[field].observed_at for field in fetched),
+            )
+            for item in fetched.values():
+                state.capture_spans[item.capture_digest] = span
+            if self.capture_observations is not None:
+                for item in fetched.values():
+                    state.observed_contents[item.capture_digest] = (
+                        item.envelope.capture_contract_digest,
+                        observed_content(item.envelope).digest,
+                    )
+                # The fetch is the observation (ruling 1a): one record for the
+                # call, keyed by the contents it observed, new or reused.
+                self.capture_observations.observe(
+                    tuple(
+                        (
+                            item.envelope.capture_contract_digest,
+                            observed_content(item.envelope).digest,
+                            item.capture_digest,
+                        )
+                        for item in fetched.values()
+                    ),
+                    earliest=span[0],
+                    latest=span[1],
+                    run_id=admission.run_id,
+                    node_id=node.node_id,
+                    actor_id=admission.actor_context.actor_id,
+                    # D-R14: the Procedure whose call observed it, run-free.
+                    lineage={
+                        "procedure": admission.procedure_identity.qualified,
+                        "procedure_artifact_digest": admission.procedure_artifact_digest,
+                    },
+                )
         for field in fields:
             if decisions[field].disposition == "refused":
                 # The attempted reads remain journaled, but an ineligible
@@ -5020,6 +5334,7 @@ class ProcedureExecutor:
                 occurrence_path=occurrence.occurrence_path,
                 invocation_receipt_digest=receipts[field][1],
                 member_request_digest=member_requests.get(field),
+                new=field not in reused,
             )
             if field in members:
                 bound_members.setdefault(rules[field].input_name, []).append(
@@ -5062,6 +5377,51 @@ class ProcedureExecutor:
             # nothing (D-R41).
             state.glob_lists.add(node.as_)
         reserved_store.release()
+
+    def _held_or_new(
+        self,
+        item: Any,
+        deferred: _DeferredEnvelopeStore,
+        reserved_store: ReservedCaptureStore,
+        *,
+        request: str,
+        pending: dict[str, str],
+    ) -> Any:
+        """The held Capture an identical re-fetch reproduces, else this new one, stored.
+
+        The key is the built envelope less its run-bound fields, with the
+        executed request (ruling 1c). A held Capture whose envelope or body is
+        gone, damaged or erased is never reused (the port refuses it); the new
+        envelope is then stored, and is what the next identical re-fetch reuses.
+        """
+
+        assert self.capture_observations is not None
+        content = deferred.envelopes.pop(item.capture_digest)
+        key = capture_content_key(json.loads(content), request=request)
+        held = (
+            None
+            if key is None
+            else self.capture_observations.held_capture(
+                key, commitment_digest=item.envelope.commitment.digest
+            )
+        )
+        if held is None or held[0] == item.capture_digest:
+            if reserved_store.store(content).digest != item.capture_digest:
+                raise ExecutionError("Capture envelope CAS digest did not reproduce")
+            if key is not None:
+                # Reusable only once its production is durable (F-008): named
+                # when this run journals producing it, never before.
+                pending[item.capture_digest] = key
+            return item
+        digest, envelope = held
+        deferred.reused.add(digest)
+        return CaptureBuildResult(
+            contract_digest=item.contract_digest,
+            envelope=envelope,
+            capture_digest=digest,
+            commitment_digest=envelope.commitment.digest,
+            source_body_materialized=item.source_body_materialized,
+        )
 
     def _capture_body(self, state: _RunState, capture_digest: str) -> bytes:
         """The exact bytes of a Capture this run committed or was admitted."""
@@ -5126,7 +5486,13 @@ class ProcedureExecutor:
                 details={"node_id": node.node_id, "reason": exc.message},
             ) from exc
 
-    def _run_extract(self, node: ExtractNode, *, state: _RunState) -> None:
+    def _run_extract(
+        self,
+        node: ExtractNode,
+        *,
+        state: _RunState,
+        admission: ProcedureRunAdmission | None = None,
+    ) -> None:
         """Read one Capture's records, typed, by its CaptureContract's decoding.
 
         Over a list of Captures, each member's records are read the same way
@@ -5136,7 +5502,7 @@ class ProcedureExecutor:
         call = state.outputs.get(node.capture_alias)
         capture_digest = call.get(node.capture_field) if isinstance(call, dict) else None
         if isinstance(capture_digest, list):
-            self._run_list_extract(node, capture_digest, state=state)
+            self._run_list_extract(node, capture_digest, state=state, admission=admission)
             return
         if not isinstance(capture_digest, str):
             raise _RunRefusal(
@@ -5167,6 +5533,13 @@ class ProcedureExecutor:
                 details=exc.details or None,
             ) from exc
         self._bind_extract(node, outcome, state=state)
+        self._observe_rows(
+            node,
+            ((capture_digest, outcome),),
+            state=state,
+            admission=admission,
+            selection=only_keys,
+        )
 
     def _extract_inputs(
         self, node: ExtractNode, capture_digest: str, *, state: _RunState
@@ -5194,7 +5567,12 @@ class ProcedureExecutor:
         return content, contract, row
 
     def _run_list_extract(
-        self, node: ExtractNode, members: Sequence[object], *, state: _RunState
+        self,
+        node: ExtractNode,
+        members: Sequence[object],
+        *,
+        state: _RunState,
+        admission: ProcedureRunAdmission | None = None,
     ) -> None:
         """Extract over a list of Captures: every member's records, merged (D-R37 a5).
 
@@ -5262,6 +5640,71 @@ class ProcedureExecutor:
             outcome,
             state=state,
             items=tuple(member_tokens[source] for source in sources),
+        )
+        self._observe_rows(
+            node,
+            tuple(zip(cast(Sequence[str], members), outcomes, strict=True)),
+            state=state,
+            admission=admission,
+            selection=only_keys,
+        )
+
+    def _observe_rows(
+        self,
+        node: ExtractNode,
+        parts: Sequence[tuple[str, ExtractOutcome]],
+        *,
+        state: _RunState,
+        admission: ProcedureRunAdmission | None,
+        selection: object = None,
+    ) -> None:
+        """Publish the step's whole extracted row set as one observation (2026-11-16 a).
+
+        Each record is a row keyed by its Capture's contract and logical
+        source, its record key and its value; the set is Capture-free, so the
+        same rows in new bytes are the same set (a head update, no per-Claim
+        write). Published only when every Capture read was fetched by this run
+        (an admitted Capture was not observed now), with the acquiring calls'
+        span (ruling 1b). A Capture's rows under one spec and selection are an
+        immutable derivation, computed once per process (``_row_map_of``): an
+        unchanged step hashes no row (review 2c #6).
+        """
+
+        spec = extract_spec_digest(node)
+        selected = (
+            "*"
+            if selection is None
+            else typed_digest(
+                Sha256Value,
+                "cruxible-extract-selection-v1",
+                {"keys": normalize_canonical(selection)},
+            ).tagged
+        )
+        maps = []
+        for capture, outcome in parts:
+            row_map, rows = _row_map_of(state, capture, spec, selected, outcome)
+            state.row_maps[(capture, spec)] = rows
+            maps.append(row_map)
+        spans = [_capture_span(state, capture) for capture, _outcome in parts]
+        if (
+            self.capture_observations is None
+            or admission is None
+            or not parts
+            or any(span is None for span in spans)
+        ):
+            return
+        known = [span for span in spans if span is not None]
+        self.capture_observations.observe_rows(
+            tuple(maps),
+            earliest=min(span[0] for span in known),
+            latest=max(span[1] for span in known),
+            run_id=admission.run_id,
+            node_id=node.node_id,
+            actor_id=admission.actor_context.actor_id,
+            lineage={
+                "procedure": admission.procedure_identity.qualified,
+                "procedure_artifact_digest": admission.procedure_artifact_digest,
+            },
         )
 
     def _bind_extract(
@@ -5541,38 +5984,67 @@ class ProcedureExecutor:
         records: list[StoredProcedureJournalRecordV1],
         *,
         node: CallNode,
-        field: str,
-        result: ProcedureSourceAcquisitionResultV1,
-        decision: AcquisitionInputDecision,
-        provider_refusal: object | None = None,
-        member_request_digest: str | None = None,
+        members: list[dict[str, object]],
+        observed: tuple[datetime, ...],
     ) -> None:
-        """Journal one capture output's acquisition attempt and its decision.
+        """Journal one call's acquisition: one record citing its run-free members body.
 
-        A list member (``field`` is ``<field>/<i>``) also names its identity,
-        the request digest its coordinate carries (D-R37 a2).
+        Each member (a capture field, or a list member ``<field>/<i>`` naming
+        the request digest its coordinate carries, D-R37 a2) is its attempt and
+        decision, in the call's field order. Nothing in the members body names
+        the run or a time, so a call whose members are unchanged reproduces the
+        body an earlier run stored. The record keeps what is this call's own:
+        the earliest and latest instant its acquired members were observed.
+
+        The members are stored in chunks of up to ``ACQUIRED_MEMBERS_CHUNK``,
+        listed in one root body the record cites, so a bounded reader (a run
+        card) opens the root and only the chunks it shows; the record counts
+        the list members, so a reader past its bound knows a call has more
+        without opening any. The list grows with the call's
+        capture outputs; it is built once per call, never per member.
         """
 
+        chunks = [
+            self.bodies.store(
+                canonical_bytes(
+                    {
+                        "tag": ACQUIRED_MEMBERS_BODY_V1,
+                        "members": members[start : start + ACQUIRED_MEMBERS_CHUNK],
+                    }
+                ),
+                journal_payload=True,
+            ).digest
+            for start in range(0, len(members), ACQUIRED_MEMBERS_CHUNK)
+        ]
+        # One root cites the chunks: an unchanged call reproduces it too, and
+        # the record stays one digest whatever the call fetched.
+        root: str | None = None
+        for start in reversed(range(0, max(len(chunks), 1), ACQUIRED_MEMBER_CHUNKS_PAGE)):
+            root = self.bodies.store(
+                canonical_bytes(
+                    {
+                        "tag": ACQUIRED_MEMBER_CHUNKS_BODY_V1,
+                        "chunks": chunks[start : start + ACQUIRED_MEMBER_CHUNKS_PAGE],
+                        **({} if root is None else {"next": root}),
+                    }
+                ),
+                journal_payload=True,
+            ).digest
         self._append_event(
             admission,
             records,
             "source_acquisition",
             {
-                "tag": "playbill-procedure-source-acquisition-v1",
+                "tag": SOURCE_ACQUISITION_RECORD_V2,
                 "node_id": node.node_id,
-                "input_name": result.input_name,
-                "field": field,
-                "result": result.model_dump(mode="json", exclude={"acquisition"}),
-                "decision": decision.model_dump(mode="json"),
-                **({} if provider_refusal is None else {"provider_refusal": provider_refusal}),
-                **(
-                    {}
-                    if member_request_digest is None
-                    else {"member_request_digest": member_request_digest}
-                ),
-                "audit": {
-                    "deployment_digest": admission.deployment_snapshot_digest,
-                    "recorded_at": format_datetime(self.clock.now()),
+                "members_digest": root,
+                "count": len(members),
+                "listed": sum(1 for member in members if "/" in str(member["field"])),
+                "observed": None
+                if not observed
+                else {
+                    "earliest": format_datetime(min(observed)),
+                    "latest": format_datetime(max(observed)),
                 },
             },
         )
@@ -5660,13 +6132,17 @@ class ProcedureExecutor:
         occurrence_path: str,
         invocation_receipt_digest: str,
         member_request_digest: str | None = None,
+        new: bool = True,
     ) -> frozenset[DependencyToken]:
         """Bind one selected capture output: its Capture, budget, evidence and association.
 
         A list member is one of its field's Captures: its record names its
         identity (D-R37 a2), and its list's one outcome is recorded by the
         caller once every member is bound. Returns the tokens the call's
-        value carries for it.
+        value carries for it. A reused Capture (``new`` false) is bound
+        exactly the same, but journals no ``produced_capture``: this run
+        produced nothing new, so Capture-landing Triggers and source tallies,
+        which count that record, count new Captures only (ruling 1c).
         """
 
         digest = acquisition.capture_digest
@@ -5683,7 +6159,54 @@ class ProcedureExecutor:
             state.outcomes[rule.input_name] = AcquisitionInputOutcomeV1(
                 input_name=rule.input_name, disposition="acquired", capture_digests=(digest,)
             )
-        self._append_event(
+        if new:
+            proof = self._produced_capture(
+                admission,
+                records,
+                node=node,
+                rule=rule,
+                field=field,
+                acquisition=acquisition,
+                occurrence_path=occurrence_path,
+                invocation_receipt_digest=invocation_receipt_digest,
+                member_request_digest=member_request_digest,
+            )
+            key = state.pending_reuse_keys.pop(digest, None)
+            if key is not None and self.capture_observations is not None:
+                self.capture_observations.remember(key, digest, proof=proof)
+        state.source_capture_associations.append(
+            ProcedureSourceCaptureAssociation(
+                occurrence_path=occurrence_path,
+                field=field,
+                invocation_receipt_digest=invocation_receipt_digest,
+                capture_digest=digest,
+            )
+        )
+        return frozenset(
+            {
+                produced_capture_token(digest),
+                receipt_token(acquisition.receipt.digest),
+                policy_token(acquisition.envelope.capture_contract_digest),
+            }
+        )
+
+    def _produced_capture(
+        self,
+        admission: ProcedureRunAdmission,
+        records: list[StoredProcedureJournalRecordV1],
+        *,
+        node: CallNode,
+        rule: AcquisitionRule,
+        field: str,
+        acquisition: ExternalCaptureAcquisitionV1,
+        occurrence_path: str,
+        invocation_receipt_digest: str,
+        member_request_digest: str | None,
+    ) -> str:
+        """Journal the run's production of one Capture; return the record's payload digest."""
+
+        digest = acquisition.capture_digest
+        return self._append_event(
             admission,
             records,
             "produced_capture",
@@ -5709,22 +6232,7 @@ class ProcedureExecutor:
                     "recorded_at": format_datetime(self.clock.now()),
                 },
             },
-        )
-        state.source_capture_associations.append(
-            ProcedureSourceCaptureAssociation(
-                occurrence_path=occurrence_path,
-                field=field,
-                invocation_receipt_digest=invocation_receipt_digest,
-                capture_digest=digest,
-            )
-        )
-        return frozenset(
-            {
-                produced_capture_token(digest),
-                receipt_token(acquisition.receipt.digest),
-                policy_token(acquisition.envelope.capture_contract_digest),
-            }
-        )
+        ).record.payload_digest
 
     def _run_child(
         self,
@@ -5859,15 +6367,19 @@ class ProcedureExecutor:
         # The child's completion records an incomplete return (data or control
         # lineage); the invoke's output is that AND the inputs it passed.
         child_complete = final.get("return_complete", True) is not False
-        consumption = final.get("consumption")
-        consumed = consumption.get("captures") if isinstance(consumption, dict) else None
-        if (
-            not isinstance(consumption, dict)
-            or consumption.get("v") != CONSUMPTION_VERSION
-            or not isinstance(consumed, list)
-        ):
+        try:
+            consumed = consumed_captures(
+                final.get("consumption"),
+                lambda digest: bytes(self.bodies.read(digest, access=access)),
+            )
+        except (CasError, OSError) as exc:
+            raise _OperationalFailure(
+                "replay_material_unavailable",
+                details={"payload_digest": child_records[-1].record.payload_digest},
+            ) from exc
+        if consumed is None:
             raise ExecutionError("nested completion records no Capture consumption")
-        state.consumed_captures.update(str(digest) for digest in consumed)
+        state.consumed_captures.update(consumed)
         budget = ProcedureRunBudget.model_validate(final["budget"]).observed
         state.provider_calls += budget.provider_calls
         state.capture_bytes += budget.capture_bytes
@@ -6077,12 +6589,18 @@ class ProcedureExecutor:
         """
 
         inbox_cap = _inbox_cap(node) if isinstance(node, InboxEgressNode) else None
-        children, values, manifests, selected = self._record_terminal_items(
+        bound = self._record_terminal_items(
             node,
             admission=admission,
             state=state,
             records=records,
             limit=None if inbox_cap is None else max(inbox_cap[0] - state.inbox_items, 0),
+        )
+        children, values, manifests, selected = (
+            bound.children,
+            bound.values,
+            bound.manifests,
+            bound.selected,
         )
         truncation = (
             None
@@ -6113,8 +6631,18 @@ class ProcedureExecutor:
                 )
             # A fan-out over an empty list has nothing to emit: no egress is
             # prepared or delivered (a proposal with no member is no proposal),
-            # and the run ends at this terminal with its typed result.
-            self._note_delivery(node, state, delivery="empty", emitted=0, truncation=None)
+            # and the run ends at this terminal with its typed result. A claims
+            # terminal whose every item restated exactly what is live (the
+            # held Capture, or another of the content it cites) has no item
+            # either: it is unchanged, and its record's counts say so (1e).
+            diagnostics = state.claims_diagnostics.get(node.node_id)
+            self._note_delivery(
+                node,
+                state,
+                delivery="unchanged" if diagnostics is not None and diagnostics.same else "empty",
+                emitted=0,
+                truncation=None,
+            )
             return
         required = TERMINAL_REQUIRED_RUNGS[node.kind]
         payload: dict[str, object] = {
@@ -6122,6 +6650,7 @@ class ProcedureExecutor:
             "kind": "claims" if node.node_id in state.claims_items else node.kind,
             **self._diagnostic_report(node.node_id, state),
             "required_rung": required,
+            "items_record_digest": bound.items_record_digest,
             "children": [item.model_dump(mode="json") for item in children],
         }
         if truncation is not None:
@@ -6198,6 +6727,7 @@ class ProcedureExecutor:
                 claims_changes=state.claims_changes.get(node.node_id, ()),
                 derivations=state.derivations,
                 capture_root_cache=state.capture_root_cache,
+                state=state,
             )
         except TerminalEgressError as exc:
             refusal = self._terminal_refusal(exc, node_id=node.node_id)
@@ -6427,7 +6957,7 @@ class ProcedureExecutor:
         request: TerminalEgressRequestV1,
         *,
         admission: ProcedureRunAdmission,
-        manifests: Mapping[str, TerminalItemDependencyManifestV1],
+        manifests: Mapping[str, TerminalItemDependencyManifestV2],
     ) -> TerminalEgressReceiptV1:
         """Hand the request to the sink; a preparer sink also receives the admission.
 
@@ -6482,14 +7012,15 @@ class ProcedureExecutor:
         *,
         admission: ProcedureRunAdmission,
         rung: EffectiveRungV1,
-        children: tuple[TerminalChildReceiptV1, ...],
+        children: tuple[TerminalChildReceiptV2, ...],
         values: tuple[CanonicalValue, ...],
-        manifests: Mapping[str, TerminalItemDependencyManifestV1] | None = None,
+        manifests: Mapping[str, TerminalItemDependencyManifestV2] | None = None,
         capped_by: EffectiveRungTermV1 | None = None,
         claims_evidence: tuple[ClaimEvidenceReceipt | None, ...] = (),
         claims_changes: tuple[CoreClaimsChange, ...] = (),
         derivations: Mapping[str, Collection[str]] | None = None,
         capture_root_cache: CaptureRootCache | None = None,
+        state: _RunState | None = None,
     ) -> tuple[TerminalEgressRequestV1, PreparedTerminalEgressV1 | None]:
         """Hand the sink the exact pins this terminal kind's law traverses.
 
@@ -6552,6 +7083,9 @@ class ProcedureExecutor:
                 if claims_evidence
                 else {}
             ),
+            # One entry per distinct cited Capture this run fetched, so
+            # O(the terminal's items), never the Claims citing them.
+            observation_latest=_observation_latest(state, claims_evidence),
             prepared_at=self.clock.now(),
         )
         # Ruling C4: a direct run's admission is never a V5+ Line carrier (it
@@ -6624,16 +7158,16 @@ class ProcedureExecutor:
         state: _RunState,
         records: list[StoredProcedureJournalRecordV1],
         limit: int | None = None,
-    ) -> tuple[
-        tuple[TerminalChildReceiptV1, ...],
-        tuple[CanonicalValue, ...],
-        dict[str, TerminalItemDependencyManifestV1],
-        int,
-    ]:
+    ) -> _TerminalItems:
         """Derive one manifest per terminal item from the exact closure it consumed.
 
-        ``limit`` keeps the first items only (an inbox cap); the last element is
+        ``limit`` keeps the first items only (an inbox cap); ``selected`` is
         how many items the terminal selected before it.
+
+        The closures are journaled as ONE ``item_dependencies`` record citing
+        run-free bodies (:func:`build_terminal_items`): an item whose closure
+        is unchanged since an earlier run reproduces its body, so it stores
+        nothing new. The loop over items grows with this terminal's items.
         """
 
         base = _node_policy_tokens(node, self.references) | state.control
@@ -6668,12 +7202,8 @@ class ProcedureExecutor:
         outcomes = tuple(
             sorted(state.outcomes.values(), key=lambda item: item.input_name.encode("utf-8"))
         )
-        receipts: list[TerminalChildReceiptV1] = []
-        manifests: dict[str, TerminalItemDependencyManifestV1] = {}
-        folded: list[TerminalItemDerivedFactsV1] = []
-        stamps: list[str] = []
-        item_drafts: list[tuple[str, str]] = []
-        recorded_at: list[datetime] = []
+        manifests: dict[str, TerminalItemDependencyManifestV2] = {}
+        folded: list[TerminalItemDerivedFactsV2] = []
         for index, value in enumerate(values):
             tokens = base | item_tokens[index]
             item_key = terminal_item_key(
@@ -6681,73 +7211,62 @@ class ProcedureExecutor:
                 child_index=index,
                 item=value,
             )
-            manifest = build_terminal_item_manifest(
+            manifest = build_terminal_item_manifest_v2(
                 tokens,
-                run_id=admission.run_id,
                 terminal_node_id=node.node_id,
                 item_key=item_key,
             )
-            derived = derive_terminal_item_facts(
-                tokens,
-                manifest=manifest,
-                child_index=index,
-                facts=state.facts,
-                outcomes=outcomes,
-            )
-            folded.append(derived)
-            stamp = format_datetime(self.clock.now())
-            assert stamp is not None  # a clock reading always renders
-            stamps.append(stamp)
-            # Preserve the per-item clock reads and their order from single appends.
-            recorded_at.append(self.clock.now())
-            item_drafts.append((item_key, derived.manifest_digest))
-            manifests[item_key] = manifest
-        # What every item consumed (a list of Captures they all derive from) is
-        # stored once and cited by digest: each item's record carries only its
-        # own digests, so its size never grows with the run's Capture count.
-        payloads: list[object] = []
-        if folded:
-            shared = shared_terminal_dependencies(tuple(manifests.values()), folded)
-            shared_digest = self.bodies.store(
-                render_shared_terminal_dependencies(shared), journal_payload=True
-            ).digest
-            payloads = list(
-                split_item_dependency_payloads(
-                    tuple(manifests.values()),
-                    folded,
-                    shared=shared,
-                    shared_digest=shared_digest,
-                    deployment_digest=admission.deployment_snapshot_digest,
-                    recorded_at=stamps,
+            folded.append(
+                derive_terminal_item_facts(
+                    tokens,
+                    manifest=manifest,
+                    child_index=index,
+                    facts=state.facts,
+                    outcomes=outcomes,
                 )
             )
-        group = self._append_events(
-            admission,
-            records,
-            "item_dependencies",
-            payloads,
-            recorded_at=recorded_at,
-        )
+            manifests[item_key] = manifest
+        items_record_digest: str | None = None
+        if folded:
+            # What every item consumed (a list of Captures they all derive from)
+            # is stored once; each item's body carries only its own digests, so
+            # its size never grows with the run's Capture count.
+            built = build_terminal_items(
+                tuple(manifests.values()),
+                folded,
+                terminal_node_id=node.node_id,
+                shared=shared_terminal_dependencies(tuple(manifests.values()), folded),
+                digest=lambda content: self.bodies.digest_bytes(content).tagged,
+            )
+            self.bodies.store_many(built.bodies, journal_payload=True)
+            items_record_digest = self._append_event(
+                admission, records, "item_dependencies", built.payload
+            ).record_digest
         # A claims item also records what it changed (D-R37 g): its stable
         # identity, its change's kind and the digest of that canonical change,
         # never the change body. Other terminals' items carry none.
         changes = state.claims_changes.get(node.node_id, ())
         identities = state.claims_identities.get(node.node_id, ())
-        for index, (stored, (item_key, manifest_digest)) in enumerate(zip(group, item_drafts)):
+        receipts: list[TerminalChildReceiptV2] = []
+        for index, facts in enumerate(folded):
             change = changes[index] if index < len(changes) else None
             receipts.append(
-                TerminalChildReceiptV1(
+                TerminalChildReceiptV2(
                     child_index=index,
-                    item_key=item_key,
-                    manifest_digest=manifest_digest,
-                    record_digest=stored.record_digest,
-                    sequence=stored.record.sequence,
+                    item_key=facts.item_key,
+                    manifest_digest=facts.manifest_digest,
                     item_identity_digest=None if change is None else identities[index],
                     change_kind=None if change is None else change.kind,
                     change_digest=None if change is None else claims_item_change_digest(change),
                 )
             )
-        return tuple(receipts), tuple(values), manifests, selected
+        return _TerminalItems(
+            children=tuple(receipts),
+            values=tuple(values),
+            manifests=manifests,
+            selected=selected,
+            items_record_digest=items_record_digest,
+        )
 
     def _planned_external_occurrence(
         self,
@@ -7649,78 +8168,30 @@ class ProcedureExecutor:
             )
         raise ExecutionError(f"unsupported repeat operation {body.operation!r}")
 
-    def _append_events(
-        self,
-        admission: ProcedureRunAdmission,
-        records: list[StoredProcedureJournalRecordV1],
-        event_kind: JournalEventKindV1,
-        payloads: list[object],
-        *,
-        recorded_at: list[datetime],
-    ) -> tuple[StoredProcedureJournalRecordV1, ...]:
-        """Reserve, publish and append one terminal's item records as a group."""
-        if not payloads:
-            return ()
-        payload_bytes = [journal_payload_bytes(payload) for payload in payloads]
-        reservations = [
-            make_run_reservation(
-                instance_id=admission.instance_id,
-                partition_id=admission.journal_partition_id,
-                event_kind=event_kind,
-                run_id=admission.run_id,
-                admission_binding_digest=admission.admission_binding_digest,
-                body_digest=self.bodies.digest_bytes(content).tagged,
-            )
-            for content in payload_bytes
-        ]
-        with self.material_reservations.locked():
-            group_id = self.material_reservations.reserve_many_locked(reservations)
-            metadata = self.bodies.store_many(payload_bytes, journal_payload=True)
-            head = self.journal.read_head(admission.journal_stream, admission.journal_partition_id)
-            drafts = [
-                ProcedureJournalRecordDraftV1(
-                    stream=admission.journal_stream,
-                    partition_id=admission.journal_partition_id,
-                    event_kind=event_kind,
-                    accepted_coordinate=admission.accepted_coordinate,
-                    procedure_artifact_digest=admission.procedure_artifact_digest,
-                    definition_digest=admission.definition_digest,
-                    run_id=admission.run_id,
-                    line_spec_digest=admission.line_spec_digest,
-                    occurrence_id=admission.occurrence_id,
-                    attempt=admission.attempt,
-                    admission_binding_digest=admission.admission_binding_digest,
-                    payload_digest=item.digest,
-                    actor_context=admission.actor_context,
-                    recorded_at=when,
-                )
-                for item, when in zip(metadata, recorded_at)
-            ]
-            try:
-                group = self.journal.append_many(
-                    drafts,
-                    expected_head=head,
-                    fencing_token=self.fencing_token,
-                )
-            except JournalError as exc:
-                raise ProcedureBoundaryRefused(
-                    _journal_refusal_code(exc),
-                    "Procedure journal append refused.",
-                ) from exc
-            if len(group) != len(reservations) or any(
-                stored.record.payload_digest != reservation.body_digest
-                or stored.record.event_kind != reservation.intended_event_kind
-                or stored.record.run_id != reservation.run_id
-                or stored.record.admission_binding_digest != reservation.admission_binding_digest
-                or stored.record.stream != admission.journal_stream
-                or stored.record.partition_id != admission.journal_partition_id
-                for stored, reservation in zip(group, reservations)
-            ):
-                raise ExecutionError("journal append did not reproduce its material reservations")
-            self.material_reservations.release_locked(group_id)
-        records.extend(group)
-        self.run_index.apply_records(group)
-        return group
+    def _consumed(self, state: _RunState) -> dict[str, object]:
+        """The run's consumed Captures so far, versioned: an empty set is proven empty.
+
+        The sorted list is one run-free body, stored when the set changes
+        (once per distinct set in a run): every later node record that
+        consumed nothing new cites the same body.
+        """
+
+        held = state.consumption_body
+        if held is None or held[0] != state.consumed_captures:
+            captures = sorted(state.consumed_captures)
+            digest = self.bodies.store(
+                canonical_bytes({"tag": CONSUMED_CAPTURES_BODY_V1, "captures": captures}),
+                journal_payload=True,
+            ).digest
+            held = (frozenset(state.consumed_captures), digest)
+            state.consumption_body = held
+        return {
+            "consumption": {
+                "v": CONSUMPTION_VERSION,
+                "captures_digest": held[1],
+                "count": len(held[0]),
+            }
+        }
 
     def _append_event(
         self,
@@ -7729,6 +8200,19 @@ class ProcedureExecutor:
         event_kind: JournalEventKindV1,
         payload: object,
     ) -> StoredProcedureJournalRecordV1:
+        if event_kind == "source_request_derived" and isinstance(payload, Mapping):
+            # The request value is a run-free body: an unchanged request is one object.
+            payload = split_derived_source_request(
+                payload,
+                store=lambda content: self.bodies.store(content, journal_payload=True).digest,
+            )
+        if event_kind == "terminal_egress" and splits_terminal_egress(payload):
+            # A claims terminal's per-item parts are run-free bodies the record
+            # cites: an unchanged list is one object, shared across records.
+            payload = split_terminal_egress_payload(
+                cast(Mapping[str, Any], payload),
+                store=lambda content: self.bodies.store(content, journal_payload=True).digest,
+            )
         payload_bytes = journal_payload_bytes(payload)
         body_digest = self.bodies.digest_bytes(payload_bytes).tagged
         reservation = make_run_reservation(
@@ -8151,6 +8635,89 @@ def _extract_only_keys(node: ExtractNode, *, state: _RunState) -> list[dict[str,
             node_id=node.node_id,
         )
     return cast(list[dict[str, object]], resolved)
+
+
+#: Each (Capture, extract spec, selection)'s rows: an immutable derivation of
+#: immutable inputs, computed once per process.
+_ROW_MAPS: OrderedDict[tuple[str, str, str], tuple[Any, dict[str, str]]] = OrderedDict()
+_ROW_MAPS_CAPACITY = 256
+
+
+def _row_map_of(
+    state: _RunState, capture: str, spec: str, selected: str, outcome: ExtractOutcome
+) -> tuple[Any, dict[str, str]]:
+    """One Capture's extracted records as rows (a ``RowMap``) and by locator.
+
+    The rows of the same Capture under the same spec and selection never
+    change, so a later run reuses them: the loop over records runs once.
+    """
+
+    from cruxible_core.evidence.claim_reobservations import RowMap, row_digest
+    from cruxible_core.procedures.extract import _Record, held_wire, wire_value
+
+    key = (capture, spec, selected)
+    held = _ROW_MAPS.get(key)
+    if held is not None:
+        _ROW_MAPS.move_to_end(key)
+        return held
+    contract = state.capture_contracts.get(capture, "")
+    source = state.capture_sources.get(capture, "")
+    rows: dict[str, str] = {}
+    for item in outcome.held:
+        if not isinstance(item, _Record):
+            continue
+        rows[item.locator] = row_digest(
+            contract,
+            source,
+            {name: wire_value(value) for name, value in item.key.items()},
+            # A field's value and state, never where in the document it sat:
+            # the same rows reordered are the same rows.
+            {
+                name: {part: held for part, held in held_wire(value).items() if part != "at"}
+                for name, value in item.fields.items()
+            },
+        )
+    found = (RowMap(capture, spec, contract, tuple(sorted(rows.items()))), rows)
+    _ROW_MAPS[key] = found
+    while len(_ROW_MAPS) > _ROW_MAPS_CAPACITY:
+        _ROW_MAPS.popitem(last=False)
+    return found
+
+
+def _observation_latest(
+    state: _RunState | None, receipts: Sequence[ClaimEvidenceReceipt | None]
+) -> dict[str, datetime]:
+    """When the call that fetched each cited Capture ended, for those this run observed."""
+
+    found: dict[str, datetime] = {}
+    if state is None:
+        return found
+    for receipt in receipts:
+        cited = None if receipt is None else getattr(receipt.value, "capture_digest", None)
+        if isinstance(cited, str) and cited not in found:
+            span = _capture_span(state, cited)
+            if span is not None:
+                found[cited] = span[1]
+    return found
+
+
+def _capture_span(
+    state: _RunState, capture: str, seen: frozenset[str] = frozenset()
+) -> tuple[datetime, datetime] | None:
+    """When this run observed a Capture: its acquiring call's span, or for one it
+    derived, the span of all its inputs (None when any input was not fetched now)."""
+
+    span = state.capture_spans.get(capture)
+    if span is not None:
+        return span
+    inputs = state.derivations.get(capture)
+    if not inputs or capture in seen:
+        return None
+    found = [_capture_span(state, item, seen | {capture}) for item in inputs]
+    if any(item is None for item in found):
+        return None
+    known = [item for item in found if item is not None]
+    return min(item[0] for item in known), max(item[1] for item in known)
 
 
 def _member_request_digest(

@@ -296,6 +296,24 @@ def _retention(
     return None if contract is None else capture_retention_policy(contract)
 
 
+def _last_observed(instance: Any, envelope: Any) -> datetime:
+    """When a Capture's contents were last observed: its own instant, or a later fetch's.
+
+    A re-fetch that reproduces a held Capture reuses it (ruling 1c), so the
+    envelope's instant is when the contents were first observed; minimum
+    retention counts from the latest observation of them.
+    """
+
+    from cruxible_client.contracts.captures import observed_content
+    from cruxible_core.evidence.claim_reobservations import ReobservationReader
+
+    later = ReobservationReader.of(instance).latest_observation(
+        envelope.capture_contract_digest, observed_content(envelope).digest
+    )
+    observed: datetime = envelope.observed_at
+    return observed if later is None or later <= observed else later
+
+
 def _absence_permitted(
     policy: CaptureRetentionErasurePolicy | None, *, observed_at: datetime, now: datetime
 ) -> bool:
@@ -536,7 +554,7 @@ class EvidencePart:
                                     git_oid=coordinate.git_oid,
                                     capture_digest=digest,
                                 ),
-                                observed_at=envelope.observed_at,
+                                observed_at=_last_observed(instance, envelope),
                                 now=now,
                             )
                         )

@@ -264,7 +264,11 @@ def test_fields_without_for_each_are_one_item(tmp_path: Path) -> None:
 def test_an_hourly_reread_of_identical_rows_is_one_item_per_row_seen_each_hour(
     tmp_path: Path,
 ) -> None:
-    """Each tick reads its own Capture; the same rows are the same items, seen again."""
+    """Each tick re-reads the same bytes; the same rows are the same items, seen again.
+
+    An identical re-read reuses the held Capture (ruling 1c), so every sighting
+    stands on the one Capture the first tick produced.
+    """
 
     instance, root, line = inbox_world(tmp_path)
     hours = 4
@@ -280,7 +284,7 @@ def test_an_hourly_reread_of_identical_rows_is_one_item_per_row_seen_each_hour(
     captures = [
         next(iter({item.capture_digest for item in state.source_observations})) for state in states
     ]
-    assert len(set(captures)) == hours  # new evidence every hour
+    assert len(set(captures)) == 1  # the same evidence every hour: the held Capture
     for item in entries:
         envelope = item.envelope
         assert envelope.occurrences == hours

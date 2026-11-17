@@ -135,6 +135,8 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("ActionRunRequest", "wait_timeout_seconds"): "VALIDITY WINDOW",
     ("ReobservationReading", "sequence"): "SETTLEMENT ORDER",
     ("RecordedReobservation", "sequence"): "SETTLEMENT ORDER",
+    # A content observation's journal sequence: where a read's position cuts it.
+    ("_Point", "sequence"): "SETTLEMENT ORDER",
     ("LandingHead", "sequence"): "SETTLEMENT ORDER",
     ("Landing", "sequence"): "SETTLEMENT ORDER",
     ("ReobservationReading", "boundaries"): "VALIDITY WINDOW",
@@ -596,8 +598,8 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("SourceEffectiveTime", "effective_until"): "VALIDITY WINDOW",
     ("SubjectProfileV1", "evaluation_time"): "EVALUATION INSTANT",
     ("StaleProposal", "admitted_at"): "ASSERTION TIME",
-    ("TerminalChildReceiptV1", "sequence"): "SETTLEMENT ORDER",
     ("TerminalEgressRequestV1", "prepared_at"): "EVALUATION INSTANT",
+    ("TerminalEgressRequestV1", "observation_latest"): "EVALUATION INSTANT",
     ("TerminalEgressRequestV2", "evaluation_time"): "EVALUATION INSTANT",
     ("VerifiedClaimAttestation", "recorded_at"): "ASSERTION TIME",
     ("VerifiedExhaustRecordV1", "sequence"): "SETTLEMENT ORDER",
@@ -616,6 +618,8 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     # `now - 3d`: a fixed shift of the query's explicit evaluation instant.
     ("QueryEvaluationTimeRef", "offset_seconds"): "EVALUATION INSTANT",
     ("FilterOperand", "offset_seconds"): "EVALUATION INSTANT",
+    # When each fetched Capture's acquiring call observed its members (ruling 1b).
+    ("_RunState", "capture_spans"): "EVALUATION INSTANT",
 }
 
 # Discovered by name, carrying no clock value: a supplier of instants, a boolean
