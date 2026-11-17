@@ -521,7 +521,9 @@ quickstart and concepts pages.
   review` printed only `created` for them. A new ClaimType now shows its value
   type, cardinality, kinds, roles, evidence requirement and admitted contracts
   (public names); a Document its title and links (`guides ClaimType:...`); a
-  note its section and the Subjects it is about. The review cache rebuilds once
+  note its section and the Subjects it is about. A note's section Capture now
+  counts in the review's access decision, so a reader it is withheld from sees
+  neither version's file or heading path. The review cache rebuilds once
   (format 5).
 - **A note's handle reads with `get`.** `get NOTE-...` (or `Note:NOTE-...`),
   the handle `link` and `backlinks` print, answered `ref_not_found`; it now

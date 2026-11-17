@@ -1052,6 +1052,62 @@ def test_r6_a_real_restricted_note_keeps_its_section_from_a_read_only_reader(
                 assert proof["envelope"]["section"] == ["Reason"]
 
 
+def test_r6_a_note_only_review_keeps_a_restricted_section_from_a_read_only_reader(
+    tmp_path: Path,
+) -> None:
+    """A proposal holding just a note cited no Claim Capture, so its review showed the
+    restricted file and heading path to a reader without access."""
+
+    from cruxible_client.contracts.captures import (
+        capture_contract_path,
+        foreign_source_capture_contract,
+        render_capture_contract,
+    )
+    from cruxible_client.contracts.text_display import render_review_summary
+    from cruxible_client.contracts.write import WriteRequest
+    from cruxible_core.service.authoring.write_verbs import service_playbill_write
+    from cruxible_core.service.proposals.review import service_review_playbill_proposal
+    from tests.core_support._identity_support import accept_tree
+    from tests.core_support._write_support import KIND, caller, seed_write_surface
+    from tests.test_service.test_notes import SOURCE, about
+
+    instance, _ = seed_write_surface(tmp_path)
+    sealed = foreign_source_capture_contract(SOURCE).model_copy(
+        update={"body_access": "restricted"}
+    )
+    accept_tree(
+        instance,
+        {capture_contract_path(sealed.identity.name): render_capture_contract(sealed)},
+        name="sealed-notes",
+    )
+    pending = service_playbill_write(
+        instance,
+        request=WriteRequest(because="Context", changes=(about(f"{KIND}/wi-1"),), accept="never"),
+        caller=caller(),
+    )
+    assert pending.proposal is not None
+    proposal = pending.proposal.proposal_id
+    for order in ((READER, KEY), (KEY, READER)):
+        for access in order:
+            review = service_review_playbill_proposal(instance, proposal_id=proposal, access=access)
+            served = review.model_dump_json() + render_review_summary(review)
+            (definition,) = review.definitions
+            assert definition.kind == "Note"
+            if access is READER:
+                assert review.withheld is not None and definition.detail is None
+                # The withholding notice names the restricted kind, never the section.
+                assert '"source_id"' not in served and '"Reason"' not in served
+                assert "#Reason" not in served
+                assert all(
+                    not group.shared_fields and all(not row.before for row in group.rows)
+                    for group in review.groups
+                    if group.artifact_kind == "note"
+                )
+            else:
+                assert review.withheld is None and definition.detail is not None
+                assert definition.detail.file == SOURCE
+
+
 class _FakeEnvelopes:
     """The envelope index's two authorization reads, counted, over in-memory metadata."""
 
