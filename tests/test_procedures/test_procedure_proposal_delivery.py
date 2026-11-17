@@ -23,7 +23,7 @@ from cruxible_client.contracts.captures import (
     parse_capture_envelope,
 )
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_path, render_claim_type
-from cruxible_client.contracts.claims import parse_claim
+from cruxible_client.contracts.claims import claim_artifact_digest, parse_claim
 from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionPolicy,
     ClaimEvidenceAdmissionRule,
@@ -2855,3 +2855,59 @@ def test_a_prepared_then_delivered_terminal_reads_as_one_delivery(
         "pending",
         "capped_by_term",
     }
+
+
+@pytest.mark.parametrize("lane", ["delivered", "recovered"])
+def test_a_per_claim_record_counts_for_a_deadline_only_once_its_call_ended(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, lane: str
+) -> None:
+    """Review 2c #2: a per-Claim record keeps the fetching call's end (ruling 1b).
+
+    The run's call is widened to members ten minutes apart, the restated one
+    the earlier. The durable request carries the call's end, so the record
+    delivered (or recorded by recovery after a crash at the sink) counts for
+    a deadline only once that call ended.
+    """
+
+    from pathlib import PurePosixPath
+
+    from cruxible_core.evidence.claim_reobservations import ReobservationReader
+    from cruxible_core.procedures import execution
+    from cruxible_core.service.proposals.proposal_egress import service_recover_proposal_egress
+
+    instance, owner, root, line, _procedure = proposal_world(tmp_path)
+    first = _accept_first_run(instance, owner, root, line)
+    claim_id = PurePosixPath(first.children[0].path).stem
+    head = instance.accepted_coordinate()
+    version = claim_artifact_digest(
+        parse_claim(
+            instance.tree_at(head.git_oid)[first.children[0].path], path=first.children[0].path
+        )
+    ).tagged
+    _restate_in_new_bytes(root, monkeypatch)
+    span = execution._capture_span  # noqa: SLF001
+
+    def widened(state, capture, seen=frozenset()):  # type: ignore[no-untyped-def]
+        found = span(state, capture, seen)
+        return None if found is None else (found[0], found[0] + timedelta(minutes=10))
+
+    monkeypatch.setattr(execution, "_capture_span", widened)
+    at = NOW + timedelta(hours=1)
+    if lane == "delivered":
+        assert run_line(instance, root, line, at=at).status == "succeeded"
+    else:
+        with monkeypatch.context() as patch:
+            _die_at_delivery(patch, journal_failure=True)
+            with pytest.raises(_Crash):
+                run_line(instance, root, line, at=at)
+        service_recover_proposal_egress(instance, recorded_at=at + timedelta(hours=1))
+    from cruxible_core.evidence.claim_reobservations import ClaimReobservationStore
+
+    (record,) = ClaimReobservationStore(instance).history(claim_id)
+    reader = ReobservationReader(instance)
+    middle = record.observed_at + timedelta(minutes=5)
+    assert reader.latest_version_record(claim_id, version, observed_by=middle) is None
+    ended = reader.latest_version_record(
+        claim_id, version, observed_by=record.observed_at + timedelta(minutes=10)
+    )
+    assert ended is not None and ended.record.capture_digest == record.capture_digest

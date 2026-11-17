@@ -613,12 +613,24 @@ class TerminalEgressRequestV1(_StrictEgressModel):
     claims_evidence: dict[str, ClaimEvidenceReceipt] = Field(
         default_factory=dict, exclude_if=lambda value: not value
     )
+    #: When the call that fetched each cited Capture ended (its last member's
+    #: instant, ruling 1b), for the Captures this run fetched: a per-Claim
+    #: re-observation recorded at delivery, or by recovery, carries it.
+    observation_latest: dict[str, datetime] = Field(
+        default_factory=dict, exclude_if=lambda value: not value
+    )
+
     _digests = field_validator("procedure_artifact_digest", "admission_binding_digest")(_tagged)
 
     @field_validator("prepared_at")
     @classmethod
     def _prepared_at(cls, value: datetime) -> datetime:
         return ensure_utc(value)
+
+    @field_validator("observation_latest")
+    @classmethod
+    def _observation_latest(cls, value: dict[str, datetime]) -> dict[str, datetime]:
+        return {_tagged(digest): ensure_utc(latest) for digest, latest in value.items()}
 
     @model_validator(mode="after")
     def _shape(self) -> "TerminalEgressRequestV1":
@@ -639,7 +651,7 @@ class TerminalEgressRequestV1(_StrictEgressModel):
                 raise ValueError(
                     "claims egress requires the executor's typed changes; use a claims node"
                 )
-        elif self.claims_changes or self.claims_evidence:
+        elif self.claims_changes or self.claims_evidence or self.observation_latest:
             raise ValueError("only the claims executor produces Claim changes and evidence")
         if not self.items:
             raise ValueError("terminal egress requires at least one child item")

@@ -6702,6 +6702,7 @@ class ProcedureExecutor:
                 claims_changes=state.claims_changes.get(node.node_id, ()),
                 derivations=state.derivations,
                 capture_root_cache=state.capture_root_cache,
+                state=state,
             )
         except TerminalEgressError as exc:
             refusal = self._terminal_refusal(exc, node_id=node.node_id)
@@ -6994,6 +6995,7 @@ class ProcedureExecutor:
         claims_changes: tuple[CoreClaimsChange, ...] = (),
         derivations: Mapping[str, Collection[str]] | None = None,
         capture_root_cache: CaptureRootCache | None = None,
+        state: _RunState | None = None,
     ) -> tuple[TerminalEgressRequestV1, PreparedTerminalEgressV1 | None]:
         """Hand the sink the exact pins this terminal kind's law traverses.
 
@@ -7056,6 +7058,9 @@ class ProcedureExecutor:
                 if claims_evidence
                 else {}
             ),
+            # One entry per distinct cited Capture this run fetched, so
+            # O(the terminal's items), never the Claims citing them.
+            observation_latest=_observation_latest(state, claims_evidence),
             prepared_at=self.clock.now(),
         )
         # Ruling C4: a direct run's admission is never a V5+ Line carrier (it
@@ -8605,6 +8610,23 @@ def _extract_only_keys(node: ExtractNode, *, state: _RunState) -> list[dict[str,
             node_id=node.node_id,
         )
     return cast(list[dict[str, object]], resolved)
+
+
+def _observation_latest(
+    state: _RunState | None, receipts: Sequence[ClaimEvidenceReceipt | None]
+) -> dict[str, datetime]:
+    """When the call that fetched each cited Capture ended, for those this run observed."""
+
+    found: dict[str, datetime] = {}
+    if state is None:
+        return found
+    for receipt in receipts:
+        cited = None if receipt is None else getattr(receipt.value, "capture_digest", None)
+        if isinstance(cited, str) and cited not in found:
+            span = _capture_span(state, cited)
+            if span is not None:
+                found[cited] = span[1]
+    return found
 
 
 def _capture_span(

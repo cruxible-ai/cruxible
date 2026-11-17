@@ -87,7 +87,7 @@ ROW_MAP_BODY = "cruxible-row-map-v1"
 #: The row maps of one extract step's Captures (run-free).
 ROW_MAPS_BODY = "cruxible-row-maps-v1"
 _ACCESS = BodyAccessContext(principal_id="claim-reobservation", can_read_body=True)
-_SCHEMA_VERSION = 10
+_SCHEMA_VERSION = 11
 REOBSERVATION_DIRECTORY = "claim-reobservations"
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 # ``reobservations`` keeps the full history (audit, historical verification).
@@ -112,7 +112,7 @@ CREATE TABLE IF NOT EXISTS reobservations (
  claim_id TEXT NOT NULL, capture_digest TEXT NOT NULL, contract_digest TEXT NOT NULL,
  observed_content_digest TEXT NOT NULL, observed_at TEXT NOT NULL, recorded_at TEXT NOT NULL,
  observed_us INTEGER NOT NULL, recorded_us INTEGER NOT NULL, sequence INTEGER NOT NULL,
- claim_artifact_digest TEXT NOT NULL,
+ claim_artifact_digest TEXT NOT NULL, latest_us INTEGER NOT NULL,
  PRIMARY KEY(claim_id, capture_digest)
 ) STRICT;
 CREATE INDEX IF NOT EXISTS reobservations_by_sequence ON reobservations (claim_id, sequence);
@@ -212,7 +212,7 @@ _VERSION_RECORD = (
     "SELECT capture_digest, contract_digest, observed_content_digest, observed_at, recorded_at, "
     "sequence FROM reobservations INDEXED BY reobservations_by_version "
     "WHERE claim_id=? AND claim_artifact_digest=? AND observed_us<=? AND sequence<=? "
-    "ORDER BY observed_us DESC, capture_digest DESC LIMIT 1"
+    "AND latest_us<=? ORDER BY observed_us DESC, capture_digest DESC LIMIT 1"
 )
 
 
@@ -512,7 +512,7 @@ class ClaimReobservationStore:
         observed_us = _micros(observed_at)
         key = (payload["claim_id"], payload["contract_digest"], payload["observed_content_digest"])
         inserted = conn.execute(
-            "INSERT OR IGNORE INTO reobservations VALUES (?,?,?,?,?,?,?,?,?,?)",
+            "INSERT OR IGNORE INTO reobservations VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (
                 payload["claim_id"],
                 payload["capture_digest"],
@@ -524,6 +524,10 @@ class ClaimReobservationStore:
                 recorded_us,
                 sequence,
                 str(payload.get("claim_artifact_digest", "")),
+                # When the observing call ended (ruling 1b): a deadline counts
+                # it only if it ended by then. A record without one ended at
+                # its own instant (earlier builds, dev instances only).
+                _micros(_instant(payload["latest"])) if "latest" in payload else observed_us,
             ),
         ).rowcount
         if inserted:
@@ -947,8 +951,15 @@ class ClaimReobservationStore:
         extracted_value: object = None,
         cited_envelopes: dict[str, CaptureEnvelopeAny] | None = None,
         verified_witnesses: dict[object, None] | None = None,
+        call_latest: datetime | None = None,
     ) -> ReobservationRecord | None:
         """Record one admissible re-observation at the current head; a repeat is the same record.
+
+        ``call_latest`` is when the call that fetched the Capture ended (its
+        last member's instant, ruling 1b); a deadline counts the record only if
+        that call ended by it. Unknown (a Capture handed to the run, a write's
+        restatement), the record's own recording instant stands in: a call
+        always ends before its record is made, so that bound is never late.
 
         Admission is judged at the accepted head, held still from the check
         through the durable append (``holding_accepted_head``), and only when the
@@ -1065,6 +1076,11 @@ class ClaimReobservationStore:
                 "observed_content_digest": record.observed_content_digest,
                 "observed_at": format_datetime(record.observed_at),
                 "claim_artifact_digest": version,
+                "latest": format_datetime(
+                    now
+                    if call_latest is None
+                    else max(record.observed_at, min(call_latest.astimezone(UTC), now))
+                ),
             }
             if extraction is not None:
                 payload["extraction"] = extraction.model_dump(mode="json")
@@ -1893,7 +1909,8 @@ class ReobservationReader:
         """One Claim version's latest recorded re-observation observed by ``observed_by``.
 
         ``version`` is the Claim's artifact digest: only records admitted while
-        that exact version was live count. One
+        that exact version was live count, and only when their call ended by
+        ``observed_by`` (a call running across the deadline does not count). One
         seek on ``reobservations_by_version`` and one journal record read by
         its sequence: records observed after ``observed_by``, and the lineage's
         other versions, are never visited.
@@ -1907,7 +1924,7 @@ class ReobservationReader:
             self.probes += 1
             row = conn.execute(
                 _VERSION_RECORD,
-                (claim_id, version, _micros(observed_by), _through()),
+                (claim_id, version, _micros(observed_by), _through(), _micros(observed_by)),
             ).fetchone()
         if row is None:
             return None
