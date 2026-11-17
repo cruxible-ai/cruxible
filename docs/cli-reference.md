@@ -5084,7 +5084,10 @@ or a target ref whose current Git target
 names exactly one admission; unknown and historical ambiguous selectors are
 typed refusals that point back to `proposal list`.
 A proposal behind the head is stale only when the head changed what it touches
-since its base (`stale_paths`, above). Otherwise `proposal approve` and
+since its base (`stale_paths`, above). A path the head now holds exactly as the
+proposal proposes it is no conflict: two pending writes that cite the same new
+file each carry its CaptureContract, and the second stays open when the first
+lands. Otherwise `proposal approve` and
 `proposal activate` land the same change set at the head: its own bytes are
 readmitted there under its author (the admission's `readmits` link names the
 source, proposed at its base, and the head it landed at), the source closes as

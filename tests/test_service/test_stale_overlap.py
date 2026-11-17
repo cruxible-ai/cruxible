@@ -229,6 +229,113 @@ def test_a_change_to_what_it_touches_makes_it_stale_and_names_the_path(
     assert instance.proposal_evidence().read_withdrawal(source_id) is None
 
 
+def test_two_writes_defining_one_identical_contract_do_not_conflict(tmp_path: Path) -> None:
+    """psw F16: two pending writes each cite the same uncatalogued file, so each
+    carries the file's CaptureContract, byte for byte the same. When the first
+    landed, the second read as stale on that path, left the open list and the
+    reviewer's approval row, and waited for a readmit nobody was told about.
+
+    The head holding exactly what a change set proposes for a path is no
+    conflict: the second stays open, the reviewer keeps the approval row, and
+    approving lands it at the head without the contract it no longer adds.
+    """
+
+    from datetime import UTC, datetime
+
+    from cruxible_client.authoring.doc_writes import write_workspace
+    from cruxible_client.contracts.write import WriteRequest
+    from cruxible_core.coverage.contracts import CoverageAccessProfile
+    from cruxible_core.service.authoring.write_verbs import service_playbill_write
+    from cruxible_core.service.discovery.next import NextRequest, service_playbill_next
+    from cruxible_core.service.proposals.proposals import open_proposal_count
+    from tests.core_support._write_support import caller
+
+    instance, reviewer = _world(tmp_path)
+    workspace = tmp_path / "cited"
+    workspace.mkdir()
+    (workspace / "notes.md").write_text("# Notes\n\nfirst anchor\n\nsecond anchor\n", "utf-8")
+
+    def cite(subject: str, anchor: str) -> str:
+        request = WriteRequest.model_validate(
+            {
+                "because": "The writer checked it.",
+                "changes": [
+                    _set(
+                        subject,
+                        "title",
+                        anchor,
+                        evidence={"kind": "file", "file": f"notes.md#{anchor}"},
+                    )
+                ],
+            }
+        )
+        outcome = write_workspace(
+            request,
+            workspace=workspace,
+            submit=lambda observed: service_playbill_write(
+                instance, request=observed, caller=caller()
+            ),
+        )
+        assert outcome.proposal is not None, outcome
+        return outcome.proposal.proposal_id
+
+    first = cite(f"{KIND}/wi-1", "first anchor")
+    second = cite(f"{KIND}/wi-2", "second anchor")
+    shared = _proposal_paths(instance, first) & _proposal_paths(instance, second)
+    (contract,) = shared
+    assert contract.startswith("capture-contracts/")
+
+    assert _approve(instance, reviewer, first).activation.status == "accepted"  # type: ignore[union-attr]
+
+    entry = _entry(instance, second)
+    assert (entry.status, entry.stale_paths) == ("open", ())
+    assert open_proposal_count(instance) == 1
+    queue = service_playbill_next(
+        instance,
+        request=NextRequest(
+            evaluation_time=datetime.now(UTC),
+            access_profile=CoverageAccessProfile(
+                profile_id="test", permitted_access_classes=("instance", "public")
+            ),
+        ),
+        caller_principal_id="reviewer",
+    )
+    (row,) = [item for item in queue.items if item.subject_identity == second]
+    assert row.reason == "proposal_awaiting_approval"
+    assert row.repair is not None and row.repair.operation == "cruxible.proposal.approve"
+
+    landed = _approve(instance, reviewer, second)
+    assert isinstance(landed, ProposalRecompiled) and landed.proposal_id is not None
+    # The contract is already live, so the landed change set no longer adds it;
+    # that is a different member roll, and the reviewer is shown it.
+    assert landed.status == "pending_review" and not landed.members_identical
+    assert [(item.path, item.change) for item in landed.changed_members] == [(contract, "removed")]
+    assert _approve(instance, reviewer, landed.proposal_id).activation.status == "accepted"  # type: ignore[union-attr]
+
+
+def test_a_different_artifact_at_a_proposed_path_is_still_a_conflict(tmp_path: Path) -> None:
+    """Only the exact artifact the change set proposes is no conflict: a path
+    the head holds a different version of names itself, as before."""
+
+    from cruxible_core.service.proposals.staleness import proposal_change_keys
+
+    instance, reviewer = _world(tmp_path)
+    held = _pending(instance, _set(f"{KIND}/wi-1", "title", "held"))
+    proposal = _proposal_result(instance, held)
+    assert proposal.candidate is not None
+    keys = proposal_change_keys(
+        instance, proposal_id=held, candidate_digest=proposal.candidate.candidate_digest
+    )
+    assert {path for path, _digest in keys.proposed} == {
+        member.path
+        for member in proposal.candidate.members
+        if member.disposition in ("create", "replace")
+    }
+    _accept_write(instance, reviewer, _set(f"{KIND}/wi-1", "title", "someone else's"))
+    entry = _entry(instance, held)
+    assert entry.status == "awaiting_readmit" and entry.stale_paths
+
+
 def _proposal_paths(instance: PlaybillInstance, proposal_id: str) -> set[str]:
     candidate = _proposal_result(instance, proposal_id).candidate
     assert candidate is not None

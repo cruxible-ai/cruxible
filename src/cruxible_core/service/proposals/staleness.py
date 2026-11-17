@@ -21,6 +21,13 @@ A proposal's keys:
 * a settle's Procedure mandate (``settle_submission.mandate_digest``), read
   as that version's path on the history index's digest locator.
 
+A member path the head changed to exactly the artifact this change set
+proposes for it is not a conflict: two pending writes that each define the
+same CaptureContract for a file they both cite agree about it, and the second
+stays open when the first lands. The comparison is the head's latest version
+of that one path against the member's own digest, one keyed seek per changed
+member path.
+
 Landing re-evaluates the change set at the head, so a boundary no key names
 (a Subject id an alias took since, say) still refuses there rather than land.
 """
@@ -56,6 +63,9 @@ class ProposalChangeKeys:
     slots: frozenset[Slot]
     #: The Procedure mandate a settle was submitted under, if any.
     mandate_digest: str | None = None
+    #: Each member path with the artifact its change set proposes there (a
+    #: retirement or deletion proposes none), sorted by path.
+    proposed: tuple[tuple[str, str], ...] = ()
 
 
 _KEYS_LIMIT = 2048
@@ -105,6 +115,14 @@ def proposal_change_keys(
         paths=frozenset(paths),
         slots=frozenset(slots),
         mandate_digest=None if settle is None else settle.mandate_digest,
+        proposed=tuple(
+            sorted(
+                (member.path, member.candidate_artifact_digest)
+                for member in candidate.members
+                if member.candidate_artifact_digest is not None
+                and member.disposition in ("create", "replace")
+            )
+        ),
     )
     with _keys_lock:
         _keys_memo[proposal_id] = keys
@@ -170,6 +188,12 @@ def overlap_check(
             changed = set(history.paths_changed_after(paths, base.sequence))
             for slot in sorted(keys.slots, key=lambda item: (item[0], item[1], item[2] or "")):
                 changed |= history.paths_changed_after(slot_paths(slot), base.sequence)
+            for path, digest in keys.proposed:
+                if path in changed:
+                    # The head holds exactly what this change set proposes there.
+                    live = history.latest_member(path)
+                    if live is not None and live.artifact_digest == digest:
+                        changed.discard(path)
             return tuple(sorted(changed))
 
         yield check

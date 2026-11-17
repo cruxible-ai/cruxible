@@ -226,6 +226,10 @@ quickstart and concepts pages.
   `closed_by`, the principal whose approval, activation or readmit closed it;
   it used to read as withdrawn by its author. `proposal approve` prints the
   proposal beside the candidate it signed.
+- **Two pending writes that cite the same new file no longer conflict.** Each
+  carries the file's CaptureContract; when the first landed, the second went
+  `awaiting_readmit` on that identical contract and left the open list. A path
+  the head holds exactly as a proposal proposes it is no longer stale.
 
 ### Automation: Procedures, Lines and capabilities
 
