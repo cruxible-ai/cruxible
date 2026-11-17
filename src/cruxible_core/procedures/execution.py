@@ -5210,18 +5210,24 @@ class ProcedureExecutor:
             # When the call's members were observed: their own fetch instants.
             observed=tuple(wires[field].observed_at for field in built),
         )
-        if built:
-            span = (
-                min(wires[field].observed_at for field in built),
-                max(wires[field].observed_at for field in built),
+        for item in built.values():
+            state.capture_sources[item.capture_digest] = str(
+                getattr(item.envelope.source, "source_identity", "")
             )
-            for item in built.values():
+        # Only what the call fetched was observed now: a derived output is a
+        # function of its inputs, observed when they all were (``_capture_span``
+        # derives its span from them), never stamped with the derive's own time
+        # (review 2c #8).
+        fetched = {field: item for field, item in built.items() if field not in derived_fields}
+        if fetched:
+            span = (
+                min(wires[field].observed_at for field in fetched),
+                max(wires[field].observed_at for field in fetched),
+            )
+            for item in fetched.values():
                 state.capture_spans[item.capture_digest] = span
-                state.capture_sources[item.capture_digest] = str(
-                    getattr(item.envelope.source, "source_identity", "")
-                )
             if self.capture_observations is not None:
-                for item in built.values():
+                for item in fetched.values():
                     state.observed_contents[item.capture_digest] = (
                         item.envelope.capture_contract_digest,
                         observed_content(item.envelope).digest,
@@ -5235,7 +5241,7 @@ class ProcedureExecutor:
                             observed_content(item.envelope).digest,
                             item.capture_digest,
                         )
-                        for item in built.values()
+                        for item in fetched.values()
                     ),
                     earliest=span[0],
                     latest=span[1],

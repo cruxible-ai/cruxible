@@ -1096,3 +1096,51 @@ def test_a_real_failed_page_leaves_the_list_incomplete_and_suppresses_retirement
     assert any(
         item.kind == "claim_not_in_source" and item.source_incomplete for item in second.findings
     ), second.findings
+
+
+def test_a_derived_view_is_observed_only_through_the_pages_it_was_derived_from(
+    tmp_path: Path,
+) -> None:
+    """Review 2c #8: the derive's output is not a fetch. No content observation
+    names the view; its rows are observed with the span of the pages it read
+    (fetched by this run), never the derive's own instant."""
+
+    import json as _json
+    from datetime import timedelta
+
+    from cruxible_core.evidence.claim_reobservations import (
+        CONTENT_OBSERVATION_TAG,
+        ROW_OBSERVATION_TAG,
+        ClaimReobservationStore,
+    )
+    from cruxible_core.exhaust.records import parse_journal_payload
+    from cruxible_core.storage.cas import BodyAccessContext
+
+    instance = pages_world(tmp_path)
+    install(instance, list_spec(derive=True), line="test.kev-pages-derive-line", origins=True)
+    pages = Pages(split(catalog()), observed=NOW - timedelta(minutes=5))
+    state = run_pages(instance, pages, line="test.kev-pages-derive-line")
+    assert state.status == "succeeded", state.terminal
+    claims = _by(proposed(instance, state))
+    view = next(iter(claims.values())).backing.procedure_evidence.value.capture_digest
+    store = ClaimReobservationStore(instance)
+    journal = store._journal(create=False)  # noqa: SLF001
+    assert journal is not None
+    access = BodyAccessContext(principal_id="test", can_read_body=True)
+    payloads = [
+        parse_journal_payload(
+            instance.body_store().read(stored.record.payload_digest, access=access)
+        )
+        for stored in journal.select_records(store.stream, partition_id="reobservations")
+    ]
+    for payload in payloads:
+        if payload["tag"] == CONTENT_OBSERVATION_TAG:
+            body = _json.loads(instance.body_store().read(payload["set_digest"], access=access))
+            assert view not in {item[2] for item in body["contents"]}
+    rows = [payload for payload in payloads if payload["tag"] == ROW_OBSERVATION_TAG]
+    # The pages' instant, not the derive's (its wire says NOW).
+    from datetime import datetime as _datetime
+
+    assert rows and all(
+        _datetime.fromisoformat(payload["latest"]) == NOW - timedelta(minutes=5) for payload in rows
+    )
