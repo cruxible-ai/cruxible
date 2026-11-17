@@ -41,8 +41,9 @@ CREATE TABLE IF NOT EXISTS derivations (capture_digest TEXT PRIMARY KEY) WITHOUT
 CREATE TABLE IF NOT EXISTS derivation_inputs (
  capture_digest TEXT NOT NULL, input_digest TEXT NOT NULL,
  PRIMARY KEY(capture_digest, input_digest)) WITHOUT ROWID;
-CREATE TABLE IF NOT EXISTS content_keys (
- content_key TEXT PRIMARY KEY, capture_digest TEXT NOT NULL) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS content_reuse (
+ content_key TEXT PRIMARY KEY, capture_digest TEXT NOT NULL, proof_digest TEXT NOT NULL
+) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS backfilled (shard TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS backfill_complete (singleton INTEGER PRIMARY KEY);
 """
@@ -157,29 +158,32 @@ class CaptureEnvelopeIndex:
                 )
                 connection.execute("INSERT OR IGNORE INTO derivations VALUES (?)", (digest,))
 
-    def remember_content_key(self, content_key: str, capture_digest: str) -> None:
+    def remember_content_key(self, content_key: str, capture_digest: str, *, proof: str) -> None:
         """Name the Capture an identical re-fetch reuses (``capture_content_key``).
 
-        The executor names each Capture it stores new: the key covers the
-        executed request, which the envelope bytes do not carry. The latest one
-        stored wins (a new one is stored only when none held was usable). Not
-        rebuilt from the store's bytes: a lost row costs one new Capture, never
-        a wrong reuse.
+        The executor names each Capture it stores new once the run journaled
+        producing it; ``proof`` is that record's payload body. The key covers
+        the executed request, which the envelope bytes do not carry. The latest
+        one stored wins. Not rebuilt from the store's bytes: a lost row costs
+        one new Capture, never a wrong reuse.
         """
 
         with self._connection() as connection:
             connection.execute(
-                "INSERT OR REPLACE INTO content_keys VALUES (?,?)", (content_key, capture_digest)
+                "INSERT OR REPLACE INTO content_reuse VALUES (?,?,?)",
+                (content_key, capture_digest, proof),
             )
 
-    def capture_for_content_key(self, content_key: str) -> str | None:
-        """The held Capture an identical re-fetch reproduces, if one was stored (a candidate)."""
+    def capture_for_content_key(self, content_key: str) -> tuple[str, str] | None:
+        """The held Capture an identical re-fetch reproduces and its production
+        record's payload body, if one was named (a candidate)."""
 
         with self._connection() as connection:
             row = connection.execute(
-                "SELECT capture_digest FROM content_keys WHERE content_key=?", (content_key,)
+                "SELECT capture_digest, proof_digest FROM content_reuse WHERE content_key=?",
+                (content_key,),
             ).fetchone()
-        return None if row is None else str(row[0])
+        return None if row is None else (str(row[0]), str(row[1]))
 
     def _derivation_inputs(self, content: bytes) -> tuple[str, ...] | None:
         """A derived envelope's input Captures, from its manifest (stored before it).

@@ -53,8 +53,16 @@ class InstanceCaptureObservations:
         """
 
         store = self.instance.body_store()
-        digest = store.capture_envelopes.capture_for_content_key(content_key)
-        if digest is None:
+        found = store.capture_envelopes.capture_for_content_key(content_key)
+        if found is None:
+            return None
+        digest, proof = found
+        # Named only once its run journaled producing it (F-008): reusable only
+        # while that production record's body is not recorded missing, corrupt
+        # or erased (a journal payload lands with its record, so only damage
+        # is logged for it): one indexed answer, never a read of the producing
+        # run's records.
+        if _proof_lost(store, proof):
             return None
         if body_present(store, digest) is False or body_present(store, commitment_digest) is False:
             return None
@@ -65,40 +73,13 @@ class InstanceCaptureObservations:
         envelope = _held_envelope(store, digest)
         if envelope is None or envelope.commitment.digest != commitment_digest:
             return None
-        if not self._produced(digest, envelope):
-            return None
         return digest, envelope
 
-    def _produced(self, digest: str, envelope: CaptureEnvelope) -> bool:
-        """Whether the held Capture's producing run recorded producing it, proof available (F-008).
-
-        Read through the request's verification context: one read of that
-        run's records, shared with every later proof check of the request.
-        A Capture whose production is unproven is never reused: the new one
-        is built and recorded instead.
-        """
-
-        context = self.instance.capture_verification_context()
-        run_id = envelope.run_coordinate.run_id
-        try:
-            produced = any(
-                record.capture_digest == digest
-                and record.capture_contract_digest == envelope.capture_contract_digest
-                and record.receipt_digest in (None, envelope.producer_receipt_digest)
-                for record in context.produced_capture(digest, run_id=run_id)
-            )
-            return produced and (
-                context.producer_receipt(envelope.producer_receipt_digest, run_id=run_id)
-                is not None
-            )
-        except (CruxibleError, ValueError, OSError):
-            return False
-
-    def remember(self, content_key: str, capture_digest: str) -> None:
+    def remember(self, content_key: str, capture_digest: str, *, proof: str) -> None:
         """Name the new Capture these contents' next identical re-fetch reuses."""
 
         self.instance.body_store().capture_envelopes.remember_content_key(
-            content_key, capture_digest
+            content_key, capture_digest, proof=proof
         )
 
     def observe_rows(
@@ -171,6 +152,17 @@ class InstanceCaptureObservations:
             actor_id=actor_id,
             lineage=lineage,
         )
+
+
+def _proof_lost(store: Any, digest: str) -> bool:
+    """Whether the landing log records a production proof body damaged or erased."""
+
+    landings = getattr(store, "landings", None)
+    if landings is None:
+        return False
+    head = landings.head()
+    kind = landings.last_completion(digest, identity=head.identity, sequence=head.sequence)
+    return kind not in (None, "stored")
 
 
 def _held_envelope(store: Any, digest: str) -> CaptureEnvelope | None:

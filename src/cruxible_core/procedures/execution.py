@@ -1346,8 +1346,11 @@ class CaptureObservationsProtocol(Protocol):
     def held_capture(self, content_key: str, *, commitment_digest: str) -> tuple[str, Any] | None:
         """The held Capture (digest, envelope) of these contents, when it may be reused."""
 
-    def remember(self, content_key: str, capture_digest: str) -> None:
-        """Name the new Capture these contents' next identical re-fetch reuses."""
+    def remember(self, content_key: str, capture_digest: str, *, proof: str) -> None:
+        """Name the new Capture these contents' next identical re-fetch reuses.
+
+        ``proof`` is the payload body of the record journaling its production.
+        """
 
     def observe_rows(
         self,
@@ -6139,7 +6142,7 @@ class ProcedureExecutor:
                 input_name=rule.input_name, disposition="acquired", capture_digests=(digest,)
             )
         if new:
-            self._produced_capture(
+            proof = self._produced_capture(
                 admission,
                 records,
                 node=node,
@@ -6152,7 +6155,7 @@ class ProcedureExecutor:
             )
             key = state.pending_reuse_keys.pop(digest, None)
             if key is not None and self.capture_observations is not None:
-                self.capture_observations.remember(key, digest)
+                self.capture_observations.remember(key, digest, proof=proof)
         state.source_capture_associations.append(
             ProcedureSourceCaptureAssociation(
                 occurrence_path=occurrence_path,
@@ -6181,9 +6184,11 @@ class ProcedureExecutor:
         occurrence_path: str,
         invocation_receipt_digest: str,
         member_request_digest: str | None,
-    ) -> None:
+    ) -> str:
+        """Journal the run's production of one Capture; return the record's payload digest."""
+
         digest = acquisition.capture_digest
-        self._append_event(
+        return self._append_event(
             admission,
             records,
             "produced_capture",
@@ -6209,7 +6214,7 @@ class ProcedureExecutor:
                     "recorded_at": format_datetime(self.clock.now()),
                 },
             },
-        )
+        ).record.payload_digest
 
     def _run_child(
         self,
