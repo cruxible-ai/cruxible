@@ -727,3 +727,106 @@ def test_typed_named_query_specs_fill_defaults_without_reintroducing_pins(resolv
     accepted = QueryDefinitionInput(kind="query_definition", query_definition=body)
     assert isinstance(accepted.query_definition, QueryDefinitionSpec)
     assert query_definition_digest(accepted.query_definition) == query_definition_digest(full)
+
+
+def _window(where):
+    return QuerySpecInput.model_validate(
+        {
+            "query": "test.recent",
+            "from": {"incident": "security.incident"},
+            "fields": ["incident", "incident.window_start"],
+            "where": where,
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    "where,offset",
+    [
+        ("incident.window_start < now - 3d", -259200),
+        ("incident.window_start < now - 72h", -259200),
+        ("incident.window_start < now-4320m", -259200),
+        ("incident.window_start >= now + 12h", 43200),
+        ("now - 90s > incident.window_start", -90),
+    ],
+)
+def test_now_takes_a_fixed_offset_held_in_seconds(where, offset, resolver, tree):
+    query = lower_query_spec(_window(where), resolver)
+    assert query.artifact_format == "cruxible-query-definition-v4"
+    (time_ref,) = [
+        ref for ref in (query.where.left, query.where.right) if ref.kind == "evaluation_time"
+    ]
+    assert time_ref.offset_seconds == offset
+    assert time_ref.tag == "playbill-query-evaluation-time-ref-v2"
+    # Stored, parsed and rendered back: one canonical form per offset.
+    payload = lower_authoring_input(
+        QueryDefinitionInput(kind="query_definition", query_definition=_window(where))
+    )
+    path, wire, digest = _render_non_procedure_member(payload, tree=tree)
+    stored = parse_query_definition(wire, path=path)
+    assert stored == query
+    assert query_definition_digest(stored).tagged == digest
+    assert lower_query_spec(query_spec_from_definition(stored), resolver) == query
+
+
+def test_equal_offsets_are_one_definition_rendered_in_the_largest_unit(resolver):
+    days = lower_query_spec(_window("incident.window_start < now - 3d"), resolver)
+    hours = lower_query_spec(_window("incident.window_start < now - 72h"), resolver)
+    assert query_definition_digest(days) == query_definition_digest(hours)
+    assert query_spec_from_definition(hours).where.endswith(" < now - 3d")
+    odd = lower_query_spec(_window("incident.window_start < now + 25h"), resolver)
+    assert query_spec_from_definition(odd).where.endswith(" < now + 25h")
+
+
+def test_an_unshifted_now_stays_a_v3_definition(resolver):
+    for where in ("incident.window_start < now", "incident.window_start < now - 0d"):
+        query = lower_query_spec(_window(where), resolver)
+        assert query.artifact_format == "cruxible-query-definition-v3"
+        assert b"offset_seconds" not in render_query_definition(query)
+
+
+@pytest.mark.parametrize(
+    "where,code,column",
+    [
+        ("incident.window_start < now - P3D", "filter_invalid", 31),
+        ("incident.window_start < now - 3M", "time_offset_unit_unsupported", 31),
+        ("incident.window_start < now - 1y", "time_offset_unit_unsupported", 31),
+        ("incident.window_start < now - 2months", "time_offset_unit_unsupported", 31),
+        ("incident.window_start < now - 2w", "time_offset_unit_unsupported", 31),
+        ("incident.window_start < now - 3D", "time_offset_unit_unsupported", 31),
+        ("incident.window_start < now - 36501d", "filter_invalid", 31),
+        ("incident.window_start < now -", "filter_invalid", 30),
+    ],
+)
+def test_offsets_take_fixed_length_units_only(where, code, column):
+    with pytest.raises(QuerySpecError) as caught:
+        parse_filter(where)
+    assert caught.value.error_code == f"cruxible.query.{code}"
+    assert caught.value.column == column
+    if "M" in where or "y" in where.split("-")[-1]:
+        assert "days" in str(caught.value)
+
+
+def test_a_shifted_now_compares_only_with_a_timestamp(resolver):
+    with pytest.raises(QuerySpecError) as caught:
+        lower_query_spec(_window("incident.name < now - 3d"), resolver)
+    assert caught.value.error_code == "cruxible.query.value_type_mismatch"
+
+
+def test_the_format_follows_the_offset_both_ways(resolver):
+    shifted = lower_query_spec(_window("incident.window_start < now - 3d"), resolver)
+    body = shifted.model_dump(mode="json")
+    with pytest.raises(ValidationError, match="cruxible-query-definition-v4"):
+        type(shifted).model_validate({**body, "artifact_format": "cruxible-query-definition-v3"})
+    plain = lower_query_spec(_window("incident.window_start < now"), resolver).model_dump(
+        mode="json"
+    )
+    with pytest.raises(ValidationError, match="cruxible-query-definition-v3"):
+        type(shifted).model_validate({**plain, "artifact_format": "cruxible-query-definition-v4"})
+
+
+@pytest.mark.parametrize("expression", ["incident.name == 3d", "1abc == 3", "incident.name == - 3"])
+def test_a_duration_or_sign_is_read_only_after_now(expression):
+    with pytest.raises(QuerySpecError) as caught:
+        parse_filter(expression)
+    assert caught.value.error_code == "cruxible.query.filter_invalid"

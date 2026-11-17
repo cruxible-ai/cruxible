@@ -127,6 +127,7 @@ BUDGET_EXCEEDS_MAXIMUM = "cruxible.query.budget_exceeds_maximum"
 CLAIM_CONFLICT = "cruxible.query.claim_conflict"
 COORDINATE_MISMATCH = "cruxible.query.coordinate_mismatch"
 EVALUATION_TIME_NOT_ABSOLUTE = "cruxible.query.evaluation_time_not_absolute"
+EVALUATION_TIME_OUT_OF_RANGE = "cruxible.query.evaluation_time_out_of_range"
 PARAMETER_MISSING = "cruxible.query.parameter_missing"
 PARAMETER_TYPE_MISMATCH = "cruxible.query.parameter_type_mismatch"
 PARAMETER_UNDECLARED = "cruxible.query.parameter_undeclared"
@@ -620,7 +621,16 @@ class _Evaluator:
                 return _ABSENT
             return _Value(state="present", value=self._parameters[ref.parameter])
         if isinstance(ref, QueryEvaluationTimeRef):
-            return _Value(state="present", value=_render_time(self._evaluation_time))
+            # ``now - 3d``: a fixed shift of the explicit evaluation time, in UTC.
+            try:
+                shifted = self._evaluation_time + timedelta(seconds=ref.offset_seconds)
+            except OverflowError:
+                raise _refuse(
+                    EVALUATION_TIME_OUT_OF_RANGE,
+                    "The evaluation time shifted by the query's now offset leaves the "
+                    "representable timestamps; evaluate at an earlier or later time.",
+                ) from None
+            return _Value(state="present", value=_render_time(shifted))
         if isinstance(ref, QuerySubjectFieldRef):
             subject_path = row.bindings.get(ref.binding)
             if subject_path is None:

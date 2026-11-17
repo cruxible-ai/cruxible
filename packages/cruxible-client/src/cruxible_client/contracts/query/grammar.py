@@ -360,11 +360,44 @@ class QuerySubjectFieldRef(_StrictQueryModel):
         return QueryReferenceInventory(bindings=frozenset({self.binding}))
 
 
-class QueryEvaluationTimeRef(_StrictQueryModel):
-    """The run's explicit evaluation time; never an implicit wall clock."""
+#: The largest ``now`` offset, in seconds either way: 36500 days.
+QUERY_TIME_OFFSET_MAX_SECONDS = 36500 * 86400
 
-    tag: Literal["playbill-query-evaluation-time-ref-v1"] = "playbill-query-evaluation-time-ref-v1"
+
+class QueryEvaluationTimeRef(_StrictQueryModel):
+    """The run's explicit evaluation time, optionally shifted; never a wall clock.
+
+    ``offset_seconds`` is the fixed shift authored as ``now - 3d`` or
+    ``now + 12h``, held in whole seconds (UTC, no calendar units): ``now -
+    72h`` and ``now - 3d`` are one offset, -259200. An unshifted ref is v1 and
+    serializes exactly as before; a shifted one is v2, which only a
+    ``cruxible-query-definition-v4`` definition holds.
+    """
+
+    tag: Literal[
+        "playbill-query-evaluation-time-ref-v1", "playbill-query-evaluation-time-ref-v2"
+    ] = "playbill-query-evaluation-time-ref-v1"
     kind: Literal["evaluation_time"] = "evaluation_time"
+    offset_seconds: int = Field(
+        default=0,
+        ge=-QUERY_TIME_OFFSET_MAX_SECONDS,
+        le=QUERY_TIME_OFFSET_MAX_SECONDS,
+        exclude_if=lambda value: value == 0,
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _offset_tag(cls, data: Any) -> Any:
+        # The stored wire carries no tags: the offset alone names the version.
+        if isinstance(data, Mapping) and "tag" not in data and data.get("offset_seconds"):
+            return {**data, "tag": "playbill-query-evaluation-time-ref-v2"}
+        return data
+
+    @model_validator(mode="after")
+    def _offset_version(self) -> QueryEvaluationTimeRef:
+        if (self.tag == "playbill-query-evaluation-time-ref-v2") != (self.offset_seconds != 0):
+            raise ValueError("an evaluation-time ref with an offset is v2; one without is v1")
+        return self
 
     @property
     def references(self) -> QueryReferenceInventory:

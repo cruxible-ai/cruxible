@@ -171,7 +171,11 @@ def test_cli_compile_reads_payload_and_submit_uses_only_opaque_intent(
     compiled = runner.invoke(cli, [*common, "compile", str(payload)])
     submitted = runner.invoke(cli, [*common, "submit", "--intent-id", INTENT_ID])
 
-    assert compiled.exit_code == 0, compiled.output
+    # A refused compile exits 1 like a refused submit, naming the refusal on
+    # stderr beside the full record on stdout (coldkit-03).
+    assert compiled.exit_code == 1, compiled.output
+    assert json.loads(compiled.stdout)["verdict"] == "refused"
+    assert "refused: x: refused" in compiled.stderr
     assert submitted.exit_code == 0, submitted.output
     assert calls == [
         ("inst_authoring", authoring),
@@ -233,7 +237,9 @@ def test_cli_submit_takes_a_payload_directly_and_dry_run_saves_nothing(
 
     assert direct.exit_code == 0, direct.output
     assert onto.exit_code == 0, onto.output
-    assert preview.exit_code == 0, preview.output
+    # A refused dry run exits 1 with the refusal line, as compile and submit do.
+    assert preview.exit_code == 1, preview.output
+    assert "refused: x: refused" in preview.stderr
     assert calls == [
         ("submit", authoring, None),
         ("submit", authoring, INTENT_ID),
@@ -245,6 +251,43 @@ def test_cli_submit_takes_a_payload_directly_and_dry_run_saves_nothing(
     staged_preview = runner.invoke(cli, [*common, "--intent-id", INTENT_ID, "--dry-run"])
     assert staged_preview.exit_code == 2
     assert "takes no --intent-id" in staged_preview.output
+
+
+@pytest.mark.parametrize("verdict", ["passed", "refused"])
+@pytest.mark.parametrize("brief", [False, True], ids=["json", "brief"])
+def test_cli_preflight_exits_1_on_a_refused_verdict_like_every_authoring_command(
+    monkeypatch, verdict: str, brief: bool
+) -> None:  # type: ignore[no-untyped-def]
+    class StubClient:
+        def preflight_authoring_intent(
+            self, instance_id: str, intent_id: str
+        ) -> contracts.AuthoringPreflightResult:
+            diagnostics = (stub_diagnostic("x"),) if verdict == "refused" else ()
+            return stub_preflight_result(verdict=verdict, diagnostics=diagnostics)  # type: ignore[arg-type]
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://authoring.example.test",
+            "--instance-id",
+            "inst_authoring",
+            "authoring",
+            "preflight",
+            INTENT_ID,
+            *(["--brief"] if brief else []),
+        ],
+    )
+
+    if verdict == "passed":
+        assert result.exit_code == 0, result.output
+        assert "refused:" not in result.stderr
+    else:
+        assert result.exit_code == 1, result.output
+        assert "refused: x: refused" in result.stderr
+    if not brief:
+        assert json.loads(result.stdout)["verdict"] == verdict
 
 
 def test_cli_claim_type_propose_delivers_nonblocking_source_lint(

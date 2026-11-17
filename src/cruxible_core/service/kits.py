@@ -301,9 +301,9 @@ def _render(path: str, payload: dict[str, Any]) -> tuple[bytes, str]:
         )
 
         content = render_procedure(ProcedureArtifact.model_validate(payload))
-    elif (
-        path.startswith("query-definitions/")
-        and payload.get("artifact_format") == "cruxible-query-definition-v3"
+    elif path.startswith("query-definitions/") and payload.get("artifact_format") in (
+        "cruxible-query-definition-v3",
+        "cruxible-query-definition-v4",
     ):
         from cruxible_client.contracts.query.definitions import (
             QueryDefinition,

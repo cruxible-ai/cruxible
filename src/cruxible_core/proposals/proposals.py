@@ -216,6 +216,7 @@ from cruxible_client.contracts.providers import (
     provider_path,
 )
 from cruxible_client.contracts.query.definitions import (
+    QUERY_DEFINITION_FORMATS,
     AcceptedQueryDefinition,
     QueryDefinition,
     QueryDefinitionFormatError,
@@ -1897,13 +1898,20 @@ class _MemberKind:
 
 def _installed(context: _MemberContext, artifact_tag: str) -> InstalledAcceptanceLaw:
     if context.historical_law_coordinate is None and not context.rechecking:
-        from cruxible_client.contracts.laws import NAMED_REFERENCE_FORMATS
+        from cruxible_client.contracts.laws import (
+            NAMED_REFERENCE_FORMATS,
+            NAMED_REFERENCE_SUCCESSOR_FORMATS,
+        )
 
         kind = _member_kind(context.path)
         if kind is not None and kind.name in NAMED_REFERENCE_FORMATS:
             named = NAMED_REFERENCE_FORMATS[kind.name]
-            if artifact_tag != named and not (
-                kind.name == "provider" and artifact_tag == "cruxible-provider-identity-v2"
+            if (
+                artifact_tag != named
+                and artifact_tag not in NAMED_REFERENCE_SUCCESSOR_FORMATS.get(kind.name, ())
+                and not (
+                    kind.name == "provider" and artifact_tag == "cruxible-provider-identity-v2"
+                )
             ):
                 raise FormatError(f"New {kind.name} artifacts require {named}.")
     if context.historical_law_coordinate is None:
@@ -5169,7 +5177,7 @@ def _evaluate_scoped_members(
             )
 
             content = render_procedure(ProcedureArtifact.model_validate(payload))
-        elif state.artifact_tag == "cruxible-query-definition-v3":
+        elif state.artifact_tag in QUERY_DEFINITION_FORMATS:
             from cruxible_client.contracts.query.definitions import (
                 QueryDefinition,
                 render_query_definition,

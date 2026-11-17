@@ -613,6 +613,9 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("_ProcessOutcome", "duration_seconds"): "VALIDITY WINDOW",
     ("_RecordedCurationPatternObservedV1", "accepted_generation"): "SETTLEMENT ORDER",
     ("_RunState", "wall_clock_microseconds"): "VALIDITY WINDOW",
+    # `now - 3d`: a fixed shift of the query's explicit evaluation instant.
+    ("QueryEvaluationTimeRef", "offset_seconds"): "EVALUATION INSTANT",
+    ("FilterOperand", "offset_seconds"): "EVALUATION INSTANT",
 }
 
 # Discovered by name, carrying no clock value: a supplier of instants, a boolean

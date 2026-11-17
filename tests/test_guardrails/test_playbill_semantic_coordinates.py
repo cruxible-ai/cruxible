@@ -44,6 +44,7 @@ from cruxible_client.contracts.laws import (
     PROVIDER_BUILD_ACCEPTANCE_LAW,
     PROVIDER_V2_ACCEPTANCE_LAW,
     PROVIDER_V3_ACCEPTANCE_LAW,
+    QUERY_DEFINITION_V4_ACCEPTANCE_LAW,
     RESOLUTION_CONTRACT_ACCEPTANCE_LAW,
     RUNBOOK_ACCEPTANCE_LAW,
     SUBJECT_ACCEPTANCE_LAW,
@@ -302,6 +303,17 @@ LAW_COORDINATES += (
         "cruxible-provider-identity-v3",
         1,
         "sha256:eeee10b2d9b95eea4bf55bd47a0500c63657ebb202b9e0c659faff3eb0644e5a",
+    ),
+)
+
+
+LAW_COORDINATES += (
+    (
+        QUERY_DEFINITION_V4_ACCEPTANCE_LAW,
+        "cruxible.query-definition.v4",
+        "cruxible-query-definition-v4",
+        1,
+        "sha256:6cf41504dba2ac82fbcce4f26e2980e0ab301fa1b0e3c90f782afcf8eab0ff14",
     ),
 )
 

@@ -546,10 +546,10 @@ def test_named_query_read_validation_preserves_native_owner_and_rejects_old_pins
     assert AcceptedQueryDefinition.model_validate(accepted.model_dump(mode="json")) == accepted
     schema = AcceptedQueryDefinition.model_json_schema()
     assert schema["properties"]["query"] == {"$ref": "#/$defs/QueryDefinition"}
-    assert (
-        schema["$defs"]["QueryDefinition"]["properties"]["artifact_format"]["const"]
-        == "cruxible-query-definition-v3"
-    )
+    assert schema["$defs"]["QueryDefinition"]["properties"]["artifact_format"]["enum"] == [
+        "cruxible-query-definition-v3",
+        "cruxible-query-definition-v4",
+    ]
     assert (
         validate_query_definition(QueryDefinitionSpec.model_validate(query.model_dump())) == query
     )

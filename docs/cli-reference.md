@@ -1927,11 +1927,14 @@ coordinate. A payload that fails preflight reads `refused` (reason
 exits 1 (also under `--json`). Rerunning preflight cannot help, since the faults
 are in the payload: the next step is `cruxible authoring submit REVISED_PAYLOAD
 --intent-id ID`. `--no-accept` keeps the proposal. `--dry-run` returns the
-preflight the submit would run, with every refusal, and saves no intent. Durable
+preflight the submit would run, with every refusal, and saves no intent; a
+refused dry run, like a refused `compile` or `preflight`, names its diagnostics
+on stderr and exits 1. Durable
 intents are optional, for staged work on large definitions: `compile PAYLOAD`
 creates one (its ID is `certificate.intent_id`), `compile PAYLOAD --intent-id ID`
 revises it (the daemon keeps every revision), and `submit --intent-id ID`
-submits it. `preflight` and `submit` check a refused intent whose base the
+submits it. Compile runs the same checks submit runs: a refused compile prints
+the record, names its diagnostics on stderr and exits 1, as submit does. `preflight` and `submit` check a refused intent whose base the
 accepted head moved past again at the head; when it passes there it advances to
 the head (same payload and identity, the next revision), and a payload fault
 still refuses. `get` and `list`
@@ -2495,7 +2498,14 @@ row read, traversal paths, bound parameters, verdict, and the
 
 Author named queries with a `query_definition` input through `cruxible authoring
 submit` (or `compile` for a staged intent); it lands when policy and the
-caller's tier allow. A definition needs only `identity`, `entry` and
+caller's tier allow. A filter's `now` is the read's evaluation time
+(`--evaluation-time`; a Line's run reads at its own evaluation instant) and takes
+a fixed offset: `where: incident.opened_at < now - 3d` or `due_at < now + 12h`,
+units `d`, `h`, `m`, `s` in UTC (months and years refuse with
+`cruxible.query.time_offset_unit_unsupported`; write days). The offset is held in
+whole seconds, so `now - 72h` and `now - 3d` are one definition, shown as
+`now - 3d`; such a query is a `cruxible-query-definition-v4` (see [Asking
+questions](asking-questions.md)). A definition needs only `identity`, `entry` and
 `result_binding` (plus the `where`, `projection` and `parameters` it uses);
 the rest defaults to one row per Subject (`result_shape: subject`,
 `result_cardinality: many`, `dedupe: subject`), supported and current values
