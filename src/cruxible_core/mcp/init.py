@@ -7,7 +7,11 @@ refusals: home, a filesystem root, the state root, inside a ``.cruxible``),
 writes the binding, creates the owner principal and its key in the default key
 directory outside the project, initializes the instance under the default
 ``self_approval_allowed`` policy, and records the folder identity, so the same
-MCP session authors as the owner on its next call. A folder already
+MCP session authors as the owner on its next call. As `cruxible init` does,
+``reviewer_key_dir`` also creates a second ordinary principal ``reviewer`` with
+its key and settings file there (remembered for the CLI and the key lookup),
+and ``require_independent_approval`` makes every governed change, the base kit
+included, wait for a principal other than its author. A folder already
 initialized reports its instance and changes nothing. No key material ever
 leaves this process: the result names the key directory only.
 """
@@ -34,6 +38,7 @@ from cruxible_client.authoring.world_stub import render_world_stub_for, write_wo
 from cruxible_client.contracts.approval_policy import ApprovalPolicyMode
 from cruxible_client.contracts.principals import is_canonical_principal_id
 from cruxible_client.errors import CoreError as ClientCoreError
+from cruxible_core.cli.context import load_cli_context, principal_binding, save_cli_context
 from cruxible_core.cli.principal_settings import default_key_dir, write_principal_settings
 from cruxible_core.errors import ConfigError, DataValidationError
 from cruxible_core.governance.init_custody import prepare_init_custody
@@ -122,11 +127,27 @@ def _find_mode(value: Any) -> ApprovalPolicyMode | None:
     return None
 
 
+def _reviewer_key_dir(raw: str | None) -> Path | None:
+    """The reviewer's key directory as given: absolute, so no workspace-relative custody."""
+
+    if raw is None:
+        return None
+    directory = Path(raw).expanduser()
+    if not directory.is_absolute():
+        raise DataValidationError(
+            f"cruxible_init: reviewer_key_dir {raw!r} is not an absolute path; repair: pass "
+            "an absolute directory outside the project folder"
+        )
+    return directory
+
+
 def run_mcp_init(
     *,
     principal_id: str | None,
     target: DaemonTarget,
     call: DaemonCall[Any],
+    reviewer_key_dir: str | None = None,
+    require_independent_approval: bool = False,
 ) -> McpInitResult:
     """Initialize the MCP workspace folder; report its instance when it already is."""
 
@@ -148,6 +169,12 @@ def run_mcp_init(
         raise DataValidationError(
             f"cruxible_init: principal_id {principal_id!r} is not a principal ID (a lowercase "
             "letter, then letters, digits, '_', '.' or '-')"
+        )
+    reviewer_dir = _reviewer_key_dir(reviewer_key_dir)
+    if reviewer_dir is not None and (principal_id or default_principal_id()) == "reviewer":
+        raise DataValidationError(
+            "cruxible_init: reviewer_key_dir creates the principal `reviewer`, which the "
+            "owner cannot also be; repair: pass another principal_id"
         )
     selected = _bound_instance(root, socket)
     if selected is not None:
@@ -200,7 +227,10 @@ def run_mcp_init(
     materials, markers = prepare_init_custody(
         transport=f"unix://{socket}",
         instance_id=instance_id,
-        specifications=((key_dir, owner, "ordinary"),),
+        specifications=(
+            (key_dir, owner, "ordinary"),
+            *(() if reviewer_dir is None else ((reviewer_dir, "reviewer", "ordinary"),)),
+        ),
         forbidden_roots=roots,
     )
     material = materials[0]
@@ -209,8 +239,9 @@ def run_mcp_init(
     with CruxibleClient(socket_path=socket, principal_id=owner) as client:
         result = client.init(
             instance_id,
-            principals=[material.principal.model_dump(mode="json")],
+            principals=[item.principal.model_dump(mode="json") for item in materials],
             operating_profile="local",
+            require_independent_approval=require_independent_approval,
             workspace_root=str(root),
         )
     write_workspace_config(root, instance_id=result.instance_id, server_socket=socket)
@@ -225,6 +256,27 @@ def run_mcp_init(
         token=None,
         written_by="cruxible_init",
     )
+    if reviewer_dir is not None:
+        # What `cruxible init --reviewer-key-dir` leaves: a settings file beside
+        # the key, remembered so the CLI (`context use --principal reviewer`,
+        # CRUXIBLE_PRINCIPAL_ID=reviewer) and every client's key lookup find it.
+        reviewer_settings = write_principal_settings(
+            reviewer_dir,
+            ctx_obj={"server_socket": socket},
+            instance_id=result.instance_id,
+            principal_id="reviewer",
+            private_key_path=materials[1].private_key_path,
+            token=None,
+            written_by="cruxible_init",
+        )
+        save_cli_context(
+            load_cli_context().remember_principal(
+                principal_binding(f"unix://{socket}", result.instance_id),
+                "reviewer",
+                reviewer_settings,
+                activate=False,
+            )
+        )
     identity_path, _status = write_folder_identity(
         root, instance_id=result.instance_id, principal_id=owner, key_dir=key_dir, replace=True
     )
@@ -241,6 +293,11 @@ def run_mcp_init(
         approval_policy=result.approval_policy_mode,
         workspace_root=str(root),
         folder_identity_path=str(identity_path),
+        base_kit_proposal_id=(
+            result.base_kit.proposal_id
+            if result.base_kit is not None and result.base_kit.status == "proposed"
+            else None
+        ),
     )
 
 

@@ -711,9 +711,18 @@ def register_tools(
             str | None,
             Field(description="Owner principal ID (default: your OS username)."),
         ] = None,
+        reviewer_key_dir: Annotated[
+            str | None,
+            Field(description="Also create principal `reviewer`: its key directory."),
+        ] = None,
+        require_independent_approval: bool = False,
     ) -> McpInitResult:
         """Initialize this workspace folder; an initialized one reports its instance."""
-        return handlers.handle_init(principal_id)
+        return handlers.handle_init(
+            principal_id,
+            reviewer_key_dir=reviewer_key_dir,
+            require_independent_approval=require_independent_approval,
+        )
 
     @_tool
     def cruxible_console(

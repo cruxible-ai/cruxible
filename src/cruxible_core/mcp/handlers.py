@@ -1410,7 +1410,12 @@ def handle_console(instance_id: str, *, stop: bool = False) -> McpConsoleResult:
     )
 
 
-def handle_init(principal_id: str | None = None) -> McpInitResult:
+def handle_init(
+    principal_id: str | None = None,
+    *,
+    reviewer_key_dir: str | None = None,
+    require_independent_approval: bool = False,
+) -> McpInitResult:
     """`cruxible_init`: initialize the MCP workspace folder (`cruxible_core.mcp.init`)."""
 
     check_permission("cruxible_init")
@@ -1419,7 +1424,13 @@ def handle_init(principal_id: str | None = None) -> McpInitResult:
     def call(fn: Callable[[CruxibleClient], Any], operation: str) -> Any:
         return _daemon_call(fn, operation_name=operation)
 
-    return run_mcp_init(principal_id=principal_id, target=target, call=call)
+    return run_mcp_init(
+        principal_id=principal_id,
+        target=target,
+        call=call,
+        reviewer_key_dir=reviewer_key_dir,
+        require_independent_approval=require_independent_approval,
+    )
 
 
 def handle_playbill_authoring_status(

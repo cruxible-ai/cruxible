@@ -3,7 +3,7 @@
   "succession": {
     "ratified_by": "maintainer",
     "register_entry": "2026-11-17:fb-cosign",
-    "surface_digest": "sha256:5e68edabcc94f2184cc75dd3413ab14d71d0edbdf77a29edd2152925d4dbed9a"
+    "surface_digest": "sha256:cf1b1584cf7cadde38430bb598ebdf78cbcf26ee6e703916a1e6a49c6497685e"
   },
   "surface": {
     "cli_leaves": [
@@ -2453,9 +2453,9 @@
           "show_host"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_init",
-        "input_schema_digest": "sha256:1cf060135e2b393ae0fbe0b7cdbac99b39d52127d73e49e09611cf595c65be2c",
+        "input_schema_digest": "sha256:043d0e20ff82987668bb5456582e127f121d83fa1280333786b0bd7c53e14aaf",
         "name": "cruxible_init",
-        "output_schema_digest": "sha256:d6321b60efe130609096d01614b49b09a46d4c0b779b88f5a8dd0cbf7d1c864e",
+        "output_schema_digest": "sha256:fc953405e6a96f11ea1e0659a471c1e7dd04cecb289fe75d062411afd3fea91b",
         "permission": "ADMIN"
       },
       {

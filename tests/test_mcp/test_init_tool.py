@@ -252,3 +252,47 @@ def test_submit_by_path_refuses_a_symlink_and_an_oversize_file(workspace: Path) 
     (workspace / "bad.yaml").write_text("kind: nothing-like-an-input\n", encoding="utf-8")
     with pytest.raises(DataValidationError, match="not an authoring input"):
         handlers.handle_playbill_authoring_submit_file("inst_x", "bad.yaml")
+
+
+def test_init_by_tool_with_a_reviewer_and_independent_approval(world: dict[str, Path]) -> None:
+    """coldmcp-01/02: `cruxible_init` took only `principal_id`, so the kit README's setup
+    (a reviewer, no self-approval) had no MCP route. The reviewer it creates then cosigns
+    by the shared key lookup: its remembered settings, named by `signer_id`."""
+
+    reviewer_dir = world["config"] / "reviewer-keys"
+    relative = pytest.raises(DataValidationError, match="not an absolute path")
+    with relative:
+        handlers.handle_init("owner", reviewer_key_dir="reviewer-keys")
+
+    initialized = handlers.handle_init(
+        "owner", reviewer_key_dir=str(reviewer_dir), require_independent_approval=True
+    )
+
+    assert initialized.status == "initialized"
+    assert initialized.approval_policy == "independent_approval_required"
+    assert (reviewer_dir / "reviewer.ed25519").is_file()
+    assert "export CRUXIBLE_PRINCIPAL_ID=reviewer" in (reviewer_dir / "cruxible.env").read_text()
+    _no_key_material(initialized, reviewer_dir)
+    # The base kit cannot land on its creator's approval: it awaits the reviewer.
+    proposal = initialized.base_kit_proposal_id
+    assert proposal is not None
+
+    instance_id = require_instance_id()
+    with pytest.raises(Exception, match="creator_forbidden|independent"):
+        handlers.handle_playbill_approve(
+            instance_id, proposal, signer_id=None, candidate_digest=None
+        )
+    approved = handlers.handle_playbill_approve(
+        instance_id, proposal, signer_id="reviewer", candidate_digest=None
+    )
+    assert isinstance(approved, contracts.ApprovalReceipt)
+    assert approved.signer_id == "reviewer" and approved.activation is not None
+    _no_key_material(approved, reviewer_dir)
+
+    # The CLI finds the same reviewer: its settings are remembered for this instance.
+    shown = CliRunner().invoke(
+        cli,
+        ["--server-socket", str(world["socket"]), "--principal-id", "reviewer", "whoami", "--json"],
+    )
+    assert shown.exit_code == 0, shown.output
+    assert json.loads(shown.stdout)["actor_id"] == "reviewer"
