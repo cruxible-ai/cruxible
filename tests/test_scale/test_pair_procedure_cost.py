@@ -214,8 +214,9 @@ def _absence(by: str) -> Callable[[_World], object]:
             )
         state = world.apply(by)
         changes = sorted(c.change_kind for c in state.terminal_egress[0].children if c.change_kind)
-        # One retirement; the nine still listed are re-observed from the new bytes.
-        assert changes == ["reobservation"] * (CURRENT - 1) + ["retirement"], changes
+        # One retirement; the nine still listed hold unchanged rows, refreshed by
+        # the extract step's one row observation with no item (2026-11-16 c).
+        assert changes == ["retirement"], changes
         return state
 
     return route
@@ -256,7 +257,8 @@ def _retire(count: int) -> Callable[[_World], object]:
         )
         state = world.apply("inventory")
         changes = sorted(c.change_kind for c in state.terminal_egress[0].children if c.change_kind)
-        assert changes == ["reobservation"] + ["retirement"] * count, changes
+        # The one still listed holds an unchanged row: no item (2026-11-16 c).
+        assert changes == ["retirement"] * count, changes
         return state
 
     return route

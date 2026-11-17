@@ -524,7 +524,9 @@ def test_an_sbom_import_reads_its_own_inventory_late_and_mirrors_by_it(tmp_path:
     write_sbom(root, APP, [A, C])
     second = run(instance, root, source, minute=1)
     assert second.status == "succeeded", json.dumps(second.terminal.model_dump(mode="json"))
-    assert _changes(second) == ["claim", "reobservation", "retirement", "subject"]
+    # A's row is unchanged: its row observation refreshes it, with no item
+    # (ruling 2026-11-16 c).
+    assert _changes(second) == ["claim", "retirement", "subject"]
     activate(instance, second)
     assert memberships(instance) == {APP: {A, C}}
 

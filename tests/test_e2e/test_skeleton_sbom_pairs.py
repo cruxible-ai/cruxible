@@ -285,7 +285,8 @@ def test_an_sbom_import_settles_occurrences_and_retires_by_its_inventory(tmp_pat
     write_sbom(root, APP, [A, C])
     second = run(instance, root, source, line=LINE, minute=1)
     _settled(second)
-    assert _changes(second) == ["claim", "reobservation", "retirement", "subject", "subject"]
+    # An unchanged row is refreshed by its row observation, with no item (2026-11-16 c).
+    assert _changes(second) == ["claim", "retirement", "subject", "subject"]
     assert memberships(instance) == {APP: {A: "required", C: "required"}}
 
     # 3. Another inventory's SBOM never touches this one's occurrences.
@@ -302,7 +303,8 @@ def test_an_sbom_import_settles_occurrences_and_retires_by_its_inventory(tmp_pat
     write_sbom(root, APP, [A, B, C])
     again = run(instance, root, source, line=LINE, minute=3)
     _settled(again)
-    assert _changes(again) == ["claim", "reobservation", "reobservation"]
+    # A's and C's rows are unchanged: refreshed by the row observation (2026-11-16 c).
+    assert _changes(again) == ["claim"]
 
     # 5. An incomplete read (a refused record) retires nothing (D-R40).
     write_sbom(root, APP, [A, "not a record"])

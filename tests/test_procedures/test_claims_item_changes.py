@@ -83,12 +83,13 @@ def test_two_runs_diff_by_item_identity(tmp_path: Path) -> None:
     )
     second = run(instance, root, minute=2)
     after = _changes(instance, second)
-    # Both items keep their identities: the changed value is a new claim change,
-    # the same value read from the new document bytes a re-observation.
-    assert set(after) == set(before)
+    # The changed value is a claim change under the same identity; the same
+    # value's row is unchanged, so the row observation refreshes it with no
+    # item (ruling 2026-11-16 c).
+    assert set(after) < set(before) and len(after) == 1
     kinds = sorted(kind for kind, _, _ in after.values())
-    assert kinds == ["claim", "reobservation"]
-    assert all(after[k][1] != before[k][1] for k in before)
+    assert kinds == ["claim"]
+    assert all(after[k][1] != before[k][1] for k in after)
 
 
 def test_a_retirement_from_absence_carries_the_retired_positives_identity(
@@ -152,10 +153,11 @@ def test_a_subject_created_with_its_claim_keeps_one_identity_after_acceptance(
     )
     later = run(instance, root, minute=1)
     after = _changes(instance, later)
-    # No new Subject items: both Subjects already exist. Both claim items
-    # keep the identities the creating run gave them.
-    assert set(after) == claim_identities
-    assert sorted(kind for kind, _, _ in after.values()) == ["claim", "reobservation"]
+    # No new Subject items: both Subjects already exist. The revised claim item
+    # keeps the identity the creating run gave it; 0001's row is unchanged, so
+    # it has no item (ruling 2026-11-16 c).
+    assert set(after) < claim_identities and len(after) == 1
+    assert sorted(kind for kind, _, _ in after.values()) == ["claim"]
 
 
 @pytest.mark.executor_only
