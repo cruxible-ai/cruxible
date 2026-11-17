@@ -1234,3 +1234,40 @@ def test_a_warmed_reader_rereads_a_journal_that_went_away_and_came_back(tmp_path
     _reobserve(instance, _START + timedelta(minutes=110))  # the projection now holds 1 record
     _restore_journal(store, tmp_path / "aside")
     assert reader.sequence(claim_id) == 3
+
+
+def test_a_locator_index_that_outlived_its_log_is_an_empty_journal(tmp_path: Path) -> None:
+    """Review finding 2: a crash can keep the journal's locator index and lose
+    the log it locates (a first append commits the locator without the log
+    being durable). The log is the authority: the journal is then empty, the
+    kept projection is rebuilt to nothing, and the next record is sequence 1."""
+
+    from cruxible_core.evidence.claim_reobservations import _PARTITION, ReobservationReader
+    from cruxible_core.exhaust.backends import journal_log_path
+
+    (tmp_path / "world").mkdir()
+    instance, _owner = _freshness_world(tmp_path / "world", stale_after=_HOUR)
+    claim_id = _current_claim(instance).identity.name
+    store = ClaimReobservationStore(instance)
+    reader = ReobservationReader.of(instance)
+    for minute in (20, 40, 50):
+        _reobserve(instance, _START + timedelta(minutes=minute))
+    assert store.head_sequence() == 3
+
+    # Only the log is lost: its locator index and the projection survive.
+    journal_log_path(store.root, store.stream, _PARTITION).unlink()
+    assert (store.root / "event-index.sqlite3").exists() and store.path.exists()
+    assert store.head_sequence() == 0
+    assert store.history(claim_id) == ()
+    assert store.records_after(0) == ()
+    assert reader.sequence(claim_id) == 0
+    assert _verdict(instance, _START + timedelta(minutes=100)).verdict == "stale_evidence"
+
+    _reobserve(instance, _START + timedelta(minutes=110))
+    assert store.head_sequence() == 1
+    (only,) = store.history(claim_id)
+    assert only.observed_at == _START + timedelta(minutes=110)
+    assert reader.sequence(claim_id) == 1
+    replaced = _dump(store)
+    store.path.unlink()
+    assert _dump(store) == replaced

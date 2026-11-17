@@ -797,6 +797,22 @@ class JournalIndex:
             directory = self.backend._partition_directory(stream, partition_id, create=False)
         log = directory / "records.log"
         if not log.exists():
+            # The log is the authority: with none, the journal is empty. A
+            # locator that outlived its log (a first append commits it without
+            # the log being durable) is dropped, so no head or record of the
+            # lost log is served.
+            if conn.execute(
+                "SELECT 1 FROM partitions WHERE stream=? AND partition_id=?",
+                (_key(stream), partition_id),
+            ).fetchone():
+                conn.execute(
+                    "DELETE FROM records WHERE stream=? AND partition_id=?",
+                    (_key(stream), partition_id),
+                )
+                conn.execute(
+                    "DELETE FROM partitions WHERE stream=? AND partition_id=?",
+                    (_key(stream), partition_id),
+                )
             return
         stat = log.stat()
         signature = (
