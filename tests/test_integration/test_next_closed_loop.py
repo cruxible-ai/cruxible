@@ -2560,9 +2560,9 @@ def _kit_resume_blocked(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
             instance, (f"providers/{release.manifest.providers[0].build}.json",)
         )
         # No approval round to run here: the resume's own commit lands at
-        # once, the same self-resolving activation ``_add`` gets directly.
-        (resumed,) = _resumes(consumer)
-        assert resumed.state == "proposed" and resumed.proposal_id is not None
+        # once, the same self-resolving activation ``_add`` gets directly. Its
+        # proposal is closed, so kit status lists no pending row for it.
+        assert _resumes(consumer) == ()
         assert f"procedures/{PROCEDURE}.json" in _tree(consumer)
 
         # A stale recorded resume for an older release: its head no longer
