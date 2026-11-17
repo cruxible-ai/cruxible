@@ -98,8 +98,8 @@ warning  vocabulary_file_behind  .cruxible/vocabulary.yaml  next=cruxible.vocabu
   repair: cruxible vocabulary export
 ~~~
 
-`orient`'s `next=` count covers accepted state only; the vocabulary row is in
-`cruxible next`. A header naming an export this instance does not know is
+`orient`'s `next=` counts the same queue, this row included, when it is run
+from the workspace. A header naming an export this instance does not know is
 `vocabulary_file_baseline_invalid`: restore the header, or `vocabulary export
 --force`. Export replaces a file only when nothing in it would be lost; a file
 holding edits not yet applied refuses, naming them:

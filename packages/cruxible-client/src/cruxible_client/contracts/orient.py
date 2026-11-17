@@ -418,16 +418,21 @@ class OrientAttention(_StrictOrientModel):
     ``next_items`` counts the queue's problems and ``top`` names the first of
     them; ``setup_items`` counts its setup rows apart (choices the operator
     owns, such as a Line accepted but not yet enabled), absent when none.
-    These count accepted state only: rows about the caller's workspace (its
-    floor, sources, projection blocks, vocabulary file) need the workspace
-    and appear in ``next``; orient reports the floor and the vocabulary file
-    as status beside this (``floor``, ``vocabulary_file``), as it always has.
+    A daemon answer counts accepted state only: rows about the caller's
+    workspace (its floor, sources, projection blocks, vocabulary file) need
+    the workspace. A client that sees one (CLI, MCP, SDK) reads the queue
+    ``next`` returns for it and reports that queue's counts and top lines
+    instead, with ``workspace_counted`` set: ``next_items`` is then what
+    ``next`` lists. Orient reports the floor and the vocabulary file as status
+    beside this (``floor``, ``vocabulary_file``) either way.
     """
 
     next_items: int = Field(ge=0)
     open_proposals: int = Field(ge=0)
     top: tuple[str, ...] = ()
     setup_items: int = Field(default=0, ge=0, exclude_if=lambda value: not value)
+    #: The counts include the caller's workspace rows, as ``next`` lists them.
+    workspace_counted: bool = Field(default=False, exclude_if=lambda value: not value)
     notes: tuple[str, ...] = Field(default=(), exclude_if=_is_empty)
     # Present when any Line was ever enabled on this instance.
     enablements: OrientEnablements | None = Field(default=None, exclude_if=_is_none)

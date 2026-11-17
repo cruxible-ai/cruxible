@@ -88,6 +88,7 @@ from cruxible_client.authoring.workspace import (
     observe_next_workspace,
     observe_next_workspace_with_coverage,
     refresh_workspace_floor,
+    workspace_attention,
     workspace_floor_freshness,
     workspace_vocabulary_at,
     workspace_vocabulary_freshness,
@@ -5471,8 +5472,17 @@ class Cruxible:
         if self._workspace is None:
             # No workspace, no floor to compare: the floor is unknown, not stale.
             return result
-        return workspace_vocabulary_freshness(
+        result = workspace_vocabulary_freshness(
             self._workspace, workspace_floor_freshness(self._workspace, result)
+        )
+        # next_items is the queue cx.next() lists here, workspace rows included.
+        return workspace_attention(
+            self._client,
+            self._instance_id,
+            self._workspace,
+            result,
+            surface="sdk",
+            access_profile=self._access_profile.model_dump(),
         )
 
     def attest(

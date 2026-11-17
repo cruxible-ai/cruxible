@@ -226,6 +226,12 @@ quickstart and concepts pages.
   `closed_by`, the principal whose approval, activation or readmit closed it;
   it used to read as withdrawn by its author. `proposal approve` prints the
   proposal beside the candidate it signed.
+- **`orient`'s `next=` is the queue `next` lists.** Run from a workspace, the
+  CLI, MCP and SDK count the workspace's rows too (a Claim whose cited file
+  changed, a floor or vocabulary file behind), so orient no longer says
+  `next=0` over a queue of drift rows; `attention.workspace_counted` says the
+  count includes them. Orient then makes the workspace observation `next`
+  makes.
 - **A review shows the guidance of every guided field it touches.** A large
   change set asked guidance for the first 20 ClaimTypes it met in member order,
   so a guidance line could be missing, and differ between two submissions of

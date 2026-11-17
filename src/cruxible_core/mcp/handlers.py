@@ -54,6 +54,7 @@ from cruxible_client.authoring.workspace import (
     floor_export_parts,
     inspect_workspace_floor,
     observe_next_workspace_with_coverage,
+    workspace_attention,
     workspace_floor_freshness,
     workspace_vocabulary_at,
     workspace_vocabulary_freshness,
@@ -856,7 +857,29 @@ def handle_playbill_orient(
     )
     if workspace is None:
         return result
-    return workspace_vocabulary_freshness(workspace, workspace_floor_freshness(workspace, result))
+    result = workspace_vocabulary_freshness(workspace, workspace_floor_freshness(workspace, result))
+    if result.attention is None:
+        return result
+    # next_items is the queue cruxible_next lists here, workspace rows included.
+    answered, observed_root = result, workspace
+    return _daemon_call(
+        lambda client: workspace_attention(
+            client,
+            instance_id,
+            observed_root,
+            answered,
+            surface="mcp",
+            access_profile=_MCP_NEXT_PROFILE,
+            caller_tools=tools,
+        ),
+        operation_name="cruxible_orient",
+    )
+
+
+#: The access profile `cruxible_next` sends by default, and orient's count of that queue.
+_MCP_NEXT_PROFILE: dict[str, Any] = CoverageAccessProfile(
+    profile_id="mcp-next", permitted_access_classes=("instance", "public")
+).model_dump(mode="json")
 
 
 def handle_playbill_list_proposals(
@@ -2190,10 +2213,11 @@ def handle_playbill_next(
         if evaluation_time is None
         else evaluation_time
     )
-    profile = CoverageAccessProfile.model_validate(
-        access_profile
-        or {"profile_id": "mcp-next", "permitted_access_classes": ["instance", "public"]}
-    ).model_dump(mode="json")
+    profile = (
+        CoverageAccessProfile.model_validate(access_profile).model_dump(mode="json")
+        if access_profile
+        else _MCP_NEXT_PROFILE
+    )
     # The workspace observation is optional: a root that is no workspace is observed
     # as no workspace rather than refusing the queue.
     workspace = mcp_workspace_root(guard=False)

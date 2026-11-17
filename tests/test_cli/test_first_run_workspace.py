@@ -361,8 +361,21 @@ def test_first_run_from_an_empty_folder_needs_no_git_and_no_flags(
     # 5. Editing the cited file is drift, and next says so.
     assert not [item for item in _json("next")["items"] if item["reason"] == "citation_drifted"]
     source_file.write_text("status: blocked\n", encoding="utf-8")
-    drifted = [item for item in _json("next")["items"] if item["reason"] == "citation_drifted"]
+    queue = _json("next")
+    drifted = [item for item in queue["items"] if item["reason"] == "citation_drifted"]
     assert drifted, "next reports no drift after the cited file changed"
+    # psw F4: orient said next=0 over that queue, because the daemon's count
+    # does not see the workspace. The CLI counts the queue `next` lists here.
+    assert queue["next_cursor"] is None
+    problems = [item for item in queue["items"] if item["severity"] != "setup"]
+    attention = _json("orient")["attention"]
+    assert attention["workspace_counted"] is True
+    assert attention["next_items"] == len(problems)
+    assert attention.get("setup_items", 0) == len(queue["items"]) - len(problems)
+    assert attention["top"] == [
+        f"{item['severity']} {item['reason']}: {item['subject_identity']}" for item in problems[:3]
+    ]
+    assert f"Attention: next={len(problems)} " in _run("orient").stdout
 
     # 6. `git init` and attach again turn the ledger mirror on.
     subprocess.run(["git", "init", "-q", "-b", "main", str(folder)], check=True)
