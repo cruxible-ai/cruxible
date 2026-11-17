@@ -610,9 +610,9 @@ def render_get(
                     )
                     continue
                 if key == "definition" and result.kind == "query" and value is not None:
-                    shown = query_definition_lines(result.card.definition)
-                    if shown is not None:
-                        lines.extend(shown)
+                    clauses = query_definition_lines(result.card.definition)
+                    if clauses is not None:
+                        lines.extend(clauses)
                         continue
                 if key == "authored" and result.kind == "procedure" and value is not None:
                     from cruxible_client.contracts.refs import concise
