@@ -1271,3 +1271,53 @@ def test_a_locator_index_that_outlived_its_log_is_an_empty_journal(tmp_path: Pat
     replaced = _dump(store)
     store.path.unlink()
     assert _dump(store) == replaced
+
+
+def test_an_interrupted_projection_reset_never_mixes_two_journals(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review finding 3: the reset on divergence is interrupted after the
+    progress and applied marks are dropped. The next open still sees the old
+    projection whole, resets again, and holds only the journal's records."""
+
+    import shutil
+    import sqlite3
+
+    (tmp_path / "world").mkdir()
+    instance, _owner = _freshness_world(tmp_path / "world", stale_after=_HOUR)
+    claim_id = _current_claim(instance).identity.name
+    store = ClaimReobservationStore(instance)
+    for minute in (20, 40, 50):
+        _reobserve(instance, _START + timedelta(minutes=minute))
+    assert len(store.history(claim_id)) == 3
+    kept = tmp_path / "kept.sqlite3"
+    shutil.copy(store.path, kept)
+
+    # Another journal, of one record, and the projection built from it.
+    _move_journal(store, tmp_path / "aside")
+    _reobserve(instance, _START + timedelta(minutes=110))
+    expected = _dump(store)
+    # The first journal's projection is kept over the second journal.
+    shutil.copy(kept, store.path)
+
+    class Interrupted(sqlite3.Connection):
+        def execute(self, sql, *parameters):  # type: ignore[no-untyped-def]
+            if sql == "DROP TABLE IF EXISTS reobservations":
+                raise KeyboardInterrupt
+            return super().execute(sql, *parameters)
+
+    connect = sqlite3.connect
+
+    def interrupted(database, *args, **kwargs):  # type: ignore[no-untyped-def]
+        if str(database) == str(store.path):
+            kwargs["factory"] = Interrupted
+        return connect(database, *args, **kwargs)
+
+    with monkeypatch.context() as patched:
+        patched.setattr(sqlite3, "connect", interrupted)
+        with pytest.raises(KeyboardInterrupt):
+            store.history(claim_id)
+
+    (only,) = store.history(claim_id)
+    assert only.observed_at == _START + timedelta(minutes=110)
+    assert _dump(store) == expected

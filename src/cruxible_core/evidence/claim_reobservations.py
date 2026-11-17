@@ -615,8 +615,25 @@ class ClaimReobservationStore:
 
     @staticmethod
     def _reset(conn: sqlite3.Connection) -> None:
-        """Drop every projected table: the next catch-up rebuilds from the journal's start."""
+        """Drop every projected table: the next catch-up rebuilds from the journal's start.
 
+        One transaction: interrupted, the old projection is whole (its mark
+        still names the journal it was built from, so the next open resets
+        again), never some of its tables under a dropped mark, which the next
+        open would fill from another journal.
+        """
+
+        conn.commit()
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            ClaimReobservationStore._drop(conn)
+            conn.execute("COMMIT")
+        except BaseException:
+            conn.execute("ROLLBACK")
+            raise
+
+    @staticmethod
+    def _drop(conn: sqlite3.Connection) -> None:
         for table in (
             "progress",
             "applied",
