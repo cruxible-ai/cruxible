@@ -66,13 +66,11 @@ def test_public_claim_review_and_repair_example(playbill_http, tmp_path: Path, m
     assert len(set(recovered)) == 2
 
 
-def test_cx_signer_opens_a_principals_key_against_its_registered_card(
-    playbill_http, tmp_path: Path
+def test_cx_signer_opens_the_registered_key_without_a_principal_read(
+    playbill_http, tmp_path: Path, monkeypatch
 ) -> None:
-    """`cx.signer(ID, key=...)` on a real instance: one `Principal:ID` read gives the
-    registered public key the key file is checked against; an unknown principal refuses."""
-
-    from cruxible_client.contracts.errors import ReadRefusalError
+    """`cx.signer(ID, key=...)` on a real instance opens the key file alone; its public
+    key is the one the instance holds for that principal (read here only to compare)."""
 
     http, instance_id, private_path = playbill_http
     transport = CruxibleClient(base_url="http://cruxible")
@@ -80,10 +78,9 @@ def test_cx_signer_opens_a_principals_key_against_its_registered_card(
     workspace = tmp_path / "demo-workspace"
     workspace.mkdir()
     cx = Cruxible._from_client(transport, instance_id=instance_id, workspace=workspace)
+    registered = cx.get("Principal:reviewer").value.public_key
+    monkeypatch.setattr(Cruxible, "get", lambda *a, **k: pytest.fail("a signer reads nothing"))
 
     signer = cx.signer("reviewer", key=private_path)
 
-    assert signer.signer_id == "reviewer"
-    assert signer.public_key == cx.get("Principal:reviewer").value.public_key
-    with pytest.raises(ReadRefusalError, match="no accepted Principal"):
-        cx.signer("nobody", key=private_path)
+    assert (signer.signer_id, signer.public_key) == ("reviewer", registered)

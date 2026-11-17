@@ -1468,7 +1468,7 @@ Who this connection acts as and where that came from, its permission mode and pr
 signer(principal_id: str | None = None, *, key: str | Path | None = None) -> LocalEd25519ApprovalSigner
 ```
 
-The local approval signer of one principal (default: who this connection acts as), for `proposal.approve(signer=cx.signer("reviewer"), reviewed=review)`. The key is found as the CLI and the MCP server find it: `key`, else `CRUXIBLE_PRINCIPAL_KEY` unless `CRUXIBLE_PRINCIPAL_ID` names another principal, else the settings `cruxible init` or `cruxible principal add` remembered for that principal on this instance, else the folder's identity record when it names it. The key is checked against the principal's registered public key and must sit outside the workspace. It is never another principal's key: with none found it raises `SigningKeyError` naming the repair.
+The local approval signer of one principal (default: who this connection acts as), for `proposal.approve(signer=cx.signer("reviewer"), reviewed=review)`. The key is found as the CLI and the MCP server find it: `key`, else `CRUXIBLE_PRINCIPAL_KEY` unless `CRUXIBLE_PRINCIPAL_ID` names another principal, else the settings `cruxible init` or `cruxible principal add` remembered for that principal on this instance, else the folder's identity record when it names it. The key must sit outside the workspace. Opening it reads nothing from the daemon: `approve` checks it against the signer's registered principal in its challenge and refuses a key the instance does not hold for that principal, or an unknown principal, signing nothing. With no key found it raises `SigningKeyError` naming the repair.
 
 <a id="api-cruxible-kits"></a>
 

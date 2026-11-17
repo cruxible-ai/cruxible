@@ -20,7 +20,6 @@ from cruxible_client.authoring.folder_identity import write_folder_identity
 from cruxible_client.authoring.principal_settings import principal_key, principal_key_missing
 from cruxible_client.authoring.sdk import Cruxible
 from cruxible_client.contracts.errors import SigningKeyError
-from cruxible_client.contracts.get_reads import GetPrincipalCard
 from cruxible_core.governance.keys import generate_client_principal_key
 
 INSTANCE = "inst_1"
@@ -175,31 +174,16 @@ def _cx(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *principals: str) -> tu
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     monkeypatch.delenv("CRUXIBLE_PRINCIPAL_ID", raising=False)
     monkeypatch.delenv("CRUXIBLE_PRINCIPAL_KEY", raising=False)
+    # Only whoami answers: opening a signer reads nothing else from the daemon.
     client = SimpleNamespace(
         base_url=None,
         socket_path=str(socket),
         whoami=lambda instance: SimpleNamespace(actor_id="owner"),
-        orient=lambda *args, **kwargs: pytest.fail("a signer lists no principals"),
     )
-    cards = {
-        record.principal_id: GetPrincipalCard(
-            principal=record.principal_id,
-            kind=record.kind,
-            status=record.status,
-            algorithm=record.algorithm,
-            public_key=record.public_key,
-        )
-        for record in records
-    }
-    read: list[str] = []
-
-    def get(self: Cruxible, ref: str, **_: Any) -> Any:
-        # The one addressed read cx.signer makes: recorded, so a test can count it.
-        read.append(ref)
-        return SimpleNamespace(value=cards[ref.removeprefix("Principal:")])
-
-    monkeypatch.setattr(Cruxible, "get", get)
-    monkeypatch.setattr(Cruxible, "_principal_reads", read, raising=False)
+    monkeypatch.setattr(
+        Cruxible, "get", lambda *args, **kwargs: pytest.fail("a signer reads no principal")
+    )
+    monkeypatch.setattr(Cruxible, "_registered", records, raising=False)
     workspace = tmp_path / "project"
     workspace.mkdir()
     cx = Cruxible(
@@ -230,9 +214,13 @@ def test_the_sdk_builds_a_signer_in_one_line_from_the_same_lookup(
     monkeypatch.setenv("CRUXIBLE_PRINCIPAL_ID", "owner")
     monkeypatch.setenv("CRUXIBLE_PRINCIPAL_KEY", str(keys / "owner" / "owner.ed25519"))
     assert cx.signer("reviewer").private_key_path == reviewer.private_key_path
-    # An explicit key that is not the principal's is refused by its public half.
-    with pytest.raises(SigningKeyError, match="does not match"):
-        cx.signer("reviewer", key=keys / "owner" / "owner.ed25519")
+    # The signer's public key is its key file's own, the reviewer's registered key;
+    # an explicit key of another principal opens as that file's key, and approve
+    # refuses it against the challenge (test_playbill_sdk_approval).
+    registered = {item.principal_id: item.public_key for item in cx._registered}  # type: ignore[attr-defined]
+    assert reviewer.public_key == registered["reviewer"]
+    wrong = cx.signer("reviewer", key=keys / "owner" / "owner.ed25519")
+    assert wrong.public_key == registered["owner"] != registered["reviewer"]
 
 
 def test_the_sdk_refuses_a_signer_with_no_key_naming_the_sdk_repair(
@@ -247,16 +235,19 @@ def test_the_sdk_refuses_a_signer_with_no_key_naming_the_sdk_repair(
     assert "cruxible context use" not in str(refused.value)
 
 
-@pytest.mark.parametrize("registered", [2, 60])
-def test_opening_one_signer_reads_one_principal_whatever_the_registry_holds(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, registered: int
+def test_opening_a_signer_reads_nothing_from_the_daemon(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Review F-005: cx.signer(X) paged and validated the whole principal registry to
-    find X. It reads Principal:X by address: one read at either registry size."""
+    """Review F-005: cx.signer(X) paged the whole principal registry, then read
+    `Principal:X` through a route that folds history and every principal. It now
+    opens the key file only (the stub answers no orient and no get); the approval
+    challenge carries the signer's record, and approve checks the key against it."""
 
-    names = ("owner", "reviewer", *(f"agent-{n}" for n in range(registered - 2)))
-    cx, _keys = _cx(tmp_path, monkeypatch, *names)
+    cx, _keys = _cx(tmp_path, monkeypatch, "owner", "reviewer")
 
+    assert cx.signer("reviewer", key=_keys / "reviewer" / "reviewer.ed25519").signer_id == (
+        "reviewer"
+    )
+    # A principal named explicitly needs no whoami either.
+    cx._client.whoami = lambda instance: pytest.fail("no identity read")  # type: ignore[attr-defined]
     assert cx.signer("reviewer").signer_id == "reviewer"
-
-    assert cx._principal_reads == ["Principal:reviewer"]  # type: ignore[attr-defined]

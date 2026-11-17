@@ -4975,16 +4975,16 @@ class Cruxible:
         ``CRUXIBLE_PRINCIPAL_KEY`` unless ``CRUXIBLE_PRINCIPAL_ID`` names another
         principal, else the settings `cruxible init` or `cruxible principal add`
         remembered for that principal on this instance, else the folder's
-        identity record when it names it. It is checked against the principal's
-        registered public key and must sit outside the workspace. Never another
-        principal's key: with none found it raises ``SigningKeyError`` naming
-        the repair.
+        identity record when it names it. It must sit outside the workspace.
+        Nothing is read from the daemon to open it: ``approve`` checks the key
+        against the signer's registered principal in its challenge and refuses
+        one the instance does not hold, or an unknown principal, signing
+        nothing. With no key found it raises ``SigningKeyError`` naming the repair.
 
         Next: ``cx.proposal(ID).approve(signer=cx.signer("reviewer"), reviewed=review)``.
         """
 
         from cruxible_client.contracts.errors import SigningKeyError
-        from cruxible_client.contracts.get_reads import GetPrincipalCard
 
         who = principal_id if principal_id is not None else self.whoami().actor_id
         if who is None:
@@ -5003,15 +5003,12 @@ class Cruxible:
         )
         if found is None:
             raise SigningKeyError(principal_key_missing(who, client="sdk"))
-        # One addressed read of this principal: its registered public key. An
-        # unknown principal refuses there, naming how to list them.
-        card = self.get(f"Principal:{who}").value
-        if not isinstance(card, GetPrincipalCard):
-            raise SigningKeyError(f"Principal:{who} did not read as a principal card")
-        return LocalEd25519ApprovalSigner.open(
+        # No registry read: the key file is opened and its custody checked here,
+        # and the approval checks it against the principal record in the
+        # daemon's challenge (an unknown principal refuses there).
+        return LocalEd25519ApprovalSigner.from_key(
             signer_id=who,
             private_key_path=found.private_key_path,
-            expected_public_key=card.public_key,
             forbidden_roots=() if self._workspace is None else (self._workspace,),
         )
 

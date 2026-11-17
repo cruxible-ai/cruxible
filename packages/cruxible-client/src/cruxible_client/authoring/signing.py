@@ -94,6 +94,25 @@ class LocalEd25519ApprovalSigner:
             public_key=public_key,
         )
 
+    @classmethod
+    def from_key(
+        cls, *, signer_id: str, private_key_path: Path, forbidden_roots: Sequence[Path]
+    ) -> LocalEd25519ApprovalSigner:
+        """Open a signer from its key alone: custody is checked, the registry is not read.
+
+        Its ``public_key`` is the key file's own. The approval that uses it
+        checks that key against the signer's principal record in the daemon's
+        challenge, and refuses a key the instance does not hold for it.
+        """
+
+        assert_outside_roots(private_key_path, forbidden_roots)
+        private_key = _load_private_key(private_key_path)
+        return cls(
+            signer_id=signer_id,
+            private_key_path=private_key_path.resolve(strict=True),
+            public_key=private_key.public_key().public_bytes_raw().hex(),
+        )
+
     def sign(self, statement: ApprovalStatement) -> ApprovalAttestation:
         if statement.signer_id != self.signer_id:
             raise SigningKeyError("approval statement names a different signer")

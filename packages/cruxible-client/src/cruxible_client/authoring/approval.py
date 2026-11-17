@@ -24,6 +24,7 @@ from cruxible_client.contracts.candidates import (
     candidate_digest,
 )
 from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.errors import SigningKeyError
 from cruxible_client.contracts.types import PrincipalRecord
 
 if TYPE_CHECKING:
@@ -195,6 +196,15 @@ def approve_reviewed(
             if getattr(review, name) != getattr(challenge.review, name):
                 raise ApprovalReviewMismatch(f"Fresh challenge changed reviewed {name}")
         statement = ApprovalStatement.model_validate(challenge.statement)
+        held = challenge.signer_principal
+        if held.get("principal_id") == signer_id and held.get("public_key") != public_key:
+            # A signer opened from its key file alone (cx.signer) is checked here,
+            # against the record the challenge carries: no registry read opens it.
+            raise SigningKeyError(
+                f"the signer's local key is not the key this instance holds for principal "
+                f"{signer_id}; nothing was signed. Repair: open the signer with that "
+                f"principal's own key (cx.signer({signer_id!r}, key=FILE))"
+            )
         principal = PrincipalRecord.model_validate(challenge.signer_principal)
         history_ref = f"principals/{signer_id}.json@{review.parent_semantic_root}"
         if (
