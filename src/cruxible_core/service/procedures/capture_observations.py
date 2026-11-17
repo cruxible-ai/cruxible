@@ -62,7 +62,7 @@ class InstanceCaptureObservations:
         # or erased (a journal payload lands with its record, so only damage
         # is logged for it): one indexed answer, never a read of the producing
         # run's records.
-        if _proof_lost(store, proof):
+        if _proof_lost(store, proof) or not _proof_shown(store, proof):
             return None
         if body_present(store, digest) is False or body_present(store, commitment_digest) is False:
             return None
@@ -152,6 +152,32 @@ class InstanceCaptureObservations:
             actor_id=actor_id,
             lineage=lineage,
         )
+
+
+#: Production proof bodies read whole once in this process (immutable by
+#: digest: a later loss is a recorded damage or erasure, ``_proof_lost``).
+_SHOWN: set[tuple[str, str]] = set()
+
+
+def _proof_shown(store: Any, digest: str) -> bool:
+    """Whether the production record's body can be read (review 2d #3).
+
+    A journal payload's arrival is not in the landing log, so its loss can go
+    unrecorded: the candidate's proof is read once per process, and a Capture
+    whose proof cannot be shown is never reused; the run fetches anew and
+    records producing it, which replaces the reuse key.
+    """
+
+    key = (str(getattr(store, "root", "")), digest)
+    if key in _SHOWN:
+        return True
+    try:
+        store.read(digest, access=_ACCESS)
+    except (CruxibleError, OSError, ValueError):
+        return False
+    with _LOCK:
+        _SHOWN.add(key)
+    return True
 
 
 def _proof_lost(store: Any, digest: str) -> bool:
