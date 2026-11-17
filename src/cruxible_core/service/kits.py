@@ -3539,22 +3539,32 @@ def service_kit_status(instance: PlaybillInstance) -> KitStatus:
 def _pending_resumes(
     instance: PlaybillInstance, resumes: tuple[KitResumeStatus, ...]
 ) -> tuple[KitResumeStatus, ...]:
-    """Each resume row still pending: a proposed row only while its proposal is open.
+    """Each resume row still pending: a proposed row only while its proposal is open
+    or awaits readmission.
 
     A proposed row whose proposal closed (accepted, rejected or withdrawn) has
     nothing left to say: the kit is installed, removed or never landed, which the
-    installed kits answer. One indexed proposal lookup per proposed row (at most
-    one row per kit).
+    installed kits answer. One whose proposal awaits readmission stays, marked, so
+    the add is re-run (morning-rulings-1116 (9)). One indexed proposal lookup per
+    proposed row (at most one row per kit).
     """
 
-    from cruxible_core.service.proposals.proposals import proposal_is_open
+    from cruxible_core.service.proposals.proposals import proposal_inventory_status
 
     pending = []
     for resume in resumes:
         if resume.state != "proposed":
             pending.append(resume)
-        elif resume.proposal_id is not None and proposal_is_open(instance, resume.proposal_id):
+            continue
+        status = (
+            None
+            if resume.proposal_id is None
+            else proposal_inventory_status(instance, resume.proposal_id)
+        )
+        if status == "open":
             pending.append(resume.model_copy(update={"proposal_open": True}))
+        elif status == "awaiting_readmit":
+            pending.append(resume.model_copy(update={"proposal_awaiting_readmit": True}))
     return tuple(pending)
 
 

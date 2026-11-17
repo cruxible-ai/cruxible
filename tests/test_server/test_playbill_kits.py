@@ -3107,3 +3107,22 @@ def test_a_newer_release_of_a_removed_kit_omitting_its_retired_paths_is_refused(
         assert "kit acme was removed here" in (result.detail or "")
         assert "none of this release's definitions is retired here" in (result.detail or "")
     assert calls == []
+
+
+def test_kit_status_keeps_a_kit_add_whose_proposal_awaits_readmit(
+    strict_worlds: tuple[_World, _World], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review F-009: an overlapping head change leaves the add's proposal awaiting
+    readmit; status kept only exactly-open proposals and dropped it."""
+
+    from cruxible_core.service.proposals import proposals
+
+    _publisher, consumer = strict_worlds
+    monkeypatch.setattr(
+        proposals, "proposal_inventory_status", lambda _instance, _id: "awaiting_readmit"
+    )
+
+    (base,) = playbill_api.playbill_kit_status(consumer.instance_id).resumes
+
+    assert base.kit_id == "base" and base.state == "proposed"
+    assert base.proposal_awaiting_readmit and not base.proposal_open

@@ -1237,8 +1237,8 @@ class InstalledKit(_Strict):
 
 #: A recorded kit add waiting on its provider installs: ``waiting`` (an install
 #: has not activated yet), ``proposed`` (the definitions were proposed once they
-#: did; kit status lists it only while that proposal is open), ``blocked``
-#: (proposing them refused; ``detail`` says why).
+#: did; kit status lists it while that proposal is open or awaits readmission),
+#: ``blocked`` (proposing them refused; ``detail`` says why).
 KitResumeState = Literal["waiting", "proposed", "blocked"]
 
 
@@ -1258,6 +1258,9 @@ class KitResumeStatus(_Strict):
     proposal_id: str | None = None
     #: That proposal is still open (awaiting approval or activation).
     proposal_open: bool = Field(default=False, exclude_if=lambda value: not value)
+    #: That proposal awaits readmission: the head changed what it touches, so the
+    #: kit add is run again (kit add proposes it at the head).
+    proposal_awaiting_readmit: bool = Field(default=False, exclude_if=lambda value: not value)
     detail: str | None = None
     #: Where the bundle came from, as the kit add recorded it.
     source: str | None = None

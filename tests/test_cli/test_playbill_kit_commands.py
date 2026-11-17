@@ -950,6 +950,16 @@ def test_kit_status_shows_a_pending_kit_and_the_command_that_approves_it(
                         recorded_at="2026-11-15T00:00:00Z",
                         proposal_id="sha256:" + "d" * 64,
                     ),
+                    KitResumeStatus(
+                        kit_id="ops",
+                        version="2.0.0",
+                        state="proposed",
+                        actor_id="owner",
+                        recorded_at="2026-11-15T00:00:00Z",
+                        proposal_id="sha256:" + "a" * 64,
+                        proposal_awaiting_readmit=True,
+                        source="./kits/ops",
+                    ),
                 )
             )
 
@@ -964,8 +974,13 @@ def test_kit_status_shows_a_pending_kit_and_the_command_that_approves_it(
         f"  next: cruxible proposal approve {proposal} --signer-id ID --key FILE "
         "(the approval that completes it activates it)\n" in result.output
     )
-    # A proposal no longer open names no next step.
+    # A proposal no longer open names no approve step.
     assert result.output.count("next: cruxible proposal approve") == 1
+    # One awaiting readmit is re-run at its recorded source (review F-009).
+    assert (
+        "  awaiting readmit: accepted state changed what it touches; "
+        "next: cruxible kit add ./kits/ops\n" in result.output
+    )
 
 
 def test_kit_help_says_what_a_default_provider_stands_for_now() -> None:

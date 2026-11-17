@@ -2809,6 +2809,18 @@ def kit_status(offline: bool, output_json: bool) -> None:
                 f"  next: cruxible proposal approve {resume.proposal_id} --signer-id ID "
                 "--key FILE (the approval that completes it activates it)"
             )
+        elif resume.proposal_awaiting_readmit:
+            # The head changed what it touches: the add is planned again at the head.
+            if resume.kit_id == "base" and resume.source in (None, "bundled"):
+                reference = "base"
+            elif resume.source is not None:
+                reference = shlex.quote(resume.source)
+            else:
+                reference = "'<KIT>'"
+            click.echo(
+                "  awaiting readmit: accepted state changed what it touches; "
+                f"next: cruxible kit add {reference}"
+            )
     for kit in result.kits:
         available = ""
         if kit.update_check == "checked" and kit.latest_available is not None:

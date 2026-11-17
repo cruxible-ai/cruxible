@@ -497,7 +497,8 @@ quickstart and concepts pages.
   A kit add that stopped at its proposal (the base kit under independent
   approval, or a resumed kit add) was listed as proposed after it was accepted,
   rejected or the kit was removed; it is now listed only while its proposal is
-  open, on the CLI (`--offline` too), SDK and MCP alike.
+  open or awaits readmission, on the CLI (`--offline` too), SDK and MCP alike.
+  One awaiting readmission says so and names the `kit add` to re-run.
 - **A kit add whose provider installs await an approver says so.** Its preview
   and its `awaiting_providers` commit answered `approval_required: false`
   under `independent_approval_required`; both now answer true.
