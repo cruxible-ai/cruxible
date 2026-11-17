@@ -60,7 +60,6 @@ from cruxible_core.ledger.git import NOTE_REFS
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import service_inspect_playbill_proposal
 from cruxible_core.service.discovery.backlinks import (
-    REVIEW_GUIDANCE_MAX_DEFINITIONS,
     claim_type_identity,
     review_guidance,
 )
@@ -660,7 +659,7 @@ def service_review_playbill_proposal(
             instance,
             (
                 definition
-                for member in reviewed_members[: 4 * REVIEW_GUIDANCE_MAX_DEFINITIONS]
+                for member in reviewed_members
                 for definition in (
                     claim_type_identity(
                         member.candidate_semantic_artifact or member.base_semantic_artifact,

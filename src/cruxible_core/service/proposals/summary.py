@@ -40,7 +40,6 @@ from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.indexes.proposal_review import initialize_review_projection
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.backlinks import (
-    REVIEW_GUIDANCE_MAX_DEFINITIONS,
     claim_type_identity,
     review_guidance,
 )
@@ -215,7 +214,9 @@ def _build(
                 cited.update(new.get("backing", {}).get("capture_digests", ()))
             kind = _subject_kind(artifact, member.artifact_kind)
             definition = claim_type_identity(artifact, member.artifact_kind)
-            if definition is not None and len(definitions) < REVIEW_GUIDANCE_MAX_DEFINITIONS:
+            if definition is not None:
+                # Every definition touched: which of them have guidance is asked
+                # at read time, so none is dropped here by member order.
                 definitions.add(definition)
             receipt = artifact.get("backing", {}).get("procedure_evidence", {})
             template = (

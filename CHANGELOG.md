@@ -226,6 +226,10 @@ quickstart and concepts pages.
   `closed_by`, the principal whose approval, activation or readmit closed it;
   it used to read as withdrawn by its author. `proposal approve` prints the
   proposal beside the candidate it signed.
+- **A review shows the guidance of every guided field it touches.** A large
+  change set asked guidance for the first 20 ClaimTypes it met in member order,
+  so a guidance line could be missing, and differ between two submissions of
+  the same change. The cap now counts guided definitions, in name order.
 - **Two pending writes that cite the same new file no longer conflict.** Each
   carries the file's CaptureContract; when the first landed, the second went
   `awaiting_readmit` on that identical contract and left the open list. A path
