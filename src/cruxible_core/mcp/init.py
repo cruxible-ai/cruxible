@@ -26,6 +26,7 @@ from typing import Any, TypeVar
 from cruxible_client import CruxibleClient, contracts
 from cruxible_client.authoring.context import ContextResolutionError, resolve_context
 from cruxible_client.authoring.folder_identity import (
+    FolderIdentity,
     folder_identity_path,
     read_folder_identity,
     write_folder_identity,
@@ -141,6 +142,83 @@ def _reviewer_key_dir(raw: str | None) -> Path | None:
     return directory
 
 
+def _remember_reviewer(socket: str, instance_id: str, settings: Path) -> str | None:
+    """Remember the reviewer's settings in the CLI context; why not and the repair, if not.
+
+    The context is another program's file: failing to rewrite it never undoes
+    or strands an initialization.
+    """
+
+    try:
+        save_cli_context(
+            load_cli_context().remember_principal(
+                principal_binding(f"unix://{socket}", instance_id),
+                "reviewer",
+                settings,
+                activate=False,
+            )
+        )
+    except (ConfigError, OSError) as exc:
+        return (
+            f"{exc}. Repair: start the reviewer's process with its settings loaded "
+            f"(`set -a; . {settings}; set +a`), or fix the CLI context and run "
+            "`cruxible principal add` for any further principal"
+        )
+    return None
+
+
+def _complete_local_setup(
+    root: Path,
+    instance_id: str,
+    socket: str,
+    principal_id: str | None,
+    reviewer_dir: Path | None,
+) -> FolderIdentity | None:
+    """Finish the local half of an init the daemon already committed.
+
+    The owner's key that init generated is in the default key directory: its
+    settings file and the folder's identity record are written again (both
+    idempotent), and so are the settings of a reviewer whose key init generated
+    in ``reviewer_dir``, which are remembered. With
+    no such key the folder stays as it is; the record is checked against the
+    daemon's registry when it is used, as every folder record is.
+    """
+
+    try:
+        owner = principal_id or default_principal_id()
+    except DataValidationError:
+        return None
+    key_dir = default_key_dir(instance_id, owner)
+    key = key_dir / f"{owner}.ed25519"
+    if not key.is_file():
+        return None
+    write_principal_settings(
+        key_dir,
+        ctx_obj={"server_socket": socket},
+        instance_id=instance_id,
+        principal_id=owner,
+        private_key_path=key,
+        token=None,
+        written_by="cruxible_init",
+    )
+    write_folder_identity(
+        root, instance_id=instance_id, principal_id=owner, key_dir=key_dir, replace=True
+    )
+    reviewer_key = None if reviewer_dir is None else reviewer_dir / "reviewer.ed25519"
+    if reviewer_dir is not None and reviewer_key is not None and reviewer_key.is_file():
+        settings = write_principal_settings(
+            reviewer_dir,
+            ctx_obj={"server_socket": socket},
+            instance_id=instance_id,
+            principal_id="reviewer",
+            private_key_path=reviewer_key,
+            token=None,
+            written_by="cruxible_init",
+        )
+        _remember_reviewer(socket, instance_id, settings)
+    return read_folder_identity(root)
+
+
 def run_mcp_init(
     *,
     principal_id: str | None,
@@ -186,6 +264,10 @@ def run_mcp_init(
             inspection = None
         if inspection is not None and inspection.compatibility != "uninitialized":
             record = read_folder_identity(root)
+            if record is None:
+                # An init that the daemon committed but whose local setup was
+                # interrupted: finish it from the keys that init left.
+                record = _complete_local_setup(root, bound, socket, principal_id, reviewer_dir)
             return McpInitResult(
                 status="already_initialized",
                 instance_id=bound,
@@ -198,6 +280,16 @@ def run_mcp_init(
                 folder_identity_path=None if record is None else str(folder_identity_path(root)),
             )
     owner = principal_id or default_principal_id()
+    if reviewer_dir is not None:
+        # Remembering the reviewer reads and rewrites the CLI context: a context
+        # that cannot be read refuses here, before anything is created.
+        try:
+            load_cli_context()
+        except ConfigError as exc:
+            raise ConfigError(
+                f"cruxible_init: {exc}; nothing was created. Repair: fix or remove that "
+                "file (it only remembers CLI settings), then call cruxible_init again"
+            ) from exc
     validate_workspace_config_write(root, instance_id=selected, server_socket=socket)
     roots = tuple(
         dict.fromkeys(
@@ -256,6 +348,12 @@ def run_mcp_init(
         token=None,
         written_by="cruxible_init",
     )
+    # The folder's own setup first: nothing after it can leave the folder
+    # without the identity this session acts as.
+    identity_path, _status = write_folder_identity(
+        root, instance_id=result.instance_id, principal_id=owner, key_dir=key_dir, replace=True
+    )
+    not_remembered = None
     if reviewer_dir is not None:
         # What `cruxible init --reviewer-key-dir` leaves: a settings file beside
         # the key, remembered so the CLI (`context use --principal reviewer`,
@@ -269,22 +367,19 @@ def run_mcp_init(
             token=None,
             written_by="cruxible_init",
         )
-        save_cli_context(
-            load_cli_context().remember_principal(
-                principal_binding(f"unix://{socket}", result.instance_id),
-                "reviewer",
-                reviewer_settings,
-                activate=False,
-            )
-        )
-    identity_path, _status = write_folder_identity(
-        root, instance_id=result.instance_id, principal_id=owner, key_dir=key_dir, replace=True
-    )
+        not_remembered = _remember_reviewer(socket, result.instance_id, reviewer_settings)
     rendered = call(
         lambda client: render_world_stub_for(client, result.instance_id, workspace=root),
         "cruxible_init",
     )
     write_world_stub(root, rendered)
+    if not_remembered is not None:
+        # Everything else is done; only the convenience of finding the reviewer's
+        # key by name is missing, so say so with the repair instead of failing early.
+        raise ConfigError(
+            f"cruxible_init initialized {result.instance_id} as {owner} (call it again for "
+            f"the result), but could not remember the reviewer's settings: {not_remembered}"
+        )
     return McpInitResult(
         status="initialized",
         instance_id=result.instance_id,

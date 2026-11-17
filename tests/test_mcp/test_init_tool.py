@@ -296,3 +296,82 @@ def test_init_by_tool_with_a_reviewer_and_independent_approval(world: dict[str, 
     )
     assert shown.exit_code == 0, shown.output
     assert json.loads(shown.stdout)["actor_id"] == "reviewer"
+
+
+def test_an_unreadable_cli_context_refuses_before_anything_is_created(
+    world: dict[str, Path],
+) -> None:
+    """Review F-003: remembering the reviewer rewrites the CLI context. One that cannot
+    be read is found before the host, the keys or the instance exist."""
+
+    context = Path(os.environ["CRUXIBLE_CLI_CONTEXT_PATH"])
+    context.write_text("{not json")
+    reviewer_dir = world["config"] / "reviewer-keys"
+
+    with pytest.raises(ConfigError, match="nothing was created"):
+        handlers.handle_init("owner", reviewer_key_dir=str(reviewer_dir))
+
+    assert not (world["folder"] / ".cruxible" / "coverage.json").exists()
+    assert not reviewer_dir.exists()
+    context.unlink()
+    assert handlers.handle_init("owner", reviewer_key_dir=str(reviewer_dir)).status == (
+        "initialized"
+    )
+
+
+def test_a_context_that_cannot_be_saved_never_strands_the_initialized_folder(
+    world: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review F-003: the save failed after the daemon committed, before the folder
+    identity was written, and a retry answered `already_initialized` with no owner."""
+
+    from cruxible_core.mcp import init as mcp_init
+
+    def refuse(*_args: object, **_kwargs: object) -> None:
+        raise OSError("read-only context")
+
+    reviewer_dir = world["config"] / "reviewer-keys"
+    monkeypatch.setattr(mcp_init, "save_cli_context", refuse)
+
+    with pytest.raises(ConfigError) as partial:
+        handlers.handle_init("owner", reviewer_key_dir=str(reviewer_dir))
+
+    message = str(partial.value)
+    assert "initialized" in message and "could not remember the reviewer's settings" in message
+    assert f". {reviewer_dir / 'cruxible.env'}; set +a" in message
+    # The folder is complete: this session acts as the owner, with the original keys.
+    again = handlers.handle_init("owner", reviewer_key_dir=str(reviewer_dir))
+    assert (again.status, again.principal_id) == ("already_initialized", "owner")
+    whoami = handlers.handle_playbill_whoami(require_instance_id())
+    assert (whoami.identity_source, whoami.identity.actor_id) == ("folder", "owner")
+    assert (reviewer_dir / "reviewer.ed25519").is_file()
+
+
+def test_a_retry_completes_the_local_setup_an_interrupted_init_left(
+    world: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The daemon committed and the local setup stopped before the identity record:
+    calling init again writes it from the owner key that init generated."""
+
+    from cruxible_core.mcp import init as mcp_init
+
+    def interrupted(*_args: object, **_kwargs: object) -> None:
+        raise OSError("disk full")
+
+    reviewer_dir = world["config"] / "reviewer-keys"
+    with monkeypatch.context() as patched:
+        patched.setattr(mcp_init, "write_folder_identity", interrupted)
+        with pytest.raises(OSError, match="disk full"):
+            handlers.handle_init("owner", reviewer_key_dir=str(reviewer_dir))
+    assert not (world["folder"] / ".cruxible" / "identity.json").exists()
+
+    again = handlers.handle_init("owner", reviewer_key_dir=str(reviewer_dir))
+
+    assert (again.status, again.principal_id) == ("already_initialized", "owner")
+    assert again.folder_identity_path == str(world["folder"] / ".cruxible" / "identity.json")
+    whoami = handlers.handle_playbill_whoami(require_instance_id())
+    assert (whoami.identity_source, whoami.identity.actor_id) == ("folder", "owner")
+    from cruxible_core.cli.context import load_cli_context
+
+    remembered = [entry for entry in load_cli_context().principals.values()]
+    assert remembered and "reviewer" in remembered[0].settings
