@@ -102,7 +102,10 @@ if TYPE_CHECKING:
 #: number is part of the schema text, so a new one rebuilds the state (R5).
 #: 17: a current Claim's facts end at its freshness expiry less next's lead, and
 #: a content observation derives only the Claims it changes (built at 16: rebuild).
-FORMAT = 19  # A stale reader's edges name its keys' observed sets (review 2c #6)
+#: 20: a new row map of a Capture derives the Claims citing it again. A state built
+#: at 19 can hold a supported Claim with its cursor already past the conflicting map,
+#: which no later record names: it must rebuild once.
+FORMAT = 20
 #: (<TEXT>, <CLAIM_ID>), and a due dispatch names its Line. A state built at 15 stores
 #: rows with the old commands and ids, so it must rebuild once. (15: subject-end entries
 #: per (end, pair) key; live key-object index.)

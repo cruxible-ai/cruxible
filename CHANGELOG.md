@@ -506,7 +506,8 @@ quickstart and concepts pages.
 - **`next` follows a new typing of a cited Capture.** A row map recorded
   after `next` stored a Claim's facts can withdraw the Claim's row evidence;
   the Claims citing that Capture are now derived again, so `next` and a direct
-  read agree.
+  read agree. The `next` state rebuilds once after the upgrade (format 20),
+  so the first `next` is slower.
 - **A re-observation record whose stored payload was lost no longer fails
   reads.** The record is skipped as unavailable evidence when the projection
   is rebuilt (after an upgrade, for one), and every other record is served.

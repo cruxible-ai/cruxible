@@ -534,14 +534,11 @@ def test_a_reobservation_journal_lost_then_restored_is_followed_without_a_repair
     followed()
 
 
-def test_a_typing_map_recorded_after_a_claims_facts_derives_the_claim_again(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Review finding 1: the worker stores a supported, current Claim's facts
-    (its extracted record is row X, observed again recently). A second typing
-    of the cited Capture then maps the record to row Y: the maps disagree, the
-    direct reader withdraws the row evidence, and the worker derives the
-    Claim again, so next serves what a rebuild does."""
+def _row_map_world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):  # type: ignore[no-untyped-def]
+    """A Claim whose extracted record is row X of its cited Capture, observed
+    again recently: ``observe(minute, capture, row, typing)`` records a row map,
+    and ``observe.conflict()`` records a second typing mapping the record to row
+    Y, so the Capture's maps disagree and the row evidence is withdrawn."""
 
     from cruxible_core.evidence import claim_reobservations
     from cruxible_core.evidence.claim_reobservations import ReobservationKey, RowMap
@@ -579,7 +576,22 @@ def test_a_typing_map_recorded_after_a_claims_facts_derives_the_claim_again(
             depends if kwargs["claim"].identity == claim.identity else real_keys(instance, **kwargs)
         ),
     )
-    at = start + timedelta(minutes=40)
+    observe(1, cited, row_x, "t1")
+    observe(20, _OTHER, row_x, "t1")
+    observe.conflict = lambda minute=30: observe(minute, cited, row_y, "t2")  # type: ignore[attr-defined]
+    return instance, claim, cited, observe, start + timedelta(minutes=40)
+
+
+def test_a_typing_map_recorded_after_a_claims_facts_derives_the_claim_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review finding 1: the worker stores a supported, current Claim's facts
+    (its extracted record is row X, observed again recently). A second typing
+    of the cited Capture then maps the record to row Y: the maps disagree, the
+    direct reader withdraws the row evidence, and the worker derives the
+    Claim again, so next serves what a rebuild does."""
+
+    instance, claim, cited, observe, at = _row_map_world(tmp_path, monkeypatch)
     identity = claim.identity.qualified
 
     def stored_verdict() -> str:
@@ -587,11 +599,9 @@ def test_a_typing_map_recorded_after_a_claims_facts_derives_the_claim_again(
         tables = _assert_rebuilt(instance, at)
         return str(next(row for row in tables["claim_facts"] if row[0] == identity)[_VERDICT])
 
-    observe(1, cited, row_x, "t1")
-    observe(20, _OTHER, row_x, "t1")
     assert stored_verdict() == "supported"
     # The worker is caught up; only now is the conflicting map recorded.
-    observe(30, cited, row_y, "t2")
+    observe.conflict()
     with _counted() as work:
         _catch_up(instance, at)
     # Reached through the Capture: the Claims citing it, each once.
@@ -604,10 +614,91 @@ def test_a_typing_map_recorded_after_a_claims_facts_derives_the_claim_again(
     assert set(work.claims) <= citing
     assert stored_verdict() != "supported"
     # The same maps again are no new map: nothing is derived.
-    observe(35, cited, row_y, "t2")
+    observe.conflict(35)
     with _counted() as work:
         _catch_up(instance, at)
     assert identity not in work.claims
+
+
+def test_facts_stored_before_typing_maps_were_followed_rebuild_once_after_an_upgrade(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review round 2: a format-19 worker did not follow new row maps, so it
+    could store a Claim as supported and move its cursor past the conflicting
+    map. Records past the cursor never name that map again: only a rebuild
+    corrects the fact. A format-19 state is therefore not this format: reads
+    fold until the worker has rebuilt it, and both agree with the direct
+    freshness verdict."""
+
+    from tests.test_evidence.test_content_observations import _verdict
+
+    instance, claim, _cited, observe, at = _row_map_world(tmp_path, monkeypatch)
+    identity = claim.identity.qualified
+    stored = "SELECT verdict FROM claim_facts WHERE claim_id=?"
+
+    def served() -> Any:
+        """The verdict a read takes from the stored facts; None when it folds."""
+
+        answer = facts._serving(
+            instance,
+            coordinate=None,
+            door_head=None,
+            evaluation_time=at,
+            read=lambda connection, _coordinate: connection.execute(stored, (identity,)).fetchone(),
+        )
+        return None if answer is None else answer[0][0]
+
+    _catch_up(instance, at)
+    assert served() == "supported"
+    # The format-19 worker: the conflicting map lands and the cursor passes it
+    # with no Claim derived, as that build's change selection did.
+    observe.conflict()
+    with (
+        patch.object(ClaimReobservationStore, "maps_after", lambda *_a, **_k: frozenset()),
+        _counted() as work,
+    ):
+        _catch_up(instance, at)
+    assert identity not in work.claims
+    path = facts._STATE.path(instance)
+    with sqlite3.connect(path) as connection:
+        assert connection.execute(stored, (identity,)).fetchone() == ("supported",)
+        cursors = connection.execute("SELECT * FROM cursors").fetchall()
+    assert ClaimReobservationStore(instance).maps_after(0)
+    direct = _verdict(instance, at).verdict
+    assert direct != "supported"
+
+    # The same rows and cursors under the format-19 schema text, as that build left them.
+    current = path.with_suffix(".current")
+    path.rename(current)
+    prior = sqlite3.connect(path)
+    prior.executescript(
+        facts._SCHEMA.replace(f"v={facts.FORMAT}", "v=19").replace(
+            f"VALUES ({facts.FORMAT})", "VALUES (19)"
+        )
+    )
+    prior.execute("ATTACH DATABASE ? AS cur", (str(current),))
+    for (table,) in prior.execute(
+        "SELECT name FROM cur.sqlite_master WHERE type='table' AND name!='format'"
+    ).fetchall():
+        prior.execute(f"DELETE FROM main.{table}")
+        prior.execute(f"INSERT INTO main.{table} SELECT * FROM cur.{table}")
+    prior.commit()
+    prior.execute("DETACH DATABASE cur")
+    prior.close()
+    current.unlink()
+    with sqlite3.connect(path) as connection:
+        assert connection.execute("SELECT v FROM format").fetchone() == (19,)
+        assert connection.execute("SELECT * FROM cursors").fetchall() == cursors
+        assert connection.execute(stored, (identity,)).fetchone() == ("supported",)
+
+    # The first read after the upgrade does not serve the stored fact: it folds.
+    assert served() is None
+    # The worker rebuilds with no new record, and then serves the direct verdict.
+    _catch_up(instance, at)
+    _assert_rebuilt(instance, at)
+    assert served() == direct
+    with sqlite3.connect(path) as connection:
+        assert connection.execute("SELECT v FROM format").fetchone() == (facts.FORMAT,)
 
 
 def test_a_journal_tail_lost_in_place_and_regrown_before_a_pass_rebuilds_the_facts(
