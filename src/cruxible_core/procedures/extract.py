@@ -1037,6 +1037,11 @@ class ExtractOutcome:
     duplicates: int
     complete_when_result: CompleteWhenResult | None = None
     invalid_fields: dict[str, int] = field(default_factory=dict)
+    #: Every typing input the records were read under (each field's and key's
+    #: effective type with what it resolves to now: enum members, SubjectKind
+    #: key rules, nested Contracts): with the Capture, spec and selection, the
+    #: whole derivation key of the rows (review 2d #5).
+    typing_key: str = ""
 
     @property
     def results(self) -> list[ResultValue]:
@@ -1387,6 +1392,12 @@ def run_extract(
         invalid_records=invalid_records,
         duplicates=duplicates,
         invalid_fields=invalid_fields,
+        typing_key=extract_spec_digest(
+            {
+                "fields": field_digests,
+                "keys": {name: typing.of(keys_by_name[name]) for name in sorted(keys_by_name)},
+            }
+        ),
     )
 
 

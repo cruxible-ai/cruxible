@@ -5659,7 +5659,9 @@ class ProcedureExecutor:
         )
         maps = []
         for capture, outcome in parts:
-            row_map, rows = _row_map_of(state, capture, spec, selected, outcome)
+            row_map, rows = _row_map_of(
+                state, capture, spec, f"{selected}|{outcome.typing_key}", outcome
+            )
             state.row_maps[(capture, spec)] = rows
             maps.append(row_map)
         spans = [_capture_span(state, capture) for capture, _outcome in parts]
