@@ -20,7 +20,6 @@ Arguments that mix the two refuse with a typed refusal saying which is which.
 from __future__ import annotations
 
 import re
-import shlex
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Literal, Protocol
@@ -35,6 +34,7 @@ from cruxible_client.authoring.files import (
     _portable_catalog_path,
     _read_portable,
     _write_portable,
+    catalog_step,
     compile_client_file_context,
     media_type_for,
 )
@@ -267,7 +267,7 @@ def _overlay_entry(root: Path, name: str) -> FileCatalogEntry | None:
 
 
 def _guidance_entry(
-    files: WorkspaceFiles, file: str, *, root: Path
+    files: WorkspaceFiles, file: str, *, root: Path, surface: Literal["cli", "mcp", "sdk"]
 ) -> tuple[FileCatalogEntry, Path]:
     """The one catalog entry ``file`` (a path or name) names, or a typed refusal.
 
@@ -287,14 +287,14 @@ def _guidance_entry(
             LINK_FILE_AMBIGUOUS,
             f"{file} is catalogued under several names ({names}); guidance links the one "
             "page its Document compiles from",
-            repair_line=f"Keep one entry: cruxible files remove {matches[-1].name}",
+            repair_line="Keep one entry: " + catalog_step(surface, "remove", matches[-1].name),
         )
     if not matches:
         raise WriteRefusalError(
             LINK_FILE_UNREGISTERED,
             f"{file} is not a registered workspace file; guidance links a page in the "
             "file catalog, the one its Document compiles from",
-            repair_line=f"Register it first: cruxible files add {shlex.quote(file)}",
+            repair_line="Register it first: " + catalog_step(surface, "add", file),
         )
     return matches[0], path
 
@@ -311,8 +311,12 @@ def link_guides(
     dry_run: bool = False,
     accept: AuthoringAccept = "if_allowed",
     at: str | None = None,
+    surface: Literal["cli", "mcp", "sdk"] = "cli",
 ) -> GuidanceLinkOutcome:
     """Record ``guides`` links on FILE's catalog entry and propose its Document's next revision.
+
+    ``surface`` is the caller's client: a refusal's repair is worded as that
+    client runs it (``cx.files.add(...)`` on the SDK).
 
     The proposal is ``files propose``'s, compiled from the file's current bytes
     and the entry's links as they will read. The catalog is written only after
@@ -342,9 +346,9 @@ def link_guides(
             raise WriteRefusalError(
                 LINK_FILE_UNREGISTERED,
                 f"{file} is not a registered workspace file (the workspace has no file catalog)",
-                repair_line=f"Register it first: cruxible files add {shlex.quote(file)}",
+                repair_line="Register it first: " + catalog_step(surface, "add", file),
             ) from None
-        entry, path = _guidance_entry(files, file, root=root)
+        entry, path = _guidance_entry(files, file, root=root, surface=surface)
         catalog_path = _portable_catalog_path(root)
         portable = _read_portable(catalog_path)
         original = next(
@@ -360,7 +364,8 @@ def link_guides(
                 LINK_FILE_UNREGISTERED,
                 f"{entry.name} is catalogued only in the local overlay; guidance is recorded "
                 "in the portable catalog (.cruxible/files.yaml)",
-                repair_line=f"Register it there: cruxible files add {entry.name} {entry.locator}",
+                repair_line="Register it there: "
+                + catalog_step(surface, "add", entry.name, str(entry.locator)),
             )
         overlay = _overlay_entry(root, entry.name)
         if overlay is not None:

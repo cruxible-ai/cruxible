@@ -19,6 +19,7 @@ from cruxible_client.authoring.context import (
     ContextResolutionError,
     resolve_context,
 )
+from cruxible_client.authoring.principal_settings import principal_key
 from cruxible_client.contracts.repair_spelling import render_repair, repair_spelling
 from cruxible_client.contracts.repairs import HandEditRepair, RepairOperation
 from cruxible_client.contracts.workspace_layout import WorkspaceDirectoryConflict
@@ -1439,7 +1440,12 @@ def _load_remembered_principal(
     they write; `cruxible context use --principal ID` picks the active one. A
     process that names its own principal (--principal-id, CRUXIBLE_PRINCIPAL_ID)
     or carries its own key or credential keeps them: an agent launched with its
-    own settings file is never overridden.
+    own settings file is never overridden. A process that names its principal
+    and carries no key is given that principal's own key (and, carrying no
+    credential either, its token) by the one key lookup every client uses
+    (`cruxible_client.authoring.principal_settings.principal_key`): its
+    remembered settings, else the folder record when it names that principal.
+    It is never given another principal's.
 
     Settings are remembered per instance on one daemon endpoint, and the file
     must name that same endpoint: a credential is never offered to another
@@ -1457,6 +1463,8 @@ def _load_remembered_principal(
         obj["principal_source"] = (
             "environment" if source is click.core.ParameterSource.ENVIRONMENT else "explicit"
         )
+        if instance_id is not None and transport is not None:
+            _load_named_principal_key(ctx, stored, str(obj["principal_id"]), instance_id, folder)
         return
     if (
         instance_id is None
@@ -1513,6 +1521,72 @@ def _load_remembered_principal(
     )
 
 
+def _load_named_principal_key(
+    ctx: click.Context,
+    stored: CliContextState,
+    principal_id: str,
+    instance_id: str,
+    folder: Path | None,
+) -> None:
+    """Give a process that names its principal and no key that principal's own key.
+
+    `CRUXIBLE_PRINCIPAL_ID=reviewer cruxible proposal approve ID` then signs
+    wherever the reviewer's settings are remembered. A process that carries a
+    key keeps it; a token is added only from the same principal's remembered
+    settings, and only when the process carries none. The principal the
+    process named stays its principal whatever the command turns out to do.
+
+    The key is exported with the principal it belongs to (CRUXIBLE_PRINCIPAL_ID),
+    as a sourced settings file sets both: a key the CLI loaded is never an
+    unnamed key, so the lookup never offers it to another signer
+    (`--principal-id owner ... --signer-id reviewer`).
+    """
+
+    if os.environ.get(PRINCIPAL_KEY_ENV):
+        return
+    obj = ctx.obj
+    key = principal_key(
+        principal_id,
+        instance_id=instance_id,
+        server_url=obj.get("server_url"),
+        server_socket=obj.get("server_socket"),
+        remembered=stored.as_json(),
+        folder=folder,
+    )
+    if key is None or key.source not in ("remembered_settings", "folder"):
+        # The default key directory is read where a key is needed, not exported.
+        return
+    environment = {
+        PRINCIPAL_ID_ENV: principal_id,
+        PRINCIPAL_KEY_ENV: str(key.private_key_path),
+    }
+    if key.token is not None and not os.environ.get(PRINCIPAL_TOKEN_ENV):
+        # From the one read that verified the settings name this principal on
+        # this instance and endpoint: the file is never read a second time.
+        environment[PRINCIPAL_TOKEN_ENV] = key.token
+    previous = {name: os.environ.get(name) for name in environment}
+
+    def restore() -> None:
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+    def forget() -> None:
+        # A command that turns out to act on another instance (init in a new
+        # folder) drops the key and token it was handed, not the named principal.
+        restore()
+        for name in ("principal_settings", "principal_key_source"):
+            obj.pop(name, None)
+
+    os.environ.update(environment)
+    ctx.call_on_close(restore)
+    obj["principal_settings"] = None if key.settings_path is None else str(key.settings_path)
+    obj["principal_key_source"] = key.source
+    obj["forget_remembered_principal"] = forget
+
+
 def _act_as(
     ctx: click.Context,
     environment: dict[str, str],
@@ -1542,6 +1616,7 @@ def _act_as(
             "principal_id",
             "principal_source",
             "principal_settings",
+            "principal_key_source",
             "folder_identity",
             "folder_identity_refused",
         ):
@@ -1552,6 +1627,7 @@ def _act_as(
     obj["principal_id"] = principal_id
     obj["principal_source"] = source
     obj["principal_settings"] = settings_path
+    obj["principal_key_source"] = "folder" if source == "folder" else "remembered_settings"
     obj["forget_remembered_principal"] = forget
 
 

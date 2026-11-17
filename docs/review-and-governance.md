@@ -31,7 +31,7 @@ awaiting approval (generation 2, cd46246265f9)
   + subject catalog.part/bp-1142
 proposal: sha256:9afd6283… (awaiting_external_approval)
 awaiting: independent approval; approvers: reviewer
-next: cruxible proposal approve sha256:9afd6283… --signer-id reviewer --key <reviewer.ed25519>
+next: cruxible proposal approve sha256:9afd6283… --signer-id reviewer
 ~~~
 
 `--no-accept` stops any write at a proposal even when it could land, and
@@ -106,8 +106,12 @@ Activated at 9b659ad32d3f…
 ~~~
 
 A reviewer created at `cruxible init --reviewer-key-dir DIR` has its settings
-in `DIR`, so `context use` switches to it; on another machine, a reviewer
-can instead pass `--signer-id reviewer --key PATH`.
+in `DIR`, so `context use` switches to it. One command can also name the
+reviewer without switching: `CRUXIBLE_PRINCIPAL_ID=reviewer cruxible proposal
+approve ID` acts as the reviewer, and `--signer-id reviewer` signs as it; both
+find the reviewer's key in its remembered settings, never another principal's.
+On a machine that remembers no settings for it, a reviewer passes
+`--signer-id reviewer --key PATH`.
 
 `--hold` signs without accepting, for when someone else should decide when
 the change lands; they run `proposal activate` later:

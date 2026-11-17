@@ -745,13 +745,13 @@ def land_for_signer(
     if reason is not None:
         # Refused before anything is evaluated or published at the head.
         why, command = reason
-        from cruxible_core.service.proposals.proposals import author_repair
+        from cruxible_core.service.proposals.proposals import author_repair, kit_source_note
 
         raise ProposalReadmitRequiresResubmission(
             f"proposal {proposal_id} {why}, so it cannot be landed at the head for a signer "
             f"registered after its base; its author {proposal.admission.actor_id!r} "
-            f"{command}, and you approve the new proposal",
-            repair=author_repair(proposal),
+            f"{command}, and you approve the new proposal" + kit_source_note(proposal, instance),
+            repair=author_repair(proposal, instance),
         )
     recompiled = _recompile_for_review(instance, proposal, approver=True, triggered_by=triggered_by)
     if recompiled is None:

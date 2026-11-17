@@ -249,6 +249,7 @@ class CruxibleClient:
             headers[EFFECTIVE_PERMISSION_MODE_HEADER] = permission_ceiling
         self.principal_id = principal_id
         self.socket_path = socket_path
+        self.base_url = base_url
         if socket_path is not None:
             target = f"unix:{socket_path}"
             raw_client = httpx.Client(

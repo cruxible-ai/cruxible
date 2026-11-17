@@ -340,16 +340,16 @@ def _render_proposal_call(
 ) -> str:
     if surface == "cli":
         if verb == "approve":
-            who = signer or "<approver>"
-            return (
-                f"cruxible proposal approve {proposal_id} --signer-id {who} --key <{who}.ed25519>"
-            )
+            # No key: the signer's client finds it (remembered settings) or
+            # refuses with the repair.
+            who = signer or "'<SIGNER_ID>'"
+            return f"cruxible proposal approve {proposal_id} --signer-id {who}"
         return f"cruxible proposal activate {proposal_id}"
     if surface == "sdk":
         handle = f"cx.proposal({json.dumps(proposal_id)})"
         if verb == "approve":
-            who = signer or "approver"
-            return f"{handle}.approve(signer=<{who} signer>, reviewed={handle}.review())"
+            who = "" if signer is None else json.dumps(signer)
+            return f"{handle}.approve(signer=cx.signer({who}), reviewed={handle}.review())"
         return f"{handle}.activate()"
     if verb == "approve":
         arguments = f"proposal_id={json.dumps(proposal_id)}"

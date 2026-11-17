@@ -71,6 +71,7 @@ from cruxible_client.contracts.kits import (
     kit_file_entry,
     kit_file_path_allowed,
     kit_version_key,
+    registry_source,
 )
 from cruxible_client.contracts.validation_messages import validation_summary
 from cruxible_client.errors import ConfigError
@@ -668,13 +669,6 @@ def resolve_kit_image(
 
 #: How long the update check waits on a registry before reporting it unavailable.
 UPDATE_CHECK_TIMEOUT = 5.0
-
-
-def registry_source(source: str | None) -> bool:
-    """Whether a recorded kit source is a registry reference (directory and layout
-    sources are a bare name)."""
-
-    return source is not None and "/" in source
 
 
 def latest_release(tags: tuple[str, ...]) -> str | None:

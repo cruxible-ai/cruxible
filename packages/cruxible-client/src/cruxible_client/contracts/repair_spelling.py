@@ -603,7 +603,8 @@ def next_repair_command(
         parts.append(shlex.quote(proposal_id))
     elif operation == "cruxible.proposal.approve":
         # The signing key stays in the signer's client custody; the daemon
-        # never learns its path, so `--key` is the one operand left to add.
+        # never learns its path. The signer's client finds it (its remembered
+        # settings) or refuses naming the repair, so no `--key` is spelled.
         proposal_id = values.get("proposal_id")
         signer_id = values.get("signer_id")
         if not isinstance(proposal_id, str) or not isinstance(signer_id, str):
@@ -810,12 +811,12 @@ def _sdk_procedure(method: str) -> SdkSpelling:
 
 
 def _sdk_approve(values: Mapping[str, object]) -> str:
-    """The approval call; SIGNER is the caller's ApprovalSigner (a NameError until given)."""
+    """The approval call; ``cx.signer(ID)`` opens that principal's key by the shared lookup."""
 
     handle = _sdk_call("cx.proposal", _operand(values, "proposal_id"))
     signer = values.get("signer_id")
-    whose = f"  # SIGNER: {signer}'s ApprovalSigner" if isinstance(signer, str) and signer else ""
-    return f"{handle}.approve(signer=SIGNER, reviewed={handle}.review()){whose}"
+    who = _sdk_call("cx.signer", signer) if isinstance(signer, str) and signer else "cx.signer()"
+    return f"{handle}.approve(signer={who}, reviewed={handle}.review())"
 
 
 def _proposal_verb(

@@ -666,12 +666,12 @@ def test_an_approval_awaiting_more_names_whose_and_the_approve_next() -> None:
         "completes it activates it"
     )
     assert lines[1:] == [
-        f"Next: cruxible proposal approve {proposal} --signer-id owner --key FILE",
-        f"Next: cruxible proposal approve {proposal} --signer-id ops2 --key FILE",
+        f"Next: cruxible proposal approve {proposal} --signer-id owner",
+        f"Next: cruxible proposal approve {proposal} --signer-id ops2",
     ]
     assert steps[:2] == [
-        f"cruxible proposal approve {proposal} --signer-id owner --key FILE",
-        f"cruxible proposal approve {proposal} --signer-id ops2 --key FILE",
+        f"cruxible proposal approve {proposal} --signer-id owner",
+        f"cruxible proposal approve {proposal} --signer-id ops2",
     ]
     assert not any("proposal activate" in step for step in steps)
 
@@ -702,7 +702,7 @@ def test_a_principal_change_proposal_names_its_proposers_approval_next(capsys) -
     ordinary = capsys.readouterr().out
 
     assert (
-        f"next: cruxible proposal approve {proposal_id} --signer-id ops2 --key FILE "
+        f"next: cruxible proposal approve {proposal_id} --signer-id ops2 "
         "(a principal change needs its proposer's own signature)"
     ) in principal
     assert f"next: cruxible get {proposal_id}" in ordinary

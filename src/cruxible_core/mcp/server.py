@@ -77,10 +77,11 @@ unknown.
 
 Point, don't copy, unless a rule must notice change, a consumer needs prior
 state, a join needs it, or the source forgets. Use expect or at for shared
-edits. Even with auth off, never self-approve: a subagent as principal
-reviewer (init --reviewer-key-dir or principal add) reviews the exact candidate and
-approves via the CLI (context use --principal reviewer); subagents share this
-MCP server. No reviewer: set one up. A person approves only if asked.
+edits. Auth off or on, never self-approve: a subagent as reviewer reviews
+the exact candidate and approves via CLI (context use --principal
+reviewer); subagents share MCP. No reviewer: CLI principal add reviewer
+--key-dir DIR --mode graph_write, then submit approval_policy. A person
+approves only if asked.
 
 A proposal is not accepted state; an approval is not activation. Transport tiers
 only control endpoint reachability; Cruxible principals and acceptance laws

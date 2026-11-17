@@ -21,7 +21,7 @@ from cruxible_client.contracts.attestations import (
     approval_digest,
     approval_statement_bytes,
 )
-from cruxible_client.contracts.errors import ReviewedCandidateChanged
+from cruxible_client.contracts.errors import ReviewedCandidateChanged, SigningKeyError
 from cruxible_core.ledger.signing import LocalEd25519ApprovalSigner as CoreSigner
 from tests.test_integration.test_approval_attestations import ROOT, _candidate
 
@@ -333,9 +333,15 @@ def test_changed_challenge_refuses_before_signing(setup, field) -> None:
         else:
             changed["parent_semantic_root"] = "sha256:" + "f" * 64
         client.changes["review"] = changed
-    with pytest.raises(ApprovalReviewMismatch):
+    # A key the instance does not hold for the signer is a key refusal with its own
+    # repair (a signer opened from its key file alone, cx.signer, is checked here).
+    expected = SigningKeyError if field == "key" else ApprovalReviewMismatch
+    with pytest.raises(expected) as refused:
         proposal.approve(signer=signer, reviewed=reviewed)
     assert signer.calls == client.submitted == 0
+    if field == "key":
+        assert "not the key this instance holds for principal reviewer" in str(refused.value)
+        assert "cx.signer('reviewer', key=FILE)" in str(refused.value)
 
 
 @pytest.mark.parametrize("mode", ["mutate", "invalid"])

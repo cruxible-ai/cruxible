@@ -35,7 +35,12 @@ from cruxible_client.authoring.context import (
     resolve_context,
 )
 from cruxible_client.authoring.doc_writes import write_workspace
-from cruxible_client.authoring.principal_settings import remembered_principal_settings
+from cruxible_client.authoring.principal_settings import (
+    principal_key,
+    principal_key_missing,
+    remembered_context,
+    remembered_principal_settings,
+)
 from cruxible_client.authoring.procedures import Sequence as ProcedureSequence
 from cruxible_client.authoring.procedures import procedure_record_constructor
 from cruxible_client.authoring.sdk_types import (
@@ -77,7 +82,7 @@ from cruxible_client.authoring.selectors import (
     FileSelector,
     WorkspaceFiles,
 )
-from cruxible_client.authoring.signing import ApprovalSigner
+from cruxible_client.authoring.signing import ApprovalSigner, LocalEd25519ApprovalSigner
 from cruxible_client.authoring.source_map import (
     DiagnosticSourceMap,
     capture_keyword_sites,
@@ -2640,7 +2645,7 @@ class Proposal:
 
     Read it with ``cx.get(proposal_id)``: status, verdict, changes, and for a refused
     proposal every refusal with its repair. Next: ``proposal.review()``, then
-    ``proposal.approve(signer=..., reviewed=...)`` and ``proposal.activate()``.
+    ``proposal.approve(signer=cx.signer(), reviewed=...)`` and ``proposal.activate()``.
     """
 
     def __init__(self, cx: Cruxible, proposal_id: str) -> None:
@@ -2653,7 +2658,7 @@ class Proposal:
         ``print(review)`` shows what ``cruxible proposal review`` prints: the value
         changes with what each cites, and the definitions; ``review.details`` is
         the full candidate review.
-        Next: ``proposal.approve(signer=..., reviewed=review)``.
+        Next: ``proposal.approve(signer=cx.signer(), reviewed=review)``.
         """
         return review_proposal(self._playbill, self.proposal_id)
 
@@ -2803,6 +2808,8 @@ class Cruxible:
         self._coordinate: AcceptedCoordinate | None = None
         self._pinned = False
         self._owns_client = True
+        # The context file ``connect`` was opened with; None reads the default.
+        self._context_path: Path | None = None
         # An accepted ClaimType at an exact coordinate never changes, so one read
         # answers every Claim this connection drafts under that predicate there.
         self._claim_type_envelopes: dict[tuple[str, str], Mapping[str, object]] = {}
@@ -2920,6 +2927,7 @@ class Cruxible:
             # A session needs only the current head, not an orientation of the
             # whole accepted world: one identity read names it. Orient
             # explicitly (``orient()`` / ``refresh()``) when the overview is wanted.
+            result._context_path = context_path
             if at is None:
                 result._coordinate = AcceptedCoordinate.model_validate(
                     client.whoami(resolved.instance_id).coordinate.model_dump(mode="json")
@@ -3040,6 +3048,8 @@ class Cruxible:
         result._coordinate = AcceptedCoordinate.model_validate(coordinate.model_dump(mode="json"))
         result._pinned = True
         result._owns_client = False
+        # The pinned context is the same connection: the same remembered context.
+        result._context_path = self._context_path
         return result
 
     def _read_at(
@@ -3960,6 +3970,7 @@ class Cruxible:
             dry_run=dry_run,
             accept=write_accept(accept),
             at=pinned.git_oid if isinstance(pinned, api.AcceptedCoordinate) else pinned,
+            surface="sdk",
         )
         landed = guided.proposal.outcome
         if isinstance(landed, api.AuthoringLanded):
@@ -4964,6 +4975,54 @@ class Cruxible:
         """
 
         return self._client.whoami(self._instance_id)
+
+    def signer(
+        self, principal_id: str | None = None, *, key: str | Path | None = None
+    ) -> LocalEd25519ApprovalSigner:
+        """The local approval signer of one principal (default: who this connection acts as).
+
+        The key is found as the CLI and the MCP server find it: ``key``, else
+        ``CRUXIBLE_PRINCIPAL_KEY`` unless ``CRUXIBLE_PRINCIPAL_ID`` names another
+        principal, else the settings `cruxible init` or `cruxible principal add`
+        remembered for that principal on this instance, else the folder's
+        identity record when it names it. It must sit outside the workspace.
+        Nothing is read from the daemon to open it: ``approve`` checks the key
+        against the signer's registered principal in its challenge and refuses
+        one the instance does not hold, or an unknown principal, signing
+        nothing. With no key found it raises ``SigningKeyError`` naming the repair.
+
+        Next: ``cx.proposal(ID).approve(signer=cx.signer("reviewer"), reviewed=review)``.
+        """
+
+        from cruxible_client.contracts.errors import SigningKeyError
+
+        who = principal_id if principal_id is not None else self.whoami().actor_id
+        if who is None:
+            raise SigningKeyError(
+                "this connection acts as no principal, so it has no signer of its own; "
+                "repair: pass the principal, as cx.signer('reviewer')"
+            )
+        who = who.removeprefix("Principal:")
+        found = principal_key(
+            who,
+            instance_id=self._instance_id,
+            server_url=self._client.base_url,
+            server_socket=self._client.socket_path,
+            explicit=key,
+            # The context this connection was opened with, as it reads now.
+            remembered=remembered_context(path=self._context_path),
+            folder=self._workspace,
+        )
+        if found is None:
+            raise SigningKeyError(principal_key_missing(who, client="sdk"))
+        # No registry read: the key file is opened and its custody checked here,
+        # and the approval checks it against the principal record in the
+        # daemon's challenge (an unknown principal refuses there).
+        return LocalEd25519ApprovalSigner.from_key(
+            signer_id=who,
+            private_key_path=found.private_key_path,
+            forbidden_roots=() if self._workspace is None else (self._workspace,),
+        )
 
     def kits(self) -> KitStatus:
         """The kits installed here, their versions, providers and pending adds.

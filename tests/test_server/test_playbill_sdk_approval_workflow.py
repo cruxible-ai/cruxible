@@ -5,6 +5,7 @@ from __future__ import annotations
 import runpy
 from pathlib import Path
 
+import pytest
 from cryptography.hazmat.primitives import serialization
 
 from cruxible_client import Cruxible, LocalEd25519ApprovalSigner
@@ -63,3 +64,23 @@ def test_public_claim_review_and_repair_example(playbill_http, tmp_path: Path, m
     assert result["value"] == 49 and result["verdict"] == "supported"
     assert result["revision"] == 2
     assert len(set(recovered)) == 2
+
+
+def test_cx_signer_opens_the_registered_key_without_a_principal_read(
+    playbill_http, tmp_path: Path, monkeypatch
+) -> None:
+    """`cx.signer(ID, key=...)` on a real instance opens the key file alone; its public
+    key is the one the instance holds for that principal (read here only to compare)."""
+
+    http, instance_id, private_path = playbill_http
+    transport = CruxibleClient(base_url="http://cruxible")
+    transport._client = http
+    workspace = tmp_path / "demo-workspace"
+    workspace.mkdir()
+    cx = Cruxible._from_client(transport, instance_id=instance_id, workspace=workspace)
+    registered = cx.get("Principal:reviewer").value.public_key
+    monkeypatch.setattr(Cruxible, "get", lambda *a, **k: pytest.fail("a signer reads nothing"))
+
+    signer = cx.signer("reviewer", key=private_path)
+
+    assert (signer.signer_id, signer.public_key) == ("reviewer", registered)

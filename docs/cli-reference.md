@@ -114,7 +114,9 @@ sourcing is needed; `context use --principal ID` switches, and `context show`
 names the principal and where it came from. A process that sets its own
 principal (`--principal-id`, `CRUXIBLE_PRINCIPAL_ID`, `CRUXIBLE_PRINCIPAL_KEY`
 or `CRUXIBLE_SERVER_BEARER_TOKEN`) keeps it, so an agent launched with its own
-`cruxible.env` works unchanged. Settings are remembered for one instance on one
+`cruxible.env` works unchanged. A process that names only its principal
+(`CRUXIBLE_PRINCIPAL_ID=reviewer cruxible proposal approve ID`) is given that
+principal's own remembered key and credential, never another principal's. Settings are remembered for one instance on one
 daemon endpoint (URL or socket), and the file must name that endpoint: when a
 command targets another daemon, by flag, environment or workspace config, the
 CLI loads nothing and acts as no principal, so a credential never reaches a
@@ -1464,8 +1466,8 @@ VERSION, content sha256:...`, not `up to date`. `--offline` skips the check,
 and a kit from a directory or layout shows its local source. A kit add stopped
 at its proposal (the base kit add of `init --require-independent-approval`,
 or a resumed add) is listed with its state and proposal, and while that
-proposal is open, `next: cruxible proposal approve ID --signer-id ID --key
-FILE`; `No kits installed.` prints only when there is neither. Installing an update stays explicit:
+proposal is open, `next: cruxible proposal approve ID --signer-id
+'<SIGNER_ID>'`; `No kits installed.` prints only when there is neither. Installing an update stays explicit:
 `kit add REFERENCE:VERSION`. `remove` retires what a kit owns (never what it only
 carries, and never a bundled provider, which stays installed). It keeps the
 kit's Contracts, capabilities, Documents and the endpoint ClaimTypes of its pair
@@ -5436,8 +5438,15 @@ registration is only proposed and the command prints each remaining step:
 `proposal approve` (which activates it), and, with auth,
 `credential mint --principal-id ID --key-dir DIR`, which writes the token into
 the same settings file. `cruxible init` writes the owner's settings file the
-same way, and with `--reviewer-key-dir` the reviewer's too. `proposal approve` defaults `--signer-id` to the configured principal
-and `--key` to `CRUXIBLE_PRINCIPAL_KEY`.
+same way, and with `--reviewer-key-dir` the reviewer's too. `proposal approve` defaults `--signer-id` to the configured principal.
+Which key signs as a principal is one lookup, the same on the CLI, the SDK
+(`cx.signer(ID)`) and the MCP server (`cruxible_proposal_approve`): `--key`;
+`CRUXIBLE_PRINCIPAL_KEY`, unless `CRUXIBLE_PRINCIPAL_ID` names another
+principal; the settings file remembered for that principal on this instance;
+the folder's identity record when it names that principal; the default key
+directory. It is never another principal's key: with none found the command
+refuses and names `cruxible context use --principal ID`, sourcing
+`DIR/cruxible.env`, or `--key`.
 
 A propose-only agent is a principal whose credential is `governed_write`: it
 can author and propose, and the tier refuses approvals and activation. That
@@ -5541,7 +5550,8 @@ previews first (at an interactive terminal it then asks `Commit this
 change?`; `--yes` commits without asking; `--commit --at OID` commits the
 preview at OID), and the commit proposes, signs with your key and activates.
 The key is `--key`, else `CRUXIBLE_PRINCIPAL_KEY` (which the settings
-`cruxible init` remembers export), else the default key directory
+`cruxible init` remembers export), else your remembered settings or the folder's
+identity record, else the default key directory
 `$XDG_CONFIG_HOME/cruxible/keys/INSTANCE_ID/PRINCIPAL_ID/PRINCIPAL_ID.ed25519`
 (default `~/.config`); the output names which. Activating needs admin.
 

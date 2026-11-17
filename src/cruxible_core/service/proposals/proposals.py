@@ -26,6 +26,7 @@ from cruxible_client.contracts.errors import (
     ProposalStale,
     ProposalWithdrawNotAuthor,
 )
+from cruxible_client.contracts.kits import KitReceipt
 from cruxible_client.contracts.principals import AuthoringRefusal
 from cruxible_client.contracts.procedures.node_summary import (
     ReobservationRefusalReason,
@@ -34,6 +35,7 @@ from cruxible_client.contracts.procedures.node_summary import (
 from cruxible_client.contracts.proposal_models import ProposalReadmissionLink
 from cruxible_client.contracts.repairs import RepairOperation
 from cruxible_core.authoring.id_prefixes import AmbiguousIdPrefix, resolve_id_prefix
+from cruxible_core.errors import CoreError
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.indexes.proposals.proposal_index import timestamp
 from cruxible_core.proposals.proposal_evidence import ProposalEvidenceStore
@@ -1332,7 +1334,7 @@ def _readmit(
             reobservations_refused=recompiled.reobservations_refused,
         )
     if exact_bytes_cannot_rebase(source):
-        raise requires_resubmission(source)
+        raise requires_resubmission(source, instance)
     if landing and not mode.previewing:
         landed = land_exact_bytes(instance, source, mode=mode, triggered_by=actor_id)
         assert isinstance(landed, ProposalResult)
@@ -1414,18 +1416,21 @@ def exact_bytes_cannot_rebase(source: ProposalResult) -> bool:
     return cannot_rebase(source) is not None
 
 
-def requires_resubmission(source: ProposalResult) -> ProposalReadmitRequiresResubmission:
+def requires_resubmission(
+    source: ProposalResult, instance: PlaybillInstance | None = None
+) -> ProposalReadmitRequiresResubmission:
     """The refusal for a change set that cannot be rebased by its bytes, by kind."""
 
     reason = cannot_rebase(source)
     assert reason is not None
     why, command = reason
     if why.startswith("is a generated"):
-        return ProposalReadmitRequiresResubmission(repair=author_repair(source))
+        return ProposalReadmitRequiresResubmission(repair=author_repair(source, instance))
     return ProposalReadmitRequiresResubmission(
         f"proposal {source.admission.proposal_id} {why}, so it is not readmitted or "
-        f"landed by its old bytes; its author {source.admission.actor_id!r} {command}",
-        repair=author_repair(source),
+        f"landed by its old bytes; its author {source.admission.actor_id!r} {command}"
+        + kit_source_note(source, instance),
+        repair=author_repair(source, instance),
     )
 
 
@@ -1462,23 +1467,91 @@ def _is_kit_removal(source: ProposalResult) -> bool:
     )
 
 
-def author_repair(source: ProposalResult) -> RepairOperation:
+def author_repair(
+    source: ProposalResult, instance: PlaybillInstance | None = None
+) -> RepairOperation:
     """The author's command that remakes a change set its bytes cannot carry to the head.
 
     A kit change is its kit's own commit again: ``kit remove`` with the kit's id
-    for a removal, ``kit add`` for an addition (which release or build to add is
-    the author's, so its reference is left to name); a migration, or another
-    closure, is authored again.
+    for a removal, ``kit add`` for an addition, naming ``base`` when it is the
+    bundled base kit (``_kit_reference``) and otherwise leaving the kit operand
+    to its author; a migration, or another closure, is authored again.
     """
 
     kit_id = _kit_id(source)
     if kit_id is not None:
         if _is_kit_removal(source):
             return RepairOperation(operation="cruxible.kit.remove", arguments={"kit_id": kit_id})
-        return RepairOperation(operation="cruxible.kit.add")
+        reference = _kit_reference(_proposed_kit_receipt(source, kit_id, instance), kit_id)
+        return RepairOperation(
+            operation="cruxible.kit.add",
+            arguments={} if reference is None else {"kit": reference},
+        )
     if _target_leaf(source).startswith("claim-type-migration-"):
         return RepairOperation(operation="cruxible.claim-type.migrate")
     return RepairOperation(operation="cruxible.authoring.list")
+
+
+def _proposed_kit_receipt(
+    source: ProposalResult, kit_id: str, instance: PlaybillInstance | None
+) -> KitReceipt | None:
+    """The receipt a kit proposal installs, read from the proposal itself: one blob.
+
+    It records the release (``version``) and where the author's client read the
+    kit (``source``). None when it cannot be read; the repair then names less.
+    """
+
+    if instance is None:
+        return None
+    from cruxible_core.service.kits import proposed_kit_receipt
+
+    try:
+        return proposed_kit_receipt(
+            instance,
+            source.admission.candidate_tree_oid,
+            kit_id,
+            proposal_id=source.admission.proposal_id,
+        )
+    except (CoreError, ValueError, KeyError):
+        return None
+
+
+def _kit_reference(receipt: KitReceipt | None, kit_id: str) -> str | None:
+    """The ``kit add`` reference that remakes a kit proposal, when the daemon vouches for one.
+
+    Only the base kit this core bundles, recognized by its id and content
+    digest (``kit add base`` adds exactly that). The source a client recorded
+    is a free-form label (a folder's name, a ``--source`` value, a registry
+    reference the daemon never resolved): it is shown in the message for the
+    author to read and is never rendered as a command.
+    """
+
+    if receipt is None:
+        return None
+    from cruxible_core.service.kits import bundled_base_reference
+
+    return bundled_base_reference(kit_id, receipt.content_digest)
+
+
+def kit_source_note(source: ProposalResult, instance: PlaybillInstance | None) -> str:
+    """What a stale kit addition's refusal adds when the repair cannot name its kit.
+
+    The release it was and the source label its author's client recorded, for
+    the author to choose the directory, layout or registry reference again.
+    """
+
+    kit_id = _kit_id(source)
+    if kit_id is None or _is_kit_removal(source):
+        return ""
+    receipt = _proposed_kit_receipt(source, kit_id, instance)
+    if receipt is None or _kit_reference(receipt, kit_id) is not None:
+        return ""
+    recorded = f" (recorded as {receipt.source})" if receipt.source else ""
+    return (
+        f": kit {kit_id} {receipt.version}, from the kit directory, layout or registry "
+        f"reference it was added from{recorded}; the daemon holds the kit's bytes and "
+        "that label, not a reference it can vouch for"
+    )
 
 
 def _readmit_exact_bytes(
@@ -1625,7 +1698,7 @@ def land_exact_bytes(
             return carried
         instance.proposal_evidence().refuse_closed(source_id)
         if exact_bytes_cannot_rebase(source):
-            raise requires_resubmission(source)
+            raise requires_resubmission(source, instance)
         binding: dict[str, Any] = {}
         if check_first:
             with preview_guards(True):

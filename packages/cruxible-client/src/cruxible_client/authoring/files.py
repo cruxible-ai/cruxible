@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
+import shlex
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
@@ -505,6 +507,24 @@ class WorkspaceCatalog:
         return remove_catalog_entry(self._root, name=name)
 
 
+def catalog_step(
+    surface: Literal["cli", "mcp", "sdk"], verb: Literal["add", "remove"], *operands: str
+) -> str:
+    """A file-catalog edit as the caller's own client runs it: a refusal's repair.
+
+    The SDK edits the catalog itself (``cx.files``). No MCP tool does, so an MCP
+    caller is told the command is the CLI's, as a rendered repair says of any
+    operation its client has no form for.
+    """
+
+    if surface == "sdk":
+        return f"cx.files.{verb}({', '.join(json.dumps(item) for item in operands)})"
+    line = f"cruxible files {verb} {shlex.join(operands)}"
+    if surface == "mcp":
+        return f"{line}  (on the CLI; MCP has no tool that edits the file catalog)"
+    return line
+
+
 __all__ = [
     "FileCatalogEdit",
     "FileCatalogEditError",
@@ -513,6 +533,7 @@ __all__ = [
     "WorkspaceFileError",
     "add_catalog_entry",
     "catalog_file",
+    "catalog_step",
     "media_type_for",
     "remove_catalog_entry",
     "compile_client_file_context",

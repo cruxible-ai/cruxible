@@ -132,6 +132,9 @@ def test_principal_add_without_a_signer_key_proposes_and_names_each_next_step(
 ) -> None:
     owner_dir = tmp_path / "owner"
     assert _run("init", "--key-dir", str(owner_dir), "--principal-id", "owner").exit_code == 0
+    # A process that names its principal is given that principal's remembered key,
+    # which would sign here. Without the remembered settings it holds no key.
+    (tmp_path / "context.json").unlink()
 
     added = _run(
         "principal",
@@ -203,3 +206,65 @@ def test_a_networked_owner_adds_a_propose_only_agent_in_one_command(
         "cruxible proposal activate needs the graph_write tier; this credential is "
         "governed_write" in refused.output
     )
+
+
+def test_cosign_setup_on_an_existing_instance_gives_a_reviewer_that_can_approve(
+    daemon: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review round 6: the documented setup after an owner-only init (`principal add
+    reviewer ... --mode graph_write`, then the approval policy). With daemon auth on,
+    the reviewer's credential must be able to submit approvals: the default
+    governed_write tier cannot, so the documented command names graph_write. The
+    reviewer then approves the owner's candidate and it lands."""
+
+    operator = get_runtime_credential_store().create_credential(
+        instance_id=INSTANCE,
+        label="bootstrap-admin",
+        permission_mode=PermissionMode.ADMIN,
+        created_by="runtime_bootstrap",
+    )
+    monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
+    monkeypatch.setenv("CRUXIBLE_SERVER_BEARER_TOKEN", operator.token)
+    owner_dir, reviewer_dir = tmp_path / "owner", tmp_path / "reviewer"
+    assert _run("init", "--key-dir", str(owner_dir), "--principal-id", "owner").exit_code == 0
+    owner = _settings(owner_dir / "cruxible.env")
+    monkeypatch.setenv("CRUXIBLE_SERVER_BEARER_TOKEN", owner["CRUXIBLE_SERVER_BEARER_TOKEN"])
+
+    added = _run(
+        "principal", "add", "reviewer", "--key-dir", str(reviewer_dir),
+        "--signer-key", owner["CRUXIBLE_PRINCIPAL_KEY"], "--mode", "graph_write",
+        principal="owner",
+    )  # fmt: skip
+    assert added.exit_code == 0, added.output
+    assert "Principal reviewer: registered and active" in added.output
+    example = _run("authoring", "example", "approval-policy", principal="owner")
+    policy = tmp_path / "policy.json"
+    policy.write_text(example.stdout[example.stdout.index("{") :])
+    submitted = _run("authoring", "submit", str(policy), principal="owner")
+    assert submitted.exit_code == 0, submitted.output
+
+    # The owner's next change is a candidate it cannot land alone.
+    monkeypatch.setenv("CRUXIBLE_PRINCIPAL_KEY", owner["CRUXIBLE_PRINCIPAL_KEY"])
+    pending = _run(
+        "principal", "add", "agent-c", "--key-dir", str(tmp_path / "agent-c"), "--json",
+        principal="owner",
+    )  # fmt: skip
+    assert pending.exit_code == 0, pending.output
+    payload = json.loads(pending.stdout)
+    proposal = payload["proposal_id"]
+    # Under the new policy the owner cannot land it: activation needs the reviewer.
+    alone = _run("proposal", "activate", proposal, principal="owner")
+    assert alone.exit_code != 0, alone.output
+
+    # The reviewer, under its own credential and key (its settings file).
+    reviewer = _settings(reviewer_dir / "cruxible.env")
+    monkeypatch.setenv("CRUXIBLE_SERVER_BEARER_TOKEN", reviewer["CRUXIBLE_SERVER_BEARER_TOKEN"])
+    monkeypatch.setenv("CRUXIBLE_PRINCIPAL_KEY", reviewer["CRUXIBLE_PRINCIPAL_KEY"])
+    who = json.loads(_run("whoami", "--json", principal="reviewer").stdout)
+    assert (who["actor_id"], who["credential_permission_mode"]) == ("reviewer", "graph_write")
+    approved = _run("proposal", "approve", proposal, "--yes", "--json", principal="reviewer")
+
+    assert approved.exit_code == 0, approved.output
+    receipt = json.loads(approved.stdout[approved.stdout.index("{") :])
+    assert receipt["signer_id"] == "reviewer"
+    assert receipt["activation"]["status"] == "accepted", receipt

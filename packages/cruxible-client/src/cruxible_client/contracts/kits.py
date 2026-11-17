@@ -422,6 +422,13 @@ class KitProvenance(_Strict):
     principal_id: str | None = None
 
 
+def registry_source(source: str | None) -> bool:
+    """Whether a recorded kit source is a registry reference (directory and layout
+    sources are a bare name)."""
+
+    return source is not None and "/" in source
+
+
 def kit_version_key(version: str) -> tuple[int, int, int]:
     """MAJOR.MINOR.PATCH as a sortable tuple."""
 

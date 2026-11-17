@@ -1458,6 +1458,18 @@ whoami() -> api.WhoAmI
 
 Who this connection acts as and where that came from, its permission mode and principal registration, and whether it can author here: `can_author` and `authoring_refusal` carry the code, detail and repair authoring would return.
 
+<a id="api-cruxible-signer"></a>
+
+### `Cruxible.signer`
+
+[Source](src/cruxible_client/authoring/sdk.py)
+
+```text
+signer(principal_id: str | None = None, *, key: str | Path | None = None) -> LocalEd25519ApprovalSigner
+```
+
+The local approval signer of one principal (default: who this connection acts as), for `proposal.approve(signer=cx.signer("reviewer"), reviewed=review)`. The key is found as the CLI and the MCP server find it: `key`, else `CRUXIBLE_PRINCIPAL_KEY` unless `CRUXIBLE_PRINCIPAL_ID` names another principal, else the settings `cruxible init` or `cruxible principal add` remembered for that principal on this instance, else the folder's identity record when it names it. The key must sit outside the workspace. Opening it reads nothing from the daemon: `approve` checks it against the signer's registered principal in its challenge and refuses a key the instance does not hold for that principal, or an unknown principal, signing nothing. With no key found it raises `SigningKeyError` naming the repair.
+
 <a id="api-cruxible-kits"></a>
 
 ### `Cruxible.kits`
@@ -2504,7 +2516,9 @@ the proposal's own actor withdraws it with
 `CruxibleClient(socket_path=SOCKET, principal_id=YOUR_ID)`; `cruxible context
 show` prints the socket and the instance ID.
 
-To approve with a key on disk, open a `LocalEd25519ApprovalSigner` with the
+To approve with a key on disk, `cx.signer("reviewer")` opens that principal's
+signer from its remembered settings (or `cx.signer("reviewer", key=FILE)`). To
+open one by hand, use a `LocalEd25519ApprovalSigner` with the
 principal's registered public key as `expected_public_key`: 64 hex characters,
 as `cx.get("Principal:NAME").value.public_key` (or `cruxible get
 Principal:NAME`) shows it. The `.pub` file next to a key, in OpenSSH form

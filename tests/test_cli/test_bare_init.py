@@ -21,6 +21,7 @@ from fastapi.testclient import TestClient
 
 from cruxible_client import CruxibleClient
 from cruxible_core.cli.commands import _common, playbill
+from cruxible_core.cli.commands import context as context_commands
 from cruxible_core.cli.context import (
     CliContextState,
     RememberedPrincipals,
@@ -75,6 +76,11 @@ def daemon(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
         return real
 
     monkeypatch.setattr(_common, "_get_client", get_client)
+    # `context` binds `_get_client` by name when it is first imported. Imported
+    # above and patched here, it gets this stub only for the test: imported
+    # lazily under the patch, it kept the stub for the rest of the worker, and a
+    # later file's `context show` then skipped the folder identity check.
+    monkeypatch.setattr(context_commands, "_get_client", get_client)
     yield tmp_path
     get_playbill_manager().clear()
     reset_runtime_credential_store()
@@ -516,3 +522,177 @@ def test_a_bare_init_owner_attests_a_claim_with_no_extra_variables(
     payload = json.loads(result.stdout[result.stdout.index("{") :])
     assert payload["tag"] == "playbill-claim-attestation-append-result-v1"
     assert len(instance.claim_attestation_evidence_store().events()) == 1
+
+
+def _init_awaiting_reviewer(daemon: Path) -> tuple[str, str]:
+    """An instance whose base kit awaits the reviewer: (proposal ID, init's stdout)."""
+
+    made = _run(
+        "init",
+        "--principal-id",
+        "owner",
+        "--reviewer-key-dir",
+        str(daemon / "rev"),
+        "--require-independent-approval",
+    )
+    assert made.exit_code == 0, made.output
+    (line,) = [item for item in made.stdout.splitlines() if item.startswith("Base kit: ")]
+    proposal = line.split("proposal ", 1)[1].split(" ", 1)[0]
+    # The printed approve form names the reviewer init created, and no key.
+    assert f"(cruxible proposal approve {proposal} --signer-id reviewer, " in line
+    return proposal, made.stdout
+
+
+def test_a_process_naming_the_reviewer_signs_with_the_reviewers_remembered_key(
+    daemon: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """sec N2, coldcli-01: `CRUXIBLE_PRINCIPAL_ID=reviewer cruxible proposal approve ID --yes`
+    found no key, because a process naming its principal loaded nothing."""
+
+    proposal, _ = _init_awaiting_reviewer(daemon)
+    monkeypatch.setenv("CRUXIBLE_PRINCIPAL_ID", "reviewer")
+
+    result = _run("proposal", "approve", proposal, "--yes")
+
+    assert result.exit_code == 0, result.output
+    key = daemon / "rev" / "reviewer.ed25519"
+    settings = daemon / "rev" / "cruxible.env"
+    assert f"Signing key for reviewer: {key} (from remembered settings {settings})" in result.stderr
+    assert _whoami()["actor_id"] == "reviewer"
+    shown = json.loads(_run("context", "show", "--json").stdout)
+    assert shown["principal_source"] == "environment"
+
+
+def test_the_printed_signer_form_signs_with_that_signers_key_never_the_owners(
+    daemon: Path,
+) -> None:
+    """sec N3: `--signer-id reviewer` from the owner's shell signed with the owner's key
+    "for reviewer" and died in SigningKeyError with no repair."""
+
+    proposal, _ = _init_awaiting_reviewer(daemon)
+    assert _whoami()["actor_id"] == "owner"
+
+    # A signer whose key is nowhere here is refused with the repair, before any signing.
+    missing = _run("proposal", "approve", proposal, "--signer-id", "ghost", "--yes")
+    assert missing.exit_code == 2, missing.output
+    assert "no signing key for principal ghost here" in missing.output
+    assert "cruxible context use --principal ghost" in missing.output
+    assert "--key FILE" in missing.output
+    assert "SigningKeyError" not in missing.output and "owner.ed25519" not in missing.output
+
+    result = _run("proposal", "approve", proposal, "--signer-id", "reviewer", "--yes")
+
+    assert result.exit_code == 0, result.output
+    key = daemon / "rev" / "reviewer.ed25519"
+    settings = daemon / "rev" / "cruxible.env"
+    assert f"Signing key for reviewer: {key} (from remembered settings {settings})" in result.stderr
+
+
+def test_a_key_the_cli_loaded_for_the_named_actor_is_never_another_signers(
+    daemon: Path,
+) -> None:
+    """Review F-001: `--principal-id owner ... --signer-id reviewer` with no principal
+    variables. The CLI loaded the owner's key for the named actor and exported it
+    without its principal, so the lookup took it as an unnamed key for the reviewer."""
+
+    proposal, _ = _init_awaiting_reviewer(daemon)
+
+    result = _run(
+        "--principal-id", "owner", "proposal", "approve", proposal, "--signer-id", "reviewer",
+        "--yes",
+    )  # fmt: skip
+
+    assert result.exit_code == 0, result.output
+    key = daemon / "rev" / "reviewer.ed25519"
+    settings = daemon / "rev" / "cruxible.env"
+    assert f"Signing key for reviewer: {key} (from remembered settings {settings})" in result.stderr
+    # The named actor is still the actor.
+    assert _whoami("--principal-id", "owner")["actor_id"] == "owner"
+
+
+def test_a_named_principals_token_is_never_read_from_the_settings_a_second_time(
+    daemon: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review F-012: the CLI took the key from the lookup's verified read of the
+    settings file and read the file again for the token. It now uses the token the
+    lookup returned with the key, so it supplies a credential only from that record."""
+
+    import os
+
+    from cruxible_client.authoring.principal_settings import PrincipalKey
+    from cruxible_core.cli import main
+
+    _init_awaiting_reviewer(daemon)
+    key = daemon / "rev" / "reviewer.ed25519"
+    monkeypatch.setattr(
+        main,
+        "principal_key",
+        lambda *_args, **_kwargs: PrincipalKey(
+            "reviewer",
+            key,
+            "remembered_settings",
+            settings_path=daemon / "rev" / "cruxible.env",
+            token="tok-verified",
+        ),
+    )
+    monkeypatch.setattr(
+        main,
+        "read_principal_settings",
+        lambda path: pytest.fail(f"the settings file {path} was read a second time"),
+    )
+    seen: dict[str, str | None] = {}
+    get_client = _common._get_client
+
+    def recording() -> CruxibleClient:
+        seen["token"] = os.environ.get("CRUXIBLE_SERVER_BEARER_TOKEN")
+        seen["key"] = os.environ.get("CRUXIBLE_PRINCIPAL_KEY")
+        return get_client()
+
+    monkeypatch.setattr(_common, "_get_client", recording)
+
+    result = _run("--principal-id", "reviewer", "whoami", "--json")
+
+    assert result.exit_code == 0, result.output
+    assert seen == {"token": "tok-verified", "key": str(key)}
+    assert "CRUXIBLE_SERVER_BEARER_TOKEN" not in os.environ
+
+
+def test_cosign_setup_on_an_existing_owner_only_instance(
+    daemon: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review F-017: after an owner-only init (what MCP `cruxible_init` makes),
+    `cruxible init --reviewer-key-dir ...` answers already initialized and adds no
+    reviewer. The step the docs and MCP instructions name instead: add the reviewer,
+    then submit the approval policy; the reviewer is added first, while the owner can
+    still land it alone."""
+
+    assert _run("init", "--principal-id", "owner").exit_code == 0
+    instance_id = load_cli_context().instance_id
+    assert instance_id is not None
+    owner_key = daemon / "config" / "cruxible" / "keys" / instance_id / "owner" / "owner.ed25519"
+    again = _run("init", "--reviewer-key-dir", str(daemon / "rev2"))
+    assert again.exit_code != 0 and not (daemon / "rev2").exists(), again.output
+
+    added = _run(
+        "principal", "add", "reviewer", "--key-dir", str(daemon / "rev"),
+        "--signer-key", str(owner_key), "--yes",
+    )  # fmt: skip
+    assert added.exit_code == 0, added.output
+    example = _run("authoring", "example", "approval-policy")
+    assert example.exit_code == 0, example.output
+    policy = daemon / "policy.json"
+    policy.write_text(example.stdout[example.stdout.index("{") :])
+    assert json.loads(policy.read_text())["approval_policy"]["mode"] == (
+        "independent_approval_required"
+    )
+    submitted = _run("authoring", "submit", str(policy))
+    assert submitted.exit_code == 0, submitted.output
+    shown = _run("orient", "--section", "policies", "--json")
+    assert "independent_approval_required" in shown.stdout, shown.output
+
+    # The reviewer added this way cosigns by name, from its remembered settings.
+    monkeypatch.setenv("CRUXIBLE_PRINCIPAL_ID", "reviewer")
+    assert _whoami()["actor_id"] == "reviewer"
+    assert load_cli_context().principals[principal_binding(URL, instance_id)].settings[
+        "reviewer"
+    ] == str((daemon / "rev" / "cruxible.env").resolve())

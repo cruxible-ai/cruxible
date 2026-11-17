@@ -674,9 +674,9 @@ def register_tools(
             str | None,
             Field(
                 description=(
-                    "Principal to sign as; its key is <signer_id>.ed25519 in the server's "
-                    "CRUXIBLE_MCP_KEY_DIR. Omit to sign as the folder's owner, or when "
-                    "that directory holds exactly one key."
+                    "Principal to sign as; its key comes from CRUXIBLE_MCP_KEY_DIR, "
+                    "CRUXIBLE_PRINCIPAL_KEY or its remembered settings. Omit to sign as "
+                    "the principal this server acts as."
                 )
             ),
         ] = None,

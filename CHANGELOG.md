@@ -565,6 +565,35 @@ quickstart and concepts pages.
 - **CLI `proposal approve` with no principal refuses as every proposal act
   does** (`cruxible.identity.principal_unconfigured` or `credential_unbound`),
   adding that `--principal-id ID --key FILE` signs as that principal.
+- **One lookup for the key that signs as a principal, on the CLI, the SDK and
+  the MCP server.** `--key`; `CRUXIBLE_PRINCIPAL_KEY`, unless
+  `CRUXIBLE_PRINCIPAL_ID` names another principal; the settings remembered for
+  that principal on this instance; the folder's identity record when it names
+  it; the default key directory. It is never another principal's key.
+  `CRUXIBLE_PRINCIPAL_ID=reviewer cruxible proposal approve ID --yes` and
+  `--signer-id reviewer` now sign wherever the reviewer's settings are
+  remembered (the first found no key; the second signed with the owner's key
+  and failed in `SigningKeyError`). With no key the refusal names the repair
+  of the client that printed it. `next` lines that name a signer print
+  `--signer-id ID` with no `--key FILE`.
+- **MCP `cruxible_proposal_approve` reads `CRUXIBLE_PRINCIPAL_KEY`** as a
+  principal's `cruxible.env` sets it, beside `CRUXIBLE_MCP_KEY_DIR`, and signs
+  as `CRUXIBLE_PRINCIPAL_ID` by default.
+- **SDK `cx.signer(ID)`** opens a principal's approval signer from the same
+  lookup (`cx.signer()` for the connection's own principal); the SDK's `next`
+  spells `approve(signer=cx.signer("reviewer"), ...)`.
+- **A kit repair names the base kit, and never invents a reference.**
+  `cruxible.kit.requires_missing` for the bundled base kit and a stale base
+  kit proposal's `readmit_requires_resubmission` printed `cruxible kit add
+  '<KIT>'`; they now print `kit add base`, recognized by the kit's id and
+  content. Any other kit keeps the placeholder, because the daemon holds the
+  kit's bytes and a free-form source label, not a reference it can vouch for;
+  the message names the release and that label. A kit that requires a kit
+  whose own add awaits approval, in a release that meets the requirement, is
+  refused with that proposal's approval as the repair.
+- **`link --guides` on an unregistered page names the caller's own repair**:
+  `cx.files.add(...)` on the SDK, and on MCP the CLI command marked as the
+  CLI's (no MCP tool edits the file catalog).
 
 ## [0.3.2] - 2026-08-06
 

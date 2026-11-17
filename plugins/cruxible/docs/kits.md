@@ -205,8 +205,8 @@ base 1.0.0 content sha256:433a7768…; up to date
   `--require-independent-approval` cannot land the base kit on its creator's
   approval alone: `init` stops it at a proposal and prints the approve
   command for a second principal (`Base kit: base 1.0.0 awaits approval,
-  proposal sha256:… (cruxible proposal approve sha256:… --signer-id ID --key
-  FILE, as a second principal)`). Until it is approved, the capabilities are
+  proposal sha256:… (cruxible proposal approve sha256:… --signer-id reviewer,
+  as a second principal)`). Until it is approved, the capabilities are
   absent, and `kit status` lists the pending add with its proposal and the
   approve command. If other writes land before the approval, the kit proposal
   is stale and is not rebased: run `cruxible kit add base` again for a fresh
@@ -255,8 +255,8 @@ refuses to take away a kit another one needs:
 
 ~~~text
 $ cruxible kit add ./catalog-1.0.0
-Error: cruxible.kit.requires_missing: Kit catalog 1.0.0 requires kit base 1.0.0 or later; this instance holds none. Add it first, from a release or a local build of base 1.0.0 or later: kit add '<KIT>', where <KIT> is that release's reference or the built kit's path.
-Repair: cruxible kit add '<KIT>'
+Error: cruxible.kit.requires_missing: Kit catalog 1.0.0 requires kit base 1.0.0 or later; this instance holds none. Add it first: kit add base (or the path of a local build of base 1.0.0 or later).
+Repair: cruxible kit add base
 
 $ cruxible kit remove base
 Error: cruxible.kit.remove_required: Kit base cannot be removed: kit catalog requires it.

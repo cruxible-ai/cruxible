@@ -41,6 +41,7 @@ from cruxible_client.authoring.links import (
     about_link_request,
     link_guides,
 )
+from cruxible_client.authoring.principal_settings import principal_key, principal_key_missing
 from cruxible_client.authoring.sdk_types import SourceSelectionError
 from cruxible_client.authoring.selectors import WorkspaceFiles
 from cruxible_client.authoring.signing import LocalEd25519ApprovalSigner
@@ -105,7 +106,11 @@ from cruxible_client.contracts.kits import (
     KitRemoveRequest,
     KitStatus,
 )
-from cruxible_client.contracts.principals import AuthoringRefusal
+from cruxible_client.contracts.principals import (
+    PRINCIPAL_ID_ENV,
+    PRINCIPAL_KEY_ENV,
+    AuthoringRefusal,
+)
 from cruxible_client.contracts.provider_installation import (
     ProviderCatalog,
     ProviderInstallRequest,
@@ -147,6 +152,7 @@ from cruxible_client.kits import (
     stage_kit_providers,
     with_automation_template,
 )
+from cruxible_client.transport.http import configured_principal_id
 from cruxible_core import __version__
 from cruxible_core.adapters.block_detach import detach_projection_pages
 from cruxible_core.claims.claim_type_inputs import (
@@ -190,6 +196,7 @@ from cruxible_core.mcp.results import (
 )
 from cruxible_core.mcp.target import configured_instance_id
 from cruxible_core.mcp.workspace import (
+    MCP_KEY_DIR_ENV,
     mcp_approval_key_dir,
     mcp_custody_forbidden_roots,
     mcp_floor_workspace_root,
@@ -645,18 +652,7 @@ def handle_playbill_approve(
     the daemon proposed again at the head with identical members is signed here.
     """
 
-    key_dir, default_signer = _approval_key_dir()
-    signer = (
-        signer_id
-        if signer_id is not None
-        else default_signer
-        if default_signer is not None
-        else _sole_approval_signer(key_dir)
-    )
-    try:
-        governance_identifier(signer, label="signer_id")
-    except ValueError as exc:
-        raise DataValidationError(f"cruxible_proposal_approve: {exc}") from exc
+    signer, private_key_path = _approval_signer_key(instance_id, signer_id)
     challenge = handle_playbill_prepare_approval(
         instance_id,
         proposal_id,
@@ -677,7 +673,7 @@ def handle_playbill_approve(
     principal = PrincipalRecord.model_validate(challenge.signer_principal)
     key_signer = LocalEd25519ApprovalSigner.open(
         signer_id=signer,
-        private_key_path=key_dir / f"{signer}.ed25519",
+        private_key_path=private_key_path,
         expected_public_key=principal.public_key,
         forbidden_roots=mcp_custody_forbidden_roots(),
     )
@@ -714,17 +710,60 @@ def handle_playbill_approve(
     return result
 
 
-def _approval_key_dir() -> tuple[Path, str | None]:
-    """The local approval key directory and the signer it defaults to, if one.
+def _approval_signer_key(instance_id: str, signer_id: str | None) -> tuple[str, Path]:
+    """Who signs and with which local key, by the lookup the CLI and the SDK share.
 
-    ``CRUXIBLE_MCP_KEY_DIR`` when the environment names the identity; else the
-    folder record's key directory, signing as the folder's principal.
+    The signer is ``signer_id``, else the principal this server acts as on the
+    instance the call targets (the folder's when the folder is bound to that
+    instance, or ``CRUXIBLE_PRINCIPAL_ID``), else the one key in
+    ``CRUXIBLE_MCP_KEY_DIR``. Its key is ``<signer>.ed25519`` in
+    ``CRUXIBLE_MCP_KEY_DIR``, the operator's explicit directory; otherwise the
+    shared lookup decides, for the targeted instance: ``CRUXIBLE_PRINCIPAL_KEY``
+    (never when the environment names another principal), the signer's
+    remembered settings for that instance, then the folder record when it is
+    that instance's and names the signer. A folder bound to another instance
+    is no source: its same-named principal has another key.
     """
 
     folder = _folder_identity()
-    if folder is not None:
-        return folder.key_dir, folder.principal_id
-    return mcp_approval_key_dir(), None
+    key_dir = mcp_approval_key_dir() if os.environ.get(MCP_KEY_DIR_ENV) else None
+    if folder is not None and folder.identity.instance_id != instance_id:
+        folder = None
+    signer = signer_id
+    if signer is None and folder is not None:
+        signer = folder.principal_id
+    if signer is None:
+        signer = configured_principal_id()
+    if signer is None:
+        if key_dir is None:
+            raise ConfigError(
+                "cruxible_proposal_approve: this MCP server acts as no principal; pass "
+                "signer_id, or run `cruxible init` in this folder (an MCP server started "
+                f"there signs as its owner), or set {PRINCIPAL_ID_ENV} and "
+                f"{PRINCIPAL_KEY_ENV} in this server's environment (the env block of the "
+                "MCP client config), as a principal's cruxible.env sets them"
+            )
+        signer = _sole_approval_signer(key_dir)
+    try:
+        governance_identifier(signer, label="signer_id")
+    except ValueError as exc:
+        raise DataValidationError(f"cruxible_proposal_approve: {exc}") from exc
+    if key_dir is not None and (key_dir / f"{signer}.ed25519").is_file():
+        return signer, key_dir / f"{signer}.ed25519"
+    client = _get_client()
+    found = principal_key(
+        signer,
+        instance_id=instance_id,
+        server_url=client.base_url,
+        server_socket=client.socket_path,
+        # The bound folder's root (its record is .cruxible/identity.json).
+        folder=None if folder is None else folder.record_path.parent.parent,
+    )
+    if found is None:
+        raise ConfigError(
+            "cruxible_proposal_approve: " + principal_key_missing(signer, client="mcp")
+        )
+    return signer, found.private_key_path
 
 
 def _folder_identity() -> VerifiedFolderIdentity | None:
@@ -1862,6 +1901,7 @@ def handle_playbill_link(
             dry_run=dry_run,
             accept=accept,
             at=at,
+            surface="mcp",
         ),
         operation_name="cruxible_link",
     )
