@@ -61,11 +61,11 @@ PAGES_PROVIDER = "test-pages"
 ORIGIN = "https://pages.test"
 LOGICAL_SOURCE = "cisa.kev.catalog"
 PAGES_REQUEST = boundary_contract("test.pages.request", {"feed": "string"})
-PAGES_RESULT = boundary_contract("test.pages.result", {"pages": "list<capture<*>>{max_items: 3}"})
+PAGES_RESULT = boundary_contract("test.pages.result", {"pages": "list<capture<*>>{max_items: 32}"})
 PAGES_DERIVE = boundary_contract(
     "test.pages-derive.request",
     {
-        "sources": "list<capture<*>>{max_items: 3}",
+        "sources": "list<capture<*>>{max_items: 32}",
         "watched": "list<test.watched-row@1>{max_items: 100}",
     },
     WATCH_ROW,
@@ -801,6 +801,95 @@ def test_an_absence_is_reconfirmed_per_claim_by_every_complete_run(tmp_path: Pat
         before = after
     records = store.history(inverse)
     assert len(records) == 3  # one per complete run
+
+
+def _cas_files(root: Path) -> dict[str, int]:
+    return {
+        str(path): path.stat().st_size
+        for path in (root / "cas").rglob("*")
+        if path.is_file() and len(path.name) == 64
+    }
+
+
+@pytest.mark.parametrize("fixed", [False, True], ids=["run_input_digest", "read_identity"])
+def test_an_unchanged_derive_reuses_its_capture_at_3_and_24_pages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fixed: bool
+) -> None:
+    """Round 6 item 2 (D): a derive over the same pages and the same state read
+    of an unchanged generation reuses the Capture it made before.
+
+    Its manifest names the read by its run-free identity (manifest v2), so the
+    read's evaluation instant no longer makes a new manifest, envelope,
+    consumed lists or row map every run. ``run_input_digest`` is the round 5
+    rule (each read named by its run input digest), measured for comparison.
+    """
+
+    import cruxible_core.procedures.execution as execution
+    from cruxible_core.procedures.input_planes import run_input_digest
+
+    if not fixed:
+        monkeypatch.setattr(
+            execution,
+            "accepted_read_identity",
+            lambda run_input, _value: run_input_digest(run_input),
+        )
+    grown: dict[int, tuple[int, int, int]] = {}
+    for count in (3, 24):
+        (tmp_path / str(count)).mkdir()
+        instance = pages_world(tmp_path / str(count))
+        install(instance, list_spec(derive=True), line="test.kev-pages-derive-line", origins=True)
+        entries = catalog()
+        bodies = [
+            json.dumps({"vulnerabilities": entries[index::count]}, sort_keys=True).encode()
+            for index in range(count)
+        ]
+        first = run_pages(instance, Pages(bodies), line="test.kev-pages-derive-line")
+        assert first.status == "succeeded", first.terminal
+        activate(instance, first)
+        roots = []
+        held: dict[str, int] = {}
+        for minute in (1, 2):
+            if minute == 2:
+                held = _cas_files(instance.root)
+            state = run_pages(
+                instance, Pages(bodies), line="test.kev-pages-derive-line", minute=minute
+            )
+            assert state.status == "succeeded", state.terminal
+            (call,) = (node for node in state.nodes if node.node == "view")
+            roots.append(tuple(call.summary.capture_digests))
+        added = {path: size for path, size in _cas_files(instance.root).items() if path not in held}
+        # The terminal's shared dependencies (``TerminalSharedDependenciesV1``)
+        # list every page and are measured apart: they are stored again each
+        # run because they name the read by its run input digest (reported,
+        # not part of this item).
+        shared = {
+            path: size
+            for path, size in added.items()
+            if Path(path).read_bytes()[:11] == b'{"coverage"'
+        }
+        grown[count] = (
+            len(added) - len(shared),
+            sum(added.values()) - sum(shared.values()),
+            sum(shared.values()),
+        )
+        manifest = _manifest(instance, roots[-1][0])
+        assert manifest.tag == "playbill-input-receipt-set-manifest-v2"
+        assert len(manifest.input_capture_digests) == count
+        if fixed:
+            # The same Capture: whatever cites it (an inbox item, a Claim) cites
+            # the same digest every unchanged run.
+            assert roots[0] == roots[1]
+        else:
+            assert roots[0] != roots[1]
+    print("DERIVE_COST", "fixed" if fixed else "before", grown)
+    bytes_slope = (grown[24][1] - grown[3][1]) / 21
+    if fixed:
+        # Nothing a page adds: no derived envelope, manifest, consumed lists or
+        # row map, only the run's own journal bodies.
+        assert grown[24][0] == grown[3][0], grown
+        assert bytes_slope < 16, grown
+    else:
+        assert bytes_slope > 100, grown
 
 
 def _stored(root: Path) -> tuple[int, int]:

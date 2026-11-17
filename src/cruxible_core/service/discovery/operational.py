@@ -742,7 +742,7 @@ def _capture_derivation(
         return None
     return GetCaptureDerivation(
         sources=manifest.input_capture_digests,
-        reads=manifest.input_accepted_state_digests,
+        reads=manifest.accepted_reads,
         reducer=reducer,
     )
 

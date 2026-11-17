@@ -1234,7 +1234,8 @@ def test_a_derived_capture_records_its_inputs_and_is_each_claims_one_root(
     assert source["coordinate"] == catalog_envelope.source.coordinate
     (digested,) = committed
     assert digested == {**derive_input, "source": catalog}
-    assert manifest.input_receipt_digests and len(manifest.input_accepted_state_digests) == 1
+    assert manifest.input_receipt_digests and len(manifest.input_accepted_read_digests) == 1
+    assert manifest.tag == "playbill-input-receipt-set-manifest-v2"
     # The reducer: provider build, operation signature and implementation, and this
     # node's input template; never the Procedure digest.
     reducer = read_derive_reducer(instance.body_store(), view.reducer_digest)
@@ -1294,7 +1295,7 @@ def test_get_on_a_derived_capture_serves_its_sources_reads_and_reducer(tmp_path:
     card = _get_card(instance, "Capture:" + root)
     assert card.derivation is not None
     assert card.derivation.sources == manifest.input_capture_digests
-    assert card.derivation.reads == manifest.input_accepted_state_digests
+    assert card.derivation.reads == manifest.input_accepted_read_digests
     assert card.derivation.reducer is not None
     assert card.derivation.reducer.digest == _envelope(instance, root).reducer_digest
     # Item 7: the reducer's build and operation are named beside their digests.

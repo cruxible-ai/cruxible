@@ -66,6 +66,8 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.captures import (
+    INPUT_MANIFEST_V1,
+    INPUT_MANIFEST_V2,
     CaptureBuildResult,
     CaptureDerivation,
     CaptureEnvelopeV1,
@@ -562,27 +564,12 @@ def retain_state_tap_material(
     :class:`StateTapMaterialV2` naming it. A Claim read stores its value whole.
     """
 
-    result = value.get("result") if isinstance(value, dict) else None
-    receipt = value.get("receipt") if isinstance(value, dict) else None
-    if (
-        node.reads_claims
-        or not isinstance(value, dict)
-        or not isinstance(result, dict)
-        or not isinstance(receipt, dict)
-        or not isinstance(result.get("evaluated_at"), str)
-        or not isinstance(receipt.get("evaluation_time"), str)
-        or not isinstance(receipt.get("result_digest"), str)
-    ):
+    timeless = _timeless_state_view(value, reads_claims=node.reads_claims)
+    if timeless is None:
         return bodies.store(canonical_bytes(value)).digest
-    timeless_result = {key: item for key, item in result.items() if key != "evaluated_at"}
-    timeless_receipt = {
-        key: item
-        for key, item in receipt.items()
-        if key not in {"evaluation_time", "result_digest"}
-    }
-    body = bodies.store(
-        canonical_bytes({**value, "result": timeless_result, "receipt": timeless_receipt})
-    )
+    result = cast(dict[str, Any], cast(dict[str, Any], value)["result"])
+    receipt = cast(dict[str, Any], cast(dict[str, Any], value)["receipt"])
+    body = bodies.store(timeless)
     material = StateTapMaterialV2(
         result_body_digest=body.digest,
         evaluated_at=cast(str, result["evaluated_at"]),
@@ -590,6 +577,60 @@ def retain_state_tap_material(
         receipt_result_digest=cast(str, receipt["result_digest"]),
     )
     return bodies.store(canonical_bytes(material.model_dump(mode="json"))).digest
+
+
+def _timeless_state_view(value: object, *, reads_claims: bool) -> bytes | None:
+    """A Query read's view without its evaluation instant (None: nothing to remove).
+
+    The bytes ``retain_state_tap_material`` stores as the result body: the
+    same answer read again at another instant reproduces them.
+    """
+
+    result = value.get("result") if isinstance(value, dict) else None
+    receipt = value.get("receipt") if isinstance(value, dict) else None
+    if (
+        reads_claims
+        or not isinstance(value, dict)
+        or not isinstance(result, dict)
+        or not isinstance(receipt, dict)
+        or not isinstance(result.get("evaluated_at"), str)
+        or not isinstance(receipt.get("evaluation_time"), str)
+        or not isinstance(receipt.get("result_digest"), str)
+    ):
+        return None
+    timeless_result = {key: item for key, item in result.items() if key != "evaluated_at"}
+    timeless_receipt = {
+        key: item
+        for key, item in receipt.items()
+        if key not in {"evaluation_time", "result_digest"}
+    }
+    return canonical_bytes({**value, "result": timeless_result, "receipt": timeless_receipt})
+
+
+def accepted_read_identity(run_input: AcceptedStateRunInput, value: object) -> str:
+    """One accepted-state read's run-free identity, as a derive's manifest names it.
+
+    Its coordinate, its Query or ClaimType, its parameters and its result
+    without the evaluation instant (the timeless body a Query read retains;
+    a Claim read's whole value). The same read of an unchanged generation
+    reproduces it, so a derive over it reuses the Capture it made before
+    (ruling 1c); a run input digest also commits the instant and never does.
+    """
+
+    timeless = _timeless_state_view(
+        value, reads_claims=isinstance(run_input, AcceptedClaimRunInputV1)
+    )
+    body = canonical_bytes(normalize_canonical(value)) if timeless is None else timeless
+    return typed_digest(
+        Sha256Value,
+        "cruxible-accepted-read-identity-v1",
+        {
+            "coordinate": run_input.read_coordinate.model_dump(mode="json"),
+            "definition_digest": accepted_read_definition_digest(run_input),
+            "parameters_digest": run_input.parameters_digest,
+            "result_body_digest": "sha256:" + hashlib.sha256(body).hexdigest(),
+        },
+    ).tagged
 
 
 class ProcedureResourceBudgetV1(_StrictExecutionModel):
@@ -2778,6 +2819,9 @@ class _RunState:
     #: recorded as a content observation: an item restating a Claim on another
     #: Capture of the same content observed nothing a Claim needs (ruling 1a).
     observed_contents: dict[str, tuple[str, str]] = dataclass_field(default_factory=dict)
+    #: Each accepted-state read's run-free identity, by its run input digest:
+    #: what a derive's manifest names (``accepted_read_identity``).
+    read_identities: dict[str, str] = dataclass_field(default_factory=dict)
     #: Each Capture this run stored new, by its reuse key: named reusable only
     #: once its ``produced_capture`` is journaled (F-008).
     pending_reuse_keys: dict[str, str] = dataclass_field(default_factory=dict)
@@ -3529,6 +3573,7 @@ class ProcedureExecutor:
             )
             value = self._retained_state_value(accepted_state.input, access=access)
             digest = run_input_digest(accepted_state.input)
+            state.read_identities[digest] = accepted_read_identity(accepted_state.input, value)
             name = accepted_state.input.input_name
             state.outputs[name] = normalize_canonical(value)
             state.provenance[name] = AliasProvenanceV1(
@@ -3650,6 +3695,7 @@ class ProcedureExecutor:
         state.read_rows_by_input[node.as_] = rows
         state.late_reads[node.as_] = material.input
         digest = run_input_digest(material.input)
+        state.read_identities[digest] = accepted_read_identity(material.input, material.value)
         state.outputs[node.as_] = normalize_canonical(material.value)
         state.provenance[node.as_] = AliasProvenanceV1(
             whole=frozenset(
@@ -4681,7 +4727,11 @@ class ProcedureExecutor:
                 "declare effect: pure.",
                 node_id=node.node_id,
             )
-        derivation = _capture_derivation(node, input_lineage) if derived_fields else None
+        derivation = (
+            _capture_derivation(node, input_lineage, state.read_identities)
+            if derived_fields
+            else None
+        )
         if not derived_fields:
             input_lineage = frozenset(
                 token for token in input_lineage if token.slot not in _CAPTURE_SLOTS
@@ -8760,8 +8810,15 @@ def _capture_input_fields(contract: Contract) -> dict[str, tuple[str, bool]]:
     return found
 
 
-def _capture_derivation(node: CallNode, lineage: frozenset[DependencyToken]) -> CaptureDerivation:
-    """A derive call's recorded inputs: Captures, their receipts, and state reads (D-R37 c1)."""
+def _capture_derivation(
+    node: CallNode, lineage: frozenset[DependencyToken], read_identities: Mapping[str, str]
+) -> CaptureDerivation:
+    """A derive call's recorded inputs: Captures, their receipts, and state reads (D-R37 c1).
+
+    A state read is named by its run-free identity (manifest v2): an unchanged
+    read of an unchanged generation names the same manifest, so the derive
+    reuses its held Capture instead of storing a new one every run.
+    """
 
     def slot(*names: str) -> tuple[str, ...]:
         return tuple(
@@ -8772,7 +8829,12 @@ def _capture_derivation(node: CallNode, lineage: frozenset[DependencyToken]) -> 
         )
 
     captures = slot(*_CAPTURE_SLOTS)
-    reads = slot("accepted_state")
+    reads = tuple(
+        sorted(
+            {read_identities[digest] for digest in slot("accepted_state")},
+            key=lambda item: item.encode("ascii"),
+        )
+    )
     if not captures and not reads:
         raise _RunRefusal(
             "contract_input_refused",
@@ -8782,9 +8844,10 @@ def _capture_derivation(node: CallNode, lineage: frozenset[DependencyToken]) -> 
         )
     return CaptureDerivation(
         manifest=InputReceiptSetManifest(
+            tag=INPUT_MANIFEST_V2 if reads else INPUT_MANIFEST_V1,
             input_capture_digests=captures,
             input_receipt_digests=slot("receipt"),
-            input_accepted_state_digests=reads,
+            input_accepted_read_digests=reads,
         ),
         input_template_digest=derive_input_template_digest(node.input),
     )
