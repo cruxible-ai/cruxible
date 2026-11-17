@@ -7316,6 +7316,7 @@ class ProcedureExecutor:
                 terminal_node_id=node.node_id,
                 shared=shared_terminal_dependencies(tuple(manifests.values()), folded),
                 digest=lambda content: self.bodies.digest_bytes(content).tagged,
+                read_identities=state.read_identities,
             )
             self.bodies.store_many(built.bodies, journal_payload=True)
             items_record_digest = self._append_event(

@@ -965,14 +965,12 @@ def test_an_unchanged_derive_reuses_its_capture_at_3_and_24_pages(
             (call,) = (node for node in state.nodes if node.node == "view")
             roots.append(tuple(call.summary.capture_digests))
         added = {path: size for path, size in _cas_files(instance.root).items() if path not in held}
-        # The terminal's shared dependencies (``TerminalSharedDependenciesV1``)
-        # list every page and are measured apart: they are stored again each
-        # run because they name the read by its run input digest (reported,
-        # not part of this item).
+        # The terminal's shared dependencies list every page; measured apart
+        # (round 7: v2 names the read by identity, so they are reused too).
         shared = {
             path: size
             for path, size in added.items()
-            if Path(path).read_bytes()[:11] == b'{"coverage"'
+            if b'"tag":"playbill-terminal-shared-dependencies-' in Path(path).read_bytes()
         }
         grown[count] = (
             len(added) - len(shared),
@@ -1000,13 +998,15 @@ def test_an_unchanged_derive_reuses_its_capture_at_3_and_24_pages(
             assert len(produced) == 1
     print("DERIVE_COST", "fixed" if fixed else "before", grown)
     bytes_slope = (grown[24][1] - grown[3][1]) / 21
+    shared_slope = (grown[24][2] - grown[3][2]) / 21
     if fixed:
-        # Nothing a page adds: no derived envelope, manifest, consumed lists or
-        # row map, only the run's own journal bodies.
+        # Nothing a page adds: no derived envelope, manifest, consumed lists,
+        # row map or shared dependency set, only the run's own journal bodies.
         assert grown[24][0] == grown[3][0], grown
         assert bytes_slope < 16, grown
+        assert grown[3][2] == grown[24][2] == 0, grown
     else:
-        assert bytes_slope > 100, grown
+        assert bytes_slope > 100 and shared_slope > 100, grown
 
 
 def _stored(root: Path) -> tuple[int, int]:
