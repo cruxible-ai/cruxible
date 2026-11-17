@@ -2890,7 +2890,8 @@ def remove_kit(
     """Retire every artifact KIT_ID installed (previews by default).
 
     Lands at once when the approval policy requires no approval, otherwise it
-    stops at proposed. Removal is one-way: a removed kit cannot be added back.
+    stops at proposed. Removal retires the kit's definitions that are still live,
+    and a retired definition cannot be added back in this release.
     Live Claims under its definitions block it until they are retired;
     automation you authored over the kit is never retired by it. A blocked
     removal prints the refusal and its repair first, then counts per kind;

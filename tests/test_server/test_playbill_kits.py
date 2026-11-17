@@ -3050,3 +3050,34 @@ def test_kit_status_carries_the_base_kit_digest_only_where_its_repair_is_printed
     )
     (base,) = playbill_api.playbill_kit_status(consumer.instance_id).resumes
     assert (base.kit_id, base.content_digest) == (BASE_KIT_PIN.kit_id, BASE_KIT_PIN.content_digest)
+
+
+def test_a_removal_that_retires_nothing_promises_no_re_add(
+    worlds: tuple[_World, _World],
+) -> None:
+    """Round-four finding 1: a member retired earlier by ordinary authoring is skipped
+    by removal yet still blocks a re-add, so the preview says only `retires nothing`."""
+
+    publisher, consumer = worlds
+    publisher.author(_claim_type(SEATS, {"type": "integer"}))
+    consumer.add(publisher.build("1.0.0"))
+    seats = consumer.claim_type(SEATS)
+    consumer.author(
+        successions=(
+            seats.model_copy(
+                update={
+                    "lifecycle": ArtifactLifecycle(
+                        predecessor_digest=claim_type_digest(seats).tagged, state="retired"
+                    )
+                }
+            ),
+        )
+    )
+
+    preview = playbill_api.playbill_kit_remove(
+        consumer.instance_id, KitRemoveRequest(kit_id="acme")
+    )
+
+    assert preview.status == "would_propose"
+    assert not any(item.action == "retire" for item in preview.plan)
+    assert preview.detail == "retires nothing"

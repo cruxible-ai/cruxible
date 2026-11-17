@@ -1480,11 +1480,11 @@ authored over the kit (Lines, Mandates, Triggers, Runbooks): it stays yours. A
 blocked removal prints the refusal and its repair first, then the plan as
 counts per action and kind; `--detail` also lists each path after them. A
 blocked commit of `kit add` or `kit remove` exits 1, and a blocked removal
-commit records nothing (a blocked preview exits 0). Removal is one-way, and
-its preview says so: the definitions it retires refuse revival
-(`revival_refused`), so a later `kit add` of the kit refuses, once per kind
-with a count; a removal that retires nothing (a Documents-only kit) says so,
-and that kit can be added again. After a removal `orient` no longer lists its
+commit records nothing (a blocked preview exits 0). Removal retires the
+kit's definitions that are still live, and its preview says they cannot be
+added back in this release (or `retires nothing`): a retired definition
+refuses revival (`revival_refused`), so a later `kit add` that would re-add
+one refuses, once per kind with a count. After a removal `orient` no longer lists its
 retired SubjectKinds, even where a kept pair-endpoint ClaimType still names one. Removing a kit that is not installed
 refuses with `cruxible.kit.not_installed`, naming the installed kits.
 

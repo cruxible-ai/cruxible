@@ -3331,7 +3331,9 @@ KIT_REMOVAL_ONE_WAY = (
     "one-way: the definitions this removal retires cannot be added back in this release"
 )
 #: A removal that retires nothing (every path kept, a Documents-only kit).
-KIT_REMOVAL_RETIRES_NOTHING = "retires nothing: the kit can be added again"
+#: A member retired earlier by ordinary authoring still blocks a re-add, so this
+#: promises nothing about adding the kit again.
+KIT_REMOVAL_RETIRES_NOTHING = "retires nothing"
 
 
 #: Why a kit removal keeps a pair kind's endpoint ClaimType (R13): a Subject-valued

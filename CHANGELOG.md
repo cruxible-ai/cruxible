@@ -505,8 +505,8 @@ quickstart and concepts pages.
   and its `awaiting_providers` commit answered `approval_required: false`
   under `independent_approval_required`; both now answer true.
 - **Removing and re-adding a kit say what happens.** The removal preview says
-  the definitions it retires cannot be added back in this release (or that it
-  retires nothing, so the kit can be added again). A `kit add` refused for
+  the definitions it retires cannot be added back in this release (or
+  `retires nothing`). A `kit add` refused for
   re-adding retired definitions prints each refusal once with a count, plus the
   repair, instead of one refusal per definition. A refused kit change prints
   no `Proposal:` line (`--json` keeps the id); one left open because accepted
