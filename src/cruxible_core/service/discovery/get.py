@@ -580,7 +580,7 @@ def _resolve_get_ref_as_written(
             return _resolve_typed(projection, "claim", value, ref=value, surface=surface)
         if value.startswith("NOTE-"):
             # The handle link and backlinks print for a note.
-            return _resolve_typed(projection, "note", value, ref=value, surface=surface)
+            return _resolve_note(projection, value, ref=value, surface=surface)
         if "/" in value:
             return _resolve_typed(
                 projection,
@@ -811,6 +811,8 @@ def _resolve_typed(
 ) -> ResolvedRef:
     if kind == "claim":
         return _resolve_claim(projection, name.removeprefix("Claim:"), ref=ref, surface=surface)
+    if kind == "note":
+        return _resolve_note(projection, name.removeprefix("Note:"), ref=ref, surface=surface)
     if kind == "claim_type":
         return _resolve_claim_type(projection, name, ref=ref, surface=surface)
     if kind == "provider":
@@ -1028,6 +1030,32 @@ def _names_of(projection: Any, kind: GetRefKind) -> tuple[str, ...]:
     return tuple(
         _name(row.identity) for row in projection.typed.envelopes(kind=_PROJECTION_KIND[kind])
     )
+
+
+_NOTE_ID = re.compile(r"^NOTE-[0-9a-f]{32}$")
+
+
+def _resolve_note(projection: Any, name: str, *, ref: str, surface: ReadSurface) -> ResolvedRef:
+    """A note's full handle: one indexed envelope lookup; a miss names no candidates.
+
+    As a full Claim id: a note handle is an opaque digest, so a nearest-name
+    search would read every note to compare digests that mean nothing alike.
+    """
+
+    if not _NOTE_ID.fullmatch(name):
+        raise ReadRefusalError(
+            "cruxible.get.ref_malformed",
+            f"{ref!r} is not a note handle",
+            candidates=(),
+            repair=RepairOperation(operation="cruxible.orient"),
+            repair_line="Pass NOTE- plus 32 lowercase hex, as link and backlinks print it",
+            context={"ref": ref},
+        )
+    identity = f"Note:{name}"
+    row = _envelope(projection, identity)
+    if row is None:
+        raise _not_found("note", ref, (), surface=surface)
+    return ResolvedRef("note", identity, _display("note", identity), row.path)
 
 
 def _resolve_claim(projection: Any, name: str, *, ref: str, surface: ReadSurface) -> ResolvedRef:
