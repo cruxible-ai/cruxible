@@ -35,6 +35,11 @@ from cruxible_core.exhaust.payloads import UnavailablePayload
 
 TERMINAL_CHILDREN_V1 = "playbill-terminal-children-v1"
 TERMINAL_REQUEST_ITEMS_V1 = "playbill-terminal-request-items-v1"
+#: The same parts with each distinct extraction receipt held once (items name
+#: it by index) and an absence witness's run id left to the record's request
+#: header, which delivery requires it to equal: an unchanged terminal's items
+#: (an absence reconfirmed every complete run) are then the body stored before.
+TERMINAL_REQUEST_ITEMS_V2 = "playbill-terminal-request-items-v2"
 TERMINAL_PREPARED_ITEMS_V1 = "playbill-terminal-prepared-items-v1"
 TERMINAL_RECEIPT_CHILDREN_V1 = "playbill-terminal-receipt-children-v1"
 
@@ -84,7 +89,12 @@ def split_terminal_egress_payload(
         header = {key: value for key, value in request.items() if key not in moved}
         header["items_digest"] = store(
             canonical_bytes(
-                {"tag": TERMINAL_REQUEST_ITEMS_V1, **{field: request[field] for field in moved}}
+                {
+                    "tag": TERMINAL_REQUEST_ITEMS_V2,
+                    "items": request["items"],
+                    "claims_changes": request["claims_changes"],
+                    **_run_free_receipts(request["claims_evidence"], request.get("run_id")),
+                }
             )
         )
         split["request"] = header
@@ -125,6 +135,43 @@ def split_terminal_egress_payload(
     return split
 
 
+def _run_free_receipts(evidence: object, run_id: object) -> dict[str, Any]:
+    """Each distinct receipt once, its absence witness's run id left out when it
+    is the request's own; items name their receipt by index."""
+
+    receipts: list[Any] = []
+    index: dict[bytes, int] = {}
+    named: dict[str, int] = {}
+    for key, receipt in (evidence if isinstance(evidence, Mapping) else {}).items():
+        held = receipt
+        absence = receipt.get("absence") if isinstance(receipt, Mapping) else None
+        if isinstance(absence, Mapping) and absence.get("run_id") == run_id:
+            held = {**receipt, "absence": {k: v for k, v in absence.items() if k != "run_id"}}
+        encoded = canonical_bytes(held)
+        if encoded not in index:
+            index[encoded] = len(receipts)
+            receipts.append(held)
+        named[str(key)] = index[encoded]
+    return {"receipts": receipts, "claims_evidence": named}
+
+
+def _restored_receipts(body: dict[str, Any], run_id: object) -> dict[str, Any]:
+    receipts = body.pop("receipts")
+    named = body.pop("claims_evidence")
+    if not isinstance(receipts, list) or not isinstance(named, Mapping):
+        raise TerminalPayloadError("a split terminal record's receipts are malformed")
+    evidence: dict[str, Any] = {}
+    for key, position in named.items():
+        if not isinstance(position, int) or not 0 <= position < len(receipts):
+            raise TerminalPayloadError("a split terminal record names no such receipt")
+        receipt = receipts[position]
+        absence = receipt.get("absence") if isinstance(receipt, Mapping) else None
+        if isinstance(absence, Mapping) and "run_id" not in absence:
+            receipt = {**receipt, "absence": {**absence, "run_id": run_id}}
+        evidence[key] = receipt
+    return {**body, "claims_evidence": evidence}
+
+
 def _body(read_body: Callable[[str], bytes], digest: object, *, tag: str) -> dict[str, Any]:
     if not isinstance(digest, str):
         raise TerminalPayloadError(f"a split terminal record names no {tag} body")
@@ -156,7 +203,17 @@ def join_terminal_egress_payload(
     request = joined.get("request")
     if isinstance(request, Mapping) and "items_digest" in request:
         restored = {key: value for key, value in request.items() if key != "items_digest"}
-        restored.update(_body(read_body, request["items_digest"], tag=TERMINAL_REQUEST_ITEMS_V1))
+        content = read_body(str(request["items_digest"]))
+        tagged = json.loads(content).get("tag") if content[:1] == b"{" else None
+        if tagged == TERMINAL_REQUEST_ITEMS_V2:
+            body = _body(lambda _digest: content, request["items_digest"], tag=tagged)
+            restored.update(_restored_receipts(body, restored.get("run_id")))
+        else:
+            restored.update(
+                _body(
+                    lambda _digest: content, request["items_digest"], tag=TERMINAL_REQUEST_ITEMS_V1
+                )
+            )
         joined["request"] = restored
     prepared = joined.get("prepared")
     if isinstance(prepared, Mapping) and "items_digest" in prepared:

@@ -4582,11 +4582,7 @@ class ProcedureExecutor:
                 request=executed.model_dump(mode="json"),
             )
             into.member_requests[key] = derived.request_digest
-            state.pending_source_proofs.append(
-                self._append_event(
-                    admission, records, "source_request_derived", derived.model_dump(mode="json")
-                ).record.payload_digest
-            )
+            self._append_source_request(admission, records, state, derived.model_dump(mode="json"))
             try:
                 read = reader.read(
                     executed,
@@ -4847,13 +4843,8 @@ class ProcedureExecutor:
                     else workspace_request.model_dump(mode="json")
                 ),
             )
-            state.pending_source_proofs.append(
-                self._append_event(
-                    admission,
-                    records,
-                    "source_request_derived",
-                    derived_request.model_dump(mode="json"),
-                ).record.payload_digest
+            self._append_source_request(
+                admission, records, state, derived_request.model_dump(mode="json")
             )
             source_read_receipt: SourceReadReceipt | None = None
             provider_payload = resolved_request
@@ -6258,6 +6249,27 @@ class ProcedureExecutor:
             }
         )
 
+    def _append_source_request(
+        self,
+        admission: ProcedureRunAdmission,
+        records: list[StoredProcedureJournalRecordV1],
+        state: _RunState,
+        payload: dict[str, Any],
+    ) -> None:
+        """Journal one derived Source request; name it and the request body it
+        cites (split out run-free) among the invocation's production proofs:
+        a verifier joins the two to read the source (review 2f #3)."""
+
+        split = split_derived_source_request(
+            payload,
+            store=lambda content: self.bodies.store(content, journal_payload=True).digest,
+        )
+        stored = self._append_event(admission, records, "source_request_derived", split)
+        state.pending_source_proofs.append(stored.record.payload_digest)
+        nested = split.get("request_body_digest")
+        if isinstance(nested, str):
+            state.pending_source_proofs.append(nested)
+
     @staticmethod
     def _reuse_proof(
         state: _RunState,
@@ -7301,6 +7313,15 @@ class ProcedureExecutor:
         )
         manifests: dict[str, TerminalItemDependencyManifestV2] = {}
         folded: list[TerminalItemDerivedFactsV2] = []
+        # A manifest names each accepted-state read by its run-free identity:
+        # the read's evaluation instant is not a dependency, so an unchanged
+        # item of an unchanged generation keeps its manifest digest, and its
+        # bodies, chunks and child receipts are the ones stored before. The
+        # read's facts answer under either name.
+        read_names = state.read_identities
+        for digest, identity in read_names.items():
+            if digest in state.facts:
+                state.facts.setdefault(identity, state.facts[digest])
         for index, value in enumerate(values):
             tokens = base | item_tokens[index]
             item_key = terminal_item_key(
@@ -7309,7 +7330,12 @@ class ProcedureExecutor:
                 item=value,
             )
             manifest = build_terminal_item_manifest_v2(
-                tokens,
+                frozenset(
+                    accepted_state_token(read_names[token.digest])
+                    if token.slot == "accepted_state" and token.digest in read_names
+                    else token
+                    for token in tokens
+                ),
                 terminal_node_id=node.node_id,
                 item_key=item_key,
             )
@@ -7334,7 +7360,6 @@ class ProcedureExecutor:
                 terminal_node_id=node.node_id,
                 shared=shared_terminal_dependencies(tuple(manifests.values()), folded),
                 digest=lambda content: self.bodies.digest_bytes(content).tagged,
-                read_identities=state.read_identities,
             )
             self.bodies.store_many(built.bodies, journal_payload=True)
             items_record_digest = self._append_event(

@@ -126,6 +126,54 @@ def test_split_then_join_restores_the_exact_record_and_shares_unchanged_bodies()
     assert join_terminal_egress_payload(split_delivered, store.read) == delivered
 
 
+def test_absence_receipts_are_held_once_without_the_run_id_and_restore_exactly() -> None:
+    """Round 9 (K): every reconfirmed absence of a template carries the same
+    receipt, whose witness names the run. The request items body holds each
+    distinct receipt once and leaves the witness's run id to the record's run
+    header, so an unchanged terminal's items are the body stored before."""
+
+    import json
+
+    def absence_record(run_id: str) -> dict[str, Any]:
+        record = _prepared(4, run_id=run_id)
+        witness = {"run_id": run_id, "capture": _digest("root"), "node_id": "claims"}
+        record["request"]["claims_evidence"] = {
+            child["item_key"]: {
+                "absence": witness,
+                "value": {"basis": "capture", "capture_digest": _digest("root")},
+            }
+            for child in record["children"]
+        }
+        record["evidence"] = {child["item_key"]: _digest("root") for child in record["children"]}
+        return record
+
+    store = _Store()
+    first = absence_record("run-1")
+    split = split_terminal_egress_payload(first, store=store.store)
+    assert join_terminal_egress_payload(split, store.read) == first
+    body = json.loads(store.held[split["request"]["items_digest"]])
+    assert body["tag"] == "playbill-terminal-request-items-v2"
+    assert len(body["receipts"]) == 1 and "run_id" not in body["receipts"][0]["absence"]
+    held = dict(store.held)
+    second = absence_record("run-2")
+    again = split_terminal_egress_payload(second, store=store.store)
+    assert store.held == held  # the same items body: nothing new
+    assert join_terminal_egress_payload(again, store.read) == second
+    # A receipt naming another run keeps its run id in the body.
+    other = absence_record("run-3")
+    key = next(iter(other["request"]["claims_evidence"]))
+    other["request"]["claims_evidence"][key] = {
+        **other["request"]["claims_evidence"][key],
+        "absence": {"run_id": "run-0", "capture": _digest("root"), "node_id": "claims"},
+    }
+    assert (
+        join_terminal_egress_payload(
+            split_terminal_egress_payload(other, store=store.store), store.read
+        )
+        == other
+    )
+
+
 def test_other_terminals_and_inline_history_pass_through() -> None:
     store = _Store()
     capture = {"node_id": "emit", "kind": "emit_capture", "children": _children(2)}

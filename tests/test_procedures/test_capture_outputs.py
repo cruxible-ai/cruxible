@@ -843,8 +843,19 @@ def test_a_capture_never_recorded_produced_is_not_reused(tmp_path: Path) -> None
     assert [item["field"] for item in produced] == ["right"]  # left is reused
 
 
+def _envelope_commitment(instance: Any, capture: str) -> str:
+    from cruxible_client.contracts.captures import parse_capture_envelope
+    from cruxible_core.storage.cas import BodyAccessContext
+
+    access = BodyAccessContext(principal_id="test", can_read_body=True)
+    return parse_capture_envelope(
+        instance.body_store().read(capture, access=access)
+    ).commitment.digest
+
+
 @pytest.mark.parametrize(
-    "lost", ["produced_capture", "provider_invocation_completed", "admission_bound"]
+    "lost",
+    ["produced_capture", "provider_invocation_completed", "admission_bound", "request_body"],
 )
 def test_a_capture_whose_production_proof_is_lost_is_fetched_anew(
     tmp_path: Path, lost: str
@@ -852,8 +863,9 @@ def test_a_capture_whose_production_proof_is_lost_is_fetched_anew(
     """Review 2d #3 and 2e #5: a record the held Capture's production is
     verified from is gone (unlogged, as a journal payload's loss can be): its
     production, its invocation's completion (the producer receipt) or its
-    run's admission. The identical re-fetch never reuses it, records producing
-    a new Capture, and the next re-fetch reuses that."""
+    run's admission, or (review 2f #3) the run-free request body its derived
+    Source request record cites. The identical re-fetch never reuses it,
+    records producing a new Capture, and the next re-fetch reuses that."""
 
     from datetime import timedelta
 
@@ -881,12 +893,58 @@ def test_a_capture_whose_production_proof_is_lost_is_fetched_anew(
         return state
 
     first = run(0)
+    import json
+
+    from cruxible_core.storage.cas import BodyAccessContext
+
+    access = BodyAccessContext(principal_id="test", can_read_body=True)
+    kind = "source_request_derived" if lost == "request_body" else lost
     proofs = [
         stored.record.payload_digest
         for stored in _records_for_run(instance, first.run_id)
-        if stored.record.event_kind == lost
+        if stored.record.event_kind == kind
     ]
+    if lost == "request_body":
+        proofs = [
+            json.loads(instance.body_store().read(digest, access=access))["payload"][
+                "request_body_digest"
+            ]
+            for digest in proofs
+        ]
     assert len(proofs) == (2 if lost == "produced_capture" else 1)
+    if lost == "request_body":
+        # An identical re-fetch stores the same run-free request body again
+        # before it looks for a held Capture, so the loss is seen at the port:
+        # every remembered Capture names the body among its proofs and, with
+        # it unreadable, is not reused.
+        from cruxible_core.service.procedures.capture_observations import (
+            InstanceCaptureObservations,
+        )
+
+        envelopes = instance.body_store().capture_envelopes
+        with envelopes._connection() as connection:  # noqa: SLF001
+            remembered = connection.execute(
+                "SELECT content_key, capture_digest, proof_digest FROM content_reuse"
+            ).fetchall()
+        assert len(remembered) == 2
+        assert all(proofs[0] in str(row[2]).split() for row in remembered)
+        port = InstanceCaptureObservations(instance)
+        commitments = {
+            str(row[1]): _envelope_commitment(instance, str(row[1])) for row in remembered
+        }
+        assert all(
+            port.held_capture(str(row[0]), commitment_digest=commitments[str(row[1])]) is not None
+            for row in remembered
+        )
+        instance.body_store()._path(proofs[0]).unlink()  # noqa: SLF001
+        from cruxible_core.service.procedures import capture_observations
+
+        capture_observations._SHOWN.clear()  # noqa: SLF001 - a fresh process
+        assert all(
+            port.held_capture(str(row[0]), commitment_digest=commitments[str(row[1])]) is None
+            for row in remembered
+        )
+        return
     for digest in proofs:
         instance.body_store()._path(digest).unlink()  # noqa: SLF001
     second = run(1)

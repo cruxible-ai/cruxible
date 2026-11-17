@@ -910,6 +910,154 @@ def test_a_recheck_association_is_the_latest_of_its_claim_version(tmp_path: Path
     assert port.rechecked(claim_id, version, digest("B"))
 
 
+def test_a_successor_version_is_reconfirmed_on_a_capture_its_predecessor_was(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review 2f #1: a re-check recorded for one Claim version never stands for
+    its successor's. The same Capture and call reconfirming the next version
+    (after a revision) is judged and recorded for that version."""
+
+    from datetime import UTC, datetime, timedelta
+
+    from cruxible_core.evidence.claim_reobservations import (
+        ClaimReobservationStore,
+        ReobservationReader,
+    )
+
+    instance = pages_world(tmp_path)
+    install(instance, list_spec(), line="test.kev-pages-line")
+    first = run_pages(instance, Pages(split(catalog())), line="test.kev-pages-line")
+    held = _by(proposed(instance, first))
+    activate(instance, first)
+    delisted = split(catalog("kev-catalog-delisted"))
+    second = run_pages(instance, Pages(delisted), line="test.kev-pages-line", minute=1)
+    activate(instance, second)
+    inverse = held[(_cve(DELISTED), LISTED_IN)].identity.name
+    seen: list[Any] = []
+    batched = ClaimReobservationStore.record_many
+
+    def spy(self: Any, requests: Any, **kwargs: Any) -> Any:
+        seen.extend(requests)
+        return batched(self, requests, **kwargs)
+
+    monkeypatch.setattr(ClaimReobservationStore, "record_many", spy)
+    state = run_pages(
+        instance,
+        Pages(delisted, observed=NOW + timedelta(minutes=2)),
+        line="test.kev-pages-line",
+        minute=2,
+    )
+    assert state.status == "succeeded", state.terminal
+    (real,) = [item for item in seen if item.claim_id == inverse]
+    store = ClaimReobservationStore(instance)
+    assert len(store.history(inverse)) == 1
+    current = store._version_at(inverse, instance.accepted_coordinate().git_oid)  # noqa: SLF001
+    later = datetime.now(UTC) + timedelta(days=1)
+    reader = ReobservationReader(instance)
+    assert reader.latest_version_record(inverse, current, observed_by=later) is not None
+    # The Claim is revised (its successor version is live); the same Capture
+    # and call reconfirm it.
+    successor = "sha256:" + "9" * 64
+    envelope, cited, _version = store._admissible(  # noqa: SLF001
+        claim_id=real.claim_id,
+        capture_digest=real.capture_digest,
+        coordinate=instance.accepted_coordinate(),
+        extraction=real.extraction,
+        extracted_value=real.extracted_value,
+        repeat=True,
+    )
+    admitted: list[str] = []
+
+    def admit(**kwargs: Any) -> Any:
+        admitted.append(kwargs["claim_id"])
+        return envelope, cited, successor
+
+    monkeypatch.setattr(store, "_version_at", lambda _claim, _oid: successor)
+    monkeypatch.setattr(store, "_admissible", admit)
+    assert store.record_many([real], actor_id="owner") == {}
+    assert admitted == [inverse]  # judged for the successor, not taken as known
+    assert len(store.history(inverse)) == 2
+    assert reader.latest_version_record(inverse, successor, observed_by=later) is not None
+    # A repeat for the successor itself is the record it already holds.
+    assert store.record_many([real], actor_id="owner") == {}
+    assert admitted == [inverse] and len(store.history(inverse)) == 2
+
+
+def _areas(root: Path) -> dict[str, int]:
+    """Apparent bytes under an instance by area (CAS bodies, each exhaust family, rest)."""
+
+    sizes: dict[str, int] = {}
+    for path in root.rglob("*"):
+        if not path.is_file():
+            continue
+        parts = path.relative_to(root).parts
+        area = parts[0] if parts[0] != "exhaust" or len(parts) < 2 else "exhaust/" + parts[1]
+        sizes[area] = sizes.get(area, 0) + path.stat().st_size
+    return sizes
+
+
+def test_an_unchanged_run_stores_the_same_at_2_and_22_absences(tmp_path: Path) -> None:
+    """Round 9 (K and F): the whole unchanged run, every stored byte, at two
+    absence counts. Each held absence is reconfirmed every complete run; that
+    costs one batch journal record whose entries are each Claim's id and
+    version, and nothing else per Claim: the terminal's request items (the
+    reconfirmed items, their receipt and changes) and children are the bodies
+    stored before, and the projection keeps one current point per Claim."""
+
+    from datetime import timedelta
+
+    from cruxible_client.contracts.authoring.inputs import SubjectInput
+    from tests.support.operation_world import author
+
+    grown: dict[int, dict[str, int]] = {}
+    for extra in (0, 20):
+        root = tmp_path / str(extra)
+        root.mkdir()
+        instance = pages_world(root)
+        for index in range(extra):
+            author(
+                instance,
+                SubjectInput(
+                    kind="subject",
+                    subject_kind=VULN,
+                    key={"cve_id": f"CVE-2099-{index:05d}"},
+                    rationale="Watched.",
+                ),
+                name=f"extra-{index}",
+            )
+        install(instance, list_spec(), line="test.kev-pages-line")
+        delisted = split(catalog("kev-catalog-delisted"))
+        first = run_pages(instance, Pages(split(catalog())), line="test.kev-pages-line")
+        activate(instance, first)
+        second = run_pages(instance, Pages(delisted), line="test.kev-pages-line", minute=1)
+        activate(instance, second)
+        for minute in (2, 3):  # the first unchanged run warms up
+            before = _areas(instance.root)
+            state = run_pages(
+                instance,
+                Pages(delisted, observed=NOW + timedelta(minutes=minute)),
+                line="test.kev-pages-line",
+                minute=minute,
+            )
+            assert state.status == "succeeded", state.terminal
+            assert state.completeness is None
+            after = _areas(instance.root)
+        grown[extra] = {
+            area: after.get(area, 0) - before.get(area, 0)
+            for area in after
+            if after.get(area, 0) != before.get(area, 0)
+        }
+    print("UNCHANGED_RUN", grown)
+    # Bodies and journal: one batch entry per reconfirmed absence (its id and
+    # version); the terminal's items, receipt and children are reused.
+    stored = (grown[20].get("cas", 0) - grown[0].get("cas", 0)) / 20
+    assert stored < 400, (stored, grown)
+    # The whole run, every byte (round 9 F): the projection holds each run's
+    # absences as one point of the set it reconfirmed, never a row per Claim.
+    total = (sum(grown[20].values()) - sum(grown[0].values())) / 20
+    assert total < 400, (total, grown)
+
+
 def _cas_files(root: Path) -> dict[str, int]:
     return {
         str(path): path.stat().st_size
@@ -1005,6 +1153,9 @@ def test_an_unchanged_derive_reuses_its_capture_at_3_and_24_pages(
         assert grown[24][0] == grown[3][0], grown
         assert bytes_slope < 16, grown
         assert grown[3][2] == grown[24][2] == 0, grown
+        # The complete delta, nothing subtracted (review 2f #5).
+        total = {size: grown[size][1] + grown[size][2] for size in grown}
+        assert (total[24] - total[3]) / 21 < 16, total
     else:
         assert bytes_slope > 100 and shared_slope > 100, grown
 
@@ -1076,6 +1227,7 @@ def test_absence_reconfirmations_store_one_record_per_run_at_12_and_120(
         repeat=True,
     )
     monkeypatch.setattr(store, "_admissible", lambda **_kwargs: admitted)
+    monkeypatch.setattr(store, "_version_at", lambda _claim, _oid: admitted[2])
     assert real.call is not None
     measured: dict[tuple[str, int], tuple[int, int]] = {}
     step = 0

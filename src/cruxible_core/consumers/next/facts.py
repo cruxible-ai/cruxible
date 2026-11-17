@@ -640,6 +640,7 @@ def _claim_facts(
             reads.update(
                 f"observed:{key.contract_digest}|{key.observed_content_digest}"
                 for key in recording.reobservation_keys.get(claim.identity.name, ())
+                if key.observed_content_digest  # a row its maps now disagree on reads none
             )
             # A repeated observation of a set holding them reaches this Claim
             # by the set alone (review 2c #6): no expansion of its members.
