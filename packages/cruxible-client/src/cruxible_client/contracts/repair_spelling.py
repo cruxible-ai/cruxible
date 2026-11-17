@@ -1103,6 +1103,14 @@ REPAIR_SPELLINGS: Mapping[str, RepairSpelling] = {
     ),
     "cruxible.proposal.reject": _proposal_verb("reject", reason=True),
     "cruxible.proposal.withdraw": _proposal_verb("withdraw", reason=True),
+    "cruxible.proposal.review": RepairSpelling(
+        cli="proposal review",
+        cli_args=("proposal_id",),
+        mcp="cruxible_proposal_review",
+        mcp_args={"proposal_id": "proposal_id"},
+        sdk=lambda values: _sdk_call("cx.proposal", _operand(values, "proposal_id")) + ".review()",
+        required=("proposal_id",),
+    ),
     "cruxible.proposal.activate": RepairSpelling(
         cli="proposal activate",
         cli_args=("proposal_id",),

@@ -610,6 +610,7 @@ def prepare_approval(
         proposal_id,
         signer_id=req.signer_id,
         include_body=req.include_body,
+        reviewed_candidate_digest=req.reviewed_candidate_digest,
     )
 
 
@@ -633,6 +634,7 @@ def submit_approval(
         proposal_id,
         attestation=req.attestation,
         hold=req.hold,
+        reviewed_candidate_digest=req.reviewed_candidate_digest,
     )
 
 

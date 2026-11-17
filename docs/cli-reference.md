@@ -5093,11 +5093,22 @@ superseded, and the result is the typed `cruxible-proposal-recompiled-v1` with
 proposal refuses `cruxible.approval.requirement_unsatisfied` (naming the
 eligible signers, repair `proposal approve`) before anything is landed,
 readmitted or withdrawn, whether its base moved or not. An approval signs
-exactly one candidate, so
-`proposal approve` (CLI and MCP) then signs the landed candidate in the same
-command; the SDK returns the result for a fresh review. The approval and
-activation receipts name the source in `readmits`, and the CLI prints `NEW
-replaces SOURCE (readmitted at the head); act on NEW`. Acting on the source
+exactly one candidate, and the landed one is a new candidate with a new
+digest. `proposal approve` with no reviewed digest (CLI and MCP) signs the
+landed candidate in the same command when its members are identical. Bound to
+the candidate that was reviewed (`--candidate-digest DIGEST` on the CLI,
+`candidate_digest` on MCP, always on the SDK's `approve(reviewed=...)`), it
+refuses `cruxible.approval.reviewed_candidate_changed` instead: the refusal
+names the landed proposal and its candidate, says `members identical: true` or
+`false`, signs nothing, and its repair is `proposal review NEW`. The approval
+and activation receipts name the source in `readmits`, and the CLI prints
+`Landed at the head as NEW: the same change set (proposed as SOURCE)` and
+`Approved CANDIDATE (PROPOSAL) as SIGNER`; approving a proposal that is itself
+a readmission prints `NEW replaces SOURCE (readmitted at the head); act on
+NEW`. The source closes with terminal reason `superseded`: `proposal list`
+prints `superseded_by: NEW` under its row, and `get SOURCE` shows
+`superseded_by` and `closed_by`, the principal whose approval, activation or
+readmit landed it (often not its author, who is `actor`). Acting on the source
 afterwards refuses as superseded, naming the proposal that replaced it, with
 the repair `cruxible proposal activate NEW`. Approving, activating or
 approve-submitting a proposal that is already accepted refuses
@@ -5112,8 +5123,10 @@ the head as NEW ... before SIGNER was registered`) and signs the landed
 candidate; the signer's eligibility is checked first, so a refused signer
 changes nothing. Only a caller who may submit approvals triggers the landing;
 any other refuses `cruxible.approval.signer_after_base` with the author's
-`proposal readmit` as the repair. The SDK refuses too and names the landed
-proposal to review, since its approval is bound to the candidate it reviewed.
+`proposal readmit` as the repair. An approval bound to the reviewed candidate
+(`--candidate-digest`, MCP `candidate_digest`, the SDK) lands it and refuses
+`cruxible.approval.reviewed_candidate_changed`, naming the landed proposal to
+review.
 A change set the author's readmit would recompile (retained authoring input,
 including one holding a ClaimType) lands at the head the same way for such a
 signer. A kit change or a generated ClaimType migration does not: it was

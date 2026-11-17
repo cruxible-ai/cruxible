@@ -38,6 +38,7 @@ from cruxible_client.contracts.errors import (
     ApprovalSignerAfterBase,
     ProposalIntegrityError,
     ProposalReviewOptionsInvalid,
+    ReviewedCandidateChanged,
 )
 from cruxible_client.contracts.proposal_models import (
     OriginatingLine,
@@ -705,7 +706,8 @@ def service_prepare_playbill_approval(
     proposal_id: str,
     signer_id: str,
     access: BodyAccessContext,
-    land: Callable[[], None] | None = None,
+    land: Callable[[], str] | None = None,
+    reviewed_candidate_digest: str | None = None,
 ) -> ApprovalChallenge:
     """Return the exact public statement a client signer may choose to approve.
 
@@ -717,6 +719,10 @@ def service_prepare_playbill_approval(
     moved proposal lands it, and the challenge is for the landed candidate,
     whose parent registry holds the signer. ``challenge.proposal_id`` then
     names the landed proposal; sign and submit that one.
+
+    ``reviewed_candidate_digest`` binds the challenge to the candidate the
+    signer reviewed: a challenge for any other candidate, the landed one
+    included, is refused, naming the proposal and candidate there is now.
     """
 
     from cruxible_core.service.authoring.documents import (
@@ -747,11 +753,30 @@ def service_prepare_playbill_approval(
                 raise ApprovalSignerAfterBase(
                     review.proposal_id, signer_id=signer_id, author=author
                 )
-            land()
-            landed = land_for_signer(instance, review.proposal_id)
+            landed = land_for_signer(instance, review.proposal_id, triggered_by=land())
+            assert landed.proposal_id is not None and landed.candidate_digest is not None
+            if reviewed_candidate_digest is not None:
+                # Landed, then refused: the reviewer's next review is of the
+                # successor this names, and nothing was signed for it.
+                raise ReviewedCandidateChanged(
+                    review.proposal_id,
+                    reviewed_candidate_digest=reviewed_candidate_digest,
+                    current_proposal_id=landed.proposal_id,
+                    current_candidate_digest=landed.candidate_digest,
+                    members_identical=landed.members_identical,
+                )
             return service_prepare_playbill_approval(
-                instance, proposal_id=landed, signer_id=signer_id, access=access
+                instance, proposal_id=landed.proposal_id, signer_id=signer_id, access=access
             )
+    if reviewed_candidate_digest is not None and (
+        review.candidate_digest != reviewed_candidate_digest
+    ):
+        raise ReviewedCandidateChanged(
+            review.proposal_id,
+            reviewed_candidate_digest=reviewed_candidate_digest,
+            current_proposal_id=review.proposal_id,
+            current_candidate_digest=str(review.candidate_digest),
+        )
     principal = generation.principals.require_active(signer_id)
     _refuse_ineligible_signer(principal, review)
     return ApprovalChallenge(

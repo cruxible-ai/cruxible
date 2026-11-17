@@ -210,6 +210,23 @@ quickstart and concepts pages.
   `already_current`; back up before any future upgrade (see
   [Upgrading](docs/upgrading.md#back-up-first)).
 
+- **An approval bound to the reviewed candidate signs that candidate or
+  nothing.** When accepted state moved and the proposal was proposed again at
+  the head, an approval that names the reviewed candidate digest (CLI
+  `proposal approve --candidate-digest`, new; MCP `candidate_digest`; the SDK's
+  `approve(reviewed=...)`) refuses
+  `cruxible.approval.reviewed_candidate_changed`, naming the new proposal and
+  whether its members are identical. MCP used to sign the new candidate, and
+  the SDK returned it unsigned. With no digest, the CLI and MCP sign the new
+  candidate when its members are identical, as before. The HTTP approval
+  challenge and approval requests take an optional
+  `reviewed_candidate_digest`.
+- **A proposal proposed again at the head closes as `superseded`, not
+  `withdrawn`.** `get` and `proposal list` show `superseded_by` and
+  `closed_by`, the principal whose approval, activation or readmit closed it;
+  it used to read as withdrawn by its author. `proposal approve` prints the
+  proposal beside the candidate it signed.
+
 ### Automation: Procedures, Lines and capabilities
 
 - **Procedures, Lines, Triggers, Mandates and Runbooks.** A Procedure is a

@@ -227,10 +227,23 @@ def recompile_proposal(
     *,
     preview: bool = False,
     confirm_head: Callable[[str], None] | None = None,
+    triggered_by: str | None = None,
 ) -> Recompilation | None:
-    """Serialize recompilation with withdrawal/rejection of this same source."""
+    """Serialize recompilation with withdrawal/rejection of this same source.
+
+    ``triggered_by`` is the principal whose approval, activation or readmit met
+    the stale source: the source's closing record names it. A caller that is no
+    principal's act (a Line's own delivery) leaves it None, and the record
+    names the source's author.
+    """
     with instance.refusal_index().closing(source.admission.proposal_id):
-        return _recompile_proposal(instance, source, preview=preview, confirm_head=confirm_head)
+        return _recompile_proposal(
+            instance,
+            source,
+            preview=preview,
+            confirm_head=confirm_head,
+            triggered_by=triggered_by,
+        )
 
 
 def _recompile_proposal(
@@ -239,11 +252,13 @@ def _recompile_proposal(
     *,
     preview: bool = False,
     confirm_head: Callable[[str], None] | None = None,
+    triggered_by: str | None = None,
 ) -> Recompilation | None:
     """Prepare completely before publication; refusal leaves the old proposal alone.
 
     None means this origin does not lower and keeps ordinary byte readmission.
-    The source actor owns the new proposal, even when a reviewer triggers it.
+    The source actor owns the new proposal, even when a reviewer triggers it;
+    the source closes as superseded by it, under the principal who triggered it.
     """
     from cruxible_core.service.proposals.proposals import _proposal_result, _readmission_target_ref
 
@@ -399,9 +414,9 @@ def _recompile_proposal(
         _close_once(
             instance,
             ChangeMode(instance, previewing=False),
-            ProposalWithdrawalRecord(
+            ProposalWithdrawalRecord.superseded(
                 proposal_id=source_id,
-                actor_id=source.admission.actor_id,
+                actor_id=triggered_by or source.admission.actor_id,
                 reason=f"Recompiled at the head as {result.admission.proposal_id}.",
                 withdrawn_at=str(format_datetime(datetime.now(timezone.utc))),
                 superseded_by=result.admission.proposal_id,

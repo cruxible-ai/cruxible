@@ -189,6 +189,12 @@ def _change_control(dry_run: bool | None, at: str | None) -> dict[str, Any]:
     return body
 
 
+def _reviewed(candidate_digest: str | None) -> dict[str, str]:
+    """An approval's reviewed-candidate binding; nothing on the wire when unbound."""
+
+    return {} if candidate_digest is None else {"reviewed_candidate_digest": candidate_digest}
+
+
 class CruxibleClient:
     """Synchronous client for daemon host, credential, and Cruxible operations."""
 
@@ -1067,10 +1073,17 @@ class CruxibleClient:
         *,
         signer_id: str,
         include_body: bool = False,
+        reviewed_candidate_digest: str | None = None,
     ) -> contracts.ApprovalChallenge:
+        """The statement to sign. ``reviewed_candidate_digest`` binds it to the
+        candidate the signer reviewed: any other candidate is refused."""
         response = self._client.post(
             f"/api/v1/{instance_id}/proposals/{proposal_id}/approval-challenge",
-            json={"signer_id": signer_id, "include_body": include_body},
+            json={
+                "signer_id": signer_id,
+                "include_body": include_body,
+                **_reviewed(reviewed_candidate_digest),
+            },
         )
         return self._parse_model(response, contracts.ApprovalChallenge)
 
@@ -1081,14 +1094,24 @@ class CruxibleClient:
         *,
         attestation: Mapping[str, Any],
         hold: bool = False,
+        reviewed_candidate_digest: str | None = None,
     ) -> contracts.ProposalApprovalResult:
         """Submit one approval; the daemon activates a candidate it completes.
 
         ``hold=True`` signs only and leaves activation to someone else.
+        ``reviewed_candidate_digest`` binds the approval to the candidate the
+        signer reviewed: a proposal proposed again at the head since is refused
+        (``cruxible.approval.reviewed_candidate_changed``), naming its successor
+        and whether its members are identical. Without it the successor comes
+        back as a ``ProposalRecompiled``, which records no approval.
         """
         response = self._client.post(
             f"/api/v1/{instance_id}/proposals/{proposal_id}/approvals",
-            json={"attestation": dict(attestation), "hold": hold},
+            json={
+                "attestation": dict(attestation),
+                "hold": hold,
+                **_reviewed(reviewed_candidate_digest),
+            },
         )
         if response.is_success and response.json().get("tag") == "cruxible-proposal-recompiled-v1":
             return self._parse_model(response, contracts.ProposalRecompiled)

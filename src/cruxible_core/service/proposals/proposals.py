@@ -74,7 +74,7 @@ from cruxible_core.service.list_pages import (
 #: approval or activation lands at the head as the same change set.
 ProposalInventoryStatus = Literal["open", "awaiting_readmit", "settled", "incomplete"]
 ProposalIncompleteReason = Literal["missing_admission", "missing_evaluation", "missing_candidate"]
-ProposalTerminalReason = Literal["accepted", "refused", "withdrawn", "rejected"]
+ProposalTerminalReason = Literal["accepted", "refused", "withdrawn", "rejected", "superseded"]
 _UNSETTLED_STATUSES = frozenset({"open", "awaiting_readmit"})
 #: Where the actor ID came from. ``runtime_credential`` is the principal the
 #: bearer credential is bound to; ``unbound_credential`` is a credential that
@@ -110,9 +110,17 @@ class PlaybillProposalListEntryV1(_StrictOperationalReadModel):
     #: ``settled`` + ``accepted`` only: the accepted generation its change set
     #: settled in (the proposal index's maintained settlement record).
     accepted_generation: int | None = Field(default=None, exclude_if=lambda value: value is None)
+    #: ``settled`` + ``superseded`` only: the proposal that took its place, and
+    #: the principal whose approval, activation, readmit or Line run closed it.
+    superseded_by: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    closed_by: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @model_validator(mode="after")
     def _status_shape(self) -> "PlaybillProposalListEntryV1":
+        if (self.superseded_by is not None) != (self.terminal_reason == "superseded"):
+            raise ValueError("exactly a superseded proposal names its successor")
+        if self.closed_by is not None and self.superseded_by is None:
+            raise ValueError("only a superseded proposal names who closed it")
         if (self.accepted_generation is not None) != (self.terminal_reason == "accepted"):
             raise ValueError("exactly an accepted proposal names its accepted generation")
         if bool(self.stale_paths) != (self.status == "awaiting_readmit"):
@@ -478,11 +486,18 @@ def _proposal_entries(
         awaiting_readmit = bool(stale_paths) and not missing
         if reason == "stale":
             reason = None
+        superseded_by = closed_by = None
         if reason == "withdrawn":
-            # One closing record carries both endings; its kind tells them apart.
+            # One closing record carries every ending; its kind tells them apart.
             closed = evidence.read_withdrawal(row["proposal_id"])
             if closed is not None and closed.kind == "rejected":
                 reason = "rejected"
+            elif closed is not None and closed.is_superseded and not missing:
+                reason = "superseded"
+                superseded_by = closed.superseded_by
+                # A record from before the superseded kind names the author,
+                # who did not close it: who did is not recorded, so not shown.
+                closed_by = closed.actor_id if closed.kind == "superseded" else None
         entries.append(
             PlaybillProposalListEntryV1(
                 proposal_id=row["proposal_id"],
@@ -509,6 +524,8 @@ def _proposal_entries(
                 accepted_generation=(
                     int(row["accepted_sequence"]) if not missing and reason == "accepted" else None
                 ),
+                superseded_by=superseded_by,
+                closed_by=closed_by,
             )
         )
     return tuple(entries)
@@ -1278,7 +1295,11 @@ def _readmit(
 
     try:
         recompiled = recompile_proposal(
-            instance, source, preview=mode.previewing, confirm_head=mode.confirm_head
+            instance,
+            source,
+            preview=mode.previewing,
+            confirm_head=mode.confirm_head,
+            triggered_by=actor_id,
         )
     except ProposalStale as exc:
         if exc.reason == "cruxible.authoring.slot_membership_changed":
@@ -1313,7 +1334,7 @@ def _readmit(
     if exact_bytes_cannot_rebase(source):
         raise requires_resubmission(source)
     if landing and not mode.previewing:
-        landed = land_exact_bytes(instance, source, mode=mode)
+        landed = land_exact_bytes(instance, source, mode=mode, triggered_by=actor_id)
         assert isinstance(landed, ProposalResult)
         link = landed.admission.readmits
         assert link is not None
@@ -1573,6 +1594,7 @@ def land_exact_bytes(
     *,
     mode: ChangeMode | None = None,
     check_first: bool = False,
+    triggered_by: str | None = None,
 ) -> ProposalResult | ProposalPreview:
     """Land a moved proposal whose origin does not lower at the head, by its own bytes.
 
@@ -1580,8 +1602,10 @@ def land_exact_bytes(
     (``staleness.overlap_check``), when an approval or an activation meets it:
     the same change set is readmitted at the head under its author (the
     admission's ``readmits`` link names the source, proposed at its base, and
-    the head it lands at), and the source closes as superseded by it. The
-    author is not asked. Serialized with withdrawal and rejection of the source.
+    the head it lands at), and the source closes as superseded by it, under
+    ``triggered_by``: the principal whose approval, activation or readmit landed
+    it (its author when none is named). The author is not asked. Serialized
+    with withdrawal and rejection of the source.
     A readmission the head refuses is returned as it is, and closes nothing.
 
     ``check_first`` (an approval's or activation's landing) evaluates the
@@ -1657,9 +1681,9 @@ def land_exact_bytes(
         _close_once(
             instance,
             ChangeMode(instance, previewing=False),
-            ProposalWithdrawalRecord(
+            ProposalWithdrawalRecord.superseded(
                 proposal_id=source_id,
-                actor_id=source.admission.actor_id,
+                actor_id=triggered_by or source.admission.actor_id,
                 reason=LANDED_REASON.format(successor=successor.admission.proposal_id),
                 withdrawn_at=str(format_datetime(datetime.now(timezone.utc))),
                 superseded_by=successor.admission.proposal_id,
@@ -1933,7 +1957,7 @@ def _close_once(
     )
     if entry is None:  # pragma: no cover - a read admission always lists
         raise ProposalNotFoundError(record.proposal_id)
-    verb = "withdrawn" if record.kind == "withdrawn" else "rejected"
+    verb = record.kind
     if entry.terminal_reason == "accepted":
         # Typed as approve and activate refuse it: settled, nothing to close.
         from cruxible_core.service.authoring.documents import refuse_accepted
@@ -1942,7 +1966,9 @@ def _close_once(
             instance,
             record.proposal_id,
             entry.candidate_digest,
-            acts="withdraw" if record.kind == "withdrawn" else "reject",
+            acts={"withdrawn": "withdraw", "rejected": "reject", "superseded": "supersede"}[
+                record.kind
+            ],
         )
     if entry.status not in _UNSETTLED_STATUSES:
         raise ProposalAdmissionError(

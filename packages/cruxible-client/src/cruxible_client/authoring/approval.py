@@ -24,6 +24,8 @@ from cruxible_client.contracts.candidates import (
     candidate_digest,
 )
 from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.errors import ReviewedCandidateChanged
+from cruxible_client.contracts.repair_spelling import render_repair
 from cruxible_client.contracts.types import PrincipalRecord
 
 if TYPE_CHECKING:
@@ -143,6 +145,27 @@ def review_proposal(cx: Cruxible, proposal_id: str) -> ReviewedProposal:
     )
 
 
+def _candidate_changed(
+    proposal_id: str,
+    reviewed: ReviewedProposal,
+    *,
+    current_proposal_id: str,
+    current_candidate_digest: str,
+    members_identical: bool | None = None,
+) -> ReviewedCandidateChanged:
+    """The daemon's own refusal, raised here when a reply names another candidate."""
+
+    refusal = ReviewedCandidateChanged(
+        proposal_id,
+        reviewed_candidate_digest=reviewed.candidate_digest,
+        current_proposal_id=current_proposal_id,
+        current_candidate_digest=current_candidate_digest,
+        members_identical=members_identical,
+    )
+    refusal.add_note(f"Repair: {render_repair(refusal.repair, surface='sdk')}")
+    return refusal
+
+
 def approve_reviewed(
     cx: Cruxible,
     proposal_id: str,
@@ -164,16 +187,25 @@ def approve_reviewed(
     if review.candidate_digest != reviewed.candidate_digest:
         raise ApprovalReviewMismatch("Review token advertises a different candidate digest")
     signer_id, public_key = signer.signer_id, signer.public_key
+    # Bound to the reviewed candidate: a proposal the daemon proposed again at
+    # the head (its base predates the signer, or accepted state moved) is
+    # refused there, naming the successor to review.
     raw = cx._client.prepare_approval(
-        cx._instance_id, proposal_id, signer_id=signer_id, include_body=True
+        cx._instance_id,
+        proposal_id,
+        signer_id=signer_id,
+        include_body=True,
+        reviewed_candidate_digest=reviewed.candidate_digest,
     )
     if raw.proposal_id != proposal_id:
-        # The signer was registered after the proposal's base: the daemon landed
-        # it at the head, and the reviewed candidate is not the one to sign.
-        raise ApprovalReviewMismatch(
-            f"Proposal {proposal_id} landed at the head as {raw.proposal_id} "
-            f"(its base predates signer {signer_id}); review "
-            f"cx.proposal({raw.proposal_id!r}) and approve that one"
+        landed_digest = str(raw.statement.get("payload_digest"))
+        if landed_digest == reviewed.candidate_digest:
+            raise ApprovalReviewMismatch("Challenge names a different proposal")
+        raise _candidate_changed(
+            proposal_id,
+            reviewed,
+            current_proposal_id=raw.proposal_id,
+            current_candidate_digest=landed_digest,
         )
     try:
         challenge = api.ApprovalChallenge.model_validate(raw.model_dump(mode="json"))
@@ -234,11 +266,25 @@ def approve_reviewed(
         raise ApprovalReviewMismatch("Signer returned an invalid or substituted approval") from exc
     expected_digest = approval_digest(attestation).tagged
     raw_receipt = cx._client.submit_approval(
-        cx._instance_id, proposal_id, attestation=attestation.model_dump(mode="json"), hold=hold
+        cx._instance_id,
+        proposal_id,
+        attestation=attestation.model_dump(mode="json"),
+        hold=hold,
+        reviewed_candidate_digest=reviewed.candidate_digest,
     )
     if isinstance(raw_receipt, api.ProposalRecompiled):
         if raw_receipt.source_proposal_id != proposal_id:
             raise ApprovalReviewMismatch("Recompilation receipt names a different source")
+        if raw_receipt.proposal_id is not None and raw_receipt.candidate_digest is not None:
+            # A successor: the daemon refuses this itself for a bound approval.
+            raise _candidate_changed(
+                proposal_id,
+                reviewed,
+                current_proposal_id=raw_receipt.proposal_id,
+                current_candidate_digest=raw_receipt.candidate_digest,
+                members_identical=raw_receipt.members_identical,
+            )
+        # Already live at the head: nothing is left to sign.
         return raw_receipt
     if isinstance(raw_receipt, api.ActivationReceipt):
         # A stale candidate that recompiles without approval requirements lands

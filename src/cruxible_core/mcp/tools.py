@@ -684,8 +684,12 @@ def register_tools(
             str | None,
             Field(
                 description=(
-                    "The candidate_digest you reviewed; the approval refuses if the "
-                    "proposal now signs a different candidate."
+                    "The candidate_digest you reviewed. With it the approval signs that "
+                    "candidate or refuses: if accepted state moved and the proposal was "
+                    "proposed again at the head, the refusal names the new proposal and "
+                    "says whether its members are identical; review and approve that one. "
+                    "Without it, a proposal proposed again at the head with identical "
+                    "members is signed in this call."
                 )
             ),
         ] = None,

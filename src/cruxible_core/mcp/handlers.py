@@ -87,7 +87,7 @@ from cruxible_client.contracts.duplicates import (
     DUPLICATES_AUDIT_DEFAULT_LIMIT,
     DuplicatesAuditResult,
 )
-from cruxible_client.contracts.errors import WriteRefusalError
+from cruxible_client.contracts.errors import ReviewedCandidateChanged, WriteRefusalError
 from cruxible_client.contracts.file_catalog import FileCompilationBundle
 from cruxible_client.contracts.get_reads import (
     ByteRange,
@@ -591,6 +591,7 @@ def handle_playbill_prepare_approval(
     *,
     signer_id: str,
     include_body: bool,
+    reviewed_candidate_digest: str | None = None,
 ) -> contracts.ApprovalChallenge:
     return _daemon_call(
         lambda client: client.prepare_approval(
@@ -598,6 +599,7 @@ def handle_playbill_prepare_approval(
             proposal_id,
             signer_id=signer_id,
             include_body=include_body,
+            reviewed_candidate_digest=reviewed_candidate_digest,
         ),
         operation_name="cruxible_proposal_approve_prepare",
     )
@@ -609,6 +611,7 @@ def handle_playbill_submit_approval(
     attestation: dict[str, Any],
     *,
     hold: bool = False,
+    reviewed_candidate_digest: str | None = None,
 ) -> contracts.ProposalApprovalResult:
     public_attestation = ApprovalAttestation.model_validate(attestation)
     return _daemon_call(
@@ -617,6 +620,7 @@ def handle_playbill_submit_approval(
             proposal_id,
             attestation=public_attestation.model_dump(mode="json"),
             hold=hold,
+            reviewed_candidate_digest=reviewed_candidate_digest,
         ),
         operation_name="cruxible_proposal_approve_submit",
     )
@@ -634,6 +638,11 @@ def handle_playbill_approve(
 
     Only the public attestation leaves this process; the key's bytes and path
     never enter a result or a log line.
+
+    ``candidate_digest`` is the candidate the caller reviewed: the daemon then
+    settles that candidate or refuses, naming the proposal that took its place
+    at the head and whether its members are identical. Without it, a proposal
+    the daemon proposed again at the head with identical members is signed here.
     """
 
     key_dir, default_signer = _approval_key_dir()
@@ -649,13 +658,21 @@ def handle_playbill_approve(
     except ValueError as exc:
         raise DataValidationError(f"cruxible_proposal_approve: {exc}") from exc
     challenge = handle_playbill_prepare_approval(
-        instance_id, proposal_id, signer_id=signer, include_body=False
+        instance_id,
+        proposal_id,
+        signer_id=signer,
+        include_body=False,
+        reviewed_candidate_digest=candidate_digest,
     )
     statement = ApprovalStatement.model_validate(challenge.statement)
     if candidate_digest is not None and statement.payload_digest != candidate_digest:
-        raise DataValidationError(
-            f"cruxible_proposal_approve: proposal {proposal_id} now signs candidate "
-            f"{statement.payload_digest}, not the reviewed {candidate_digest}; review it again"
+        # The daemon refuses this itself; the key never signs past a challenge
+        # that is not for the reviewed candidate, whatever served it.
+        raise ReviewedCandidateChanged(
+            proposal_id,
+            reviewed_candidate_digest=candidate_digest,
+            current_proposal_id=challenge.proposal_id,
+            current_candidate_digest=statement.payload_digest,
         )
     principal = PrincipalRecord.model_validate(challenge.signer_principal)
     key_signer = LocalEd25519ApprovalSigner.open(
@@ -668,10 +685,15 @@ def handle_playbill_approve(
     # A signer registered after the proposal's base: the challenge landed it at
     # the head, and the landed proposal is the one this signature is for.
     result = handle_playbill_submit_approval(
-        instance_id, challenge.proposal_id, attestation.model_dump(mode="json"), hold=hold
+        instance_id,
+        challenge.proposal_id,
+        attestation.model_dump(mode="json"),
+        hold=hold,
+        reviewed_candidate_digest=candidate_digest,
     )
     if (
-        isinstance(result, contracts.ProposalRecompiled)
+        candidate_digest is None
+        and isinstance(result, contracts.ProposalRecompiled)
         and result.status == "pending_review"
         and result.members_identical
         and result.proposal_id is not None

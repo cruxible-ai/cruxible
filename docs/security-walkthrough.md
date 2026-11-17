@@ -200,7 +200,7 @@ Approve it:
 $ cruxible proposal approve sha256:792b9e1d… --yes
 Signing sha256:8cfa7eeb62c9eb37605590d7eefbb444bd927fe5bfb3609041083259190260c4 (sha256:792b9e1dd42606a7dab6cef56a56976f75c469324e18def449eccc9afb6ec4e1): 17 changes (17 create)
 Signing key for owner: ...
-Approved sha256:8cfa7eeb62c9eb37605590d7eefbb444bd927fe5bfb3609041083259190260c4 as owner
+Approved sha256:8cfa7eeb62c9eb37605590d7eefbb444bd927fe5bfb3609041083259190260c4 (sha256:792b9e1dd42606a7dab6cef56a56976f75c469324e18def449eccc9afb6ec4e1) as owner
 Activated at 80d15d26d24891fcd1c0bf442a654e5e49ac0c16
 ~~~
 
@@ -477,7 +477,7 @@ Values (4):
 
 $ cruxible proposal approve sha256:0995dfa8… --yes
 ...
-Approved sha256:10ddf6b49f48971508650c0b819cd884afd8e1d10bd03a51e3082561420af9e3 as reviewer
+Approved sha256:10ddf6b49f48971508650c0b819cd884afd8e1d10bd03a51e3082561420af9e3 (sha256:0995dfa8…) as reviewer
 Activated at be0c6190a25f75ed7bc947ea0fad96167674fb37
 ~~~
 

@@ -2665,12 +2665,16 @@ class Proposal:
         The approval that completes the candidate activates it in the same call
         (``receipt.activation``) when the caller may activate; ``hold=True``
         signs only. ``receipt.not_activated`` says why nothing activated.
-        A stale candidate is recompiled: it returns an ``ActivationReceipt``
-        directly when no approval is needed and the caller may activate, or a
-        ``ProposalRecompiled`` naming the replacement proposal.
 
-        Next: read at the returned activation's ``accepted_coordinate``, or
-        follow the replacement proposal; ``proposal.activate()`` for a held approval.
+        The approval is bound to the reviewed candidate. If accepted state moved
+        since the review, the daemon proposes the change again at the head and
+        this raises ``cruxible.approval.reviewed_candidate_changed``, naming the
+        new proposal and whether its members are identical; nothing is signed.
+        Review that proposal and approve it. A ``ProposalRecompiled`` is
+        returned only when every change is already live (nothing to sign).
+
+        Next: read at the returned activation's ``accepted_coordinate``;
+        ``proposal.activate()`` for a held approval.
         """
         receipt = approve_reviewed(
             self._playbill, self.proposal_id, signer=signer, reviewed=reviewed, hold=hold

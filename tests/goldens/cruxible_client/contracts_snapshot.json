@@ -75206,6 +75206,18 @@
                 "default": null,
                 "title": "Candidate Digest"
               },
+              "closed_by": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Closed By"
+              },
               "incomplete_reasons": {
                 "default": [],
                 "items": {
@@ -75241,6 +75253,18 @@
                 "title": "Status",
                 "type": "string"
               },
+              "superseded_by": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Superseded By"
+              },
               "tag": {
                 "const": "playbill-proposal-list-entry-v1",
                 "default": "playbill-proposal-list-entry-v1",
@@ -75265,7 +75289,8 @@
                       "accepted",
                       "refused",
                       "withdrawn",
-                      "rejected"
+                      "rejected",
+                      "superseded"
                     ],
                     "type": "string"
                   },
@@ -75451,6 +75476,26 @@
             "title": "Candidate Digest"
           }
         },
+        "closed_by": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "closed_by",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Closed By"
+          }
+        },
         "incomplete_reasons": {
           "default": [],
           "default_json_serializable": true,
@@ -75514,6 +75559,26 @@
             "type": "string"
           }
         },
+        "superseded_by": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "superseded_by",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Superseded By"
+          }
+        },
         "tag": {
           "default": "playbill-proposal-list-entry-v1",
           "default_json_serializable": true,
@@ -75559,7 +75624,8 @@
                   "accepted",
                   "refused",
                   "withdrawn",
-                  "rejected"
+                  "rejected",
+                  "superseded"
                 ],
                 "type": "string"
               },
@@ -75655,6 +75721,18 @@
             "default": null,
             "title": "Candidate Digest"
           },
+          "closed_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Closed By"
+          },
           "incomplete_reasons": {
             "default": [],
             "items": {
@@ -75690,6 +75768,18 @@
             "title": "Status",
             "type": "string"
           },
+          "superseded_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Superseded By"
+          },
           "tag": {
             "const": "playbill-proposal-list-entry-v1",
             "default": "playbill-proposal-list-entry-v1",
@@ -75714,7 +75804,8 @@
                   "accepted",
                   "refused",
                   "withdrawn",
-                  "rejected"
+                  "rejected",
+                  "superseded"
                 ],
                 "type": "string"
               },
