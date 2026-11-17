@@ -1903,6 +1903,33 @@ KIT_RETIRED_REPAIR = (
 )
 
 
+#: The codes a definition law refuses a retired definition's revival with.
+_REVIVAL_REFUSALS = (".revival_refused", ".lifecycle_invalid")
+
+
+def _refused_revival(
+    diagnostics: Iterable[CompilerDiagnostic], plan: Sequence[KitPathPlan]
+) -> bool:
+    """Whether admission refused reviving a definition this change writes over a retired one.
+
+    Decided from the refusal's own code and the path it names, against the plan's
+    written re-adds (``replace`` of a retired definition); a kept retired path is
+    not written, so an unrelated refusal never earns the new-instance repair.
+    """
+
+    revived = {
+        item.path
+        for item in plan
+        if item.action == "replace" and item.consequence == "re_adds_retired"
+    }
+    return any(
+        item.code.endswith(_REVIVAL_REFUSALS)
+        and item.subject is not None
+        and item.subject.artifact_path in revived
+        for item in diagnostics
+    )
+
+
 def _kit_refusal_detail(
     diagnostics: Iterable[CompilerDiagnostic], tree: Mapping[str, bytes], *, removal: bool
 ) -> str:
@@ -2131,11 +2158,7 @@ def _submit(
         detail=None
         if admitted.admitted
         else _kit_refusal_detail(admitted.diagnostics, candidate, removal=removal)
-        + (
-            KIT_RETIRED_REPAIR
-            if any(item.consequence == "re_adds_retired" for item in plan)
-            else ""
-        ),
+        + (KIT_RETIRED_REPAIR if _refused_revival(admitted.diagnostics, plan) else ""),
         coordinate=mode.coordinate,
         **described,  # type: ignore[arg-type]
     )

@@ -3081,3 +3081,48 @@ def test_a_removal_that_retires_nothing_promises_no_re_add(
     assert preview.status == "would_propose"
     assert not any(item.action == "retire" for item in preview.plan)
     assert preview.detail == "retires nothing"
+
+
+def test_the_new_instance_repair_follows_a_refused_revival_not_a_kept_path() -> None:
+    """Round-four finding 2: a kept retired path carries re_adds_retired without being
+    written, so an unrelated refusal (a dependent Claim's incomplete closure on the
+    replaced path) must not tell the operator to use a new instance."""
+
+    from cruxible_client.contracts.diagnostics import CompilerDiagnostic
+    from cruxible_client.contracts.kits import KitPathPlan
+    from cruxible_client.contracts.semantic import SemanticAddress
+    from cruxible_core.service.kits import _refused_revival
+
+    seats, plan_path = _path(SEATS), _path(PLAN)
+
+    def refusal(code: str, path: str) -> CompilerDiagnostic:
+        return CompilerDiagnostic(
+            code=code,
+            severity="error",
+            message="refused",
+            subject=SemanticAddress.whole_artifact(path),
+        )
+
+    mixed = (
+        KitPathPlan(
+            path=seats,
+            action="keep",
+            identity=f"ClaimType:{SEATS}",
+            consequence="re_adds_retired",
+        ),
+        KitPathPlan(path=plan_path, action="replace", identity=f"ClaimType:{PLAN}"),
+    )
+    closure = refusal("cruxible.change_set.incomplete_closure", plan_path)
+    assert not _refused_revival([closure], mixed)
+    assert not _refused_revival([refusal("cruxible.claim_type.lifecycle_invalid", seats)], mixed)
+
+    revived = (
+        KitPathPlan(
+            path=seats,
+            action="replace",
+            identity=f"ClaimType:{SEATS}",
+            consequence="re_adds_retired",
+        ),
+    )
+    assert _refused_revival([refusal("cruxible.claim_type.lifecycle_invalid", seats)], revived)
+    assert not _refused_revival([closure], revived)
