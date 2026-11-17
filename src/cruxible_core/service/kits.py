@@ -1896,6 +1896,13 @@ def _closure_summary(message: str, tree: Mapping[str, bytes], *, removal: bool) 
     )
 
 
+#: The repair a kit add refused for re-adding definitions retired here carries
+#: (morning-rulings-1116 (8): a retired definition is not revived in 0.5.0).
+KIT_RETIRED_REPAIR = (
+    ". Definitions retired here cannot be added back in this release: add the kit on a new instance"
+)
+
+
 def _kit_refusal_detail(
     diagnostics: Iterable[CompilerDiagnostic], tree: Mapping[str, bytes], *, removal: bool
 ) -> str:
@@ -2123,39 +2130,14 @@ def _submit(
         plan=plan,
         detail=None
         if admitted.admitted
-        else _kit_refusal_detail(admitted.diagnostics, candidate, removal=removal),
+        else _kit_refusal_detail(admitted.diagnostics, candidate, removal=removal)
+        + (
+            KIT_RETIRED_REPAIR
+            if any(item.consequence == "re_adds_retired" for item in plan)
+            else ""
+        ),
         coordinate=mode.coordinate,
         **described,  # type: ignore[arg-type]
-    )
-
-
-def _removed_kit_refusal(
-    tree: Mapping[str, bytes], contents: Mapping[str, bytes], kit_id: str
-) -> str:
-    """Why a kit removed here cannot be added back (morning-rulings-1116 (8): removal
-    is one-way in this release), with how many of this release's definitions are
-    retired here to explain it. The recorded removal decides; the count only
-    explains (O(kit size), on a refused re-add only).
-    """
-
-    retired: dict[str, int] = {}
-    for path in contents:
-        current = tree.get(path)
-        if current is None:
-            continue
-        state = _artifact_state(path, current)
-        if state.lifecycle.state != "live":
-            kind = state.identity.qualified.partition(":")[0]
-            retired[kind] = retired.get(kind, 0) + 1
-    explained = (
-        f"{sum(retired.values()):,} of its definitions are retired: "
-        + ", ".join(f"{kind} {count:,}" for kind, count in sorted(retired.items()))
-        if retired
-        else "none of this release's definitions is retired here"
-    )
-    return (
-        f"kit {kit_id} was removed here, and a removed kit cannot be added back in this "
-        f"release ({explained}); add it on a new instance"
     )
 
 
@@ -2794,9 +2776,8 @@ def _add_kit(
             installed_prefixes=receipt.owns,
             detail=f"kit id {manifest.kit_id} is installed with prefixes {receipt.owns}; "
             f"release prefixes {manifest.owns} share no prefix with that kit",
-            repair=f"Build this release under its own kit id (kit build --id), or add it on "
-            f"a new instance: kit id {receipt.kit_id} stays with the installed kit, and a "
-            "removed kit's id cannot be added again in this release.",
+            repair=f"Remove the installed kit {receipt.kit_id} first (kit remove), then add "
+            "this release.",
         )
         return KitChangeResult(
             kit_id=manifest.kit_id,
@@ -2807,21 +2788,6 @@ def _add_kit(
             provenance=manifest.provenance,
             refusals=(refusal,),
             detail=refusal.detail,
-            coordinate=mode.coordinate,
-        )
-    from cruxible_core.service.kit_resume import kit_removed
-
-    if kit_removed(instance, manifest.kit_id):
-        # A removal of this kit id was accepted here: removal is one-way in this
-        # release (morning-rulings-1116 (8)), whatever this release holds, so the
-        # add refuses before anything is installed or proposed. One keyed row.
-        return KitChangeResult(
-            kit_id=manifest.kit_id,
-            version=manifest.version,
-            status="would_block" if mode.previewing else "blocked",
-            transition=transition,
-            provenance=manifest.provenance,
-            detail=_removed_kit_refusal(tree, contents, manifest.kit_id),
             coordinate=mode.coordinate,
         )
     # Kit-add work only: indexed receipt documents and their recorded definitions,
@@ -3352,13 +3318,20 @@ def _remove_kit(
         may_activate=may_activate,
     )
     if result.status == "would_propose" and result.detail is None:
-        result = result.model_copy(update={"detail": KIT_REMOVAL_ONE_WAY})
+        retires = any(item.action == "retire" for item in plan)
+        result = result.model_copy(
+            update={"detail": KIT_REMOVAL_ONE_WAY if retires else KIT_REMOVAL_RETIRES_NOTHING}
+        )
     return result
 
 
 #: What a removal preview says before it is committed (morning-rulings-1116 (8)):
-#: a retired definition is never revived in this release, so the kit cannot return.
-KIT_REMOVAL_ONE_WAY = "one-way: a removed kit cannot be added back in this release"
+#: a retired definition is never revived in this release.
+KIT_REMOVAL_ONE_WAY = (
+    "one-way: the definitions this removal retires cannot be added back in this release"
+)
+#: A removal that retires nothing (every path kept, a Documents-only kit).
+KIT_REMOVAL_RETIRES_NOTHING = "retires nothing: the kit can be added again"
 
 
 #: Why a kit removal keeps a pair kind's endpoint ClaimType (R13): a Subject-valued

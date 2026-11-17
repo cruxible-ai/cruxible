@@ -1024,27 +1024,18 @@ def test_reusing_an_installed_kit_id_with_disjoint_prefixes_is_refused(
     assert refusal.owning_kit_id == "acme"
     assert refusal.our_prefixes == ("beta.",)
     assert refusal.installed_prefixes == ("acme.",)
-    assert "its own kit id (kit build --id), or add it on a new instance" in refusal.repair
-    assert "kit remove" not in refusal.repair
+    assert "Remove the" in refusal.repair and "kit acme first (kit remove)" in refusal.repair
     assert consumer.tree() == before
     assert result.plan == ()
 
-    # Removal does not free the id in this release (ruling 1116 (8)): the different
-    # kit under the same id is refused too, so the removed kit can never come back
-    # through it (round-two F-003).
+    # Removing the installed kit is the exit, not a permanent reservation of its id.
     removal = playbill_api.playbill_kit_remove(
         consumer.instance_id, KitRemoveRequest(kit_id="acme", dry_run=False)
     )
     consumer.settle(removal)
     preview = playbill_api.playbill_kit_add(consumer.instance_id, KitAddRequest(bundle=unrelated))
-    assert preview.status == "would_block" and preview.refusals == ()
-    assert (preview.detail or "").startswith("kit acme was removed here")
-    # Under its own id, the same definitions install.
-    renamed = publisher.build("2.0.0", owns=("beta.",), kit_id="beta")
-    assert (
-        playbill_api.playbill_kit_add(consumer.instance_id, KitAddRequest(bundle=renamed)).status
-        == "would_propose"
-    )
+    assert preview.status == "would_propose", preview.detail
+    assert preview.refusals == ()
 
 
 @pytest.mark.parametrize(
@@ -1787,7 +1778,9 @@ def test_a_kit_install_and_removal_preview_by_default_and_write_nothing(
     assert removal.status == "would_propose" and removal.proposal_id is None
     assert {item.action for item in removal.plan} == {"retire"}
     # Said before it is committed: a removed kit cannot come back in this release.
-    assert removal.detail == "one-way: a removed kit cannot be added back in this release"
+    assert removal.detail == (
+        "one-way: the definitions this removal retires cannot be added back in this release"
+    )
     assert [
         kit.kit_id for kit in _installed(playbill_api.playbill_kit_status(consumer.instance_id))
     ] == ["acme"]
@@ -2961,10 +2954,13 @@ def test_kit_status_drops_a_kit_add_once_its_proposal_lands(
     assert [kit.kit_id for kit in status.kits] == ["base"]
 
 
-def test_re_adding_a_removed_kit_refuses_once_with_counts_and_records_nothing(
+def test_re_adding_retired_definitions_refuses_once_counted_with_its_repair(
     worlds: tuple[_World, _World],
 ) -> None:
-    """sec N1: the re-add repeated one revival refusal per definition and named a proposal."""
+    """sec N1: the re-add repeated one revival refusal per definition, said "you
+    retired" and printed a Proposal line. The law still refuses (a retired definition
+    is not revived in 0.5.0); the answer says it once per kind, counted, with the
+    repair, and lands nothing."""
 
     publisher, consumer = worlds
     publisher.author(_claim_type(SEATS, {"type": "integer"}), _claim_type(PLAN, {"type": "string"}))
@@ -2977,18 +2973,20 @@ def test_re_adding_a_removed_kit_refuses_once_with_counts_and_records_nothing(
     )
     before = consumer.tree()
     expected = (
-        "kit acme was removed here, and a removed kit cannot be added back in this release "
-        "(2 of its definitions are retired: ClaimType 2); add it on a new instance"
+        "Refused: cruxible.claim_type.lifecycle_invalid: A retired ClaimType cannot be revived "
+        "or revised. (2 definitions). Definitions retired here cannot be added back in this "
+        "release: add the kit on a new instance"
     )
 
     preview = _kit_preview(consumer, KitAddRequest(bundle=release, source="test"))
     assert preview.status == "would_block" and preview.detail == expected
+    assert {item.consequence for item in preview.plan} == {"re_adds_retired"}
     committed = playbill_api.playbill_kit_add(
         consumer.instance_id, KitAddRequest(bundle=release, source="test", dry_run=False)
     )
 
     assert committed.status == "blocked" and committed.detail == expected
-    assert committed.proposal_id is None and committed.plan == ()
+    assert not committed.proposal_open
     assert consumer.tree() == before
 
 
@@ -3016,108 +3014,6 @@ def test_a_repeated_kit_refusal_prints_once_with_its_count() -> None:
     )
 
 
-def _count_installs_and_proposals(monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    from cruxible_core.service import kits
-
-    calls: list[str] = []
-    install, admit = kits._install_providers, kits.admit_change_set
-    monkeypatch.setattr(
-        kits, "_install_providers", lambda *a, **k: calls.append("install") or install(*a, **k)
-    )
-    monkeypatch.setattr(
-        kits, "admit_change_set", lambda *a, **k: calls.append("propose") or admit(*a, **k)
-    )
-    return calls
-
-
-def test_a_removed_documents_only_kit_cannot_come_back(
-    worlds: tuple[_World, _World], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Review F-003: removal keeps a kit's Documents, so a Documents-only kit left no
-    retired path behind and its re-add went through; the emptied receipt decides."""
-
-    publisher, consumer = worlds
-    stored = playbill_api.playbill_store_body(
-        publisher.instance_id, content_base64=base64.b64encode(b"# Guide\n").decode("ascii")
-    )
-    proposed = playbill_api.playbill_propose_document(
-        publisher.instance_id,
-        shell=DocumentShell(
-            identity="document:acme.guide",
-            document_kind="guidance",
-            title="Guide",
-            media_type="text/markdown",
-            body_digest=stored.digest,
-            governance_scope=("guidance",),
-            lifecycle=DocumentLifecycle(revision=1),
-        ),
-        proposal_name="acme-guide",
-        accept="never",
-    )
-    publisher.activate(proposed.proposal["admission"]["proposal_id"])
-    release = publisher.build("1.0.0")
-    assert {path.split("/", 1)[0] for path in release.contents()} == {"documents"}
-    # The adapters stage a kit's Document bodies before kit add; so does this test.
-    playbill_api.playbill_store_body(
-        consumer.instance_id, content_base64=base64.b64encode(b"# Guide\n").decode("ascii")
-    )
-    consumer.add(release)
-    removed = playbill_api.playbill_kit_remove(
-        consumer.instance_id, KitRemoveRequest(kit_id="acme", dry_run=False)
-    )
-    consumer.settle(removed)
-    assert {item.action for item in removed.plan} == {"keep"}
-    calls = _count_installs_and_proposals(monkeypatch)
-
-    readded = playbill_api.playbill_kit_add(
-        consumer.instance_id, KitAddRequest(bundle=release, source="test", dry_run=False)
-    )
-
-    assert readded.status == "blocked" and readded.proposal_id is None
-    assert readded.detail == (
-        "kit acme was removed here, and a removed kit cannot be added back in this release "
-        "(none of this release's definitions is retired here); add it on a new instance"
-    )
-    assert calls == []
-
-
-def test_a_newer_release_of_a_removed_kit_omitting_its_retired_paths_is_refused(
-    worlds: tuple[_World, _World], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    publisher, consumer = worlds
-    publisher.author(_claim_type(SEATS, {"type": "integer"}))
-    consumer.add(publisher.build("1.0.0"))
-    consumer.settle(
-        playbill_api.playbill_kit_remove(
-            consumer.instance_id, KitRemoveRequest(kit_id="acme", dry_run=False)
-        )
-    )
-    # The same kit's prefixes, with a field the removal never touched; SEATS (retired
-    # here) is retired at the publisher too, so the release omits it.
-    publisher.author(_claim_type(PLAN, {"type": "string"}))
-    seats = publisher.claim_type(SEATS)
-    retired = seats.model_copy(
-        update={
-            "lifecycle": ArtifactLifecycle(
-                predecessor_digest=claim_type_digest(seats).tagged, state="retired"
-            )
-        }
-    )
-    publisher.author(successions=(retired,))
-    newer = publisher.build("2.0.0")
-    assert _path(SEATS) not in newer.contents() and _path(PLAN) in newer.contents()
-    calls = _count_installs_and_proposals(monkeypatch)
-
-    for dry_run in (None, False):
-        result = playbill_api.playbill_kit_add(
-            consumer.instance_id, KitAddRequest(bundle=newer, source="test", dry_run=dry_run)
-        )
-        assert result.status == ("would_block" if dry_run is None else "blocked")
-        assert "kit acme was removed here" in (result.detail or "")
-        assert "none of this release's definitions is retired here" in (result.detail or "")
-    assert calls == []
-
-
 def test_kit_status_keeps_a_kit_add_whose_proposal_awaits_readmit(
     strict_worlds: tuple[_World, _World], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -3135,32 +3031,6 @@ def test_kit_status_keeps_a_kit_add_whose_proposal_awaits_readmit(
 
     assert base.kit_id == "base" and base.state == "proposed"
     assert base.proposal_awaiting_readmit and not base.proposal_open
-
-
-def test_a_kit_with_an_emptied_receipt_that_was_never_removed_is_not_refused(
-    worlds: tuple[_World, _World], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Round-two F-003: the guard inferred a removal from an empty receipt; only an
-    accepted removal recorded for the kit id refuses."""
-
-    from cruxible_core.service import kits
-
-    publisher, consumer = worlds
-    publisher.author(_claim_type(SEATS, {"type": "integer"}))
-    release = publisher.build("1.0.0")
-    consumer.add(release)
-    read = kits._read_receipt
-
-    def emptied(*args, **kwargs):  # type: ignore[no-untyped-def]
-        found = read(*args, **kwargs)
-        if found is None:
-            return None
-        shell, receipt = found
-        return shell, receipt.model_copy(update={"artifacts": ()})
-
-    monkeypatch.setattr(kits, "_read_receipt", emptied)
-    preview = playbill_api.playbill_kit_add(consumer.instance_id, KitAddRequest(bundle=release))
-    assert "was removed here" not in (preview.detail or "")
 
 
 def test_kit_status_carries_the_recorded_release_content_digest(
