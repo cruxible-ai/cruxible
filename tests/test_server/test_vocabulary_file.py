@@ -648,22 +648,11 @@ def test_next_and_orient_name_a_file_behind_accepted_state(world) -> None:  # ty
     assert row.repair.command == "cx.vocabulary.export()"
     status = cx.orient().vocabulary_file
     assert status.state == "behind" and status.definitions_behind == 1
-    # Walkthrough W9, psw F4: from the workspace, next= is the queue next lists,
-    # this row included. A daemon answer alone counts accepted state, and its
-    # text says where the row is.
+    # Walkthrough W9: next= counts accepted state; the text says where the row is.
     from cruxible_client.contracts.text_display import render_orient
 
-    attention = cx.orient().attention
-    problems = [item for item in cx.next().items if item.severity != "setup"]
-    assert attention.workspace_counted and attention.next_items == len(problems) >= 1
-    counted = render_orient(cx.orient().model_dump(mode="json"))
-    assert f"Attention: next={len(problems)} " in counted
-    assert "the vocabulary file row is in" not in counted
-    daemon_only = cx.orient().model_copy(
-        update={"attention": attention.model_copy(update={"workspace_counted": False})}
-    )
     assert "the vocabulary file row is in `cruxible next`" in render_orient(
-        daemon_only.model_dump(mode="json")
+        cx.orient().model_dump(mode="json")
     )
 
     # A Claim write moves the head, not the vocabulary: still one behind.

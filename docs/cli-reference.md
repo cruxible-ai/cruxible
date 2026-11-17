@@ -4503,13 +4503,11 @@ admits, by name), the artifact counts, the named queries with their parameters,
 who you are and whether you can author (when not, the same `authoring_refusal`
 code, detail and repair that `whoami` reports), what the `next` queue
 holds (its problems as `next_items` and the first of them in `top`, its setup
-rows apart as `setup_items`), and the next commands to run. Run from a
-workspace (CLI, MCP or SDK), `next_items` is the queue `cruxible next` lists
-there, rows about the workspace included (a Claim whose cited file changed, a
-floor or vocabulary file behind), and `workspace_counted` is true: orient then
-makes the workspace observation `next` makes, at `next`'s cost. The daemon's
-own answer (the HTTP route, or a client outside any workspace) counts accepted
-state only. Attention is the
+rows apart as `setup_items`), and the next commands to run. `next_items`
+counts accepted state (`next_scope: accepted_state`, and the text line ends
+`(workspace rows not counted: next)`): rows about your workspace, such as a
+Claim whose cited file changed, are only in `cruxible next`, which reads the
+workspace. Attention is the
 live queue, so `--at` an earlier generation omits it and prints `attention: head
 only` (`attention_scope: head_only`). When any Line was ever enabled, attention
 counts the enablements as the instance's Line consumer reports them (running,

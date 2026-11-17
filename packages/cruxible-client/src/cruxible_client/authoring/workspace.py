@@ -18,13 +18,11 @@ import subprocess
 import tempfile
 import unicodedata
 from collections.abc import Callable, Mapping, Sequence
-from datetime import UTC
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal, Protocol, cast
 from urllib.parse import urlsplit
 
 from cruxible_client import contracts
-from cruxible_client._error_base import CoreError
 from cruxible_client._safe_files import read_regular_file
 from cruxible_client.authoring.blocks import (
     ProjectionMarkerError,
@@ -66,7 +64,6 @@ from cruxible_client.contracts.floor import (
     FloorApplyResult,
     FloorDelta,
 )
-from cruxible_client.contracts.orient import ORIENT_ATTENTION_TOP
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.workspace_layout import (
     FLOOR_PATH,
@@ -1381,134 +1378,6 @@ def workspace_floor_freshness(
     )
 
 
-class _AttentionClient(_CoverageClient, Protocol):
-    def next(
-        self,
-        instance_id: str,
-        *,
-        evaluation_time: str,
-        access_profile: Mapping[str, Any],
-        at: contracts.AcceptedCoordinate | Mapping[str, Any] | None = None,
-        workspace_observation: Mapping[str, Any] | None = None,
-        limit: int | None = None,
-        cursor: str | None = None,
-        caller_surface: Literal["cli", "mcp", "sdk"] | None = None,
-        caller_tools: Sequence[str] | None = None,
-    ) -> contracts.NextResult: ...
-
-
-_FULL_DIGEST = re.compile(r"sha256:([0-9a-f]{12})[0-9a-f]{52}")
-
-
-def workspace_attention(
-    client: _AttentionClient,
-    instance_id: str,
-    workspace: str | Path,
-    orientation: contracts.OrientResult,
-    *,
-    surface: Literal["cli", "mcp", "sdk"],
-    access_profile: Mapping[str, Any],
-    caller_tools: Sequence[str] | None = None,
-) -> contracts.OrientResult:
-    """``orientation`` with its attention counting the queue ``next`` returns here.
-
-    The daemon's orient counts accepted state: it does not see the workspace,
-    so a Claim whose cited file changed, a floor behind or a vocabulary file
-    behind is a ``next`` row it never counted, and orient said ``next=0`` over
-    a queue of drift rows. A client that sees the workspace reads the same
-    queue ``next`` reads (the same observation, at orient's coordinate and
-    instant) and replaces the count, the setup count and the top lines with
-    that queue's; ``workspace_counted`` says so. ``access_profile`` is the one
-    this client's ``next`` sends, so both read one queue.
-
-    Unchanged when the answer has no attention (a page, a historical read) or
-    the root holds nothing ``next`` would observe (no floor, catalog or
-    vocabulary file): then no request is made. Otherwise the cost is ``next``'s
-    own, once per orient: each catalogued file read and scanned for coverage,
-    and the queue's pages.
-    """
-
-    attention = orientation.attention
-    if attention is None:
-        return orientation
-    try:
-        observation = observe_next_workspace(workspace)
-        if (
-            observation.get("floor_status") == "not_configured"
-            and not observation.get("source_observations")
-            and not observation.get("missing_bindings")
-            and "vocabulary_file" not in observation
-        ):
-            return orientation
-        observed, _coordinate = observe_next_workspace_with_coverage(
-            client,
-            instance_id,
-            workspace,
-            observation=observation,
-            coordinate=orientation.coordinate,
-            access_profile=access_profile,
-        )
-        evaluation_time = (
-            orientation.evaluation_time.astimezone(UTC)
-            .isoformat(timespec="microseconds")
-            .replace("+00:00", "Z")
-        )
-        problems = setup = 0
-        top: list[str] = []
-        cursor: str | None = None
-        while True:
-            page = client.next(
-                instance_id,
-                evaluation_time=evaluation_time,
-                access_profile=access_profile,
-                at=orientation.coordinate,
-                workspace_observation=observed,
-                limit=contracts.NEXT_MAX_LIMIT,
-                cursor=cursor,
-                caller_surface=surface,
-                caller_tools=caller_tools,
-            )
-            for item in page.items:
-                if item.severity == "setup":
-                    setup += 1
-                    continue
-                problems += 1
-                if len(top) < ORIENT_ATTENTION_TOP:
-                    subject = _FULL_DIGEST.sub(r"sha256:\1", item.subject_identity)
-                    top.append(f"{item.severity} {item.reason}: {subject}")
-            cursor = page.next_cursor
-            if cursor is None:
-                break
-    except CoreError as exc:
-        # The accepted-state counts stand, and the answer says what they lack.
-        code = getattr(exc, "error_code", None) or type(exc).__name__
-        return orientation.model_copy(
-            update={
-                "attention": attention.model_copy(
-                    update={
-                        "notes": (
-                            *attention.notes,
-                            f"workspace rows are not counted in next= ({code}); "
-                            "the next queue has them",
-                        )
-                    }
-                )
-            }
-        )
-    return orientation.model_copy(
-        update={
-            "attention": attention.model_copy(
-                update={
-                    "next_items": problems,
-                    "setup_items": setup,
-                    "top": tuple(top),
-                    "workspace_counted": True,
-                }
-            )
-        }
-    )
-
-
 def workspace_vocabulary_at(workspace: str | Path) -> str | None:
     """The Git OID to send as orient's ``vocabulary_at``: the vocabulary file's baseline.
 
@@ -2375,7 +2244,6 @@ __all__ = [
     "next_unobserved_reasons",
     "observe_next_workspace",
     "observe_next_workspace_with_coverage",
-    "workspace_attention",
     "observe_projection_coverage",
     "configured_floor_output",
     "floor_export_parts",

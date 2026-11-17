@@ -156,7 +156,7 @@ def test_orient_prints_setup_rows_apart_from_the_queues_problems() -> None:
     }
     attention = {"next_items": 0, "open_proposals": 0, "top": []}
     fresh = _render_orient({**header, "attention": {**attention, "setup_items": 14}})
-    assert "Attention: next=0 setup=14 open_proposals=0" in fresh
+    assert "Attention: next=0 setup=14 open_proposals=0 (workspace rows not counted: next)" in fresh
     # No setup rows: the line reads as it always did.
     assert "Attention: next=0 open_proposals=0" in _render_orient(
         {**header, "attention": attention}

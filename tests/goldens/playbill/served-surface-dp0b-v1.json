@@ -3,7 +3,7 @@
   "succession": {
     "ratified_by": "maintainer",
     "register_entry": "2026-11-17:fb-proposals",
-    "surface_digest": "sha256:c8e06dbe591ba7f374d992c9b9aff89a4c90788ea496b156a89230d31113a61b"
+    "surface_digest": "sha256:27af55047abc55cb7d9c83b17105d3f8feb79ee91c2eff97a36a5a38355ec07d"
   },
   "surface": {
     "cli_leaves": [
@@ -1600,7 +1600,7 @@
         "request_model": null,
         "request_schema_digest": null,
         "response_model": "cruxible_client.contracts.orient.OrientResult",
-        "response_schema_digest": "sha256:c9354ebeb6e69fac1a4d1394e5cf719cc7b5e139ec667506d3fd1ecf0234db80"
+        "response_schema_digest": "sha256:f6593a5e26da045158cb974b49632b2d92777a19e51cf72efab0270ed1427de1"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.predict",
@@ -2577,15 +2577,12 @@
       },
       {
         "client_operations": [
-          "head",
-          "next",
-          "orient",
-          "resolve_coverage"
+          "orient"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_orient",
         "input_schema_digest": "sha256:603232f2a3e158425ddb2c294f3d9be3c304f93841cf5f3b9fed04adff3fd68f",
         "name": "cruxible_orient",
-        "output_schema_digest": "sha256:0e423c8793e5ea61ed2e6997f8ed41deb54b841cb1a94bfc90799b9e787e8b01",
+        "output_schema_digest": "sha256:cb6e0a360aa81879b1113dd52d9a96dbf6f5beb057d05bffb5f57f04c247e798",
         "permission": "READ_ONLY"
       },
       {
@@ -2684,7 +2681,7 @@
           "submit_approval"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_approve",
-        "input_schema_digest": "sha256:c13f5cf4f53bef2c814485c85908269e99abf9c3674492f068fc03175eea6393",
+        "input_schema_digest": "sha256:e990083efd2330dfec2cbefdd2e4166f2c1a3fe933b5b50bb07400112456ac25",
         "name": "cruxible_proposal_approve",
         "output_schema_digest": "sha256:360b623a7d83042dbfeea9897f936de694f86514603f3b3be9703dec050c3087",
         "permission": "GRAPH_WRITE"

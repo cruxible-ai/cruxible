@@ -46669,7 +46669,7 @@
           },
           "OrientAttention": {
             "additionalProperties": false,
-            "description": "What the ``next`` queue holds, and anything else the instance needs.\n\n``next_items`` counts the queue's problems and ``top`` names the first of\nthem; ``setup_items`` counts its setup rows apart (choices the operator\nowns, such as a Line accepted but not yet enabled), absent when none.\nA daemon answer counts accepted state only: rows about the caller's\nworkspace (its floor, sources, projection blocks, vocabulary file) need\nthe workspace. A client that sees one (CLI, MCP, SDK) reads the queue\n``next`` returns for it and reports that queue's counts and top lines\ninstead, with ``workspace_counted`` set: ``next_items`` is then what\n``next`` lists. Orient reports the floor and the vocabulary file as status\nbeside this (``floor``, ``vocabulary_file``) either way.",
+            "description": "What the ``next`` queue holds, and anything else the instance needs.\n\n``next_items`` counts the queue's problems and ``top`` names the first of\nthem; ``setup_items`` counts its setup rows apart (choices the operator\nowns, such as a Line accepted but not yet enabled), absent when none.\nThese count accepted state only: rows about the caller's workspace (its\nfloor, sources, projection blocks, vocabulary file) need the workspace\nand appear in ``next``; orient reports the floor and the vocabulary file\nas status beside this (``floor``, ``vocabulary_file``), as it always has.\n``next_scope`` says so on every answer: ``next_items: 0`` is not an empty\n``next`` queue.",
             "properties": {
               "enablements": {
                 "anyOf": [
@@ -46686,6 +46686,12 @@
                 "minimum": 0,
                 "title": "Next Items",
                 "type": "integer"
+              },
+              "next_scope": {
+                "const": "accepted_state",
+                "default": "accepted_state",
+                "title": "Next Scope",
+                "type": "string"
               },
               "notes": {
                 "default": [],
@@ -46713,11 +46719,6 @@
                 },
                 "title": "Top",
                 "type": "array"
-              },
-              "workspace_counted": {
-                "default": false,
-                "title": "Workspace Counted",
-                "type": "boolean"
               }
             },
             "required": [

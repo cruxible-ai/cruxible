@@ -75,7 +75,6 @@ from cruxible_client.authoring.workspace import (
     observe_next_workspace_with_coverage,
     observe_projection_coverage,
     validate_workspace_config_write,
-    workspace_attention,
     workspace_floor_freshness,
     workspace_vocabulary_at,
     workspace_vocabulary_freshness,
@@ -9592,7 +9591,10 @@ def next_work(
         else evaluation_time
     )
     profile = (
-        _CLI_NEXT_PROFILE
+        CoverageAccessProfile(
+            profile_id="cli-next",
+            permitted_access_classes=("instance", "public"),
+        ).model_dump(mode="json")
         if access_profile_path is None
         else _read_model(access_profile_path, CoverageAccessProfile).model_dump(mode="json")
     )
@@ -9641,13 +9643,6 @@ def next_work(
             )
         )
     )
-
-
-#: The access profile `cruxible next` sends by default, and orient's count of that queue.
-_CLI_NEXT_PROFILE: dict[str, Any] = CoverageAccessProfile(
-    profile_id="cli-next",
-    permitted_access_classes=("instance", "public"),
-).model_dump(mode="json")
 
 
 @playbill_group.command("duplicates")
@@ -9974,20 +9969,6 @@ def orient(
         result = workspace_vocabulary_freshness(
             workspace_root, workspace_floor_freshness(workspace_root, result)
         )
-        if result.attention is not None:
-            # next= is the queue `cruxible next` lists here, workspace rows included.
-            answered = result
-            result = _server_call(
-                lambda client, instance_id: workspace_attention(
-                    client,
-                    instance_id,
-                    workspace_root,
-                    answered,
-                    surface="cli",
-                    access_profile=_CLI_NEXT_PROFILE,
-                ),
-                command_name="cruxible orient",
-            )
     rendered = result.model_dump(mode="json")
     if output_json:
         _emit_json(rendered)

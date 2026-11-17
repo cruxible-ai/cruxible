@@ -163,7 +163,7 @@ Kinds (4):
     ...
 Queries:
   catalog.parts_for_vehicle(vehicle: string)  The parts that fit one vehicle.
-Attention: next=0 open_proposals=0
+Attention: next=0 open_proposals=0 (workspace rows not counted: next)
 Next:
   cruxible orient --kind catalog.part
   ...
