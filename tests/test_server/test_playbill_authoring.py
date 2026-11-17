@@ -480,10 +480,7 @@ def test_http_claim_type_input_proposal_delivers_actionable_source_lint(
     playbill_http: tuple[TestClient, str, Path],
 ) -> None:
     client, instance_id, _private_key = playbill_http
-    claim_type_input = {
-        **claim_type_input_example().model_dump(mode="json"),
-        "anticipated_source_ids": ["corpus.runbook"],
-    }
+    claim_type_input = claim_type_input_example().model_dump(mode="json")
 
     response = client.post(
         f"/api/v1/{instance_id}/claim-types/proposals",
@@ -502,16 +499,12 @@ def test_http_claim_type_input_proposal_delivers_actionable_source_lint(
         if warning.get("contract_identity") != "CaptureContract:web.search-results"
     ]
     by_code = {warning["code"]: warning for warning in warnings}
-    assert len(warnings) == len(by_code) == 3
+    assert len(warnings) == len(by_code) == 2
     assert set(by_code) == {
-        "cruxible.claim_type.anticipated_source_contract_omitted",
         "cruxible.claim_type.description_missing",
         # The example states no evidence rules: the repair is the own-words rule.
         "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
     }
-    assert by_code["cruxible.claim_type.anticipated_source_contract_omitted"]["source_id"] == (
-        "corpus.runbook"
-    )
     description = by_code["cruxible.claim_type.description_missing"]
     assert description["field_path"] == "$.description"
     assert description["replacement_rule_fragment"] == {

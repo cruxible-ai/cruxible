@@ -252,10 +252,7 @@ def test_cli_claim_type_propose_delivers_nonblocking_source_lint(
     tmp_path: Path,
 ) -> None:  # type: ignore[no-untyped-def]
     payload = tmp_path / "claim-type.json"
-    values = {
-        **claim_type_input_example().model_dump(mode="json"),
-        "anticipated_source_ids": ["corpus.runbook"],
-    }
+    values = claim_type_input_example().model_dump(mode="json")
     payload.write_text(json.dumps(values))
     warning = {
         "code": "cruxible.claim_type.anticipated_source_contract_omitted",
@@ -281,7 +278,6 @@ def test_cli_claim_type_propose_delivers_nonblocking_source_lint(
                 "inst_authoring",
                 "project.work_item.replace_me",
             )
-            assert input["anticipated_source_ids"] == ["corpus.runbook"]
             return contracts.ClaimTypeInputProposalResult(
                 proposal=contracts.ProposalInspection(
                     proposal={"proposal_id": "sha256:" + "8" * 64},

@@ -146,14 +146,18 @@ catalog.part/bp-2210  Ceramic front brake pads  -
 ~~~
 
 `from` names the entry binding and its Subject kind. `where` filters values,
-`params` declares parameters, and `fields` selects columns. A field can be
+`params` declares parameters, and `fields` selects columns. A parameter's type
+is one of `string`, `integer`, `boolean`, `decimal`, `timestamp` (a date and
+time), `subject_reference` or `subject`; a parameter compared with a link field
+is a `subject_reference` (`params: {service: subject_reference}`). A field can be
 renamed, for example `{part_title: part.title}`; `role(part.category)` reads a
 Claim's role. Predicate names may be short within their binding's kind or
 written in full.
 
 Filters support `==`, `!=`, `<`, `<=`, `>`, `>=`, `in (value, value)`,
 `exists binding.predicate`, parentheses, and `not`, `and`, `or` in that order of
-precedence. Quote text literals; `$name` references a declared parameter and
+precedence. Quote text literals, in double or single quotes (`"open"` and
+`'open'` are the same value); `$name` references a declared parameter and
 `now` references the query's evaluation time.
 
 A relation hop adds a binding:

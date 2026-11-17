@@ -288,7 +288,7 @@ def parse_where(expression: str) -> QueryFilter:
     grammar_case = (
         expression.lstrip().startswith(("exists ", "not exists "))
         or (membership is not None and membership.group(2).startswith("("))
-        or (comparison is not None and comparison.group(3).startswith('"'))
+        or (comparison is not None and comparison.group(3).startswith(('"', "'")))
     )
     if grammar_case:
         try:

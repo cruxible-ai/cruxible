@@ -1013,7 +1013,6 @@ def test_a_same_set_claim_type_ref_lowers_without_reading_the_unaccepted_type(
         cardinality="one",
         permitted_roles=("observation",),
         referent_sensitivity="identity",
-        sources=(),
         admission_policy=_admission_policy(),
         resolution_policy=_resolution_policy(),
         pins=(),

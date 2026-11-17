@@ -142,6 +142,7 @@ def test_authoring_tools_expose_payload_and_opaque_intent_not_plumbing() -> None
         "claim-adjudicate-contradicting-evidence",
         "claim-cite-supporting-evidence",
         "claim-adjudicate-unreviewed-evidence",
+        "query-definition",
         "query-claims-by-type",
         "query-ontology",
         "query-procedures",

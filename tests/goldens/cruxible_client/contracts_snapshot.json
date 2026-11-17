@@ -33,6 +33,7 @@
         "claim-adjudicate-contradicting-evidence",
         "claim-cite-supporting-evidence",
         "claim-adjudicate-unreviewed-evidence",
+        "query-definition",
         "query-claims-by-type",
         "query-ontology",
         "query-procedures",
@@ -4797,6 +4798,7 @@
               "claim-adjudicate-contradicting-evidence",
               "claim-cite-supporting-evidence",
               "claim-adjudicate-unreviewed-evidence",
+              "query-definition",
               "query-claims-by-type",
               "query-ontology",
               "query-procedures",
@@ -11789,15 +11791,19 @@
                 "type": "string"
               },
               "query_definition": {
-                "anyOf": [
+                "oneOf": [
                   {
                     "$ref": "#/$defs/QuerySpecInput"
                   },
                   {
-                    "$ref": "#/$defs/QueryDefinitionSpec"
-                  },
-                  {
-                    "$ref": "#/$defs/QueryDefinition"
+                    "anyOf": [
+                      {
+                        "$ref": "#/$defs/QueryDefinitionSpec"
+                      },
+                      {
+                        "$ref": "#/$defs/QueryDefinition"
+                      }
+                    ]
                   }
                 ],
                 "title": "Query Definition"
@@ -14753,6 +14759,7 @@
               "claim-adjudicate-contradicting-evidence",
               "claim-cite-supporting-evidence",
               "claim-adjudicate-unreviewed-evidence",
+              "query-definition",
               "query-claims-by-type",
               "query-ontology",
               "query-procedures",

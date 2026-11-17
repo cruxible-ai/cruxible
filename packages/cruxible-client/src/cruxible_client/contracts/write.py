@@ -912,9 +912,38 @@ class SetRequest(_WriteRequestBase):
         )
 
 
+#: ``Kind:name``, a definition's qualified identity (``Claim:CLM-...`` is a Claim id).
+_DEFINITION_TARGET = re.compile(r"^([A-Z][A-Za-z]*):(\S+)$")
+
+
+def _refuse_definition_target(value: object) -> object:
+    """A definition is not a value: say how it does retire."""
+
+    match = _DEFINITION_TARGET.match(value) if isinstance(value, str) else None
+    if match is None or match.group(1) == "Claim":
+        return value
+    kind = match.group(1)
+    if kind in {"ClaimType", "SubjectKind"}:
+        how = (
+            f"a {kind} retires through the vocabulary file: mark its entry `retired: true`, "
+            "then cruxible vocabulary plan and apply"
+        )
+    else:
+        how = (
+            "a definition retires through authoring: submit its member with "
+            '"retire": true in a change set (cruxible authoring example procedure shows '
+            "the key), with cruxible authoring submit"
+        )
+    raise PydanticCustomError(
+        "retire_target_is_definition",
+        "{target} is a definition; retire ends a Claim (CLM-...) or a Subject (kind/id), and {how}",
+        {"target": value, "how": how},
+    )
+
+
 class RetireRequest(_WriteRequestBase):
     tag: Literal["playbill-retire-request-v1"] = "playbill-retire-request-v1"
-    target: ClaimId | SubjectRef | SlotRef
+    target: Annotated[ClaimId | SubjectRef | SlotRef, BeforeValidator(_refuse_definition_target)]
     reason: WriteRetireReason = "was-rescinded"
     expect: ExpectedValue | None = Field(default=None, description=_EXPECT_DESCRIPTION)
     with_claims: bool = Field(default=False, exclude_if=lambda value: not value)

@@ -151,7 +151,6 @@ from cruxible_client.contracts.capture_reads import CaptureReadRequest
 from cruxible_client.contracts.captures import (
     CaptureContract,
     capture_contract_path,
-    foreign_source_capture_contract,
 )
 from cruxible_client.contracts.claim_attestations import (
     ClaimAttestation,
@@ -209,8 +208,6 @@ from cruxible_client.contracts.get_reads import (
 from cruxible_client.contracts.identity_normalizers import KeyNormalizer
 from cruxible_client.contracts.kits import KitStatus
 from cruxible_client.contracts.policies import (
-    CAPTURE_CONTRACT_REF_ROLE,
-    CaptureContractAdmission,
     ClaimAdmissionPolicy,
     ClaimEvidenceAdmissionPolicy,
     ClaimEvidenceAdmissionRule,
@@ -1496,15 +1493,18 @@ class ChangeSetDraft:
         members: Mapping[str | int | bool, str] | None = None,
         key: bool = False,
         default_role: ClaimRole | str | None = None,
-        sources: Sequence[str] = (),
+        evidence: Sequence[str] | None = None,
         canonical_form: Sequence[str] | None = None,
+        sources: Sequence[str] = (),
     ) -> PendingClaimTypeRef:
         """Define (or edit) one field of a kind, with the short form's defaults.
 
         The field is the ClaimType ``<kind>.<name>``. Everything not given takes
         the default ``cruxible claim-type propose`` gives a field, lowered by the
-        same function: roles ``[default_role]`` (else ``[normative]``), the
-        own-words evidence rule plus one rule per ``sources`` entry, supported
+        same function: roles ``[default_role]`` (else ``[normative]``), one rule
+        admitting own words and workspace file and section citations (unless the
+        field requires captured evidence), one rule admitting the shaped
+        CaptureContracts named in ``evidence`` for the field's roles, supported
         and current resolution, and ``[nfc, trim]`` for a string or enum value.
         ``members`` maps each enum member to what it means; ``many`` makes the
         field hold several values (left out: one, or an edit's accepted
@@ -1516,8 +1516,8 @@ class ChangeSetDraft:
         restated, what is left out (``many``, ``description``, ``members``,
         ``default_role``, ``canonical_form``) keeps its accepted value, and its
         live Claims are carried to the new version, as ``claim-type propose``
-        does; ``sources`` shapes a new field's rules only. Retire one with
-        ``.retire_claim_type``.
+        does; ``evidence`` replaces a field's rules when given. ``sources`` is
+        retired and refuses. Retire one with ``.retire_claim_type``.
 
         Next: more fields, ``.subject_kind(name=kind, description=...)``, then
         ``.prepare()`` for the lint, and ``.submit()``.
@@ -1554,7 +1554,11 @@ class ChangeSetDraft:
                 default_role, ClaimRole, label="field default role"
             ).value
         if sources:
-            stated["anticipated_source_ids"] = sorted(set(sources), key=lambda s: s.encode())
+            from cruxible_client.contracts.claim_type_inputs import ClaimTypeSourcesRetired
+
+            raise ClaimTypeSourcesRetired(f"{kind}.{name}: sources=")
+        if evidence is not None:
+            stated["evidence"] = tuple(evidence)
         if canonical_form is not None:
             stated["canonical_form"] = tuple(canonical_form)
         record = ClaimTypeInputRecord.model_validate(stated)
@@ -1812,8 +1816,11 @@ class ChangeSetDraft:
         )
 
 
-def _short_form_rules(roles: Sequence[str]) -> tuple[ClaimEvidenceAdmissionRule, ...]:
-    """The evidence rules the short form gives a new field with no source."""
+def _short_form_rules(
+    roles: Sequence[str], evidence: Sequence[str] = ()
+) -> tuple[ClaimEvidenceAdmissionRule, ...]:
+    """The evidence rules the short form gives a field: own words and workspace
+    citations, plus the shaped contracts in ``evidence``."""
 
     from cruxible_client.contracts.claim_type_inputs import (
         default_evidence_policy,
@@ -1821,7 +1828,7 @@ def _short_form_rules(roles: Sequence[str]) -> tuple[ClaimEvidenceAdmissionRule,
     )
 
     policy = identity_evidence_policy(
-        default_evidence_policy(tuple(roles), "self", ()), identities={}
+        default_evidence_policy(tuple(roles), "self", tuple(evidence)), identities={}
     )
     return ClaimEvidenceAdmissionPolicy.model_validate(policy).rules
 
@@ -3510,15 +3517,21 @@ class Cruxible:
         cardinality: Cardinality | str,
         permitted_roles: Sequence[ClaimRole | str],
         referent_sensitivity: ReferentSensitivity | str,
-        sources: Sequence[str | SourceRef],
         admission_policy: ClaimAdmissionPolicy,
         resolution_policy: ClaimResolutionPolicy,
         pins: Sequence[ArtifactPin],
         evidence_freshness: Duration | None,
         attestation_consequence_policy: ClaimAttestationConsequencePolicy | None = None,
         canonical_form: Sequence[str] | None = None,
+        evidence: Sequence[str] = (),
+        sources: Sequence[str | SourceRef] = (),
     ) -> ClaimTypeDraft:
         """Draft a ClaimType, reading its accepted definition through get.
+
+        Its rules are the short form's: one admitting own words and workspace
+        file and section citations, plus one admitting the shaped CaptureContracts
+        named in ``evidence`` (derivationally for ``derivation``). ``sources`` is
+        retired and refuses: a workspace citation needs no rule.
 
         ``canonical_form`` names the ordered transforms every literal value is
         stored and compared in; left out, a successor keeps its
@@ -3538,37 +3551,12 @@ class Cruxible:
         name = _address(predicate, RefKind.CLAIM_TYPE)
         if isinstance(predicate, ClaimTypeRef):
             self._assert_coordinate(predicate.coordinate)
-        for source in sources:
-            if isinstance(source, SourceRef):
-                self._assert_coordinate(source.coordinate)
-        source_ids = tuple(sorted({_address(item, RefKind.SOURCE) for item in sources}))
+        if sources:
+            from cruxible_client.contracts.claim_type_inputs import ClaimTypeSourcesRetired
+
+            raise ClaimTypeSourcesRetired(f"{name}: sources=")
         role_values: tuple[ClaimRoleValue, ...] = tuple(role.value for role in roles)
-        modes: tuple[tuple[Literal["derivational", "direct"], tuple[ClaimRoleValue, ...]], ...] = (
-            ("derivational", tuple(r for r in role_values if r == "derivation")),
-            ("direct", tuple(sorted({r for r in role_values if r != "derivation"}))),
-        )
-        rules = (
-            # No source: the short form's own-words rule (`claim-type propose`
-            # and `changes.field` lower through the same function), so a field
-            # drafted here admits what its writer says in its own words.
-            _short_form_rules(role_values) if not source_ids else ()
-        ) + tuple(
-            ClaimEvidenceAdmissionRule(
-                rule_id=f"source-{source_id}-{admission}",
-                claim_roles=rule_roles,
-                capture_contracts=(
-                    CaptureContractAdmission(
-                        role=CAPTURE_CONTRACT_REF_ROLE,
-                        target=foreign_source_capture_contract(source_id).identity,
-                    ),
-                ),
-                admission=admission,
-                subject_binding="exact_claim_subject",
-            )
-            for source_id in source_ids
-            for admission, rule_roles in modes
-            if rule_roles
-        )
+        rules = _short_form_rules(role_values, evidence)
         lifecycle = ArtifactLifecycle()
         # A new ClaimType replaces evidence on revision; a successor keeps what
         # its predecessor means, exactly as the daemon's lowering does.

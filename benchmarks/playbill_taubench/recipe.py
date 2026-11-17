@@ -325,10 +325,17 @@ def seed(bundle_dir: Path = BUNDLE_DIR, *, name: str, key_dir: Path) -> dict[str
                 raise ValueError(
                     "legacy reducer allowances need an explicit current evidence policy"
                 )
-            rule["capture_contracts"] = [
+            named = [
                 *rule.get("capture_contracts", ()),
                 *(identities[digest] for digest in rule.pop("capture_contract_digests", ())),
             ]
+            # A workspace file's citations need no per-file rule (authoring
+            # refuses one): the rule admits own words and workspace citations.
+            shaped = [item for item in named if "foreign-source." not in json.dumps(item)]
+            if len(shaped) != len(named):
+                shaped.append(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity.name)
+                rule["capture_contract_families"] = ["workspace_file"]
+            rule["capture_contracts"] = shaped
         authoring_input = ClaimTypeInputRecord.model_validate(value)
         input_path = input_dir / f"claim-type-{path.stem}.json"
         input_path.write_text(authoring_input.model_dump_json())

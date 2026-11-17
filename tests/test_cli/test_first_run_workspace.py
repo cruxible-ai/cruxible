@@ -25,7 +25,7 @@ from typing import Any
 import pytest
 from click.testing import CliRunner, Result
 
-from cruxible_client.contracts.captures import foreign_source_capture_contract
+from cruxible_client.contracts.captures import COORDINATOR_SELF_SOURCE_CONTRACT_ID
 from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionPolicy,
     ClaimEvidenceAdmissionRule,
@@ -299,7 +299,6 @@ def test_first_run_from_an_empty_folder_needs_no_git_and_no_flags(
     assert CLAIM_SOURCE_ID in (folder / ".cruxible" / "files.yaml").read_text(encoding="utf-8")
 
     # 4. A Claim cites the catalogued file.
-    source_contract = foreign_source_capture_contract(CLAIM_SOURCE_ID)
     claim_type = _claim_type().model_copy(
         update={
             "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(
@@ -307,7 +306,10 @@ def test_first_run_from_an_empty_folder_needs_no_git_and_no_flags(
                     ClaimEvidenceAdmissionRule(
                         rule_id="coordinator-self-source",
                         claim_roles=("normative", "observation"),
-                        capture_contracts=(source_contract.identity.name,),
+                        # Own words and workspace citations: a catalogued
+                        # file needs no per-file rule.
+                        capture_contracts=(COORDINATOR_SELF_SOURCE_CONTRACT_ID,),
+                        capture_contract_families=("workspace_file",),
                         admission="direct",
                         subject_binding="exact_claim_subject",
                     ),

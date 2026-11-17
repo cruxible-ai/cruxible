@@ -217,6 +217,11 @@ The pieces:
   change what this Procedure extracts until it is accepted again.
 - **The claims step** writes one Claim per record, keyed by the record's key.
 
+A Procedure that ends in a claims step, or whose only effect is posting to the
+inbox, returns nothing: it needs no `output` and no `returns`. Declare an
+output (and what fills it, `returns`) only when the run's result is itself
+something to read.
+
 `procedure.spec()` is the exact spec every surface submits; `get` shows an
 accepted Procedure in the same form, each typed reference rendered as its
 `$...` text for review, with each slot's capability pinned by digest:
@@ -645,6 +650,15 @@ unread  INB-877f3d1e627e  Line:catalog.acme-notices  -  2026-11-16T03:18:10.5130
   {"notice": "2026-10-20 Recall: bp-2210 ceramic pads, batch 4471, may delaminate under heavy braking."}
 ~~~
 
+An inbox item is a call for attention, not storage. When the list already
+exists as state (a Query answers it) or as evidence (a Capture holds it), post
+one summary item that points at it: the count, a short sample, and the Query or
+Capture to read. Give the summary a field that identifies the set, a digest of
+it (a Capture's digest when the list is one Capture), and name that field in
+the inbox step's `dedupe_key`, so an unchanged set posted again is counted as
+seen again and a changed set is a new item. Post one item per element only
+when each element needs its own decision, recorded nowhere else.
+
 `inbox get ITEM` shows the whole item and the run and Capture behind it. The
 inbox is never accepted state. Judge each item and record what you decided:
 write what you concluded and `link` the item to it, `dismiss` it with a reason,
@@ -888,7 +902,10 @@ Reshaping, parsing, casts, canonicalization, filtering and projection preserve
 that basis. `derive` and `aggregate` compute a `derived` value and require
 `role: derivation`; their receipts retain the computing transform ids and
 source extraction receipts. Derivations over Claim reads also bind exact
-`inputs` from that row's dependency closure. A settle Mandate settles a value
+`inputs` from that row's dependency closure. A read enters that closure only
+through a reference in the Claim's value, key or rationale (for example
+`{$steps.status.value}` in the rationale), so an input the templates never
+reference refuses `claims_inputs_invalid`. A settle Mandate settles a value
 only on a basis its scope lists for that ClaimType and change kind
 (`extracted`, `measured` for provider-parsed values, `derived`, or `absence`);
 see the settle scope below. Cruxible does not infer attestations.

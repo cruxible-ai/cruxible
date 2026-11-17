@@ -43,7 +43,7 @@ from cruxible_client.contracts.authoring.inputs import (
     WorkingSelectionInput,
 )
 from cruxible_client.contracts.captures import (
-    foreign_source_capture_contract,
+    COORDINATOR_SELF_SOURCE_CONTRACT_ID,
 )
 from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionPolicy,
@@ -155,15 +155,17 @@ def _govern_a_foreign_span(
     coupling.
     """
 
-    contract = foreign_source_capture_contract(identity)
     claim_type = _claim_type().model_copy(
         update={
             "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(
                 rules=(
+                    # Own words and workspace citations, as the short form
+                    # lowers them (a per-file rule is no longer authored).
                     ClaimEvidenceAdmissionRule(
-                        rule_id="foreign-source",
+                        rule_id="self",
                         claim_roles=("observation",),
-                        capture_contracts=(contract.identity.name,),
+                        capture_contracts=(COORDINATOR_SELF_SOURCE_CONTRACT_ID,),
+                        capture_contract_families=("workspace_file",),
                         admission="direct",
                         subject_binding="exact_claim_subject",
                     ),

@@ -15,7 +15,7 @@ import dataclasses
 import functools
 import json
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
-from typing import Any, Literal, Protocol, cast
+from typing import Any, Final, Literal, Protocol, cast
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import canonical_digest, pretty_canonical_bytes
@@ -24,6 +24,7 @@ from cruxible_client.contracts.capabilities import (
     Capability,
     capability_path,
 )
+from cruxible_client.contracts.captures import FOREIGN_SOURCE_CONTRACT_PREFIX
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.claim_types import parse_claim_type
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
@@ -107,6 +108,7 @@ from cruxible_client.contracts.providers import (
     provider_digest,
     provider_path,
 )
+from cruxible_client.contracts.public_names import public_name
 from cruxible_client.contracts.repairs import HandEditInstruction, HandEditRepair, RepairOperation
 from cruxible_client.contracts.shapes import (
     Contract,
@@ -728,6 +730,37 @@ def _required_definitions(
     return found
 
 
+KIT_PER_FILE_EVIDENCE_RULE: Final = "cruxible.kit.per_file_evidence_rule"
+
+
+def _refuse_per_file_evidence_rules(path: str, payload: Mapping[str, Any]) -> None:
+    """A kit never carries a rule naming one workspace file's own CaptureContract.
+
+    That contract stands for a file of this workspace; a consumer whose file
+    lives elsewhere would get a rule naming a file they do not have.
+    """
+
+    if not path.startswith("claim-types/"):
+        return
+    policy = payload.get("evidence_admission_policy")
+    rules = policy.get("rules", ()) if isinstance(policy, Mapping) else ()
+    for rule in rules:
+        for entry in rule.get("capture_contracts", ()) if isinstance(rule, Mapping) else ():
+            target = entry.get("target") if isinstance(entry, Mapping) else None
+            name = target.get("name") if isinstance(target, Mapping) else None
+            if isinstance(name, str) and name.startswith(FOREIGN_SOURCE_CONTRACT_PREFIX):
+                raise RequestRefusedError(
+                    KIT_PER_FILE_EVIDENCE_RULE,
+                    f"ClaimType:{payload.get('predicate')} evidence rule "
+                    f"{rule.get('rule_id')!r} names CaptureContract:{public_name(name)}; "
+                    "this contract stands for one workspace file, so a kit cannot carry "
+                    "the rule. A workspace citation needs no rule; for a particular kind of "
+                    "source, list its shaped CaptureContract in the field's evidence: "
+                    "[<contract name>, ...] (a ClaimType edit), then build again",
+                    repair=RepairOperation(operation="cruxible.kit.build"),
+                )
+
+
 def build_kit(
     tree: Mapping[str, bytes],
     request: KitBuildRequest,
@@ -818,6 +851,7 @@ def build_kit(
             if states[dependency].lifecycle.state != "live":
                 raise DataValidationError(f"{path} pins retired {dependency}")
         _bundled_provider_pins(path, states[path], tree_providers, tree, bundled)
+        _refuse_per_file_evidence_rules(path, payloads[path])
         payload = _snapshot(path, _substitute(path, payloads[path], remap))
         content, digest = _render(path, payload)
         if digest != states[path].artifact_digest:

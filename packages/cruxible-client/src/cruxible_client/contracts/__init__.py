@@ -426,6 +426,7 @@ AuthoringExampleName = Literal[
     "claim-adjudicate-contradicting-evidence",
     "claim-cite-supporting-evidence",
     "claim-adjudicate-unreviewed-evidence",
+    "query-definition",
     "query-claims-by-type",
     "query-ontology",
     "query-procedures",

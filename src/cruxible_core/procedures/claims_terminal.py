@@ -1027,8 +1027,19 @@ def bind_claim_input(
         and provenance[name].whole.issubset(own_tokens)
     ]
     if not matches or not isinstance(supplied, dict):
+        unreferenced = sorted(
+            name for name in read_aliases if outputs.get(name) == supplied and name in provenance
+        )
+        if unreferenced and isinstance(supplied, dict):
+            raise ValueError(
+                f"claims_inputs_invalid: the read {unreferenced[0]} is not in this row's "
+                "closure: an input must be referenced by the Claim's value, key or "
+                f"rationale, e.g. {{$steps.{unreferenced[0]}.value}}"
+            )
         raise ValueError(
-            "claims_inputs_invalid: input is not an exact Claim read in this row's closure"
+            "claims_inputs_invalid: input is not an exact Claim read in this row's closure; "
+            "an input names a one-Claim read step that the Claim's value, key or rationale "
+            "references, e.g. {$steps.<read>.value}"
         )
     from cruxible_client.contracts.artifacts import ArtifactIdentity
     from cruxible_core.procedures.execution import run_value_digest

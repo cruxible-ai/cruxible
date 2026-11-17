@@ -630,29 +630,44 @@ def test_two_rules_admitting_one_role_strand_a_successor_as_ambiguous() -> None:
     assert _dependents(_rules_type(narrowed, split)) == ()
 
 
-def test_a_kit_carries_the_contracts_its_identity_rules_name() -> None:
-    from cruxible_client.contracts.kits import KitBuildRequest
-    from cruxible_core.service.kits import build_kit
+def _shaped_kit_contract() -> CaptureContract:
+    """A shaped contract a kit may carry: one workspace file's own contract is not
+    (kit build refuses a per-file rule, ruling 2026-11-16)."""
 
-    identity_type = _v6_type().model_copy(
+    return ORIGINAL.model_copy(
+        update={"identity": ArtifactIdentity(kind="CaptureContract", name="acme.work-items")}
+    )
+
+
+def _shaped_kit_type(contract: CaptureContract) -> ClaimType:
+    return _rules_type(_identity_rule(contract.identity)).model_copy(
         update={
             "identity": ArtifactIdentity(kind="ClaimType", name="acme.work_item.status"),
             "predicate": "acme.work_item.status",
             "allowed_subject_kinds": ("acme.work_item",),
         }
     )
+
+
+def test_a_kit_carries_the_contracts_its_identity_rules_name() -> None:
+    from cruxible_client.contracts.kits import KitBuildRequest
+    from cruxible_core.service.kits import build_kit
+
+    contract = _shaped_kit_contract()
+    identity_type = _shaped_kit_type(contract)
+    contract_path = capture_contract_path(contract.identity.name)
     tree = {
         claim_type_path(identity_type.predicate): render_claim_type(identity_type),
-        CONTRACT_PATH: render_capture_contract(ORIGINAL),
+        contract_path: render_capture_contract(contract),
     }
     bundle = build_kit(tree, KitBuildRequest(kit_id="acme", version="1.0.0", owns=("acme.",)))
     assert {item.path for item in bundle.manifest.artifacts} == {
         claim_type_path(identity_type.predicate),
-        CONTRACT_PATH,
+        contract_path,
     }
 
 
-def _frozen_pinning_contract():
+def _frozen_pinning_contract(name: str = IDENTITY.name):  # type: ignore[no-untyped-def]
     """The expanded v2 component grammar could carry arbitrary exact pins."""
     from cruxible_client.contracts.capture_contract_inputs import (
         CaptureContractInputRecord,
@@ -660,7 +675,7 @@ def _frozen_pinning_contract():
     )
 
     return lower_capture_contract_input(
-        CaptureContractInputRecord(name=IDENTITY.name, shape="foreign_span", replay="attested"),
+        CaptureContractInputRecord(name=name, shape="foreign_span", replay="attested"),
         named=False,
     )
 
@@ -669,13 +684,7 @@ def test_an_identity_reference_never_makes_a_kit_cycle() -> None:
     from cruxible_client.contracts.kits import KitBuildRequest
     from cruxible_core.service.kits import build_kit
 
-    identity_type = _v6_type().model_copy(
-        update={
-            "identity": ArtifactIdentity(kind="ClaimType", name="acme.work_item.status"),
-            "predicate": "acme.work_item.status",
-            "allowed_subject_kinds": ("acme.work_item",),
-        }
-    )
+    identity_type = _shaped_kit_type(_shaped_kit_contract())
     # The contract pins the ClaimType exactly while the ClaimType names the
     # contract by identity: exporting the type first and re-pinning is valid.
     extra_pin = ArtifactPin(
@@ -683,7 +692,7 @@ def test_an_identity_reference_never_makes_a_kit_cycle() -> None:
         target=identity_type.identity,
         artifact_digest=claim_type_digest(identity_type).tagged,
     )
-    original = _frozen_pinning_contract()
+    original = _frozen_pinning_contract(_shaped_kit_contract().identity.name)
     pinning = original.model_copy(
         update={
             "components": original.components.model_copy(
@@ -700,7 +709,7 @@ def test_an_identity_reference_never_makes_a_kit_cycle() -> None:
     )
     tree = {
         claim_type_path(identity_type.predicate): render_claim_type(identity_type),
-        CONTRACT_PATH: render_capture_contract(pinning),
+        capture_contract_path(pinning.identity.name): render_capture_contract(pinning),
     }
     bundle = build_kit(tree, KitBuildRequest(kit_id="acme", version="1.0.0", owns=("acme.",)))
     assert {item.path for item in bundle.manifest.artifacts} == set(tree)

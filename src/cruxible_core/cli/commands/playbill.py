@@ -365,6 +365,8 @@ def _authoring_examples_for(payload: Mapping[str, Any]) -> tuple[str, ...]:
     kind = payload.get("kind")
     if kind == "procedure":
         return ("procedure",)
+    if kind == "query_definition":
+        return ("query-definition", "query-claims-by-type")
     if kind != "claim":
         return tuple(AUTHORING_EXAMPLE_FACTORIES)
     source = payload.get("source")
@@ -4758,9 +4760,9 @@ def propose_capture_contract(
         "Subject links use subject<K1 | K2>. Prose lives in Documents. "
         "String values default canonical_form to [nfc, trim]. "
         "permitted_roles defaults to [default_role] or [normative]; exactly [observation] "
-        "defaults evidence_requirement to captured and needs a source or evidence policy. "
-        "Other roles default to self: one own-words rule, plus one per anticipated_source_ids "
-        "entry. No "
+        "defaults evidence_requirement to captured and needs evidence: [CONTRACT, ...]. "
+        "Other roles default to self: one rule admitting own words and workspace file and "
+        "section citations; evidence: [CONTRACT, ...] adds the shaped contracts. No "
         "admission requirements; supported, current resolution. An edit states only what "
         "changes: an omitted field keeps the accepted value. State canonical_form [] for "
         "no transforms (also needed for a non-string field that keys a SubjectKind). "

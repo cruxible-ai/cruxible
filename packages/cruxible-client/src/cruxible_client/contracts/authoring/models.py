@@ -87,11 +87,7 @@ from cruxible_client.contracts.proposal_models import (
     validate_change_set_rationale,
 )
 from cruxible_client.contracts.provider_operations import OperationEffect
-from cruxible_client.contracts.query.authored import QuerySpecInput
-from cruxible_client.contracts.query.definitions import (
-    QueryDefinition,
-    QueryDefinitionSpec,
-)
+from cruxible_client.contracts.query.authored import AuthoredQueryDefinition
 from cruxible_client.contracts.repairs import ServedRepair, served_repair_for_refusal
 from cruxible_client.contracts.resolution_contracts import ResolutionContract
 from cruxible_client.contracts.semantic import SemanticAddress
@@ -145,7 +141,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.5.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:f68d2147b2e081ac822963c8d6acf087ec2eb525336c1d174112334174e83b65"
+    "sha256:4b3ba8105b547f4e6797e7ef389b98575f07ef19bfe8506b58b7eff139543b4a"
 )
 
 MAX_DIAGNOSTICS = 128
@@ -950,7 +946,7 @@ class QueryDefinitionAuthoringPayload(_StrictAuthoringModel):
     tag: Literal["playbill-query-definition-authoring-payload-v1"] = (
         "playbill-query-definition-authoring-payload-v1"
     )
-    query_definition: QuerySpecInput | QueryDefinitionSpec | QueryDefinition
+    query_definition: AuthoredQueryDefinition
 
 
 class ApprovalPolicyAuthoringPayload(_StrictAuthoringModel):
