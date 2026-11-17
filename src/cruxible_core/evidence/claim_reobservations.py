@@ -101,7 +101,7 @@ ROW_MAP_BODY = "cruxible-row-map-v1"
 #: The row maps of one extract step's Captures (run-free).
 ROW_MAPS_BODY = "cruxible-row-maps-v1"
 _ACCESS = BodyAccessContext(principal_id="claim-reobservation", can_read_body=True)
-_SCHEMA_VERSION = 17
+_SCHEMA_VERSION = 18
 REOBSERVATION_DIRECTORY = "claim-reobservations"
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 # ``reobservations`` keeps the full history (audit, historical verification).
@@ -184,7 +184,7 @@ CREATE TABLE IF NOT EXISTS key_heads (
 ) STRICT, WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS capture_maps (
  capture_digest TEXT NOT NULL, spec_digest TEXT NOT NULL, map_digest TEXT NOT NULL,
- extraction TEXT NOT NULL,
+ extraction TEXT NOT NULL, sequence INTEGER NOT NULL, recorded_us INTEGER NOT NULL,
  PRIMARY KEY(capture_digest, spec_digest, map_digest)
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS capture_maps_by_extraction ON capture_maps (extraction);
@@ -646,7 +646,13 @@ class ClaimReobservationStore:
             "latest_us FROM observation_sets WHERE set_digest=?",
             (set_digest,),
         ).fetchone()
-        maps = self._project_maps(conn, payload, need_rows=head is None) if rows_tag else {}
+        maps = (
+            self._project_maps(
+                conn, payload, need_rows=head is None, sequence=sequence, recorded_us=recorded_us
+            )
+            if rows_tag
+            else {}
+        )
         if head is None:
             body = _shared_body(
                 self.instance,
@@ -721,7 +727,13 @@ class ClaimReobservationStore:
         conn.execute("INSERT OR REPLACE INTO progress VALUES(1,?,?)", (sequence, recorded_us))
 
     def _project_maps(
-        self, conn: sqlite3.Connection, payload: Mapping[str, Any], *, need_rows: bool
+        self,
+        conn: sqlite3.Connection,
+        payload: Mapping[str, Any],
+        *,
+        need_rows: bool,
+        sequence: int,
+        recorded_us: int,
     ) -> dict[str, str]:
         """Project a row observation's Capture row maps not seen before.
 
@@ -746,9 +758,18 @@ class ClaimReobservationStore:
                 continue
             # One row per Capture's map: a record's row is read from the map
             # body (an immutable artifact, parsed once per process).
+            # When the map was first recorded: a row lookup at a read reads
+            # only the maps that existed then (review 2f #2).
             conn.execute(
-                "INSERT OR IGNORE INTO capture_maps VALUES (?,?,?,?)",
-                (capture, str(body["spec"]), str(map_digest), str(body.get("extraction", ""))),
+                "INSERT OR IGNORE INTO capture_maps VALUES (?,?,?,?,?,?)",
+                (
+                    capture,
+                    str(body["spec"]),
+                    str(map_digest),
+                    str(body.get("extraction", "")),
+                    sequence,
+                    recorded_us,
+                ),
             )
             conn.execute("INSERT OR IGNORE INTO seen_maps VALUES (?)", (map_digest,))
         conn.execute("INSERT OR IGNORE INTO seen_maps VALUES (?)", (digest,))
@@ -1871,6 +1892,11 @@ class ReobservationKey:
     #: The Claim version whose own records count for the key (``claim_keys_on``
     #: names it; every admitted record names the version it checked).
     version: str = ""
+    #: Set on an extracted record's row key: (Capture, extract spec, locator).
+    #: ``latest`` resolves the row from the maps that existed at its own
+    #: instant (review 2f #2); the key's contract and content are its row at
+    #: the read position ('' when the maps then disagree).
+    row_record: tuple[str, str, str] | None = None
     #: Set on a recheck association (review 2e #1-#2): the Claim version whose
     #: latest per-Claim re-check names the content; ``latest`` resolves that
     #: association again at its own instant, so a historical read uses the
@@ -2030,9 +2056,15 @@ class ReobservationReader:
             found = 0 if row is None or row[0] is None else int(row[0])
             if keys and self._content_observed(conn):
                 for pair in {
-                    (key.contract_digest, key.observed_content_digest) for key in keys if key.shared
+                    (key.contract_digest, key.observed_content_digest)
+                    for key in keys
+                    if key.shared and key.observed_content_digest
                 }:
                     found = max(found, self._key_sequence(conn, pair, through))
+                # A new map of an extracted record's Capture can change which
+                # row it is from then on: it names the record set too.
+                for record in {key.row_record[:2] for key in keys if key.row_record is not None}:
+                    found = max(found, self._maps_sequence(conn, *record, through))
         return found
 
     def latest_observation(
@@ -2082,6 +2114,14 @@ class ReobservationReader:
                 return True
             for key in keys:
                 self.probes += 1
+                if (
+                    key.row_record is not None
+                    and conn.execute(
+                        "SELECT 1 FROM capture_maps WHERE capture_digest=? AND spec_digest=? LIMIT 1",
+                        key.row_record[:2],
+                    ).fetchone()
+                ):
+                    return True  # its row at some instant may have been observed
                 if conn.execute(
                     "SELECT 1 FROM key_sources WHERE contract_digest=? "
                     "AND observed_content_digest=? LIMIT 1",
@@ -2175,37 +2215,71 @@ class ReobservationReader:
                 _ROW_VIEWS[map_digest] = view
         return view
 
-    def row_of(self, capture_digest: str, spec_digest: str, locator: str) -> tuple[str, str] | None:
-        """The (contract, row) one extracted record of a Capture is: one seek, or None
-        when no row observation mapped that Capture's extraction."""
+    def row_of(
+        self,
+        capture_digest: str,
+        spec_digest: str,
+        locator: str,
+        *,
+        at_us: int | None = None,
+    ) -> tuple[str, str] | None:
+        """The (contract, row) one extracted record of a Capture is, or None when no
+        row observation mapped it, or the maps that existed disagree."""
 
         self._guard_fork()
         with self._lock:
             conn = self._connection()
             if conn is None:
                 return None
-            self.probes += 1
-            # One map per selection of the Capture's records the step read
-            # (a runtime ``only_keys`` can select others another run): the
-            # record is in whichever map holds its locator (review 2c #4).
-            maps = [
-                str(row[0])
-                for row in conn.execute(
-                    "SELECT map_digest FROM capture_maps WHERE capture_digest=? AND spec_digest=?",
-                    (capture_digest, spec_digest),
-                )
-            ]
-        # Different selections and typings of one Capture and spec can each
-        # hold the locator, and a typing can make it another row (review 2e
-        # #3). The Claim's row is known only when every map holding the
-        # locator agrees; otherwise None, and the Claim depends on its cited
-        # content and its own records, never on a row it may not be.
+            return self._row_on(
+                conn, (capture_digest, spec_digest, locator), at_us=at_us, through=_through()
+            )
+
+    def _row_on(
+        self,
+        conn: sqlite3.Connection,
+        record: tuple[str, str, str],
+        *,
+        at_us: int | None,
+        through: int,
+    ) -> tuple[str, str] | None:
+        capture_digest, spec_digest, locator = record
+        self.probes += 1
+        # One map per selection and typing of the Capture's records a step
+        # read (review 2c #4), each recorded when it was first seen. Only the
+        # maps that existed at the read count (review 2f #2): a later map can
+        # never change an answer about an instant before it.
+        maps = [
+            str(row[0])
+            for row in conn.execute(
+                "SELECT map_digest FROM capture_maps WHERE capture_digest=? AND spec_digest=? "
+                "AND sequence<=? AND recorded_us<=?",
+                (capture_digest, spec_digest, through, _NEVER if at_us is None else at_us),
+            )
+        ]
+        # A typing can make the locator another row (review 2e #3): the
+        # Claim's row is known only when every map holding the locator then
+        # agrees; otherwise None, and the Claim depends on its cited content
+        # and its own records, never on a row it may not be.
         found = {
             held
             for held in (_row_map(self.instance, digest).get(locator) for digest in maps)
             if held is not None
         }
         return found.pop() if len(found) == 1 else None
+
+    def _maps_sequence(
+        self, conn: sqlite3.Connection, capture: str, spec: str, through: int
+    ) -> int:
+        """The last journal sequence that recorded a map of this Capture and spec."""
+
+        self.probes += 1
+        row = conn.execute(
+            "SELECT MAX(sequence) FROM capture_maps WHERE capture_digest=? AND spec_digest=? "
+            "AND sequence<=?",
+            (capture, spec, through),
+        ).fetchone()
+        return 0 if row is None or row[0] is None else int(row[0])
 
     def content_observed(self) -> bool:
         """Whether any content or row observation was ever recorded (one probe)."""
@@ -2478,6 +2552,11 @@ class ReobservationReader:
             held_sets: set[str] = set()
             for key in keys:
                 pair = (key.contract_digest, key.observed_content_digest)
+                if key.row_record is not None:
+                    resolved = self._row_on(conn, key.row_record, at_us=at_us, through=through)
+                    if resolved is None:
+                        continue
+                    pair = resolved
                 if key.recheck_version:
                     applicable = self._rechecked_on(
                         conn, claim_id, key.recheck_version, at_us=at_us, through=through
@@ -2638,9 +2717,16 @@ def claim_keys_on(
     keys = list(content)
     value = getattr(evidence, "value", None)
     if isinstance(value, ExtractedBasis):
-        row = reader.row_of(value.capture_digest, value.extract_spec_digest, value.record_locator)
-        if row is not None:
-            keys.append(ReobservationKey(value.capture_digest, *row, version=version))
+        record = (value.capture_digest, value.extract_spec_digest, value.record_locator)
+        row = reader.row_of(*record)
+        keys.append(
+            ReobservationKey(
+                value.capture_digest,
+                *(row or ("", "")),
+                version=version,
+                row_record=record,
+            )
+        )
         rechecked = reader.rechecked(claim.identity.name, version)
         if rechecked is not None and rechecked[0] != value.capture_digest:
             # The latest Capture a per-Claim record re-checked THIS version in:

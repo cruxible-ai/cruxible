@@ -430,6 +430,54 @@ def test_a_record_two_typings_map_to_different_rows_has_no_row(tmp_path: Path) -
     assert reader.row_of(cited, spec, "/1") == (key.contract_digest, first)
 
 
+def test_a_later_typing_never_changes_a_row_lookup_before_it(tmp_path: Path) -> None:
+    """Review 2f #2: a row lookup reads only the maps that existed at its read.
+    A's record /0 was row X; bytes B holding X refreshed it at 20. A later
+    typing of A (at 30) makes /0 another row: a read at 25 still finds X's
+    observation at 20; a read after 30 finds the maps disagree and no row."""
+
+    from cruxible_core.evidence.claim_reobservations import ReobservationKey, RowMap
+
+    instance, _owner = _freshness_world(tmp_path, stale_after=_HOUR)
+    claim, cited, key = _cited(instance)
+    store = ClaimReobservationStore(instance)
+    spec = "sha256:" + "5" * 64
+    row_x, row_y = "sha256:" + "6" * 64, "sha256:" + "7" * 64
+
+    def minutes(value: int) -> datetime:
+        return _START + timedelta(hours=1, minutes=value)
+
+    def observe(at: int, capture: str, row: str, typing: str) -> None:
+        instance.recording_clock = lambda: minutes(at)
+        store.observe_rows(
+            (RowMap(capture, spec, key.contract_digest, (("/0", row),), extraction=typing),),
+            earliest=minutes(at),
+            latest=minutes(at),
+            run_id=f"RUN-{at}",
+            node_id="extract",
+            actor_id="o",
+        )
+
+    observe(1, cited, row_x, "t1")
+    observe(20, _OTHER, row_x, "t1")
+    depends = (ReobservationKey(cited, key.contract_digest, row_x, row_record=(cited, spec, "/0")),)
+    reader = ReobservationReader(instance)
+
+    def fresh(at: int) -> datetime | None:
+        evidence = reader.latest(claim.identity.name, depends, minutes(at)).evidence
+        return max((item.observed_at for item in evidence), default=None)
+
+    assert fresh(25) == minutes(20)
+    observe(30, cited, row_y, "t2")
+    assert fresh(25) == minutes(20)  # unchanged: the later map did not exist then
+    assert fresh(40) is None  # from 30 the maps disagree: no row
+    assert reader.row_of(cited, spec, "/0", at_us=None) is None
+    assert reader.row_of(cited, spec, "/0", at_us=int(minutes(25).timestamp() * 1e6)) == (
+        key.contract_digest,
+        row_x,
+    )
+
+
 def test_a_journal_from_an_unreleased_transition_build_refuses_with_re_initialise(
     tmp_path: Path,
 ) -> None:
