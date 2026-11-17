@@ -531,7 +531,7 @@ quickstart and concepts pages.
   note its section and the Subjects it is about. A note's section Capture now
   counts in the review's access decision, so a reader it is withheld from sees
   neither version's file or heading path. The review cache rebuilds once
-  (format 5).
+  (format 6).
 - **A note's handle reads with `get`.** `get NOTE-...` (or `Note:NOTE-...`),
   the handle `link` and `backlinks` print, answered `ref_not_found`; it now
   answers a note card (file, section, the Subjects it is about, the Capture of

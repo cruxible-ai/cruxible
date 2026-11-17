@@ -775,6 +775,44 @@ def test_projection_format_invalidation_and_candidate_pruning(tmp_path):
         assert connection.execute("SELECT candidate FROM review_rows").fetchall() == [("keep",)]
 
 
+def test_a_format_5_note_summary_with_no_cited_captures_is_discarded(tmp_path):
+    """Round-two F-002: an intermediate build wrote format-5 note summaries that hold
+    the section's file and heading with an empty cited-Capture list; a cache hit
+    would serve them unredacted. Format 6 discards every earlier build."""
+
+    import sqlite3
+
+    from cruxible_core.indexes.proposal_review import (
+        REVIEW_PROJECTION_VERSION,
+        initialize_review_projection,
+    )
+    from cruxible_core.service.proposals.summary import _SCHEMA
+
+    assert REVIEW_PROJECTION_VERSION == 6
+    path = tmp_path / "projection.sqlite3"
+    note = {
+        "kind": "Note",
+        "name": "NOTE-" + "1" * 32,
+        "action": "created",
+        "detail": {"kind": "note", "file": "repo.notes", "section": ["Reason"], "about": []},
+    }
+    with sqlite3.connect(path) as connection:
+        connection.executescript(_SCHEMA)
+        connection.execute("PRAGMA user_version=5")
+        connection.execute(
+            "INSERT INTO review_builds VALUES ('cand','{}',0,0,?)",
+            (json.dumps({"cited_captures": []}),),
+        )
+        connection.execute(
+            "INSERT INTO review_definitions VALUES ('cand',0,?)", (json.dumps(note),)
+        )
+        connection.commit()
+        initialize_review_projection(connection, _SCHEMA)
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 6
+        for table in ("review_builds", "review_definitions"):
+            assert connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0
+
+
 @pytest.mark.parametrize("close", ["accept", "reject"])
 def test_closing_a_proposal_prunes_its_summary(tmp_path, close):
     import sqlite3
