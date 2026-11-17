@@ -503,6 +503,9 @@ quickstart and concepts pages.
   from the journal instead of applying new records under reused sequences or
   refusing `orient`, `next`, `get` and `query` with
   `cruxible.claim.reobservation_journal_corrupt`.
+- **A re-observation record whose stored payload was lost no longer fails
+  reads.** The record is skipped as unavailable evidence when the projection
+  is rebuilt (after an upgrade, for one), and every other record is served.
 
 ## [0.3.2] - 2026-08-06
 

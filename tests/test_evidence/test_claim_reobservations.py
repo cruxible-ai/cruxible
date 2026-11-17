@@ -1321,3 +1321,44 @@ def test_an_interrupted_projection_reset_never_mixes_two_journals(
     (only,) = store.history(claim_id)
     assert only.observed_at == _START + timedelta(minutes=110)
     assert _dump(store) == expected
+
+
+def test_a_retained_record_whose_payload_is_gone_is_skipped_not_a_failed_open(
+    tmp_path: Path,
+) -> None:
+    """Review finding 5: a journal frame outlives its CAS payload (best-effort
+    exhaust), and the projection is rebuilt (here by a schema upgrade). The
+    record projects nothing and is named unavailable; every other record is
+    served, and the followers read past it."""
+
+    import sqlite3
+
+    from cruxible_core.evidence.claim_reobservations import _PARTITION, ReobservationReader
+    from cruxible_core.exhaust.backends import LocalJournalBackend
+
+    (tmp_path / "world").mkdir()
+    instance, _owner = _freshness_world(tmp_path / "world", stale_after=_HOUR)
+    claim_id = _current_claim(instance).identity.name
+    store = ClaimReobservationStore(instance)
+    for minute in (20, 40, 50):
+        _reobserve(instance, _START + timedelta(minutes=minute))
+    records = LocalJournalBackend(store.root).select_records(store.stream, partition_id=_PARTITION)
+    lost = records[1].record.payload_digest
+    instance.body_store()._path(lost).unlink()
+    # An earlier build's projection: the open drops it and replays the journal.
+    with sqlite3.connect(store.path) as conn:
+        conn.execute("PRAGMA user_version=19")
+
+    assert sorted(item.observed_at for item in store.history(claim_id)) == [
+        _START + timedelta(minutes=20),
+        _START + timedelta(minutes=50),
+    ]
+    assert store.unavailable() == ((2, lost),)
+    assert ReobservationReader.of(instance).sequence(claim_id) == 3
+    assert _verdict(instance, _START + timedelta(minutes=100)).verdict == "supported"
+    assert [sequence for sequence, _claim in store.records_after(0)] == [1, 3]
+    store.observed_after(0)
+    # The next open applies nothing again, and the store still appends.
+    assert store.unavailable() == ((2, lost),)
+    _reobserve(instance, _START + timedelta(minutes=110))
+    assert len(store.history(claim_id)) == 3

@@ -61,7 +61,7 @@ from cruxible_core.exhaust.writer import ProcedureExhaustWriter
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
-from cruxible_core.storage.cas import BodyAccessContext
+from cruxible_core.storage.cas import BodyAccessContext, CasError
 from cruxible_core.storage.preview_fence import is_previewing
 from cruxible_core.storage.read_positions import reobservations_through
 
@@ -123,12 +123,17 @@ _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 # by sequence and record digest (which commits the whole journal prefix): an
 # open finds a journal that is behind it, or does not continue it (lost or
 # replaced under a kept projection), by one head read, and rebuilds.
+# ``unavailable_records`` names each journal record whose payload body was
+# missing when it was replayed: its effect is not projected, and that is kept.
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS progress (
  singleton INTEGER PRIMARY KEY, sequence INTEGER NOT NULL, recorded_us INTEGER NOT NULL
 ) STRICT;
 CREATE TABLE IF NOT EXISTS applied (
  singleton INTEGER PRIMARY KEY, sequence INTEGER NOT NULL, record_digest TEXT NOT NULL
+) STRICT;
+CREATE TABLE IF NOT EXISTS unavailable_records (
+ sequence INTEGER PRIMARY KEY, payload_digest TEXT NOT NULL
 ) STRICT;
 CREATE TABLE IF NOT EXISTS reobservations (
  claim_id TEXT NOT NULL, capture_digest TEXT NOT NULL, contract_digest TEXT NOT NULL,
@@ -569,42 +574,34 @@ class ClaimReobservationStore:
                     self._reset(conn)
                 conn.executescript(_SCHEMA)
                 last = None
-                for stored in self._unapplied(conn, journal):
+                unapplied = self._unapplied(conn, journal)
+                if unapplied and not conn.in_transaction:
+                    # One transaction with the mark: a savepoint opened outside
+                    # one would commit each record as it is released.
+                    conn.execute("BEGIN")
+                for stored in unapplied:
                     last = stored
-                    payload = parse_journal_payload(
-                        self.instance.body_store().read(
-                            stored.record.payload_digest, access=_ACCESS
+                    conn.execute("SAVEPOINT record")
+                    try:
+                        self._replay(conn, stored)
+                    except CasError:
+                        # A frame can outlive its payload, or a body the payload
+                        # cites (best-effort exhaust). Unavailable evidence,
+                        # never a failed read: the record projects nothing and
+                        # is named as skipped.
+                        conn.execute("ROLLBACK TO record")
+                        conn.execute(
+                            "INSERT OR REPLACE INTO unavailable_records VALUES(?,?)",
+                            (stored.record.sequence, stored.record.payload_digest),
                         )
-                    )
-                    if isinstance(payload, dict) and payload.get("tag") in _SHARED_TAGS:
-                        self._apply_shared(
-                            conn,
-                            payload,
-                            stored.record.sequence,
-                            stored.record.recorded_at,
-                        )
-                        continue
-                    if isinstance(payload, dict) and payload.get("tag") == _BATCH_TAG:
-                        self._apply_batch(
-                            conn, payload, stored.record.sequence, stored.record.recorded_at
-                        )
-                        continue
-                    if isinstance(payload, dict) and payload.get("tag") != _EVENT_TAG:
-                        _refuse_retired_tag(payload.get("tag"))
-                    if not isinstance(payload, dict) or payload.get("tag") != _EVENT_TAG:
-                        raise ValueError("invalid Claim re-observation record")
-                    if "claim_artifact_digest" not in payload:
-                        # A record written before records named their version:
-                        # the version live at the head it was admitted at (one
-                        # Claim read, paid once, when the projection is rebuilt).
-                        payload = {
-                            **payload,
-                            "claim_artifact_digest": self._version_at(
-                                str(payload["claim_id"]),
-                                stored.record.accepted_coordinate.git_oid,
+                        conn.execute(
+                            "INSERT OR REPLACE INTO progress VALUES(1,?,?)",
+                            (
+                                stored.record.sequence,
+                                _ordered(conn, stored.record.sequence, stored.record.recorded_at),
                             ),
-                        }
-                    self._apply(conn, payload, stored.record.sequence, stored.record.recorded_at)
+                        )
+                    conn.execute("RELEASE record")
                 if last is not None:
                     self._mark_applied(conn, last)
                 conn.commit()
@@ -612,6 +609,60 @@ class ClaimReobservationStore:
                 conn.commit()
             finally:
                 conn.close()
+
+    def _replay(self, conn: sqlite3.Connection, stored: StoredProcedureJournalRecordV1) -> None:
+        """Project one retained journal record (``CasError`` when a body it needs is gone)."""
+
+        payload = parse_journal_payload(
+            self.instance.body_store().read(stored.record.payload_digest, access=_ACCESS)
+        )
+        if isinstance(payload, dict) and payload.get("tag") in _SHARED_TAGS:
+            self._apply_shared(conn, payload, stored.record.sequence, stored.record.recorded_at)
+            return
+        if isinstance(payload, dict) and payload.get("tag") == _BATCH_TAG:
+            self._apply_batch(conn, payload, stored.record.sequence, stored.record.recorded_at)
+            return
+        if isinstance(payload, dict) and payload.get("tag") != _EVENT_TAG:
+            _refuse_retired_tag(payload.get("tag"))
+        if not isinstance(payload, dict) or payload.get("tag") != _EVENT_TAG:
+            raise ValueError("invalid Claim re-observation record")
+        if "claim_artifact_digest" not in payload:
+            # A record written before records named their version: the version
+            # live at the head it was admitted at (one Claim read, paid once,
+            # when the projection is rebuilt).
+            payload = {
+                **payload,
+                "claim_artifact_digest": self._version_at(
+                    str(payload["claim_id"]),
+                    stored.record.accepted_coordinate.git_oid,
+                ),
+            }
+        self._apply(conn, payload, stored.record.sequence, stored.record.recorded_at)
+
+    def _payload(self, stored: StoredProcedureJournalRecordV1) -> object | None:
+        """One retained record's payload, or ``None`` when its body is unavailable.
+
+        A journal frame can outlive its payload body (best-effort exhaust: a
+        crash loses recent bodies, and the read records the damage). Such a
+        record has no readable effect: followers skip it and keep serving.
+        """
+
+        try:
+            content = self.instance.body_store().read(stored.record.payload_digest, access=_ACCESS)
+        except CasError:
+            return None
+        return parse_journal_payload(content)
+
+    def unavailable(self) -> tuple[tuple[int, str], ...]:
+        """Each replayed record whose payload was unavailable: (sequence, payload digest)."""
+
+        with self._locked() as conn:
+            return tuple(
+                (int(sequence), str(digest))
+                for sequence, digest in conn.execute(
+                    "SELECT sequence, payload_digest FROM unavailable_records ORDER BY sequence"
+                )
+            )
 
     @staticmethod
     def _reset(conn: sqlite3.Connection) -> None:
@@ -637,6 +688,7 @@ class ClaimReobservationStore:
         for table in (
             "progress",
             "applied",
+            "unavailable_records",
             "reobservations",
             "reobservation_points",
             "observed_sets",
@@ -1962,9 +2014,9 @@ class ClaimReobservationStore:
         ):
             if through is not None and stored.record.sequence > through:
                 break
-            payload = parse_journal_payload(
-                self.instance.body_store().read(stored.record.payload_digest, access=_ACCESS)
-            )
+            payload = self._payload(stored)
+            if payload is None:
+                continue  # unavailable: the projection holds nothing of it
             if isinstance(payload, dict) and payload.get("tag") in _SHARED_TAGS:
                 continue  # keyed by content, not by a lineage (``observed_after``)
             if isinstance(payload, dict) and payload.get("tag") == _BATCH_TAG:
@@ -2005,9 +2057,9 @@ class ClaimReobservationStore:
             ):
                 if through is not None and stored.record.sequence > through:
                     break
-                payload = parse_journal_payload(
-                    self.instance.body_store().read(stored.record.payload_digest, access=_ACCESS)
-                )
+                payload = self._payload(stored)
+                if payload is None:
+                    continue  # unavailable: the projection holds nothing of it
                 if not isinstance(payload, dict):
                     raise ValueError("invalid Claim re-observation record")
                 tag = payload.get("tag")
