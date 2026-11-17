@@ -485,37 +485,6 @@ class TerminalSharedDependenciesV1(_StrictDependencyModel):
         return self
 
 
-class TerminalSharedDependenciesV2(_StrictDependencyModel):
-    """The shared set, naming each accepted-state read by its run-free identity.
-
-    v1 names a read by its run input digest, which also commits the read's
-    evaluation instant, so an unchanged run on an unchanged generation stored
-    a new shared set (listing every fetched Capture) every run. v2 names it by
-    ``accepted_read_identity`` (as a derive's manifest v2 does), and the run's
-    own items record maps each identity to its run input digest, so the item
-    manifests restore exactly. Stored v1 sets stay readable as they are.
-    """
-
-    tag: Literal["playbill-terminal-shared-dependencies-v2"] = (
-        "playbill-terminal-shared-dependencies-v2"
-    )
-    digests: TerminalDependencyDigestsV1
-    accepted_reads: tuple[str, ...] = Field(min_length=1)
-    coverage: tuple[TerminalSharedCoverageV1, ...] = ()
-
-    @field_validator("accepted_reads")
-    @classmethod
-    def _reads(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        return _sorted_unique(value, label="shared accepted-state read identities")
-
-    @model_validator(mode="after")
-    def _coverage(self) -> "TerminalSharedDependenciesV2":
-        names = tuple(item.input_name for item in self.coverage)
-        if names != tuple(sorted(set(names), key=lambda item: item.encode("utf-8"))):
-            raise ValueError("shared coverage must be sorted and unique")
-        return self
-
-
 class TerminalItemDependencyAuditV1(_StrictDependencyModel):
     deployment_digest: str | None = None
     recorded_at: str
@@ -601,9 +570,7 @@ def shared_terminal_dependencies(
     )
 
 
-def render_shared_terminal_dependencies(
-    shared: TerminalSharedDependenciesV1 | TerminalSharedDependenciesV2,
-) -> bytes:
+def render_shared_terminal_dependencies(shared: TerminalSharedDependenciesV1) -> bytes:
     """The exact CAS bytes an item record's ``shared_digest`` names."""
 
     return canonical_bytes(shared.model_dump(mode="json"))
@@ -611,9 +578,6 @@ def render_shared_terminal_dependencies(
 
 #: The one ``item_dependencies`` payload a terminal journals for all its items.
 TERMINAL_ITEMS_RECORD_V1 = "playbill-terminal-items-v1"
-#: The same, citing a v2 shared set and mapping each read identity it names to
-#: this run's input digest of that read.
-TERMINAL_ITEMS_RECORD_V2 = "playbill-terminal-items-v2"
 #: One item's closure beyond its terminal's shared set: a run-free CAS body.
 ITEM_DEPENDENCIES_BODY_V3 = "playbill-procedure-item-dependencies-v3"
 #: An ordered run of up to ``TERMINAL_ITEM_CHUNK_SIZE`` item entries.
@@ -641,7 +605,6 @@ def build_terminal_items(
     terminal_node_id: str,
     shared: TerminalSharedDependenciesV1,
     digest: Callable[[bytes], str],
-    read_identities: Mapping[str, str] | None = None,
 ) -> TerminalItemsBuildV1:
     """Group one terminal's item closures into run-free, content-addressed bodies.
 
@@ -661,29 +624,7 @@ def build_terminal_items(
     held = {field: frozenset(getattr(shared.digests, field)) for field in _SLOT_FIELDS.values()}
     common = {item.input_name: frozenset(item.capture_digests) for item in shared.coverage}
     empty: frozenset[str] = frozenset()
-    # Each shared state read with a run-free identity is named by it (v2), and
-    # this run's record maps the identity back to its run input digest.
-    named = {
-        value: read_identities[value]
-        for value in shared.digests.accepted_state_input_digests
-        if read_identities is not None and value in read_identities
-    }
-    stored: TerminalSharedDependenciesV1 | TerminalSharedDependenciesV2 = shared
-    if named:
-        stored = TerminalSharedDependenciesV2(
-            digests=shared.digests.model_copy(
-                update={
-                    "accepted_state_input_digests": tuple(
-                        value
-                        for value in shared.digests.accepted_state_input_digests
-                        if value not in named
-                    )
-                }
-            ),
-            accepted_reads=tuple(sorted(set(named.values()), key=lambda item: item.encode())),
-            coverage=shared.coverage,
-        )
-    shared_bytes = render_shared_terminal_dependencies(stored)
+    shared_bytes = render_shared_terminal_dependencies(shared)
     shared_digest = digest(shared_bytes)
     bodies: dict[str, bytes] = {shared_digest: shared_bytes}
     entries: list[list[str]] = []
@@ -735,19 +676,16 @@ def build_terminal_items(
         chunk_digest = digest(chunk)
         bodies.setdefault(chunk_digest, chunk)
         chunks.append(chunk_digest)
-    payload: dict[str, object] = {
-        "tag": TERMINAL_ITEMS_RECORD_V2 if named else TERMINAL_ITEMS_RECORD_V1,
-        "terminal_node_id": terminal_node_id,
-        "shared_digest": shared_digest,
-        "count": len(entries),
-        "chunks": chunks,
-    }
-    if named:
-        payload["accepted_reads"] = sorted(
-            ([identity, value] for value, identity in named.items()),
-            key=lambda pair: (pair[0].encode(), pair[1].encode()),
-        )
-    return TerminalItemsBuildV1(bodies=tuple(bodies.values()), payload=payload)
+    return TerminalItemsBuildV1(
+        bodies=tuple(bodies.values()),
+        payload={
+            "tag": TERMINAL_ITEMS_RECORD_V1,
+            "terminal_node_id": terminal_node_id,
+            "shared_digest": shared_digest,
+            "count": len(entries),
+            "chunks": chunks,
+        },
+    )
 
 
 class _ItemFactsBodyV3(_StrictDependencyModel):
@@ -797,26 +735,6 @@ class TerminalItemsRecordV1(_StrictDependencyModel):
         return value
 
 
-class TerminalItemsRecordV2(TerminalItemsRecordV1):
-    """``TerminalItemsRecordV1`` citing a v2 shared set: each read identity it
-    names, with this run's input digest of that read."""
-
-    tag: Literal["playbill-terminal-items-v2"] = "playbill-terminal-items-v2"  # type: ignore[assignment]
-    accepted_reads: tuple[tuple[str, str], ...] = Field(min_length=1)
-
-    @field_validator("accepted_reads")
-    @classmethod
-    def _reads(cls, value: tuple[tuple[str, str], ...]) -> tuple[tuple[str, str], ...]:
-        if value != tuple(
-            sorted(set(value), key=lambda pair: (pair[0].encode(), pair[1].encode()))
-        ):
-            raise ValueError("accepted read identities must be sorted and unique")
-        for identity, digest in value:
-            _tagged(identity, label="accepted read identity")
-            _tagged(digest, label="accepted-state run input digest")
-        return value
-
-
 def _canonical_body(read_body: Callable[[str], bytes], digest: str, *, label: str) -> object:
     content = read_body(digest)
     value = json.loads(content)
@@ -836,33 +754,9 @@ def resolve_terminal_items(
     must reproduce the manifest digest its chunk entry names.
     """
 
-    tag = payload.get("tag") if isinstance(payload, Mapping) else None
-    record: TerminalItemsRecordV1 = (
-        TerminalItemsRecordV2.model_validate(payload)
-        if tag == TERMINAL_ITEMS_RECORD_V2
-        else TerminalItemsRecordV1.model_validate(payload)
-    )
+    record = TerminalItemsRecordV1.model_validate(payload)
     shared_value = _canonical_body(read_body, record.shared_digest, label="shared dependency set")
-    if isinstance(record, TerminalItemsRecordV2):
-        stored = TerminalSharedDependenciesV2.model_validate(shared_value)
-        mapping = dict(record.accepted_reads)
-        if set(mapping) != set(stored.accepted_reads) or len(mapping) != len(record.accepted_reads):
-            raise ValueError("a terminal items record maps other reads than its shared set names")
-        overlap = set(mapping.values()) & set(stored.digests.accepted_state_input_digests)
-        if overlap:
-            raise ValueError("a shared set names a read both by identity and by digest")
-        shared = TerminalSharedDependenciesV1(
-            digests=stored.digests.model_copy(
-                update={
-                    "accepted_state_input_digests": _digest_union(
-                        stored.digests.accepted_state_input_digests, mapping.values()
-                    )
-                }
-            ),
-            coverage=stored.coverage,
-        )
-    else:
-        shared = TerminalSharedDependenciesV1.model_validate(shared_value)
+    shared = TerminalSharedDependenciesV1.model_validate(shared_value)
     common_coverage = {item.input_name: item.capture_digests for item in shared.coverage}
     restored: list[tuple[TerminalItemDependencyManifestV2, TerminalItemDerivedFactsV2]] = []
     bodies: dict[str, TerminalItemDependencyBodyV3] = {}
@@ -1343,7 +1237,6 @@ __all__ = [
     "TerminalItemDependencyRecordV2",
     "TerminalSharedCoverageV1",
     "TerminalSharedDependenciesV1",
-    "TerminalSharedDependenciesV2",
     "ITEM_DEPENDENCIES_BODY_V3",
     "TERMINAL_ITEM_CHUNK_SIZE",
     "TERMINAL_ITEM_CHUNK_V1",

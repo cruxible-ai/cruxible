@@ -425,69 +425,6 @@ def test_a_terminal_journals_one_grouped_record_that_restores_every_item_exactly
         resolve_terminal_items({**payload, "count": items + 1}, store.__getitem__)
 
 
-def test_a_shared_set_names_its_state_read_by_identity_and_is_reused_across_runs() -> None:
-    """Round 7: v2 names the shared state read by its run-free identity, so two
-    runs whose read differs only in its run input digest store the same shared
-    set; each run's record maps the identity back, and the item manifests
-    restore exactly. A v1 record (no identities) still resolves."""
-
-    from cruxible_core.procedures.terminal_dependencies import (
-        build_terminal_items,
-        resolve_terminal_items,
-        shared_terminal_dependencies,
-    )
-
-    identity = _digest("1")
-    built = {}
-    for run in ("one", "two"):
-        manifests, derived = _closures(captures=3, items=4)
-        read = _digest({"one": "2", "two": "3"}[run])
-        manifests = [
-            manifest.model_copy(update={"accepted_state_input_digests": (read,)})
-            for manifest in manifests
-        ]
-        derived = [
-            facts.model_copy(update={"manifest_digest": terminal_item_manifest_digest(manifest)})
-            for manifest, facts in zip(manifests, derived, strict=True)
-        ]
-        shared = shared_terminal_dependencies(manifests, derived)
-        assert shared.digests.accepted_state_input_digests == (read,)
-        built[run] = build_terminal_items(
-            manifests,
-            derived,
-            terminal_node_id="egress",
-            shared=shared,
-            digest=_cas_digest,
-            read_identities={read: identity},
-        )
-        payload = built[run].payload
-        assert payload["tag"] == "playbill-terminal-items-v2"
-        assert payload["accepted_reads"] == [[identity, read]]
-        store = {_cas_digest(body): body for body in built[run].bodies}
-        assert (
-            b'"tag":"playbill-terminal-shared-dependencies-v2"' in store[payload["shared_digest"]]
-        )  # type: ignore[index]
-        assert read.encode() not in store[payload["shared_digest"]]  # type: ignore[index]
-        assert resolve_terminal_items(payload, store.__getitem__) == tuple(
-            zip(manifests, derived, strict=True)
-        )
-        # A record mapping another read than its shared set names is refused.
-        with pytest.raises(ValueError, match="other reads"):
-            resolve_terminal_items(
-                {**payload, "accepted_reads": [[_digest("4"), read]]}, store.__getitem__
-            )
-        # Without identities the v1 shapes are built and still resolve.
-        plain = build_terminal_items(
-            manifests, derived, terminal_node_id="egress", shared=shared, digest=_cas_digest
-        )
-        assert plain.payload["tag"] == "playbill-terminal-items-v1"
-        plain_store = {_cas_digest(body): body for body in plain.bodies}
-        assert resolve_terminal_items(plain.payload, plain_store.__getitem__) == tuple(
-            zip(manifests, derived, strict=True)
-        )
-    assert built["one"].payload["shared_digest"] == built["two"].payload["shared_digest"]
-
-
 def test_per_item_records_of_earlier_builds_still_resolve() -> None:
     """v1 (inline) and v2 (shared-set) per-item records stay readable."""
 

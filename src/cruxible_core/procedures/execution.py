@@ -7295,6 +7295,15 @@ class ProcedureExecutor:
         )
         manifests: dict[str, TerminalItemDependencyManifestV2] = {}
         folded: list[TerminalItemDerivedFactsV2] = []
+        # A manifest names each accepted-state read by its run-free identity:
+        # the read's evaluation instant is not a dependency, so an unchanged
+        # item of an unchanged generation keeps its manifest digest, and its
+        # bodies, chunks and child receipts are the ones stored before. The
+        # read's facts answer under either name.
+        identities = state.read_identities
+        for digest, identity in identities.items():
+            if digest in state.facts:
+                state.facts.setdefault(identity, state.facts[digest])
         for index, value in enumerate(values):
             tokens = base | item_tokens[index]
             item_key = terminal_item_key(
@@ -7303,7 +7312,12 @@ class ProcedureExecutor:
                 item=value,
             )
             manifest = build_terminal_item_manifest_v2(
-                tokens,
+                frozenset(
+                    accepted_state_token(identities[token.digest])
+                    if token.slot == "accepted_state" and token.digest in identities
+                    else token
+                    for token in tokens
+                ),
                 terminal_node_id=node.node_id,
                 item_key=item_key,
             )
@@ -7328,7 +7342,6 @@ class ProcedureExecutor:
                 terminal_node_id=node.node_id,
                 shared=shared_terminal_dependencies(tuple(manifests.values()), folded),
                 digest=lambda content: self.bodies.digest_bytes(content).tagged,
-                read_identities=state.read_identities,
             )
             self.bodies.store_many(built.bodies, journal_payload=True)
             items_record_digest = self._append_event(
