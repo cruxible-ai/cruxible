@@ -69,8 +69,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "like approve, it activates a candidate it completes unless hold is set."
     ),
     "cruxible_proposal_approve": (
-        "Use after review: signs with the signer's local key and submits in one call. "
-        "The approval "
+        "Use after review to approve a proposal with a local key (CRUXIBLE_PRINCIPAL_KEY or "
+        "CRUXIBLE_MCP_KEY_DIR, with CRUXIBLE_PRINCIPAL_ID naming who acts; else the folder "
+        "owner's); it challenges, signs and submits in one call. The approval "
         "that completes the candidate also activates it when your tier may; hold=true "
         "signs only. Pass the reviewed candidate_digest to bind it to what you read."
     ),

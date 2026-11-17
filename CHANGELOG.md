@@ -510,10 +510,6 @@ quickstart and concepts pages.
 - **SDK `cx.signer(ID)`** opens a principal's approval signer from the same
   lookup (`cx.signer()` for the connection's own principal); the SDK's `next`
   spells `approve(signer=cx.signer("reviewer"), ...)`.
-- **MCP `cruxible_init` takes `reviewer_key_dir` and
-  `require_independent_approval`**, as `cruxible init` does: it creates the
-  `reviewer` principal with its key and settings file, and returns the base
-  kit's proposal when it awaits that reviewer.
 - **A kit repair names the kit when the instance holds its reference.**
   `cruxible.kit.requires_missing` for the bundled base kit and a stale kit
   proposal's `readmit_requires_resubmission` printed `cruxible kit add

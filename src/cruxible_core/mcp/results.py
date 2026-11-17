@@ -73,9 +73,6 @@ class McpInitResult(BaseModel):
     approval_policy: Literal["self_approval_allowed", "independent_approval_required"] | None
     workspace_root: str
     folder_identity_path: str | None
-    #: The base kit's proposal when it awaits a second principal (independent
-    #: approval): the reviewer approves it. None when the base kit is installed.
-    base_kit_proposal_id: str | None = None
 
 
 class McpConsoleResult(BaseModel):

@@ -40,7 +40,9 @@ carries its credential. `cruxible principal add NAME --key-dir DIR` writes
 exactly these settings to `DIR/cruxible.env`. Setup (starting a daemon,
 `cruxible init`, adding principals) is operator work on the CLI; on MCP,
 `cruxible_init` initializes the workspace folder as `cruxible init` does, and
-nothing else sets up. See [MCP tools](mcp-tools.md) for every variable.
+nothing else sets up. It creates the owner only: cosign setup (a reviewer
+principal and no self-approval) is one CLI step, `cruxible init
+--reviewer-key-dir DIR --require-independent-approval`. See [MCP tools](mcp-tools.md) for every variable.
 
 First setup on one machine, in order:
 

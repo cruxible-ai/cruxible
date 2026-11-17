@@ -672,7 +672,13 @@ def register_tools(
         proposal_id: str,
         signer_id: Annotated[
             str | None,
-            Field(description="Principal to sign as (default: this server's)."),
+            Field(
+                description=(
+                    "Principal to sign as; its key comes from CRUXIBLE_MCP_KEY_DIR, "
+                    "CRUXIBLE_PRINCIPAL_KEY or its remembered settings. Omit to sign as "
+                    "the principal this server acts as."
+                )
+            ),
         ] = None,
         candidate_digest: Annotated[
             str | None,
@@ -711,18 +717,9 @@ def register_tools(
             str | None,
             Field(description="Owner principal ID (default: your OS username)."),
         ] = None,
-        reviewer_key_dir: Annotated[
-            str | None,
-            Field(description="Also create principal `reviewer`: its key directory."),
-        ] = None,
-        require_independent_approval: bool = False,
     ) -> McpInitResult:
         """Initialize this workspace folder; an initialized one reports its instance."""
-        return handlers.handle_init(
-            principal_id,
-            reviewer_key_dir=reviewer_key_dir,
-            require_independent_approval=require_independent_approval,
-        )
+        return handlers.handle_init(principal_id)
 
     @_tool
     def cruxible_console(
