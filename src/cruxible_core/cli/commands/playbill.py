@@ -7062,6 +7062,11 @@ def get_by_ref(
         lambda client, instance_id: client.get(instance_id, request=request),
         command_name="cruxible get",
     )
+    if result.backlinks is not None:
+        from cruxible_client.authoring.backlink_sections import observe_get_drift
+
+        # Section rows checked against the workspace here, as `backlinks` does.
+        result = observe_get_drift(result, Path("."))
     proof = result.proof
     claim_summary = result.kind == "claim" and result.detail == "proof" and not proof_full
     if output_json:

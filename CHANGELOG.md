@@ -513,6 +513,10 @@ quickstart and concepts pages.
   could derive them, and spelled reserved contracts `playbill.`; it now writes
   both, and `cruxible.` names, and export then plan on an untouched vocabulary
   still changes nothing.
+- **One note reads one status.** `get REF --detail backlinks` (CLI, MCP
+  `cruxible_get`, SDK `get`) said `[unknown]` for a note section that
+  `backlinks` called `[unchanged]`; it now checks section rows against the
+  workspace the same way.
 
 ## [0.3.2] - 2026-08-06
 

@@ -5268,6 +5268,11 @@ class Cruxible:
         )
         result = self._client.get(self._instance_id, request=request)
         self._observe_read(_get_coordinate(result), expected=requested)
+        if result.backlinks is not None:
+            from cruxible_client.authoring.backlink_sections import observe_get_drift
+
+            # Section rows checked against the workspace, as backlinks() does.
+            result = observe_get_drift(result, self._workspace_root)
         if result.history is not None:
             # History pages newest first; the SDK reads every page, pinned to
             # the first page's coordinate by the cursor, so it never answers
