@@ -490,6 +490,7 @@ _GET_REF_KINDS: Mapping[str, RefKind] = {
     "contract": RefKind.CONTRACT,
     "capability": RefKind.CAPABILITY,
     "runbook": RefKind.RUNBOOK,
+    "note": RefKind.NOTE,
 }
 
 _REFERENCE_KINDS: Mapping[RefKind, str] = {
@@ -5436,12 +5437,20 @@ class Cruxible:
                 )
                 assert page.backlinks is not None
                 links.extend(page.backlinks.links)
-            result = result.model_copy(
-                update={
-                    "backlinks": result.backlinks.model_copy(update={"links": tuple(links)}),
-                    "truncated": False,
-                    "next_cursor": None,
-                }
+            from cruxible_client.authoring.backlink_sections import observe_get_drift
+
+            # Every assembled section row checked against the workspace, as
+            # backlinks() checks its page.
+            result = observe_get_drift(
+                result.model_copy(
+                    update={
+                        "backlinks": result.backlinks.model_copy(update={"links": tuple(links)}),
+                        "truncated": False,
+                        "next_cursor": None,
+                    }
+                ),
+                # None (a connection without a workspace) leaves the daemon's answer.
+                self._workspace,
             )
         return result
 

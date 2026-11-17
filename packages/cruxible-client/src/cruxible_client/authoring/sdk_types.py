@@ -46,6 +46,7 @@ class RefKind(str, Enum):
     CONTRACT = "contract"
     CAPABILITY = "capability"
     RUNBOOK = "runbook"
+    NOTE = "note"
 
 
 @runtime_checkable

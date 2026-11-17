@@ -224,3 +224,53 @@ def test_unlink_without_an_observation_keeps_the_retained_bytes_then_retires(
     assert note_at(instance, name).lifecycle.state == "retired"
     gone = unlink(f"{KIND}/wi-2")
     assert gone.refusal is not None and gone.refusal.code == "cruxible.write.note_not_found"
+
+
+def test_a_missing_note_handle_reads_no_note_at_two_sizes(tmp_path, monkeypatch) -> None:
+    """Review F-005: a full note handle that misses read every note envelope for a
+    nearest-name repair; it now costs one keyed lookup, as a full Claim id does."""
+
+    import pytest
+
+    from cruxible_client.contracts.get_reads import GetRequest
+    from cruxible_core.errors import CoreError
+    from cruxible_core.indexes import typed_state
+    from cruxible_core.service.discovery.get import service_playbill_get
+    from cruxible_core.storage.cas import BodyAccessContext
+
+    access = BodyAccessContext(principal_id="reader", can_read_body=True)
+    rows_read: list[int] = []
+    listed = typed_state.TypedStateReader.envelopes
+
+    def counted(self, *args, **kwargs):
+        found = listed(self, *args, **kwargs)
+        rows_read.append(len(found))
+        return found
+
+    for size in (2, 12):
+        (tmp_path / f"size-{size}").mkdir()
+        instance, _owner = seed_write_surface(tmp_path / f"size-{size}")
+        changes = []
+        for index in range(size):
+            heading = f"Reason {index}"
+            text = f"# {heading}\nWords {index}\n".encode()
+            changes.append(
+                AboutChange(
+                    file=SOURCE,
+                    section=(heading,),
+                    subjects=(f"{KIND}/wi-1",),
+                    observation=observed(text, (heading,)),
+                )
+            )
+        result = service_playbill_write(
+            instance, request=WriteRequest(because="Context", changes=changes), caller=caller()
+        )
+        assert result.status == "accepted", result
+        missing = "NOTE-" + "0" * 32
+        with monkeypatch.context() as patched:
+            patched.setattr(typed_state.TypedStateReader, "envelopes", counted)
+            for ref in (missing, f"Note:{missing}"):
+                with pytest.raises(CoreError) as refused:
+                    service_playbill_get(instance, request=GetRequest(ref=ref), access=access)
+                assert refused.value.error_code == "cruxible.get.ref_not_found"
+        assert sum(rows_read) == 0, (size, rows_read)

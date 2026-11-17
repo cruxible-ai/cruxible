@@ -395,11 +395,17 @@ def open_proposal_at_target(
 def proposal_is_open(instance: PlaybillInstance, proposal_id: str) -> bool:
     """Whether one proposal is still open: one indexed inventory row, no evidence read."""
 
+    return proposal_inventory_status(instance, proposal_id) == "open"
+
+
+def proposal_inventory_status(instance: PlaybillInstance, proposal_id: str) -> str | None:
+    """One proposal's list status (``open``, ``awaiting_readmit``, ``settled``,
+    ``incomplete``), or None when the inventory has no row: one indexed row."""
+
     coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
-    return any(
-        entry.status == "open"
-        for entry in _proposal_entries(instance, coordinate, proposal_id, require_evidence=False)
-    )
+    for entry in _proposal_entries(instance, coordinate, proposal_id, require_evidence=False):
+        return entry.status
+    return None
 
 
 def _proposal_entries(

@@ -363,16 +363,47 @@ def _minimal_input(claim_type: ClaimType) -> dict[str, object]:
         if _lowers_to(trial, target):
             current = trial
     for name in _DROP_ORDER:
-        if name not in current:
+        if name not in current or _legible(name, current[name]):
             continue
         trial = {key: value for key, value in current.items() if key != name}
         if _lowers_to(trial, target):
             current = trial
     for name, value in tuple(current.items()):
-        tidied = _tidy(value)
+        tidied = _public_contract_names(_tidy(value))
         if tidied != value and _lowers_to({**current, name: tidied}, target):
             current[name] = tidied
     return current
+
+
+def _public_contract_names(value: object) -> object:
+    """``value`` with each reserved contract identity in its public spelling.
+
+    Display only: lowering maps a public name back to the stored identity, and
+    the caller keeps the result only when it still lowers to the same ClaimType.
+    """
+
+    if isinstance(value, Mapping):
+        kind, name = value.get("kind"), value.get("name")
+        if kind in ("CaptureContract", "Contract") and isinstance(name, str):
+            return {**value, "name": public_name(f"{kind}:{name}").partition(":")[2]}
+        return {key: _public_contract_names(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_public_contract_names(item) for item in value]
+    return value
+
+
+def _legible(name: str, value: object) -> bool:
+    """Whether export keeps this field although lowering would derive it.
+
+    ``evidence_requirement: captured`` and ``permitted_roles`` follow from other
+    fields only by rules a reader cannot see in the file (captured from roles of
+    exactly ``[observation]``, roles from ``default_role``, else ``[normative]``),
+    so the file says them: the roles on every field.
+    """
+
+    if name == "evidence_requirement":
+        return value == "captured"
+    return name == "permitted_roles"
 
 
 def _shaped_contracts(policy: object) -> list[str]:

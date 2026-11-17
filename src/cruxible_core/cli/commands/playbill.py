@@ -2238,7 +2238,7 @@ def kit_group() -> None:
 
 _KIT_CONSEQUENCE_TEXT = {
     "overwrites_your_edit": "overwrites your edit",
-    "re_adds_retired": "re-adds a definition you retired",
+    "re_adds_retired": "re-adds a retired definition",
     "consumer_retired": "keeps your retirement",
     "takes_over_outside_definition": "takes over a definition you defined outside the kit",
     "replaces_carried_definition": "replaces a definition the kit depends on",
@@ -2248,7 +2248,7 @@ _KIT_CONSEQUENCE_TEXT = {
 #: line, then as `kit status` lists it afterwards.
 _KIT_KEEP_TEXT = {
     "overwrites_your_edit": ("keeps your edit", "your edit"),
-    "re_adds_retired": ("keeps it retired", "you retired it"),
+    "re_adds_retired": ("keeps it retired", "retired here"),
     "consumer_retired": ("kept retired", "you retired it"),
     "takes_over_outside_definition": (
         "keeps your definition from outside the kit",
@@ -2453,7 +2453,14 @@ def _echo_kit_change(
             and item.consequence == "takes_over_outside_definition"
         ):
             click.echo(f"Next: rerun cruxible kit add with --keep {item.identity} to keep yours.")
-    if result.proposal_id:
+    if result.proposal_id and result.status == "blocked" and result.proposal_open:
+        # Admitted, then accepted state moved before it could land: it stays open.
+        click.echo(
+            f"Proposal: {result.proposal_id} (open; withdraw it: cruxible proposal withdraw "
+            f"{result.proposal_id} --reason '<TEXT>')"
+        )
+    elif result.proposal_id and result.status != "blocked":
+        # A refused change leaves nothing to act on (--json keeps the refused record's id).
         click.echo(f"Proposal: {result.proposal_id}")
         if result.status == "proposed":
             if result.approval_required:
@@ -2804,6 +2811,22 @@ def kit_status(offline: bool, output_json: bool) -> None:
                 f"  next: cruxible proposal approve {resume.proposal_id} --signer-id "
                 f"{_SIGNER_PLACEHOLDER} (the approval that completes it activates it)"
             )
+        elif resume.proposal_awaiting_readmit:
+            from cruxible_core.kits.base_kit_pin import BASE_KIT_PIN
+
+            # The head changed what it touches: the add is planned again at the head.
+            # `base` names the bundled base kit, so it is printed only for that exact
+            # release (id and content digest); another origin label could name any kit.
+            if (resume.kit_id, resume.content_digest) == (
+                BASE_KIT_PIN.kit_id,
+                BASE_KIT_PIN.content_digest,
+            ):
+                rerun = "cruxible kit add base"
+            else:
+                rerun = "cruxible kit add '<KIT>'"
+                if resume.source is not None:
+                    rerun += f" (recorded origin: {printable(resume.source)})"
+            click.echo(f"  awaiting readmit: accepted state changed what it touches; next: {rerun}")
     for kit in result.kits:
         available = ""
         if kit.update_check == "checked" and kit.latest_available is not None:
@@ -2869,7 +2892,8 @@ def remove_kit(
     """Retire every artifact KIT_ID installed (previews by default).
 
     Lands at once when the approval policy requires no approval, otherwise it
-    stops at proposed. Removal is one-way: a removed kit cannot be added back.
+    stops at proposed. Removal retires the kit's definitions that are still live,
+    and a retired definition cannot be added back in this release.
     Live Claims under its definitions block it until they are retired;
     automation you authored over the kit is never retired by it. A blocked
     removal prints the refusal and its repair first, then counts per kind;
@@ -7070,7 +7094,7 @@ def get_by_ref(
     or Provider:NAME/BUILD, Contract:/Capability:<name>[@N], an artifact
     path, a proposal id or prefix, or an operational reference: Line:<name> (or
     the Line identity digest next names), CAP-<12+ hex> or Capture:<digest>,
-    ResolutionContract:<name>, Mandate:<name>.
+    ResolutionContract:<name>, Mandate:<name>, or a note's NOTE-<32 hex>.
     """
 
     from cruxible_client.contracts.get_reads import ByteRange, GetRequest
@@ -7106,6 +7130,11 @@ def get_by_ref(
         lambda client, instance_id: client.get(instance_id, request=request),
         command_name="cruxible get",
     )
+    if result.backlinks is not None:
+        from cruxible_client.authoring.backlink_sections import observe_get_drift
+
+        # Section rows checked against the workspace here, as `backlinks` does.
+        result = observe_get_drift(result, Path("."))
     proof = result.proof
     claim_summary = result.kind == "claim" and result.detail == "proof" and not proof_full
     if output_json:

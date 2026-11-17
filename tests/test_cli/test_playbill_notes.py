@@ -24,6 +24,17 @@ class _Reads(_ServiceClient):
         assert instance_id == "inst_write"
         return service_playbill_backlinks(self.instance, request=request)
 
+    def get(self, instance_id: str, *, request: Any) -> Any:
+        from cruxible_core.service.discovery.get import service_playbill_get
+        from cruxible_core.storage.cas import BodyAccessContext
+
+        assert instance_id == "inst_write"
+        return service_playbill_get(
+            self.instance,
+            request=request,
+            access=BodyAccessContext(principal_id="owner", can_read_body=True),
+        )
+
 
 @pytest.fixture
 def reads(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _Reads:
@@ -57,10 +68,16 @@ def test_note_appends_and_links_then_backlinks_list_it_with_drift(
     result: dict[str, Any] = json.loads(shown.stdout)
     (link,) = result["links"]
     assert (link["relation"], link["source_kind"], link["drift"]) == ("about", "Note", "unchanged")
+    # sec N8: get --detail backlinks said [unknown] for the note backlinks called unchanged.
+    detail = _run("get", WI1, "--detail", "backlinks")
+    assert detail.exit_code == 0, detail.output
+    assert "[unchanged]" in detail.output and "[unknown]" not in detail.output
     (tmp_path / "notes.md").write_text("# Triage\nReachable after all.\n")
     text = _run("backlinks", WI1)
     assert text.exit_code == 0, text.output
     assert "about Note NOTE-" in text.output and "changed_since_cited" in text.output
+    detail = _run("get", WI1, "--detail", "backlinks")
+    assert "changed_since_cited" in detail.output, detail.output
     section = _run("backlinks", "--section", "notes.md#Triage", "--json")
     assert section.exit_code == 0, section.output
     assert json.loads(section.stdout)["links"] == []
@@ -111,3 +128,38 @@ def test_backlinks_text_names_a_cited_file_by_its_current_path(
 def test_backlinks_needs_one_target(reads: _Reads) -> None:
     result = _run("backlinks")
     assert result.exit_code != 0 and "REF" in result.output
+
+
+def test_the_note_handle_link_prints_reads_with_get(
+    reads: _Reads, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """sec N8: `get NOTE-...` and `get Note:NOTE-...` answered ref_not_found."""
+
+    monkeypatch.chdir(tmp_path)
+    noted = _run(
+        "note",
+        "notes.md",
+        "--text",
+        "# Triage\nNot reachable.\n\n",
+        "--about",
+        WI1,
+        "--because",
+        "Triage context",
+        "--json",
+    )
+    assert noted.exit_code == 0, noted.output
+    shown = json.loads(_run("backlinks", WI1, "--json").stdout)
+    (link,) = shown["links"]
+    handle = link["source"].removeprefix("Note:")
+    assert handle.startswith("NOTE-")
+
+    for ref in (handle, f"Note:{handle}"):
+        card = _run("get", ref)
+        assert card.exit_code == 0, card.output
+        assert f"note: Note:{handle}" in card.output
+        assert f"about: {WI1}" in card.output and "section: Triage" in card.output
+        assert "capture: CAP-" in card.output
+    for detail in ("history", "proof"):
+        read = _run("get", handle, "--detail", detail, "--json")
+        assert read.exit_code == 0, read.output
+        assert json.loads(read.stdout)["kind"] == "note"

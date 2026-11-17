@@ -17,6 +17,7 @@ import json
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from typing import Any, Final, Literal, Protocol, cast
 
+from cruxible_client.contracts.approval_policy import APPROVAL_POLICY_PATH, parse_approval_policy
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import canonical_digest, pretty_canonical_bytes
 from cruxible_client.contracts.capabilities import (
@@ -1927,16 +1928,56 @@ def _closure_summary(message: str, tree: Mapping[str, bytes], *, removal: bool) 
     )
 
 
+#: The repair a kit add refused for re-adding definitions retired here carries
+#: (morning-rulings-1116 (8): a retired definition is not revived in 0.5.0).
+KIT_RETIRED_REPAIR = (
+    ". Definitions retired here cannot be added back in this release: add the kit on a new instance"
+)
+
+
+#: The codes a definition law refuses a retired definition's revival with.
+_REVIVAL_REFUSALS = (".revival_refused", ".lifecycle_invalid")
+
+
+def _refused_revival(
+    diagnostics: Iterable[CompilerDiagnostic], plan: Sequence[KitPathPlan]
+) -> bool:
+    """Whether admission refused reviving a definition this change writes over a retired one.
+
+    Decided from the refusal's own code and the path it names, against the plan's
+    written re-adds (``replace`` of a retired definition); a kept retired path is
+    not written, so an unrelated refusal never earns the new-instance repair.
+    """
+
+    revived = {
+        item.path
+        for item in plan
+        if item.action == "replace" and item.consequence == "re_adds_retired"
+    }
+    return any(
+        item.code.endswith(_REVIVAL_REFUSALS)
+        and item.subject is not None
+        and item.subject.artifact_path in revived
+        for item in diagnostics
+    )
+
+
 def _kit_refusal_detail(
     diagnostics: Iterable[CompilerDiagnostic], tree: Mapping[str, bytes], *, removal: bool
 ) -> str:
-    """Each refusal by code and its message; an incomplete closure as a summary."""
+    """Each refusal by code and its message, once with a count when it repeats; an
+    incomplete closure as a summary."""
 
+    counted: dict[str, int] = {}
+    for item in diagnostics:
+        line = (
+            _closure_summary(item.message, tree, removal=removal)
+            if item.code == _INCOMPLETE_CLOSURE
+            else f"{item.code}: {item.message}"
+        )
+        counted[line] = counted.get(line, 0) + 1
     return "Refused: " + "; ".join(
-        _closure_summary(item.message, tree, removal=removal)
-        if item.code == _INCOMPLETE_CLOSURE
-        else f"{item.code}: {item.message}"
-        for item in diagnostics
+        line if count == 1 else f"{line} ({count:,} definitions)" for line, count in counted.items()
     )
 
 
@@ -2132,6 +2173,7 @@ def _submit(
                 status="blocked",
                 plan=plan,
                 proposal_id=admitted.proposal_id,
+                proposal_open=True,
                 detail="Accepted state moved during kit add; preview the kit again.",
                 coordinate=mode.coordinate,
                 **described,  # type: ignore[arg-type]
@@ -2147,9 +2189,21 @@ def _submit(
         plan=plan,
         detail=None
         if admitted.admitted
-        else _kit_refusal_detail(admitted.diagnostics, candidate, removal=removal),
+        else _kit_refusal_detail(admitted.diagnostics, candidate, removal=removal)
+        + (KIT_RETIRED_REPAIR if _refused_revival(admitted.diagnostics, plan) else ""),
         coordinate=mode.coordinate,
         **described,  # type: ignore[arg-type]
+    )
+
+
+def _policy_requires_approval(tree: Mapping[str, bytes]) -> bool:
+    """Whether the accepted approval policy makes every proposal here wait for an approver."""
+
+    content = tree.get(APPROVAL_POLICY_PATH)
+    return (
+        content is not None
+        and parse_approval_policy(content, path=APPROVAL_POLICY_PATH).mode
+        == "independent_approval_required"
     )
 
 
@@ -3003,6 +3057,8 @@ def _add_kit(
                 status="blocked"
                 if any(step.action == "blocked" for step in pending)
                 else "awaiting_providers",
+                # The installs await an approver, and so will the definitions.
+                approval_required=any(step.action == "awaiting_approval" for step in pending),
                 detail="the kit's definitions are proposed once its bundled providers are "
                 "installed: "
                 + "; ".join(
@@ -3221,6 +3277,9 @@ def _add_kit(
             kit_id=manifest.kit_id,
             version=manifest.version,
             status="would_propose",
+            # Nothing is evaluated before the installs, so the instance's
+            # approval policy answers whether they and the definitions wait.
+            approval_required=_policy_requires_approval(tree),
             plan=plan,
             detail=KIT_PREVIEW_AWAITING_INSTALL,
             coordinate=mode.coordinate,
@@ -3389,7 +3448,7 @@ def _remove_kit(
             + ", ".join(edited),
             coordinate=mode.coordinate,
         )
-    return _submit(
+    result = _submit(
         instance,
         mode,
         kit_id=request.kit_id,
@@ -3405,6 +3464,23 @@ def _remove_kit(
         removal=True,
         may_activate=may_activate,
     )
+    if result.status == "would_propose" and result.detail is None:
+        retires = any(item.action == "retire" for item in plan)
+        result = result.model_copy(
+            update={"detail": KIT_REMOVAL_ONE_WAY if retires else KIT_REMOVAL_RETIRES_NOTHING}
+        )
+    return result
+
+
+#: What a removal preview says before it is committed (morning-rulings-1116 (8)):
+#: a retired definition is never revived in this release.
+KIT_REMOVAL_ONE_WAY = (
+    "one-way: the definitions this removal retires cannot be added back in this release"
+)
+#: A removal that retires nothing (every path kept, a Documents-only kit).
+#: A member retired earlier by ordinary authoring still blocks a re-add, so this
+#: promises nothing about adding the kit again.
+KIT_REMOVAL_RETIRES_NOTHING = "retires nothing"
 
 
 #: Why a kit removal keeps a pair kind's endpoint ClaimType (R13): a Subject-valued
@@ -3584,21 +3660,45 @@ def service_kit_status(instance: PlaybillInstance) -> KitStatus:
 def _pending_resumes(
     instance: PlaybillInstance, resumes: tuple[KitResumeStatus, ...]
 ) -> tuple[KitResumeStatus, ...]:
-    """Each resume row, a proposed one marked when its proposal is still open.
+    """Each resume row still pending: a proposed row only while its proposal is open
+    or awaits readmission.
 
-    One indexed proposal lookup per proposed row (at most one row per kit).
+    A proposed row whose proposal closed (accepted, rejected or withdrawn) has
+    nothing left to say: the kit is installed, removed or never landed, which the
+    installed kits answer. One whose proposal awaits readmission stays, marked, so
+    the add is re-run (morning-rulings-1116 (9)). One indexed proposal lookup per
+    proposed row (at most one row per kit).
     """
 
-    from cruxible_core.service.proposals.proposals import proposal_is_open
+    from cruxible_core.service.kit_resume import recorded_content_digest
+    from cruxible_core.service.proposals.proposals import proposal_inventory_status
 
-    return tuple(
-        resume.model_copy(update={"proposal_open": True})
-        if resume.state == "proposed"
-        and resume.proposal_id is not None
-        and proposal_is_open(instance, resume.proposal_id)
-        else resume
-        for resume in resumes
-    )
+    pending = []
+    for resume in resumes:
+        if resume.state != "proposed":
+            pending.append(resume)
+            continue
+        status = (
+            None
+            if resume.proposal_id is None
+            else proposal_inventory_status(instance, resume.proposal_id)
+        )
+        if status == "open":
+            pending.append(resume.model_copy(update={"proposal_open": True}))
+        elif status == "awaiting_readmit":
+            # Its repair names `base` only for the bundled base kit, told by its
+            # content digest: one body read, for the base kit's row only.
+            digest = (
+                recorded_content_digest(instance, resume.kit_id)
+                if resume.kit_id == BASE_KIT_ID
+                else None
+            )
+            pending.append(
+                resume.model_copy(
+                    update={"proposal_awaiting_readmit": True, "content_digest": digest}
+                )
+            )
+    return tuple(pending)
 
 
 def _bundled_comparison(kit: InstalledKit) -> InstalledKit:

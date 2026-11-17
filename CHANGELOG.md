@@ -594,6 +594,53 @@ quickstart and concepts pages.
 - **`link --guides` on an unregistered page names the caller's own repair**:
   `cx.files.add(...)` on the SDK, and on MCP the CLI command marked as the
   CLI's (no MCP tool edits the file catalog).
+- **`kit status` stops saying `kit add proposed` once the proposal closes.**
+  A kit add that stopped at its proposal (the base kit under independent
+  approval, or a resumed kit add) was listed as proposed after it was accepted,
+  rejected or the kit was removed; it is now listed only while its proposal is
+  open or awaits readmission, on the CLI (`--offline` too), SDK and MCP alike.
+  One awaiting readmission says so and names the `kit add` to re-run: `kit add
+  base` only for the bundled base kit (by id and content digest), otherwise a
+  placeholder with the recorded origin beside it.
+- **A kit add whose provider installs await an approver says so.** Its preview
+  and its `awaiting_providers` commit answered `approval_required: false`
+  under `independent_approval_required`; both now answer true.
+- **Removing and re-adding a kit say what happens.** The removal preview says
+  the definitions it retires cannot be added back in this release (or
+  `retires nothing`). A `kit add` refused for
+  re-adding retired definitions prints each refusal once with a count, plus the
+  repair, instead of one refusal per definition. A refused kit change prints
+  no `Proposal:` line (`--json` keeps the id); one left open because accepted
+  state moved after admission names it and how to withdraw it
+  (`proposal_open`). The plan says `re-adds a retired definition` rather than
+  `you retired`.
+- **`vocabulary export` keeps what a field means in sight.** It left out
+  `evidence_requirement: captured` and `permitted_roles` whenever lowering
+  could derive them, and spelled reserved contracts `playbill.`; it now writes
+  `captured`, every field's `permitted_roles` (a sole `[normative]` too), and
+  `cruxible.` names, and export then plan on an untouched vocabulary
+  still changes nothing. `proposal list` names an awaiting-readmit proposal's
+  changed paths by their public kind-qualified names (`--json` keeps the
+  paths).
+- **One note reads one status.** `get REF --detail backlinks` (CLI, MCP
+  `cruxible_get`, SDK `get`) said `[unknown]` for a note section that
+  `backlinks` called `[unchanged]`; it now checks section rows against the
+  workspace the same way.
+- **Reviews show what a new field, guidance link or note says.** `proposal
+  review` printed only `created` for them. A new ClaimType now shows its value
+  type, cardinality, kinds, roles, evidence requirement and admitted contracts
+  (public names); a Document its title and links (`guides ClaimType:...`); a
+  note its section and the Subjects it is about. A note's section Capture now
+  counts in the review's access decision, so a reader it is withheld from sees
+  neither version's file or heading path. The review cache rebuilds once
+  (format 6).
+- **A note's handle reads with `get`.** `get NOTE-...` (or `Note:NOTE-...`),
+  the handle `link` and `backlinks` print, answered `ref_not_found`; it now
+  answers a note card (file, section, the Subjects it is about, the Capture of
+  its bytes) on the CLI, MCP `cruxible_get` and SDK `get`, with `history` and
+  `proof` too. A reader the section's Capture is withheld from sees the note,
+  its Subjects and the Capture handle without the file, heading path or section
+  digest, with a `withheld` notice, as `backlinks` does.
 
 ## [0.3.2] - 2026-08-06
 

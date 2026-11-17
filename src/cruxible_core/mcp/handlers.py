@@ -1699,6 +1699,11 @@ def handle_playbill_get(
     result = _daemon_call(
         lambda client: client.get(instance_id, request=request), operation_name="cruxible_get"
     )
+    if isinstance(result, GetResult) and result.backlinks is not None:
+        from cruxible_client.authoring.backlink_sections import observe_get_drift
+
+        # Section rows checked against the MCP workspace, as cruxible_backlinks does.
+        result = observe_get_drift(result, optional_mcp_workspace_root())
     if (
         isinstance(result, GetResult)
         and result.kind == "claim"

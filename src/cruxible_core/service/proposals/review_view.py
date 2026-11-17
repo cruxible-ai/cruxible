@@ -10,12 +10,15 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Mapping
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from pydantic import BaseModel
 
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
-from cruxible_client.contracts.claim_types import claim_type_path
+from cruxible_client.contracts.claim_types import ClaimType, claim_type_path
+from cruxible_client.contracts.documents import DocumentShell
+from cruxible_client.contracts.errors import FormatError
+from cruxible_client.contracts.notes import Note
 from cruxible_client.contracts.operational_reads import GetCaptureErasure, MandateScope
 from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.procedure_mandates import ProcedureMandate
@@ -25,18 +28,24 @@ from cruxible_client.contracts.proposal_summary import (
     REVIEW_CITED_TEXT_MAX_CHARS,
     ReviewChange,
     ReviewCitation,
+    ReviewClaimTypeDefinition,
     ReviewDefinition,
     ReviewDefinitionDetail,
+    ReviewDocumentDefinition,
     ReviewFieldChange,
     ReviewLineBinding,
     ReviewLineDefinition,
+    ReviewLink,
     ReviewMandateDefinition,
+    ReviewNoteDefinition,
     ReviewRunbookDefinition,
     ReviewSummaryValue,
     ReviewTriggerDefinition,
 )
+from cruxible_client.contracts.public_names import public_name
 from cruxible_client.contracts.read_values import summary_value, whole_value_read
 from cruxible_client.contracts.runbooks import Runbook
+from cruxible_client.contracts.shapes import coerce_field_type, render_type
 from cruxible_client.contracts.text_display import short_provider_build
 from cruxible_client.contracts.triggers import ActionTarget, LineTarget, RunbookTarget, Trigger
 from cruxible_client.contracts.write import ChangeOutcome, capture_handle
@@ -455,8 +464,61 @@ def _trigger_detail(trigger: Trigger) -> ReviewTriggerDefinition:
     return ReviewTriggerDefinition(schedule=schedule_summary(trigger.schedule), target=shown)
 
 
+def _claim_type_detail(claim_type: ClaimType) -> ReviewClaimTypeDefinition:
+    """A new field's type, kinds, roles and admitted evidence, names public."""
+
+    try:
+        value: str = render_type(coerce_field_type(cast(Any, claim_type.value)))
+    except (FormatError, ValueError):
+        value = canonical_json(claim_type.model_dump(mode="json")["value"])
+    default = claim_type.default_role
+    roles = tuple(claim_type.permitted_roles)
+    if default in roles:
+        roles = (default, *(role for role in roles if role != default))
+    evidence: list[str] = []
+    for rule in claim_type.evidence_admission_policy.rules:
+        for item in rule.capture_contracts:
+            name = public_name(item.target.qualified).removeprefix("CaptureContract:")
+            if name not in evidence:
+                evidence.append(name)
+        evidence.extend(
+            f"family:{family}"
+            for family in rule.capture_contract_families
+            if f"family:{family}" not in evidence
+        )
+    return ReviewClaimTypeDefinition(
+        value=value,
+        cardinality=claim_type.cardinality,
+        subject_kinds=tuple(claim_type.allowed_subject_kinds),
+        roles=roles,
+        default_role=claim_type.default_role,
+        evidence_requirement=claim_type.evidence_requirement,
+        evidence=tuple(evidence),
+        description=None if claim_type.description is None else _value(claim_type.description, 512),
+    )
+
+
+def _document_detail(shell: DocumentShell) -> ReviewDocumentDefinition:
+    return ReviewDocumentDefinition(
+        title=shell.title,
+        document_kind=shell.document_kind,
+        links=tuple(
+            ReviewLink(relation=link.relation, target=link.target_identity) for link in shell.links
+        ),
+    )
+
+
+def _note_detail(note: Note) -> ReviewNoteDefinition:
+    return ReviewNoteDefinition(
+        file=note.source_id,
+        section=note.section,
+        about=tuple(item.name for item in note.about),
+    )
+
+
 def _detail(artifact_kind: str, artifact: Mapping[str, Any]) -> ReviewDefinitionDetail | None:
-    """The typed text block of a Line, Mandate, Runbook or Trigger; None for other kinds."""
+    """The typed text block of a Line, Mandate, Runbook, Trigger, ClaimType, Document or
+    note; None for other kinds."""
 
     parse: dict[str, Callable[[Mapping[str, Any]], BaseModel]] = {
         "line": lambda item: _line_detail(LineSpec.model_validate(item)),
@@ -466,6 +528,9 @@ def _detail(artifact_kind: str, artifact: Mapping[str, Any]) -> ReviewDefinition
             steps=tuple(_step(step) for step in runbook.steps),
         ),
         "trigger": lambda item: _trigger_detail(Trigger.model_validate(item)),
+        "claim-type": lambda item: _claim_type_detail(ClaimType.model_validate(item)),
+        "document": lambda item: _document_detail(DocumentShell.model_validate(item)),
+        "note": lambda item: _note_detail(Note.model_validate(item)),
     }
     builder = parse.get(artifact_kind)
     if builder is None:
@@ -497,7 +562,14 @@ def definition_row(
     action: Literal["created", "revised", "retired"] = _ACTION[disposition]
     if action == "revised" and not _live(new):
         action = "retired"
-    detail = None if action == "retired" or new is None else _detail(artifact_kind, new)
+    detail = (
+        None
+        if action == "retired"
+        or new is None
+        # A revised ClaimType lists its changed fields below instead.
+        or (artifact_kind == "claim-type" and action != "created")
+        else _detail(artifact_kind, new)
+    )
     changed: tuple[ReviewFieldChange, ...] = ()
     if action == "revised" and before is not None and after is not None:
         changed = tuple(

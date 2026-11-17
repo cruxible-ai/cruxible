@@ -1150,6 +1150,10 @@ class KitChangeResult(_Strict):
         "would_block",
     ]
     proposal_id: str | None = None
+    #: A blocked change whose proposal was admitted and stays open (accepted state
+    #: moved before it could land): withdraw it, or preview the kit again. False
+    #: for a refusal, whose ``proposal_id`` (if any) names only the refused record.
+    proposal_open: bool = Field(default=False, exclude_if=lambda value: not value)
     approval_required: bool = False
     #: From the installed version to this release's (None for a removal).
     transition: KitTransition | None = None
@@ -1239,8 +1243,9 @@ class InstalledKit(_Strict):
 
 
 #: A recorded kit add waiting on its provider installs: ``waiting`` (an install
-#: has not activated yet), ``proposed`` (the definitions were proposed, or
-#: landed, once they did), ``blocked`` (proposing them refused; ``detail`` says why).
+#: has not activated yet), ``proposed`` (the definitions were proposed once they
+#: did; kit status lists it while that proposal is open or awaits readmission),
+#: ``blocked`` (proposing them refused; ``detail`` says why).
 KitResumeState = Literal["waiting", "proposed", "blocked"]
 
 
@@ -1260,9 +1265,16 @@ class KitResumeStatus(_Strict):
     proposal_id: str | None = None
     #: That proposal is still open (awaiting approval or activation).
     proposal_open: bool = Field(default=False, exclude_if=lambda value: not value)
+    #: That proposal awaits readmission: the head changed what it touches, so the
+    #: kit add is run again (kit add proposes it at the head).
+    proposal_awaiting_readmit: bool = Field(default=False, exclude_if=lambda value: not value)
     detail: str | None = None
     #: Where the bundle came from, as the kit add recorded it.
     source: str | None = None
+    #: The recorded release's content digest (what kit add pins), set for the base
+    #: kit's row awaiting readmit, so a client tells the bundled base kit from
+    #: another kit labelled the same way before naming ``kit add base``.
+    content_digest: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class KitStatus(_Strict):

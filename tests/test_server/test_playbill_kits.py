@@ -1777,6 +1777,10 @@ def test_a_kit_install_and_removal_preview_by_default_and_write_nothing(
     )
     assert removal.status == "would_propose" and removal.proposal_id is None
     assert {item.action for item in removal.plan} == {"retire"}
+    # Said before it is committed: a removed kit cannot come back in this release.
+    assert removal.detail == (
+        "one-way: the definitions this removal retires cannot be added back in this release"
+    )
     assert [
         kit.kit_id for kit in _installed(playbill_api.playbill_kit_status(consumer.instance_id))
     ] == ["acme"]
@@ -2977,3 +2981,195 @@ def test_a_kit_removal_is_read_from_its_recorded_transition_then_its_rationale(
     assert author_repair(source).operation == (  # type: ignore[arg-type]
         "cruxible.kit.remove" if removal else "cruxible.kit.add"
     )
+
+
+def test_kit_status_drops_a_kit_add_once_its_proposal_lands(
+    strict_worlds: tuple[_World, _World],
+) -> None:
+    """B2/coldcli-02: kit status kept saying "kit add proposed" after the proposal landed."""
+
+    _publisher, consumer = strict_worlds
+    # Under independent approval creation's base kit add stopped at its proposal.
+    (base,) = playbill_api.playbill_kit_status(consumer.instance_id).resumes
+    assert base.kit_id == "base" and base.state == "proposed" and base.proposal_open
+    assert base.proposal_id is not None
+
+    consumer.approve(base.proposal_id)
+
+    status = playbill_api.playbill_kit_status(consumer.instance_id)
+    assert status.resumes == ()
+    assert [kit.kit_id for kit in status.kits] == ["base"]
+
+
+def test_re_adding_retired_definitions_refuses_once_counted_with_its_repair(
+    worlds: tuple[_World, _World],
+) -> None:
+    """sec N1: the re-add repeated one revival refusal per definition, said "you
+    retired" and printed a Proposal line. The law still refuses (a retired definition
+    is not revived in 0.5.0); the answer says it once per kind, counted, with the
+    repair, and lands nothing."""
+
+    publisher, consumer = worlds
+    publisher.author(_claim_type(SEATS, {"type": "integer"}), _claim_type(PLAN, {"type": "string"}))
+    release = publisher.build("1.0.0")
+    consumer.add(release)
+    consumer.settle(
+        playbill_api.playbill_kit_remove(
+            consumer.instance_id, KitRemoveRequest(kit_id="acme", dry_run=False)
+        )
+    )
+    before = consumer.tree()
+    expected = (
+        "Refused: cruxible.claim_type.lifecycle_invalid: A retired ClaimType cannot be revived "
+        "or revised. (2 definitions). Definitions retired here cannot be added back in this "
+        "release: add the kit on a new instance"
+    )
+
+    preview = _kit_preview(consumer, KitAddRequest(bundle=release, source="test"))
+    assert preview.status == "would_block" and preview.detail == expected
+    assert {item.consequence for item in preview.plan} == {"re_adds_retired"}
+    committed = playbill_api.playbill_kit_add(
+        consumer.instance_id, KitAddRequest(bundle=release, source="test", dry_run=False)
+    )
+
+    assert committed.status == "blocked" and committed.detail == expected
+    assert not committed.proposal_open
+    assert consumer.tree() == before
+
+
+def test_a_repeated_kit_refusal_prints_once_with_its_count() -> None:
+    """sec N1: one revival refusal per retired definition ran together on one line."""
+
+    from cruxible_client.contracts.diagnostics import CompilerDiagnostic
+    from cruxible_core.service.kits import _kit_refusal_detail
+
+    def refusal(kind: str) -> CompilerDiagnostic:
+        return CompilerDiagnostic(
+            code=f"cruxible.{kind}.revival_refused",
+            severity="error",
+            message=f"A retired {kind} cannot be revived.",
+        )
+
+    detail = _kit_refusal_detail(
+        [refusal("subject_kind")] * 10 + [refusal("trigger")], {}, removal=False
+    )
+
+    assert detail == (
+        "Refused: cruxible.subject_kind.revival_refused: A retired subject_kind cannot be "
+        "revived. (10 definitions); cruxible.trigger.revival_refused: A retired trigger "
+        "cannot be revived."
+    )
+
+
+def test_kit_status_keeps_a_kit_add_whose_proposal_awaits_readmit(
+    strict_worlds: tuple[_World, _World], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review F-009: an overlapping head change leaves the add's proposal awaiting
+    readmit; status kept only exactly-open proposals and dropped it."""
+
+    from cruxible_core.service.proposals import proposals
+
+    _publisher, consumer = strict_worlds
+    monkeypatch.setattr(
+        proposals, "proposal_inventory_status", lambda _instance, _id: "awaiting_readmit"
+    )
+
+    (base,) = playbill_api.playbill_kit_status(consumer.instance_id).resumes
+
+    assert base.kit_id == "base" and base.state == "proposed"
+    assert base.proposal_awaiting_readmit and not base.proposal_open
+
+
+def test_kit_status_carries_the_base_kit_digest_only_where_its_repair_is_printed(
+    strict_worlds: tuple[_World, _World], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Round-two F-009: a client tells the bundled base kit by id and content digest;
+    the recorded body is read only for the base kit's row awaiting readmit."""
+
+    from cruxible_core.kits.base_kit_pin import BASE_KIT_PIN
+    from cruxible_core.service.proposals import proposals
+
+    _publisher, consumer = strict_worlds
+    (open_row,) = playbill_api.playbill_kit_status(consumer.instance_id).resumes
+    assert open_row.proposal_open and open_row.content_digest is None
+    monkeypatch.setattr(
+        proposals, "proposal_inventory_status", lambda _instance, _id: "awaiting_readmit"
+    )
+    (base,) = playbill_api.playbill_kit_status(consumer.instance_id).resumes
+    assert (base.kit_id, base.content_digest) == (BASE_KIT_PIN.kit_id, BASE_KIT_PIN.content_digest)
+
+
+def test_a_removal_that_retires_nothing_promises_no_re_add(
+    worlds: tuple[_World, _World],
+) -> None:
+    """Round-four finding 1: a member retired earlier by ordinary authoring is skipped
+    by removal yet still blocks a re-add, so the preview says only `retires nothing`."""
+
+    publisher, consumer = worlds
+    publisher.author(_claim_type(SEATS, {"type": "integer"}))
+    consumer.add(publisher.build("1.0.0"))
+    seats = consumer.claim_type(SEATS)
+    consumer.author(
+        successions=(
+            seats.model_copy(
+                update={
+                    "lifecycle": ArtifactLifecycle(
+                        predecessor_digest=claim_type_digest(seats).tagged, state="retired"
+                    )
+                }
+            ),
+        )
+    )
+
+    preview = playbill_api.playbill_kit_remove(
+        consumer.instance_id, KitRemoveRequest(kit_id="acme")
+    )
+
+    assert preview.status == "would_propose"
+    assert not any(item.action == "retire" for item in preview.plan)
+    assert preview.detail == "retires nothing"
+
+
+def test_the_new_instance_repair_follows_a_refused_revival_not_a_kept_path() -> None:
+    """Round-four finding 2: a kept retired path carries re_adds_retired without being
+    written, so an unrelated refusal (a dependent Claim's incomplete closure on the
+    replaced path) must not tell the operator to use a new instance."""
+
+    from cruxible_client.contracts.diagnostics import CompilerDiagnostic
+    from cruxible_client.contracts.kits import KitPathPlan
+    from cruxible_client.contracts.semantic import SemanticAddress
+    from cruxible_core.service.kits import _refused_revival
+
+    seats, plan_path = _path(SEATS), _path(PLAN)
+
+    def refusal(code: str, path: str) -> CompilerDiagnostic:
+        return CompilerDiagnostic(
+            code=code,
+            severity="error",
+            message="refused",
+            subject=SemanticAddress.whole_artifact(path),
+        )
+
+    mixed = (
+        KitPathPlan(
+            path=seats,
+            action="keep",
+            identity=f"ClaimType:{SEATS}",
+            consequence="re_adds_retired",
+        ),
+        KitPathPlan(path=plan_path, action="replace", identity=f"ClaimType:{PLAN}"),
+    )
+    closure = refusal("cruxible.change_set.incomplete_closure", plan_path)
+    assert not _refused_revival([closure], mixed)
+    assert not _refused_revival([refusal("cruxible.claim_type.lifecycle_invalid", seats)], mixed)
+
+    revived = (
+        KitPathPlan(
+            path=seats,
+            action="replace",
+            identity=f"ClaimType:{SEATS}",
+            consequence="re_adds_retired",
+        ),
+    )
+    assert _refused_revival([refusal("cruxible.claim_type.lifecycle_invalid", seats)], revived)
+    assert not _refused_revival([closure], revived)

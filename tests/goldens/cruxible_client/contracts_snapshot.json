@@ -79726,9 +79726,91 @@
             "title": "ReviewCitation",
             "type": "object"
           },
+          "ReviewClaimTypeDefinition": {
+            "additionalProperties": false,
+            "description": "A new field: what it holds and what may back it.",
+            "properties": {
+              "cardinality": {
+                "enum": [
+                  "one",
+                  "many"
+                ],
+                "title": "Cardinality",
+                "type": "string"
+              },
+              "default_role": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Default Role"
+              },
+              "description": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ReviewSummaryValue"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "evidence": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Evidence",
+                "type": "array"
+              },
+              "evidence_requirement": {
+                "title": "Evidence Requirement",
+                "type": "string"
+              },
+              "kind": {
+                "const": "claim-type",
+                "default": "claim-type",
+                "title": "Kind",
+                "type": "string"
+              },
+              "roles": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Roles",
+                "type": "array"
+              },
+              "subject_kinds": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Subject Kinds",
+                "type": "array"
+              },
+              "value": {
+                "title": "Value",
+                "type": "string"
+              }
+            },
+            "required": [
+              "value",
+              "cardinality",
+              "subject_kinds",
+              "roles",
+              "evidence_requirement"
+            ],
+            "title": "ReviewClaimTypeDefinition",
+            "type": "object"
+          },
           "ReviewDefinition": {
             "additionalProperties": false,
-            "description": "One proposed definition: its kind, name and action, and its typed fields.\n\n``detail`` is the definition as it would stand (Line, ProcedureMandate,\nRunbook, Trigger); other kinds, and retirements, carry none. ``changed``\nlists a revision's changed fields.",
+            "description": "One proposed definition: its kind, name and action, and its typed fields.\n\n``detail`` is the definition as it would stand (Line, ProcedureMandate,\nRunbook, Trigger, Document, note; a ClaimType when created); other kinds,\nand retirements, carry none. ``changed`` lists a revision's changed fields.",
             "properties": {
               "action": {
                 "enum": [
@@ -79752,7 +79834,10 @@
                   {
                     "discriminator": {
                       "mapping": {
+                        "claim-type": "#/$defs/ReviewClaimTypeDefinition",
+                        "document": "#/$defs/ReviewDocumentDefinition",
                         "line": "#/$defs/ReviewLineDefinition",
+                        "note": "#/$defs/ReviewNoteDefinition",
                         "procedure-mandate": "#/$defs/ReviewMandateDefinition",
                         "runbook": "#/$defs/ReviewRunbookDefinition",
                         "trigger": "#/$defs/ReviewTriggerDefinition"
@@ -79771,6 +79856,15 @@
                       },
                       {
                         "$ref": "#/$defs/ReviewTriggerDefinition"
+                      },
+                      {
+                        "$ref": "#/$defs/ReviewClaimTypeDefinition"
+                      },
+                      {
+                        "$ref": "#/$defs/ReviewDocumentDefinition"
+                      },
+                      {
+                        "$ref": "#/$defs/ReviewNoteDefinition"
                       }
                     ]
                   },
@@ -79796,6 +79890,40 @@
               "action"
             ],
             "title": "ReviewDefinition",
+            "type": "object"
+          },
+          "ReviewDocumentDefinition": {
+            "additionalProperties": false,
+            "description": "A Document as it would stand: its title and what it is linked to.",
+            "properties": {
+              "document_kind": {
+                "title": "Document Kind",
+                "type": "string"
+              },
+              "kind": {
+                "const": "document",
+                "default": "document",
+                "title": "Kind",
+                "type": "string"
+              },
+              "links": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/ReviewLink"
+                },
+                "title": "Links",
+                "type": "array"
+              },
+              "title": {
+                "title": "Title",
+                "type": "string"
+              }
+            },
+            "required": [
+              "title",
+              "document_kind"
+            ],
+            "title": "ReviewDocumentDefinition",
             "type": "object"
           },
           "ReviewFieldChange": {
@@ -79970,6 +80098,25 @@
             "title": "ReviewLineDefinition",
             "type": "object"
           },
+          "ReviewLink": {
+            "additionalProperties": false,
+            "properties": {
+              "relation": {
+                "title": "Relation",
+                "type": "string"
+              },
+              "target": {
+                "title": "Target",
+                "type": "string"
+              }
+            },
+            "required": [
+              "relation",
+              "target"
+            ],
+            "title": "ReviewLink",
+            "type": "object"
+          },
           "ReviewMandateDefinition": {
             "additionalProperties": false,
             "properties": {
@@ -80062,6 +80209,43 @@
               "expires_at"
             ],
             "title": "ReviewMandateDefinition",
+            "type": "object"
+          },
+          "ReviewNoteDefinition": {
+            "additionalProperties": false,
+            "description": "A note as it would stand: the section, and the Subjects it is about.",
+            "properties": {
+              "about": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "About",
+                "type": "array"
+              },
+              "file": {
+                "title": "File",
+                "type": "string"
+              },
+              "kind": {
+                "const": "note",
+                "default": "note",
+                "title": "Kind",
+                "type": "string"
+              },
+              "section": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Section",
+                "type": "array"
+              }
+            },
+            "required": [
+              "file",
+              "section",
+              "about"
+            ],
+            "title": "ReviewNoteDefinition",
             "type": "object"
           },
           "ReviewRunbookDefinition": {

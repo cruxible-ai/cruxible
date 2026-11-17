@@ -28,6 +28,7 @@ from cruxible_client.contracts import AcceptedCoordinate as ClientCoordinate
 from cruxible_client.contracts.approval_policy import ApprovalPolicy
 from cruxible_client.contracts.artifacts import ArtifactIdentity, parse_artifact_identity
 from cruxible_client.contracts.capabilities import capability_ref_for_identity
+from cruxible_client.contracts.capture_reads import BodyRestricted
 from cruxible_client.contracts.captures import (
     CaptureContractAny as CaptureContract,
 )
@@ -98,6 +99,7 @@ from cruxible_client.contracts.get_reads import (
     GetKindEnd,
     GetLineRuns,
     GetNone,
+    GetNoteCard,
     GetPairEnd,
     GetPairs,
     GetPendingProposal,
@@ -254,6 +256,7 @@ _TYPED_PREFIXES: Mapping[str, GetRefKind] = {
     "ProcedureRuntimePolicy": "procedure_runtime_policy",
     "Provider": "provider",
     "Runbook": "runbook",
+    "Note": "note",
 }
 # The projection's artifact kind for each reference kind, and back.
 _PROJECTION_KIND: Mapping[GetRefKind, str] = {
@@ -275,6 +278,7 @@ _PROJECTION_KIND: Mapping[GetRefKind, str] = {
     "contract": "contract",
     "capability": "capability",
     "runbook": "runbook",
+    "note": "note",
 }
 _REF_KIND = {value: key for key, value in _PROJECTION_KIND.items()}
 _QUALIFIER: Mapping[GetRefKind, str] = {
@@ -296,6 +300,7 @@ _QUALIFIER: Mapping[GetRefKind, str] = {
     "contract": "Contract",
     "capability": "Capability",
     "runbook": "Runbook",
+    "note": "Note",
 }
 _NAMED_KINDS: tuple[GetRefKind, ...] = (
     "document",
@@ -330,6 +335,7 @@ _DISPLAY_PREFIX: Mapping[GetRefKind, str] = {
     "contract": "Contract",
     "capability": "Capability",
     "runbook": "Runbook",
+    "note": "Note",
 }
 # The orient section that lists each operational kind, named by a refusal
 # that has no nearer candidate to offer.
@@ -480,7 +486,7 @@ def resolve_get_ref(
             access=access,
         )
     except ReadRefusalError as exc:
-        stored = stored_name(value)
+        stored = _stored_spelling(value)
         if exc.error_code != "cruxible.get.ref_not_found" or stored == value:
             raise
         try:
@@ -495,6 +501,16 @@ def resolve_get_ref(
             )
         except ReadRefusalError:
             raise exc from None
+
+
+def _stored_spelling(value: str) -> str:
+    """A printed reserved name as stored; a version suffix (``Contract:NAME@N``, as
+    proposal list and cards print a versioned Contract) is kept apart from the name."""
+
+    head, at, version = value.rpartition("@")
+    if at and head and version.isdigit():
+        return f"{stored_name(head)}@{version}"
+    return stored_name(value)
 
 
 def _resolve_get_ref_as_written(
@@ -572,6 +588,9 @@ def _resolve_get_ref_as_written(
                 raise _not_found("artifact at path", value, (), surface=surface)
         if value.startswith("CLM-"):
             return _resolve_typed(projection, "claim", value, ref=value, surface=surface)
+        if value.startswith("NOTE-"):
+            # The handle link and backlinks print for a note.
+            return _resolve_note(projection, value, ref=value, surface=surface)
         if "/" in value:
             return _resolve_typed(
                 projection,
@@ -802,6 +821,8 @@ def _resolve_typed(
 ) -> ResolvedRef:
     if kind == "claim":
         return _resolve_claim(projection, name.removeprefix("Claim:"), ref=ref, surface=surface)
+    if kind == "note":
+        return _resolve_note(projection, name.removeprefix("Note:"), ref=ref, surface=surface)
     if kind == "claim_type":
         return _resolve_claim_type(projection, name, ref=ref, surface=surface)
     if kind == "provider":
@@ -855,6 +876,7 @@ def _resolve_typed(
         "approval_policy": "ApprovalPolicy",
         "procedure_runtime_policy": "ProcedureRuntimePolicy",
         "runbook": "Runbook",
+        "note": "Note",
     }[kind]
     candidates = tuple(
         item if kind == "subject" else f"{_DISPLAY_PREFIX[kind]}:{item}"
@@ -1018,6 +1040,32 @@ def _names_of(projection: Any, kind: GetRefKind) -> tuple[str, ...]:
     return tuple(
         _name(row.identity) for row in projection.typed.envelopes(kind=_PROJECTION_KIND[kind])
     )
+
+
+_NOTE_ID = re.compile(r"^NOTE-[0-9a-f]{32}$")
+
+
+def _resolve_note(projection: Any, name: str, *, ref: str, surface: ReadSurface) -> ResolvedRef:
+    """A note's full handle: one indexed envelope lookup; a miss names no candidates.
+
+    As a full Claim id: a note handle is an opaque digest, so a nearest-name
+    search would read every note to compare digests that mean nothing alike.
+    """
+
+    if not _NOTE_ID.fullmatch(name):
+        raise ReadRefusalError(
+            "cruxible.get.ref_malformed",
+            f"{ref!r} is not a note handle",
+            candidates=(),
+            repair=RepairOperation(operation="cruxible.orient"),
+            repair_line="Pass NOTE- plus 32 lowercase hex, as link and backlinks print it",
+            context={"ref": ref},
+        )
+    identity = f"Note:{name}"
+    row = _envelope(projection, identity)
+    if row is None:
+        raise _not_found("note", ref, (), surface=surface)
+    return ResolvedRef("note", identity, _display("note", identity), row.path)
 
 
 def _resolve_claim(projection: Any, name: str, *, ref: str, surface: ReadSurface) -> ResolvedRef:
@@ -2255,6 +2303,63 @@ def _capability_card(
                 _render_get(surface, resolved.display, "history"),
             ),
         }
+    )
+
+
+def _note_withheld(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    capture_digest: str,
+    access: BodyAccessContext,
+) -> BodyRestricted | None:
+    """The C14 notice when the note's section Capture is withheld from ``access``.
+
+    The backlinks read's rule: decided from the Capture's kind version (maintained
+    metadata) before anything of the Capture is read.
+    """
+
+    from cruxible_core.service.evidence.body_access import capture_access_resolver
+
+    withheld, notice = capture_access_resolver(instance, coordinate).withheld(
+        (capture_digest,), access
+    )
+    return notice if capture_digest in withheld else None
+
+
+def _note_card(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    resolved: ResolvedRef,
+    *,
+    surface: ReadSurface,
+    access: BodyAccessContext,
+) -> GetNoteCard:
+    """One note: its section, the Subjects it is about and the Capture of its bytes.
+
+    A reader the section's Capture is withheld from sees the note, its Subjects
+    and the Capture handle, not the file or heading path (C14), as backlinks.
+    """
+
+    from cruxible_client.contracts.notes import Note
+    from cruxible_client.contracts.write import capture_handle
+
+    with instance.bind_accepted_projection(coordinate) as projection:
+        note = cast(Note, projection.typed.source(resolved.identity))
+    about = tuple(item.name for item in note.about)
+    handle = capture_handle(note.capture_digest)
+    withheld = _note_withheld(instance, coordinate, note.capture_digest, access)
+    return GetNoteCard(
+        note=resolved.display,
+        file=None if withheld else note.source_id,
+        section=() if withheld else tuple(note.section),
+        about=about,
+        capture=handle,
+        lifecycle=note.lifecycle.state,
+        withheld=withheld,
+        next=(
+            _render_backlinks(surface, about[0], at=None),
+            _render_get(surface, handle, "summary"),
+        ),
     )
 
 
@@ -3548,17 +3653,28 @@ def _proof(
         "contract",
         "capability",
         "runbook",
+        "note",
     }:
         with instance.bind_accepted_projection(coordinate) as projection:
             source = projection.typed.source(resolved.identity)
             row = projection.typed.envelope(resolved.identity)
         assert source is not None
-        return {
+        envelope = source.model_dump(mode="json")
+        proof: dict[str, Any] = {
             "coordinate": at.model_dump(mode="json"),
             "path": row.path if row else None,
             "artifact_digest": row.artifact_digest if row else None,
-            "envelope": None if source is None else source.model_dump(mode="json"),
+            "envelope": envelope,
         }
+        if resolved.kind == "note":
+            notice = _note_withheld(instance, coordinate, envelope["capture_digest"], access)
+            if notice is not None:
+                # C14, as backlinks: the section's file, heading path and digest go;
+                # the identity, Subjects, Capture commitment and lifecycle stay.
+                for name in ("source_id", "section", "section_digest"):
+                    envelope.pop(name, None)
+                proof["withheld"] = notice.model_dump(mode="json")
+        return proof
     # Proposals are operational: the status entry and the retained records.
     # C14: their candidate law evidence quotes Captures; withheld ones are
     # filtered, every digest and commitment kept.
@@ -3781,6 +3897,8 @@ def service_playbill_get(
             from cruxible_core.service.discovery.runbook_reads import runbook_card
 
             card = runbook_card(instance, coordinate, resolved.identity, render=render)
+        elif resolved.kind == "note":
+            card = _note_card(instance, coordinate, resolved, surface=surface, access=access)
         elif resolved.kind == "capture":
             card = capture_card(
                 instance,

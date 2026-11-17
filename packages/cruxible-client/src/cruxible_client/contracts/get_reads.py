@@ -83,6 +83,7 @@ GetRefKind = Literal[
     "contract",
     "capability",
     "runbook",
+    "note",
 ]
 # Verdict problems a row or card carries; derived from the verdict machinery,
 # never re-adjudicated here.
@@ -137,6 +138,7 @@ GET_DETAILS_BY_KIND: dict[str, tuple[str, ...]] = {
     "contract": ("summary", "history", "proof"),
     "capability": ("summary", "history", "proof"),
     "runbook": ("summary", "history", "proof"),
+    "note": ("summary", "history", "proof"),
 }
 
 
@@ -662,6 +664,26 @@ class GetCapabilityCard(_StrictGetModel):
     next: tuple[str, ...] = ()
 
 
+class GetNoteCard(_StrictGetModel):
+    """One note: a workspace section linked ``about`` Subjects (never a Claim)."""
+
+    #: ``Note:NOTE-<32 hex>``
+    note: str
+    #: The catalogued workspace source (files.yaml name); absent when withheld.
+    file: str | None = Field(default=None, exclude_if=_omit_none)
+    #: The heading path; empty when withheld.
+    section: tuple[str, ...] = ()
+    #: ``kind/id`` of each Subject the section is about.
+    about: tuple[str, ...]
+    #: The section's bytes when linked: a Capture handle get and read_capture accept.
+    capture: str
+    lifecycle: str
+    #: C14: the section's Capture is withheld from this reader, so its file and
+    #: heading path are left out (the note, its Subjects and Capture handle stay).
+    withheld: BodyRestricted | None = Field(default=None, exclude_if=_omit_none)
+    next: tuple[str, ...] = ()
+
+
 class GetProposalChange(_StrictGetModel):
     path: str
     change: str
@@ -766,6 +788,7 @@ GetCard = (
     | GetContractCard
     | GetCapabilityCard
     | GetRunbookCard
+    | GetNoteCard
 )
 
 
@@ -1164,6 +1187,7 @@ __all__ = [
     "GET_DETAILS_BY_KIND",
     "GetCapabilityCard",
     "GetContractCard",
+    "GetNoteCard",
     "GetContractField",
     "GET_HISTORY_DEFAULT_LIMIT",
     "GET_HISTORY_MAX_LIMIT",

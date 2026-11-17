@@ -415,11 +415,14 @@ def test_fresh_consumer_installs_the_bundled_provider_with_no_contract_prerequis
         preview = _add(consumer, release)
         assert preview.status == "would_propose", preview
         assert [step.action for step in preview.providers] == ["would_install"]
+        # coldmcp-05: the preview says whether the installs await an approver.
+        assert preview.approval_required is independent
         assert _tree(consumer) == before
         assert not any(path.startswith("providers/kit-call/") for path in before)
         added = _add(consumer, release, dry_run=False)
         if independent:
             assert added.status == "awaiting_providers", added
+            assert added.approval_required
             assert _tree(consumer) == before
             (step,) = added.providers
             assert step.proposal_id is not None

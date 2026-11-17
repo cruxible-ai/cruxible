@@ -418,6 +418,22 @@ def kit_resume_statuses(instance: PlaybillInstance) -> tuple[KitResumeStatus, ..
     )
 
 
+def recorded_content_digest(instance: PlaybillInstance, kit_id: str) -> str | None:
+    """The recorded kit add's release content digest: one keyed row, one body read."""
+
+    with retained_records(instance, write=False) as connection:
+        found = _rows(
+            connection, "SELECT request_digest FROM kit_resumes WHERE kit_id=?", (kit_id,)
+        )
+    if not found:
+        return None
+    try:
+        raw = instance.body_store().read(found[0][0], access=_REQUEST_ACCESS)
+        return KitAddRequest.model_validate_json(raw).bundle.manifest.content_digest
+    except (CoreError, OSError, ValueError):
+        return None
+
+
 def blocked_kit_resumes(instance: PlaybillInstance) -> tuple[KitResumeStatus, ...]:
     """Blocked resume rows only: ``next``'s own population.
 
@@ -470,6 +486,7 @@ __all__ = [
     "proposed_kit_proposal",
     "record_kit_resume",
     "record_proposed_kit",
+    "recorded_content_digest",
     "resume_kits_after_activation",
     "resume_pending_kits",
 ]
