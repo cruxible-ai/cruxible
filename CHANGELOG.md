@@ -75,6 +75,12 @@ quickstart and concepts pages.
   incoming, pairs, runs, backlinks, proof, body). Every read takes `--at` a
   generation. `get` accepts a built-in's printed `cruxible.` spelling
   (`CaptureContract:cruxible.coordinator-self-source-v1`).
+- **A query filter shifts `now` by a fixed offset.** `opened_at < now - 3d`
+  and `due_at < now + 12h` compare a `datetime` field with the evaluation time
+  moved by a duration in `d`, `h`, `m` or `s` (fixed length, UTC). Calendar
+  units refuse `cruxible.query.time_offset_unit_unsupported`; `now - 72h` and
+  `now - 3d` are one definition. A saved query that shifts `now` is stored as
+  `cruxible-query-definition-v4`; every other definition keeps its bytes.
 - **The write verbs change values directly.** `cruxible set`, `add`, `retire`
   and `write` (a file of create, set, add, retire and document edits) lower
   into an ordinary change set and accept it when the approval policy and your
@@ -141,6 +147,27 @@ quickstart and concepts pages.
   linked about Subjects. Projection blocks (`block repin`, `sync`, `detach`,
   `depublish`) hold page prose to accepted Claims; `block sync` reports drift
   and never rewrites prose.
+- **`cruxible link` links existing text.** `link FILE#Heading/Path --about
+  kind/id --because WHY` links a section that already exists about Subjects, as
+  a note (`backlinks` lists it, and `get NOTE-...` reads it); `link FILE
+  --guides ClaimType:NAME` (or `Procedure:NAME`) links a whole registered page
+  to a definition as its review guidance, recorded in `.cruxible/files.yaml`
+  and carried into the Document's next revision. `--unlink` removes either.
+  SDK `cx.link(...)`; MCP `cruxible_link` (full profile). A page that is not in
+  the file catalog refuses `--guides` with `cruxible files add` as the repair.
+- **Evidence rules are for shaped payloads; workspace citations need none.**
+  Every field that is not `captured` admits its author's own words and
+  workspace file and section citations by default. A field's `evidence:
+  [CONTRACT, ...]` (ClaimType input, vocabulary file, SDK `field(...,
+  evidence=)`) names the shaped CaptureContracts it admits, and `captured`
+  means such a payload is required: a file or section quote alone refuses
+  `cruxible.write.evidence_required`. A rule that names one workspace file's
+  contract or only a contract family can no longer be authored
+  (`cruxible.claim_type.per_file_evidence_rule`,
+  `cruxible.claim_type.family_rule_not_authored`; `kit build` refuses
+  `cruxible.kit.per_file_evidence_rule`), and `anticipated_source_ids` and the
+  SDK's `sources=` are retired. Accepted ClaimTypes that hold such rules keep
+  them.
 - **The vocabulary file states kinds and fields as YAML.** `cruxible vocabulary
   export|plan|apply` (SDK `cx.vocabulary.export()/.plan()/.apply()`, MCP
   `cruxible_vocabulary_export|plan|apply` in the full profile) works on
@@ -209,7 +236,6 @@ quickstart and concepts pages.
   This release installs one compiler and no upgrade path, so it answers
   `already_current`; back up before any future upgrade (see
   [Upgrading](docs/upgrading.md#back-up-first)).
-
 - **An approval bound to the reviewed candidate signs that candidate or
   nothing.** When accepted state moved and the proposal was proposed again at
   the head, an approval that names the reviewed candidate digest (CLI
@@ -254,6 +280,13 @@ quickstart and concepts pages.
   operates Lines, `cruxible runbook preview|run` runs an ordered list of
   them, and `cruxible inbox` judges findings a Line could not decide.
   Procedures never read the clock: time enters only through Triggers.
+- **`next` shows the instants a scheduled Trigger missed.** A cron or cadence
+  Trigger fires only while the daemon runs, and an instant that fell due while
+  it was down is not fired late. After a restart `next` lists one
+  `trigger_instants_missed` row per such Trigger (first and last missed
+  instant, count, target) with the repair for its target: `cruxible runbook
+  run NAME`, `cruxible action run NAME`, or a Line evaluation over the range.
+  The row stands until the target has run.
 - **Claims are declared as templates.** A `claims` terminal declares the
   Subject key and the ClaimTypes it may write; the Line's Mandate decides
   whether the change is proposed or settled. Records an extract cannot read
@@ -311,6 +344,12 @@ quickstart and concepts pages.
   instance and proposes the difference as one change set. `kit pull` fetches
   and verifies without installing; `kit status` lists installed kits, local
   edits and newer releases; `kit remove` retires what a kit owns.
+- **`kit build --file PATH` carries plain files.** A README or reference page
+  (repeatable) is copied into the built kit at its workspace-relative path and
+  listed in the manifest's `files` with its sha256. Such files are for the
+  reader: they are never installed and stay outside the content digest. A
+  missing file or a path outside the workspace refuses
+  `cruxible.kit.file_refused`. MCP `cruxible_kit_build` takes `files`.
 - **The base kit ships inside Cruxible.** Kit `base` 1.0.0 owns the `web.` and
   `workspace.` names and holds 8 capabilities (`web.fetch`,
   `web.fetch.pages`, `web.render`, `web.render.dom`, `web.search`,
@@ -464,18 +503,25 @@ quickstart and concepts pages.
   left (at most 5 seconds).
 - **`ledger publish` exits 1 when publication ends `behind`,** and prints
   Git's multi-line reason one line at a time.
-- **Proposal acts need a named principal.** A request naming no principal
-  (the auth-off implicit `operator`, such as an MCP server with only
+- **Every attributed write needs a named principal.** A request naming no
+  principal (the auth-off implicit `operator`, such as an MCP server with only
   `CRUXIBLE_MCP_KEY_DIR`) approved, activated, rejected and withdrew
-  proposals. Approve, activate, reject, withdraw and readmit now refuse it
-  with `cruxible.identity.principal_unconfigured`; readmit by anyone but the
-  author refuses `cruxible.proposal.readmit_not_author`.
+  proposals, and could erase a Capture, attest a Claim, propose and settle a
+  prediction, decommission an instance, rebuild `next`, install, move or
+  retire providers, build, add or remove kits, propose a compiler upgrade or
+  a principal change, measure and dispose, and start runs, with records naming
+  `operator`. Every write whose record names who did it now refuses such a
+  request with `cruxible.identity.principal_unconfigured` (repair: name a
+  principal). `init`, Line enable and disable and Capture uploads are
+  excepted. Readmit by anyone but the author refuses
+  `cruxible.proposal.readmit_not_author`.
 - **Activation waits for approvals.** Activating an unapproved proposal whose
   base moved landed it at the head; it now refuses
   `cruxible.approval.requirement_unsatisfied`, naming who may sign, and
-  changes nothing. Acting again on an accepted proposal refuses
-  `cruxible.proposal.already_accepted` instead of calling it stale, and a
-  repeated approval stores nothing.
+  changes nothing. Acting again on an accepted proposal (approve, activate,
+  withdraw or reject) refuses `cruxible.proposal.already_accepted`, with its
+  git oid and generation, instead of calling it stale, and a repeated approval
+  stores nothing.
 - **A landed proposal names its source.** Approval and activation receipts
   carry `readmits`; acting on the replaced proposal refuses as superseded,
   naming the replacement. While approvals remain, the approval receipt names
@@ -483,9 +529,13 @@ quickstart and concepts pages.
   whose signatures are outstanding.
 - **A reviewer registered after the proposal can approve it.** Its approval
   lands the proposal at the head first (the signer's eligibility is checked
-  before anything lands), instead of refusing `principal is absent`. A caller
+  before anything lands), instead of refusing `principal is absent`; a change
+  set holding a ClaimType lands as its author's readmit would. A caller
   without approval rights gets `cruxible.approval.signer_after_base`; the SDK
-  names the landed proposal to review.
+  names the landed proposal to review. A kit change or a generated ClaimType
+  migration refuses `cruxible.proposal.readmit_requires_resubmission` for such
+  a reviewer, naming its author and the command that remakes it, and publishes
+  nothing.
 - **The MCP mode cap is enforced by the daemon.** A client may send a ceiling
   with each request that can only lower its tier; the MCP server sends its
   `CRUXIBLE_MODE` cap. Activation inside writes, `kit add`, `kit remove` and
@@ -494,9 +544,11 @@ quickstart and concepts pages.
   `effective_permission_mode`; a tool above the cap refuses
   `cruxible.mcp.mode_insufficient`.
 - **An unchanged Procedure run stores far less.** Item dependency records cite
-  their terminal's shared set by digest (about 1.2 kB an item instead of up to
-  68 kB), and a Query read's stored result leaves out its evaluation instant,
-  so an identical read stores about 320 bytes.
+  their terminal's shared set by digest, a Query read's stored result leaves
+  out its evaluation instant, a claims terminal's evidence item list is a
+  run-free body cited by digest, and a run-journal head move that matched
+  nothing journals no Line coverage.
+  <!-- TODO(0.5.0): measured bytes per unchanged run -->
 - **Repairs and next lines run as written, in each client's spelling.** A
   refusal's repair printed an operation id and JSON on the CLI (`Repair:
   cruxible.proposal.readmit {"dry_run":true}`), and MCP and SDK results named
@@ -514,14 +566,6 @@ quickstart and concepts pages.
   `cruxible.auth.credential_unrecognized`; `next` dispatches a Line by name;
   `kit add`'s missing requirement names a release or local build. The `next`
   state rebuilds once (format 16).
-- **A late reviewer can approve an authored change set.** A reviewer
-  registered after the proposal's base now lands a change set holding a
-  ClaimType at the head as its author's readmit would. A kit change or a
-  generated ClaimType migration refuses
-  `cruxible.proposal.readmit_requires_resubmission` for such a reviewer,
-  naming its author and the command that remakes it, and publishes nothing.
-- **Withdrawing or rejecting an accepted proposal says it is accepted**
-  (`cruxible.proposal.already_accepted`, with its git oid and generation).
 - **A change set landed at the head keeps its reason.** A write approved or
   activated after the head moved landed by its own bytes with no rationale, so
   `get --detail history` and the successor's review showed no `reason:` for
@@ -575,13 +619,12 @@ quickstart and concepts pages.
   remembered (the first found no key; the second signed with the owner's key
   and failed in `SigningKeyError`). With no key the refusal names the repair
   of the client that printed it. `next` lines that name a signer print
-  `--signer-id ID` with no `--key FILE`.
-- **MCP `cruxible_proposal_approve` reads `CRUXIBLE_PRINCIPAL_KEY`** as a
-  principal's `cruxible.env` sets it, beside `CRUXIBLE_MCP_KEY_DIR`, and signs
-  as `CRUXIBLE_PRINCIPAL_ID` by default.
-- **SDK `cx.signer(ID)`** opens a principal's approval signer from the same
-  lookup (`cx.signer()` for the connection's own principal); the SDK's `next`
-  spells `approve(signer=cx.signer("reviewer"), ...)`.
+  `--signer-id ID` with no `--key FILE`. MCP `cruxible_proposal_approve` reads
+  `CRUXIBLE_PRINCIPAL_KEY` as a principal's `cruxible.env` sets it, beside
+  `CRUXIBLE_MCP_KEY_DIR`, and signs as `CRUXIBLE_PRINCIPAL_ID` by default. SDK
+  `cx.signer(ID)` opens a principal's approval signer from the same lookup
+  (`cx.signer()` for the connection's own principal); the SDK's `next` spells
+  `approve(signer=cx.signer("reviewer"), ...)`.
 - **A kit repair names the base kit, and never invents a reference.**
   `cruxible.kit.requires_missing` for the bundled base kit and a stale base
   kit proposal's `readmit_requires_resubmission` printed `cruxible kit add
