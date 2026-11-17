@@ -14,12 +14,20 @@ from cruxible_client.contracts.attestations import (
     ApprovalStatement,
     approval_statement_bytes,
 )
-from cruxible_client.contracts.errors import SigningKeyError
+from cruxible_client.contracts.errors import ReviewedCandidateChanged, SigningKeyError
+from cruxible_client.contracts.repair_spelling import render_repair
 from cruxible_core.errors import ConfigError, DataValidationError
 from cruxible_core.governance.keys import generate_client_principal_key
 from cruxible_core.mcp import handlers
 
 CANDIDATE = "sha256:" + "3" * 64
+LANDED_CANDIDATE = "sha256:" + "4" * 64
+
+
+def _mcp_repair(refusal: ReviewedCandidateChanged) -> str:
+    """The refusal's repair as the MCP server appends it to the tool error."""
+
+    return render_repair(refusal.repair, surface="mcp")
 
 
 def _world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *signers: str) -> dict[str, Any]:
@@ -34,10 +42,18 @@ def _world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *signers: str) -> di
     }
     monkeypatch.setenv("CRUXIBLE_MCP_WORKSPACE_ROOT", str(workspace))
     monkeypatch.setenv("CRUXIBLE_MCP_KEY_DIR", str(keys))
-    calls: dict[str, Any] = {"prepared": [], "submitted": []}
+    calls: dict[str, Any] = {"prepared": [], "submitted": [], "bound": []}
 
-    def prepare(instance_id: str, proposal_id: str, *, signer_id: str, include_body: bool) -> Any:
+    def prepare(
+        instance_id: str,
+        proposal_id: str,
+        *,
+        signer_id: str,
+        include_body: bool,
+        reviewed_candidate_digest: str | None = None,
+    ) -> Any:
         calls["prepared"].append((instance_id, proposal_id, signer_id))
+        calls["bound"].append(reviewed_candidate_digest)
         statement = ApprovalStatement(
             signer_id=signer_id,
             signing_semantic_root="sha256:" + "2" * 64,
@@ -50,9 +66,15 @@ def _world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *signers: str) -> di
         )
 
     def submit(
-        instance_id: str, proposal_id: str, attestation: dict[str, Any], *, hold: bool = False
+        instance_id: str,
+        proposal_id: str,
+        attestation: dict[str, Any],
+        *,
+        hold: bool = False,
+        reviewed_candidate_digest: str | None = None,
     ) -> Any:
         calls["submitted"].append(attestation)
+        calls["bound"].append(reviewed_candidate_digest)
         return "receipt"
 
     monkeypatch.setattr(handlers, "handle_playbill_prepare_approval", prepare)
@@ -69,6 +91,8 @@ def test_approve_signs_the_challenge_with_the_configured_key(tmp_path, monkeypat
 
     assert receipt == "receipt"
     assert world["calls"]["prepared"] == [("inst_1", "PROP-1", "reviewer")]
+    # The reviewed digest binds the challenge and the submission at the daemon.
+    assert world["calls"]["bound"] == [CANDIDATE, CANDIDATE]
     (attestation,) = world["calls"]["submitted"]
     assert set(attestation) == {
         "tag",
@@ -121,11 +145,16 @@ def test_approve_needs_a_signer_when_the_directory_holds_several(tmp_path, monke
 def test_approve_refuses_a_candidate_that_changed_since_review(tmp_path, monkeypatch) -> None:
     world = _world(tmp_path, monkeypatch, "reviewer")
 
-    with pytest.raises(DataValidationError, match="review it again"):
+    reviewed = "sha256:" + "9" * 64
+    with pytest.raises(ReviewedCandidateChanged) as refused:
         handlers.handle_playbill_approve(
-            "inst_1", "PROP-1", signer_id=None, candidate_digest="sha256:" + "9" * 64
+            "inst_1", "PROP-1", signer_id=None, candidate_digest=reviewed
         )
     assert world["calls"]["submitted"] == []
+    assert f"proposal PROP-1 is candidate {CANDIDATE}, not the reviewed {reviewed}" in str(
+        refused.value
+    )
+    assert _mcp_repair(refused.value) == 'cruxible_proposal_review(proposal_id="PROP-1")'
 
 
 def test_approve_refuses_a_key_directory_inside_the_workspace(tmp_path, monkeypatch) -> None:
@@ -137,22 +166,15 @@ def test_approve_refuses_a_key_directory_inside_the_workspace(tmp_path, monkeypa
     assert world["calls"]["submitted"] == []
 
 
-def test_approve_signs_the_landed_candidate_next(tmp_path, monkeypatch) -> None:
-    """Nothing it touches changed since its base: the daemon landed it at the head.
-
-    An approval signs one candidate, so the landed one (identical members) is
-    challenged and signed in the same call; its receipt is the answer.
-    """
-
+def _landed(*, members_identical: bool = True) -> Any:
     from cruxible_client import contracts
 
-    world = _world(tmp_path, monkeypatch, "reviewer")
-    landed = contracts.ProposalRecompiled(
+    return contracts.ProposalRecompiled(
         status="pending_review",
         source_proposal_id="PROP-1",
         proposal_id="PROP-2",
-        candidate_digest="sha256:" + "4" * 64,
-        members_identical=True,
+        candidate_digest=LANDED_CANDIDATE,
+        members_identical=members_identical,
         accepted_coordinate=contracts.AcceptedCoordinate(
             git_oid="1" * 40,
             semantic_root="sha256:" + "5" * 64,
@@ -160,10 +182,21 @@ def test_approve_signs_the_landed_candidate_next(tmp_path, monkeypatch) -> None:
             compiler_digest="sha256:" + "7" * 64,
         ),
     )
-    answers = iter([landed, "receipt"])
+
+
+def test_approve_signs_the_landed_candidate_next(tmp_path, monkeypatch) -> None:
+    """Nothing it touches changed since its base: the daemon landed it at the head.
+
+    An approval that names no reviewed digest signs one candidate, so the
+    landed one (identical members) is challenged and signed in the same call;
+    its receipt is the answer.
+    """
+
+    world = _world(tmp_path, monkeypatch, "reviewer")
+    answers = iter([_landed(), "receipt"])
 
     def submit(
-        instance_id: str, proposal_id: str, attestation: dict[str, Any], *, hold: bool = False
+        instance_id: str, proposal_id: str, attestation: dict[str, Any], **options: Any
     ) -> Any:
         world["calls"]["submitted"].append((proposal_id, attestation))
         return next(answers)
@@ -171,7 +204,7 @@ def test_approve_signs_the_landed_candidate_next(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(handlers, "handle_playbill_submit_approval", submit)
 
     receipt = handlers.handle_playbill_approve(
-        "inst_1", "PROP-1", signer_id=None, candidate_digest=CANDIDATE
+        "inst_1", "PROP-1", signer_id=None, candidate_digest=None
     )
 
     assert receipt == "receipt"
@@ -180,6 +213,110 @@ def test_approve_signs_the_landed_candidate_next(tmp_path, monkeypatch) -> None:
         ("inst_1", "PROP-2", "reviewer"),
     ]
     assert [proposal_id for proposal_id, _ in world["calls"]["submitted"]] == ["PROP-1", "PROP-2"]
+
+
+def test_approve_leaves_changed_members_for_review(tmp_path, monkeypatch) -> None:
+    """A successor whose members differ is never signed unreviewed: it is returned."""
+
+    world = _world(tmp_path, monkeypatch, "reviewer")
+    landed = _landed(members_identical=False)
+    monkeypatch.setattr(
+        handlers, "handle_playbill_submit_approval", lambda *args, **options: landed
+    )
+
+    assert (
+        handlers.handle_playbill_approve("inst_1", "PROP-1", signer_id=None, candidate_digest=None)
+        == landed
+    )
+    assert world["calls"]["prepared"] == [("inst_1", "PROP-1", "reviewer")]
+
+
+def test_approve_with_a_reviewed_digest_never_signs_the_successor(tmp_path, monkeypatch) -> None:
+    """coldmcp-10: the reviewed candidate is signed or nothing is.
+
+    The head moved since the review, so the daemon proposed the change again
+    there. Bound to the reviewed digest it refuses, naming the successor and
+    whether its members are identical, with the review call as the repair; the
+    handler signs nothing further, whatever the daemon answered.
+    """
+
+    world = _world(tmp_path, monkeypatch, "reviewer")
+    submitted: list[tuple[str, str | None]] = []
+
+    def refuse(
+        instance_id: str,
+        proposal_id: str,
+        attestation: dict[str, Any],
+        *,
+        hold: bool = False,
+        reviewed_candidate_digest: str | None = None,
+    ) -> Any:
+        submitted.append((proposal_id, reviewed_candidate_digest))
+        raise ReviewedCandidateChanged(
+            proposal_id,
+            reviewed_candidate_digest=str(reviewed_candidate_digest),
+            current_proposal_id="PROP-2",
+            current_candidate_digest=LANDED_CANDIDATE,
+            members_identical=True,
+        )
+
+    monkeypatch.setattr(handlers, "handle_playbill_submit_approval", refuse)
+    with pytest.raises(ReviewedCandidateChanged) as refused:
+        handlers.handle_playbill_approve(
+            "inst_1", "PROP-1", signer_id=None, candidate_digest=CANDIDATE
+        )
+
+    assert submitted == [("PROP-1", CANDIDATE)]
+    assert world["calls"]["prepared"] == [("inst_1", "PROP-1", "reviewer")]
+    assert str(refused.value) == (
+        "cruxible.approval.reviewed_candidate_changed: proposal PROP-1 was proposed again "
+        f"at the head as PROP-2 (candidate {LANDED_CANDIDATE}), not the reviewed {CANDIDATE}; "
+        "members identical: true; nothing was signed. Review PROP-2 and approve it"
+    )
+    assert _mcp_repair(refused.value) == 'cruxible_proposal_review(proposal_id="PROP-2")'
+
+    # A daemon that answers with the successor instead: still nothing more is signed.
+    answered: list[str] = []
+
+    def answer(instance_id: str, proposal_id: str, attestation: Any, **options: Any) -> Any:
+        answered.append(proposal_id)
+        return _landed()
+
+    monkeypatch.setattr(handlers, "handle_playbill_submit_approval", answer)
+    result = handlers.handle_playbill_approve(
+        "inst_1", "PROP-1", signer_id=None, candidate_digest=CANDIDATE
+    )
+    assert result == _landed() and answered == ["PROP-1"]
+
+
+def test_approve_signs_nothing_when_the_challenge_refuses_changed_members(
+    tmp_path, monkeypatch
+) -> None:
+    """Review F-001: the daemon refuses the challenge when landing a proposal for
+    a late signer changed its members; the key is never used and nothing is
+    submitted, with or without a reviewed digest."""
+
+    world = _world(tmp_path, monkeypatch, "late")
+
+    def refuse(instance_id: str, proposal_id: str, **options: Any) -> Any:
+        raise ReviewedCandidateChanged(
+            proposal_id,
+            reviewed_candidate_digest=CANDIDATE,
+            current_proposal_id="PROP-2",
+            current_candidate_digest=LANDED_CANDIDATE,
+            members_identical=False,
+        )
+
+    monkeypatch.setattr(handlers, "handle_playbill_prepare_approval", refuse)
+    signed: list[object] = []
+    monkeypatch.setattr(
+        handlers.LocalEd25519ApprovalSigner,
+        "open",
+        classmethod(lambda cls, **options: signed.append(options)),
+    )
+    with pytest.raises(ReviewedCandidateChanged, match="members identical: false"):
+        handlers.handle_playbill_approve("inst_1", "PROP-1", signer_id=None, candidate_digest=None)
+    assert signed == [] and world["calls"]["submitted"] == []
 
 
 def test_approve_submits_to_the_proposal_the_challenge_landed(tmp_path, monkeypatch) -> None:
@@ -195,7 +332,7 @@ def test_approve_submits_to_the_proposal_the_challenge_landed(tmp_path, monkeypa
         challenge = original(instance_id, proposal_id, **options)
         return SimpleNamespace(**{**vars(challenge), "proposal_id": "PROP-LANDED"})
 
-    def submit(instance_id: str, proposal_id: str, attestation: Any, *, hold: bool = False) -> Any:
+    def submit(instance_id: str, proposal_id: str, attestation: Any, **options: Any) -> Any:
         submitted_to.append(proposal_id)
         return "receipt"
 

@@ -694,6 +694,79 @@ class ApprovalSignerAfterBase(ApprovalIntegrityError):
         )
 
 
+class ReviewedCandidateChanged(ApprovalIntegrityError):
+    """An approval bound to a reviewed candidate met a different candidate; nothing was signed.
+
+    An approver who passes the candidate digest they reviewed signs that
+    candidate or nothing. When accepted state moved since the review, the
+    proposal is proposed again at the head as a new candidate (a new digest,
+    even when every member is byte-identical): the refusal names that successor
+    and says whether its members are identical, and the reviewer reviews and
+    approves it. An approval that names no reviewed digest signs the successor
+    itself when its members are identical.
+    """
+
+    error_code = "cruxible.approval.reviewed_candidate_changed"
+
+    def __init__(
+        self,
+        proposal_id: str,
+        *,
+        reviewed_candidate_digest: str,
+        current_proposal_id: str,
+        current_candidate_digest: str,
+        members_identical: bool | None = None,
+    ) -> None:
+        from cruxible_client.contracts.repairs import RepairOperation
+
+        self.proposal_id = proposal_id
+        self.reviewed_candidate_digest = reviewed_candidate_digest
+        self.current_proposal_id = current_proposal_id
+        self.current_candidate_digest = current_candidate_digest
+        self.members_identical = members_identical
+        self.repair = RepairOperation(
+            operation="cruxible.proposal.review", arguments={"proposal_id": current_proposal_id}
+        )
+        if current_proposal_id == proposal_id:
+            what = f"proposal {proposal_id} is candidate {current_candidate_digest}"
+        else:
+            what = (
+                f"proposal {proposal_id} was proposed again at the head as "
+                f"{current_proposal_id} (candidate {current_candidate_digest})"
+            )
+        members = (
+            ""
+            if members_identical is None
+            else f"; members identical: {'true' if members_identical else 'false'}"
+        )
+        super().__init__(
+            f"{self.error_code}: {what}, not the reviewed {reviewed_candidate_digest}"
+            f"{members}; nothing was signed. Review {current_proposal_id} and approve it"
+        )
+
+
+class ReviewedBindingUnsupported(ApprovalIntegrityError):
+    """The daemon is older than this client and cannot bind an approval to a reviewed candidate.
+
+    A daemon from before bound approvals rejects the request's
+    ``reviewed_candidate_digest`` field. The client never drops the field and
+    approves unbound on its own: that would sign something the caller asked not
+    to. It refuses here, with nothing signed or stored, and names the skew.
+    """
+
+    error_code = "cruxible.approval.reviewed_binding_unsupported"
+
+    def __init__(self, proposal_id: str, *, client_version: str) -> None:
+        self.proposal_id = proposal_id
+        self.client_version = client_version
+        super().__init__(
+            f"{self.error_code}: the daemon is older than this client ({client_version}) "
+            "and does not accept reviewed_candidate_digest, so it cannot bind the approval "
+            f"of {proposal_id} to the candidate you reviewed; nothing was signed. Repair: "
+            "upgrade the daemon to this client's version"
+        )
+
+
 class ApprovalRequirementUnmet(ApprovalIntegrityError):
     """Activation refused: the candidate's approval requirement is not met yet.
 

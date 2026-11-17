@@ -2340,6 +2340,8 @@ def _proposal_card(
         incomplete=entry.incomplete_reasons,
         verdict=entry.verdict,
         reason=entry.terminal_reason,
+        superseded_by=entry.superseded_by,
+        closed_by=entry.closed_by,
         actor=entry.actor_id,
         admitted_at=entry.admitted_at,
         rationale=None if admission is None else admission.rationale,

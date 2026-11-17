@@ -363,6 +363,13 @@ def test_first_run_from_an_empty_folder_needs_no_git_and_no_flags(
     source_file.write_text("status: blocked\n", encoding="utf-8")
     drifted = [item for item in _json("next")["items"] if item["reason"] == "citation_drifted"]
     assert drifted, "next reports no drift after the cited file changed"
+    # psw F4: orient's count is accepted state and cannot see that row; it says
+    # so rather than read as an empty queue.
+    assert _json("orient")["attention"]["next_scope"] == "accepted_state"
+    (attention_line,) = [
+        line for line in _run("orient").stdout.splitlines() if line.startswith("Attention: ")
+    ]
+    assert attention_line.endswith(" (workspace rows not counted: next)")
 
     # 6. `git init` and attach again turn the ledger mirror on.
     subprocess.run(["git", "init", "-q", "-b", "main", str(folder)], check=True)

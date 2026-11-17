@@ -466,10 +466,6 @@ def _governed_actor_id(instance_id: str) -> str:
     return _attributed_actor_id(instance_id)
 
 
-def _require_governed_actor(instance_id: str) -> None:
-    _governed_actor_id(instance_id)
-
-
 def _require_writer(instance_id: str) -> None:
     """The write boundary for an instance mutation that records no actor.
 
@@ -1463,6 +1459,7 @@ def playbill_prepare_approval(
     *,
     signer_id: str,
     include_body: bool = False,
+    reviewed_candidate_digest: str | None = None,
 ) -> contracts.ApprovalChallenge:
     check_permission("cruxible_proposal_review", instance_id=instance_id)
     result = service_prepare_playbill_approval(
@@ -1471,12 +1468,14 @@ def playbill_prepare_approval(
         signer_id=signer_id,
         access=_access(instance_id, include_body=include_body),
         # A signer registered after the proposal's base: a caller who may submit
-        # approvals lands it at the head first, as approving a moved proposal does.
+        # approvals lands it at the head first, as approving a moved proposal
+        # does, and the source's closing record names that caller.
         land=(
-            (lambda: _require_governed_actor(instance_id))
+            (lambda: _governed_actor_id(instance_id))
             if _permits("cruxible_proposal_approve_submit", instance_id=instance_id)
             else None
         ),
+        reviewed_candidate_digest=reviewed_candidate_digest,
     )
     from cruxible_core.service.proposals.review import withhold_review_values
 
@@ -1497,11 +1496,14 @@ def playbill_submit_approval(
     *,
     attestation: ApprovalAttestation,
     hold: bool = False,
+    reviewed_candidate_digest: str | None = None,
 ) -> contracts.ProposalApprovalResult:
     """Submit one approval; it activates the candidate when it completes it.
 
     ``hold`` signs only, leaving activation to someone else. Activation runs
     only when the caller's tier and scope also admit ``cruxible_proposal_activate``.
+    ``reviewed_candidate_digest`` binds the approval to the candidate the signer
+    reviewed: a proposal proposed again at the head is refused, naming its successor.
     """
     check_permission("cruxible_proposal_approve_submit", instance_id=instance_id)
     result = service_submit_playbill_approval(
@@ -1514,6 +1516,7 @@ def playbill_submit_approval(
         may_activate_compiler_upgrade=_permits(
             "cruxible_compiler_upgrade", instance_id=instance_id
         ),
+        reviewed_candidate_digest=reviewed_candidate_digest,
     )
     return (
         contracts.ProposalRecompiled.model_validate(result.model_dump(mode="json"))

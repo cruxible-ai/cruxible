@@ -39,6 +39,7 @@ from cruxible_client.contracts.errors import (
     ProposalIntegrityError,
     ProposalReadmitRequiresResubmission,
     ProposalStale,
+    ReviewedCandidateChanged,
     SettlementIntegrityError,
 )
 from cruxible_client.contracts.principal_rendering import render_principal
@@ -386,8 +387,16 @@ def service_submit_playbill_approval(
     activate_when_complete: bool = False,
     may_activate: bool = False,
     may_activate_compiler_upgrade: bool = False,
+    reviewed_candidate_digest: str | None = None,
 ) -> ApprovalReceipt | ActivationReceipt | ProposalRecompiled:
     """Verify and persist one public attestation; activate when it completes the candidate.
+
+    ``reviewed_candidate_digest`` is the candidate the signer reviewed. With it,
+    the approval settles that candidate or refuses: a proposal behind the head
+    is still proposed again there, and the refusal (``ReviewedCandidateChanged``)
+    names that successor and says whether its members are identical. Without
+    it, the successor is returned as a ``ProposalRecompiled`` and a client that
+    holds the key signs it when its members are identical.
 
     When this signature leaves no approval outstanding, ``activate_when_complete``
     is set (the caller did not hold activation for someone else) and
@@ -426,9 +435,24 @@ def service_submit_playbill_approval(
                 detail="changed at the head since its base: " + render_stale_paths(stale_paths),
             )
         recompiled = _recompile_for_review(
-            instance, proposal, approver=proposal.admission.actor_id != authenticated_submitter
+            instance,
+            proposal,
+            approver=proposal.admission.actor_id != authenticated_submitter,
+            triggered_by=authenticated_submitter,
         )
         if recompiled is not None:
+            if (
+                reviewed_candidate_digest is not None
+                and recompiled.proposal_id is not None
+                and recompiled.candidate_digest is not None
+            ):
+                raise ReviewedCandidateChanged(
+                    proposal_id,
+                    reviewed_candidate_digest=reviewed_candidate_digest,
+                    current_proposal_id=recompiled.proposal_id,
+                    current_candidate_digest=recompiled.candidate_digest,
+                    members_identical=recompiled.members_identical,
+                )
             if (
                 recompiled.status == "ready_to_activate"
                 and recompiled.proposal_id is not None
@@ -441,6 +465,13 @@ def service_submit_playbill_approval(
                     activated_by=authenticated_submitter,
                 )
             return recompiled
+    if reviewed_candidate_digest not in (None, candidate.candidate_digest):
+        raise ReviewedCandidateChanged(
+            proposal_id,
+            reviewed_candidate_digest=str(reviewed_candidate_digest),
+            current_proposal_id=proposal_id,
+            current_candidate_digest=candidate.candidate_digest,
+        )
     if attestation.payload_digest != candidate.candidate_digest:
         raise ProposalIntegrityError("attestation payload differs from proposal candidate")
     signing_generation = instance.generation_for_semantic_root(
@@ -676,8 +707,13 @@ def activation_not_permitted_detail(proposal_id: str) -> str:
     )
 
 
-def land_for_signer(instance: PlaybillInstance, proposal_id: str) -> str:
-    """Land a moved proposal at the head for a signer its base predates; the landed id.
+def land_for_signer(
+    instance: PlaybillInstance, proposal_id: str, *, triggered_by: str | None = None
+) -> ProposalRecompiled:
+    """Land a moved proposal at the head for a signer its base predates; the landing.
+
+    ``triggered_by`` is the principal who asked for the challenge: the source's
+    closing record names it.
 
     The approval door's own landing (``service_submit_playbill_approval``):
     stale when what it touches changed since its base (only its author's
@@ -717,12 +753,12 @@ def land_for_signer(instance: PlaybillInstance, proposal_id: str) -> str:
             f"{command}, and you approve the new proposal",
             repair=author_repair(proposal),
         )
-    recompiled = _recompile_for_review(instance, proposal, approver=True)
+    recompiled = _recompile_for_review(instance, proposal, approver=True, triggered_by=triggered_by)
     if recompiled is None:
         raise ProposalStale(proposal_id)
     if recompiled.proposal_id is None:
         raise ProposalReadmitAlreadyAccepted(proposal_id)
-    return recompiled.proposal_id
+    return recompiled
 
 
 def _delegated(proposal: ProposalResult) -> bool:
@@ -942,7 +978,7 @@ def _activate_candidate(
             # Landing it at the head would withdraw it and readmit it: activation
             # changes nothing about a proposal that may not settle yet.
             _refuse_unmet_approval(instance, proposal, candidate)
-        recompiled = _recompile_for_review(instance, proposal)
+        recompiled = _recompile_for_review(instance, proposal, triggered_by=activated_by)
         if recompiled is None:
             from cruxible_core.service.proposals.staleness import (
                 render_stale_paths,
@@ -1084,9 +1120,16 @@ def _activate_candidate(
 
 
 def _recompile_for_review(
-    instance: PlaybillInstance, source: ProposalResult, *, approver: bool = False
+    instance: PlaybillInstance,
+    source: ProposalResult,
+    *,
+    approver: bool = False,
+    triggered_by: str | None = None,
 ) -> ProposalRecompiled | None:
     """Recompile a stale proposal an approval met; ``approver``: not its author.
+
+    ``triggered_by``: the principal whose approval or activation met it, named
+    by the source's closing record.
 
     A refused recompilation reaches an approver as ``readmit_refused`` with the
     repair ``proposal reject``: only the author can make the change again, and
@@ -1124,11 +1167,11 @@ def _recompile_for_review(
         # so does an authored change set holding a ClaimType among other
         # members (its closure is rebuilt from its retained input), exactly as
         # its author's readmit does.
-        landed = _land_exact_bytes_for_review(instance, source)
+        landed = _land_exact_bytes_for_review(instance, source, triggered_by=triggered_by)
         if landed is not None:
             return landed
     try:
-        recompiled = recompile_proposal(instance, source)
+        recompiled = recompile_proposal(instance, source, triggered_by=triggered_by)
     except ProposalStale as exc:
         if not approver:
             raise
@@ -1161,7 +1204,7 @@ def _recompile_for_review(
 
 
 def _land_exact_bytes_for_review(
-    instance: PlaybillInstance, source: ProposalResult
+    instance: PlaybillInstance, source: ProposalResult, *, triggered_by: str | None = None
 ) -> ProposalRecompiled | None:
     """Land a moved proposal at the head by its own bytes, when nothing it touches
     changed since its base; None when something did (it stays stale).
@@ -1178,7 +1221,7 @@ def _land_exact_bytes_for_review(
     if candidate_accepted(instance, source.candidate.candidate_digest):
         return None  # accepted itself: nothing is left to land
     # Checked first: a landing the head refuses publishes nothing.
-    successor = land_exact_bytes(instance, source, check_first=True)
+    successor = land_exact_bytes(instance, source, check_first=True, triggered_by=triggered_by)
     if successor.candidate is None:
         raise ProposalStale(
             source.admission.proposal_id,

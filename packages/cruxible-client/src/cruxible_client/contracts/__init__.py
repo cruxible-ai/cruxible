@@ -882,7 +882,12 @@ class ProposalListEntry(BaseModel):
     #: (``stale_paths``); it waits for its author's readmit. A proposal whose
     #: base merely moved is ``open``: approval or activation lands it at the head.
     status: Literal["open", "awaiting_readmit", "settled", "incomplete"]
-    terminal_reason: Literal["accepted", "refused", "withdrawn", "rejected"] | None = None
+    #: ``superseded``: the same change was proposed again as ``superseded_by``
+    #: (at the head, when an approval, activation or readmit met it behind the
+    #: head; or by a later run of its Line). Act on that proposal.
+    terminal_reason: (
+        Literal["accepted", "refused", "withdrawn", "rejected", "superseded"] | None
+    ) = None
     incomplete_reasons: tuple[
         Literal["missing_admission", "missing_evaluation", "missing_candidate"], ...
     ] = ()
@@ -892,6 +897,10 @@ class ProposalListEntry(BaseModel):
     stale_paths: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
     #: An accepted proposal: the accepted generation its change set settled in.
     accepted_generation: int | None = Field(default=None, exclude_if=lambda value: value is None)
+    #: A superseded proposal: the proposal that took its place, and the
+    #: principal whose act closed it (absent on records that predate it).
+    superseded_by: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    closed_by: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class ProposalList(BaseModel):

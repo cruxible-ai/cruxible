@@ -36,6 +36,7 @@ from cruxible_client.contracts.claim_reads import (
 from cruxible_client.contracts.declared_blocks import DeclaredBlockPageObservation
 from cruxible_client.contracts.duplicates import DuplicatesAuditRequest, DuplicatesAuditResult
 from cruxible_client.contracts.errors import (
+    ReviewedBindingUnsupported,
     SinceRequestInvalid,
 )
 from cruxible_client.contracts.floor import FloorDelta
@@ -187,6 +188,37 @@ def _change_control(dry_run: bool | None, at: str | None) -> dict[str, Any]:
     if at is not None:
         body["at"] = at
     return body
+
+
+def _reviewed(candidate_digest: str | None) -> dict[str, str]:
+    """An approval's reviewed-candidate binding; nothing on the wire when unbound."""
+
+    return {} if candidate_digest is None else {"reviewed_candidate_digest": candidate_digest}
+
+
+def _refuse_unbindable(
+    response: httpx.Response, proposal_id: str, candidate_digest: str | None
+) -> None:
+    """Refuse, typed, when an older daemon rejected the reviewed-candidate field.
+
+    Such a daemon's request models forbid unknown fields, so a bound request
+    fails its validation naming ``reviewed_candidate_digest``. That is version
+    skew, not a fault in the request: the caller is told so. The field is never
+    dropped and the approval retried unbound.
+    """
+
+    if candidate_digest is None or response.status_code != 422:
+        return
+    try:
+        body = ErrorResponse.model_validate(response.json())
+    except Exception:
+        return
+    if body.error_type == "RequestValidationError" and any(
+        "reviewed_candidate_digest" in error for error in body.errors
+    ):
+        from cruxible_client import __version__
+
+        raise ReviewedBindingUnsupported(proposal_id, client_version=__version__)
 
 
 class CruxibleClient:
@@ -1067,11 +1099,19 @@ class CruxibleClient:
         *,
         signer_id: str,
         include_body: bool = False,
+        reviewed_candidate_digest: str | None = None,
     ) -> contracts.ApprovalChallenge:
+        """The statement to sign. ``reviewed_candidate_digest`` binds it to the
+        candidate the signer reviewed: any other candidate is refused."""
         response = self._client.post(
             f"/api/v1/{instance_id}/proposals/{proposal_id}/approval-challenge",
-            json={"signer_id": signer_id, "include_body": include_body},
+            json={
+                "signer_id": signer_id,
+                "include_body": include_body,
+                **_reviewed(reviewed_candidate_digest),
+            },
         )
+        _refuse_unbindable(response, proposal_id, reviewed_candidate_digest)
         return self._parse_model(response, contracts.ApprovalChallenge)
 
     def submit_approval(
@@ -1081,15 +1121,26 @@ class CruxibleClient:
         *,
         attestation: Mapping[str, Any],
         hold: bool = False,
+        reviewed_candidate_digest: str | None = None,
     ) -> contracts.ProposalApprovalResult:
         """Submit one approval; the daemon activates a candidate it completes.
 
         ``hold=True`` signs only and leaves activation to someone else.
+        ``reviewed_candidate_digest`` binds the approval to the candidate the
+        signer reviewed: a proposal proposed again at the head since is refused
+        (``cruxible.approval.reviewed_candidate_changed``), naming its successor
+        and whether its members are identical. Without it the successor comes
+        back as a ``ProposalRecompiled``, which records no approval.
         """
         response = self._client.post(
             f"/api/v1/{instance_id}/proposals/{proposal_id}/approvals",
-            json={"attestation": dict(attestation), "hold": hold},
+            json={
+                "attestation": dict(attestation),
+                "hold": hold,
+                **_reviewed(reviewed_candidate_digest),
+            },
         )
+        _refuse_unbindable(response, proposal_id, reviewed_candidate_digest)
         if response.is_success and response.json().get("tag") == "cruxible-proposal-recompiled-v1":
             return self._parse_model(response, contracts.ProposalRecompiled)
         if response.is_success and response.json().get("tag") == "playbill-activation-receipt-v1":

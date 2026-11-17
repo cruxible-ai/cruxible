@@ -146,6 +146,9 @@ class ApprovalRequest(_StrictPlaybillRequest):
     attestation: ApprovalAttestation
     #: Sign only: leave activating a now-complete candidate to someone else.
     hold: bool = False
+    #: The candidate digest the signer reviewed: the approval then settles that
+    #: candidate or refuses, naming the proposal that took its place at the head.
+    reviewed_candidate_digest: str | None = None
 
 
 class ReviewRequest(_StrictPlaybillRequest):
@@ -172,6 +175,9 @@ class ReviewRequest(_StrictPlaybillRequest):
 class ApprovalChallengeRequest(_StrictPlaybillRequest):
     signer_id: str
     include_body: bool = False
+    #: The candidate digest the signer reviewed: a challenge for any other
+    #: candidate is refused, naming the proposal and candidate there is now.
+    reviewed_candidate_digest: str | None = None
 
 
 class FileBundleRequest(_StrictPlaybillRequest):

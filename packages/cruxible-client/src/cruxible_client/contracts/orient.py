@@ -422,9 +422,13 @@ class OrientAttention(_StrictOrientModel):
     floor, sources, projection blocks, vocabulary file) need the workspace
     and appear in ``next``; orient reports the floor and the vocabulary file
     as status beside this (``floor``, ``vocabulary_file``), as it always has.
+    ``next_scope`` says so on every answer: ``next_items: 0`` is not an empty
+    ``next`` queue.
     """
 
     next_items: int = Field(ge=0)
+    #: What ``next_items`` counts: workspace rows are not in it; ``next`` lists them.
+    next_scope: Literal["accepted_state"] = "accepted_state"
     open_proposals: int = Field(ge=0)
     top: tuple[str, ...] = ()
     setup_items: int = Field(default=0, ge=0, exclude_if=lambda value: not value)

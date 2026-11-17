@@ -170,9 +170,14 @@ serves, and `cruxible_floor_export mode=write` pulls it elsewhere.
 holding `<signer_id>.ed25519`, the layout `cruxible principal add
 --key-dir` and `cruxible init --key-dir` write. Set it in the MCP
 server's environment; no tool argument can name a key path. The tool signs as
-`signer_id`, or as the directory's only key when `signer_id` is omitted, and
-passing the reviewed `candidate_digest` makes it refuse a candidate that
-changed since review. Unset, the tool refuses and says how to configure it.
+`signer_id`, or as the directory's only key when `signer_id` is omitted.
+Passing the reviewed `candidate_digest` binds the approval to that candidate:
+if accepted state moved and the daemon proposed the change again at the head,
+the tool refuses `cruxible.approval.reviewed_candidate_changed`, naming the
+new proposal and whether its members are identical, and signs nothing; review
+that proposal and approve it. Without `candidate_digest`, a proposal proposed
+again at the head with identical members is signed in the same call. Unset,
+the tool refuses and says how to configure it.
 Set `CRUXIBLE_PRINCIPAL_ID` beside it: the key directory makes the
 environment the identity source, so with no principal ID the server's
 requests name no principal, and submitting the approval refuses

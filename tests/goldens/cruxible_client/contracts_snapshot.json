@@ -46669,7 +46669,7 @@
           },
           "OrientAttention": {
             "additionalProperties": false,
-            "description": "What the ``next`` queue holds, and anything else the instance needs.\n\n``next_items`` counts the queue's problems and ``top`` names the first of\nthem; ``setup_items`` counts its setup rows apart (choices the operator\nowns, such as a Line accepted but not yet enabled), absent when none.\nThese count accepted state only: rows about the caller's workspace (its\nfloor, sources, projection blocks, vocabulary file) need the workspace\nand appear in ``next``; orient reports the floor and the vocabulary file\nas status beside this (``floor``, ``vocabulary_file``), as it always has.",
+            "description": "What the ``next`` queue holds, and anything else the instance needs.\n\n``next_items`` counts the queue's problems and ``top`` names the first of\nthem; ``setup_items`` counts its setup rows apart (choices the operator\nowns, such as a Line accepted but not yet enabled), absent when none.\nThese count accepted state only: rows about the caller's workspace (its\nfloor, sources, projection blocks, vocabulary file) need the workspace\nand appear in ``next``; orient reports the floor and the vocabulary file\nas status beside this (``floor``, ``vocabulary_file``), as it always has.\n``next_scope`` says so on every answer: ``next_items: 0`` is not an empty\n``next`` queue.",
             "properties": {
               "enablements": {
                 "anyOf": [
@@ -46686,6 +46686,12 @@
                 "minimum": 0,
                 "title": "Next Items",
                 "type": "integer"
+              },
+              "next_scope": {
+                "const": "accepted_state",
+                "default": "accepted_state",
+                "title": "Next Scope",
+                "type": "string"
               },
               "notes": {
                 "default": [],
@@ -75206,6 +75212,18 @@
                 "default": null,
                 "title": "Candidate Digest"
               },
+              "closed_by": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Closed By"
+              },
               "incomplete_reasons": {
                 "default": [],
                 "items": {
@@ -75241,6 +75259,18 @@
                 "title": "Status",
                 "type": "string"
               },
+              "superseded_by": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Superseded By"
+              },
               "tag": {
                 "const": "playbill-proposal-list-entry-v1",
                 "default": "playbill-proposal-list-entry-v1",
@@ -75265,7 +75295,8 @@
                       "accepted",
                       "refused",
                       "withdrawn",
-                      "rejected"
+                      "rejected",
+                      "superseded"
                     ],
                     "type": "string"
                   },
@@ -75451,6 +75482,26 @@
             "title": "Candidate Digest"
           }
         },
+        "closed_by": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "closed_by",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Closed By"
+          }
+        },
         "incomplete_reasons": {
           "default": [],
           "default_json_serializable": true,
@@ -75514,6 +75565,26 @@
             "type": "string"
           }
         },
+        "superseded_by": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "superseded_by",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Superseded By"
+          }
+        },
         "tag": {
           "default": "playbill-proposal-list-entry-v1",
           "default_json_serializable": true,
@@ -75559,7 +75630,8 @@
                   "accepted",
                   "refused",
                   "withdrawn",
-                  "rejected"
+                  "rejected",
+                  "superseded"
                 ],
                 "type": "string"
               },
@@ -75655,6 +75727,18 @@
             "default": null,
             "title": "Candidate Digest"
           },
+          "closed_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Closed By"
+          },
           "incomplete_reasons": {
             "default": [],
             "items": {
@@ -75690,6 +75774,18 @@
             "title": "Status",
             "type": "string"
           },
+          "superseded_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Superseded By"
+          },
           "tag": {
             "const": "playbill-proposal-list-entry-v1",
             "default": "playbill-proposal-list-entry-v1",
@@ -75714,7 +75810,8 @@
                   "accepted",
                   "refused",
                   "withdrawn",
-                  "rejected"
+                  "rejected",
+                  "superseded"
                 ],
                 "type": "string"
               },

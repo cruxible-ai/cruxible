@@ -684,8 +684,8 @@ def register_tools(
             str | None,
             Field(
                 description=(
-                    "The candidate_digest you reviewed; the approval refuses if the "
-                    "proposal now signs a different candidate."
+                    "The candidate_digest you reviewed: sign it or refuse. Omitted: an "
+                    "identical replacement at the head is signed."
                 )
             ),
         ] = None,

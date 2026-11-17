@@ -2171,9 +2171,16 @@ refused. `reprepare()` requires the same owning connection.
 `approve(signer=..., reviewed=...)` checks exact proposal/candidate/session/instance
 binding, obtains current governance/challenge data, signs locally, and submits
 public approval; the approval that completes the candidate also activates it
-unless `hold=True`. A stale candidate recompiles: approval returns an
-`ActivationReceipt` directly when no approval is needed and the caller may
-activate, or `ProposalRecompiled` for the replacement proposal. Activation
+unless `hold=True`. The approval is bound to the reviewed candidate: if
+accepted state moved and the daemon proposed the change again at the head,
+`approve` raises `cruxible.approval.reviewed_candidate_changed`
+(`ReviewedCandidateChanged`), naming the new proposal and whether its members
+are identical, and signs nothing; review that proposal and approve it. A
+`ProposalRecompiled` is returned only when every change is already live.
+A daemon older than this client cannot bind an approval: `approve` raises
+`cruxible.approval.reviewed_binding_unsupported` and signs nothing; upgrade
+the daemon.
+Activation
 refuses `cruxible.approval.requirement_unsatisfied` until the approvals are
 in, also when the base moved, and changes nothing; acting again on an accepted
 proposal refuses `cruxible.proposal.already_accepted`. Approval and activation
@@ -2181,8 +2188,8 @@ receipts name the proposal a landed one replaces in `readmits`, and while
 approvals remain the approval receipt names `required_signers` and
 `eligible_signers`. A signer registered after the proposal's base cannot sign
 the reviewed candidate: the daemon lands the proposal at the head, and
-`approve` raises `ApprovalReviewMismatch` naming the landed proposal to review
-and approve instead (a caller without approval rights gets
+`approve` raises the same `ReviewedCandidateChanged` naming the landed
+proposal to review and approve instead (a caller without approval rights gets
 `ApprovalSignerAfterBase`, `cruxible.approval.signer_after_base`, whose repair
 is the author's readmit). Approve, activate, readmit, and the transport's
 reject and withdraw need a named principal: a connection that names none

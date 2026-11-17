@@ -210,6 +210,38 @@ quickstart and concepts pages.
   `already_current`; back up before any future upgrade (see
   [Upgrading](docs/upgrading.md#back-up-first)).
 
+- **An approval bound to the reviewed candidate signs that candidate or
+  nothing.** When accepted state moved and the proposal was proposed again at
+  the head, an approval that names the reviewed candidate digest (CLI
+  `proposal approve --candidate-digest`, new; MCP `candidate_digest`; the SDK's
+  `approve(reviewed=...)`) refuses
+  `cruxible.approval.reviewed_candidate_changed`, naming the new proposal and
+  whether its members are identical. MCP used to sign the new candidate, and
+  the SDK returned it unsigned. With no digest, the CLI and MCP sign the new
+  candidate when its members are identical, as before, and refuse the same
+  way when a landing for a late-registered signer changed them. The HTTP approval
+  challenge and approval requests take an optional
+  `reviewed_candidate_digest`; against a daemon too old to accept it, a bound
+  approval refuses `cruxible.approval.reviewed_binding_unsupported` and signs
+  nothing (it is never sent unbound instead).
+- **A proposal proposed again at the head closes as `superseded`, not
+  `withdrawn`.** `get` and `proposal list` show `superseded_by` and
+  `closed_by`, the principal whose approval, activation or readmit closed it;
+  it used to read as withdrawn by its author. `proposal approve` prints the
+  proposal beside the candidate it signed.
+- **`orient` says its `next=` count leaves out workspace rows.** The count is
+  accepted state only (`attention.next_scope: accepted_state`; the text line
+  ends `(workspace rows not counted: next)`), so `next=0` is no longer read as
+  an empty queue while `next` lists Claims whose cited files changed.
+- **A review shows the guidance of every guided field it touches.** A large
+  change set asked guidance for the first 20 ClaimTypes it met in member order,
+  so a guidance line could be missing, and differ between two submissions of
+  the same change. The cap now counts guided definitions, in name order.
+- **Two pending writes that cite the same new file no longer conflict.** Each
+  carries the file's CaptureContract; when the first landed, the second went
+  `awaiting_readmit` on that identical contract and left the open list. A path
+  the head holds exactly as a proposal proposes it is no longer stale.
+
 ### Automation: Procedures, Lines and capabilities
 
 - **Procedures, Lines, Triggers, Mandates and Runbooks.** A Procedure is a

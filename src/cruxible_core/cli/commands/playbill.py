@@ -115,6 +115,7 @@ from cruxible_client.contracts.duplicates import (
 )
 from cruxible_client.contracts.errors import (
     CanonicalEncodingError,
+    ReviewedCandidateChanged,
     SinceRequestInvalid,
 )
 from cruxible_client.contracts.file_catalog import FileCatalog, FileCompilationBundle
@@ -3095,6 +3096,8 @@ def list_proposals(status: str | None, limit: int, cursor: str | None, output_js
             f"{entry.status}  {terminal}  {entry.proposal_id}  "
             f"{entry.target_ref or '-'}  {entry.admitted_at or '-'}"
         )
+        if entry.superseded_by is not None:
+            click.echo(f"  superseded_by: {entry.superseded_by}")
         if entry.stale_paths:
             shown = ", ".join(entry.stale_paths[:5])
             more = len(entry.stale_paths) - 5
@@ -3361,6 +3364,16 @@ def review_proposal(
     "needed where no one is at the terminal.",
 )
 @click.option(
+    "--candidate-digest",
+    "candidate_digest",
+    default=None,
+    metavar="DIGEST",
+    help="The candidate digest you reviewed (`proposal review` prints it): sign that "
+    "candidate or refuse. If accepted state moved and the proposal was proposed again "
+    "at the head, the refusal names the new proposal and says whether its members are "
+    "identical. Without it, one proposed again with identical members is signed.",
+)
+@click.option(
     "--hold",
     is_flag=True,
     help="Sign only: leave activating a candidate this approval completes to someone else.",
@@ -3377,6 +3390,7 @@ def approve_proposal(
     signer_id: str | None,
     private_key_path: str | None,
     yes: bool,
+    candidate_digest: str | None,
     hold: bool,
     full: bool,
     output_json: bool,
@@ -3388,6 +3402,12 @@ def approve_proposal(
     leaving activation timing to someone else, who runs `proposal activate`.
     Otherwise the result says what remains. Without a terminal to prompt at,
     it refuses unless --yes is passed.
+
+    When accepted state moved since the proposal was made and nothing it
+    touches changed, the same change set is proposed again at the head as a new
+    proposal, and that one is signed. `--candidate-digest` binds the approval
+    to the candidate you reviewed instead: it then refuses, naming the new
+    proposal to review.
     """
 
     if not yes and not _can_confirm():
@@ -3418,7 +3438,11 @@ def approve_proposal(
         # A signer registered after the proposal's base cannot sign its candidate;
         # the challenge then lands it at the head and names the landed proposal.
         challenge = client.prepare_approval(
-            instance_id, resolved_id, signer_id=resolved_signer, include_body=True
+            instance_id,
+            resolved_id,
+            signer_id=resolved_signer,
+            include_body=True,
+            reviewed_candidate_digest=candidate_digest,
         )
         summary = None
         if shows_summary:
@@ -3431,7 +3455,8 @@ def approve_proposal(
         _resolve_and_prepare,
         command_name="cruxible proposal approve",
     )
-    if challenge.proposal_id != resolved_id:
+    said_landed = challenge.proposal_id != resolved_id
+    if said_landed:
         if not output_json:
             click.echo(
                 f"Landed at the head as {challenge.proposal_id}: the same change set "
@@ -3465,18 +3490,30 @@ def approve_proposal(
         expected_public_key=principal.public_key,
         forbidden_roots=_custody_forbidden_roots(),
     )
-    attestation = signer.sign(ApprovalStatement.model_validate(challenge.statement))
+    statement = ApprovalStatement.model_validate(challenge.statement)
+    if candidate_digest is not None and statement.payload_digest != candidate_digest:
+        # The daemon refuses this itself; the key never signs past a challenge
+        # that is not for the reviewed candidate, whatever served it.
+        raise ReviewedCandidateChanged(
+            proposal_id,
+            reviewed_candidate_digest=candidate_digest,
+            current_proposal_id=challenge.proposal_id,
+            current_candidate_digest=statement.payload_digest,
+        )
+    attestation = signer.sign(statement)
     result = _server_call(
         lambda client, instance_id: client.submit_approval(
             instance_id,
             resolved_id,
             attestation=attestation.model_dump(mode="json"),
             hold=hold,
+            reviewed_candidate_digest=candidate_digest,
         ),
         command_name="cruxible proposal approve",
     )
-    landed = _landed_same_change_set(result)
+    landed = None if candidate_digest is not None else _landed_same_change_set(result)
     if landed is not None:
+        said_landed = True
         # Nothing it touches changed since its base: the daemon landed the same
         # change set at the head under its author. That candidate is what
         # settles, so the approval confirmed above signs it.
@@ -3509,8 +3546,11 @@ def approve_proposal(
     if isinstance(result, contracts.ActivationReceipt):
         _echo_activation(result)
         return
-    click.echo(f"Approved {result.candidate_digest} as {result.signer_id}")
-    if result.readmits is not None:
+    # Candidate, then the proposal it settles, as the Signing line names them.
+    click.echo(f"Approved {result.candidate_digest} ({result.proposal_id}) as {result.signer_id}")
+    if result.readmits is not None and not said_landed:
+        # Said above when this command landed it; here the proposal passed is
+        # itself a readmission, and the receipt names what it replaced.
         click.echo(_replaces_line(result.proposal_id, result.readmits))
     for line in _approval_outcome_lines(result):
         click.echo(line)

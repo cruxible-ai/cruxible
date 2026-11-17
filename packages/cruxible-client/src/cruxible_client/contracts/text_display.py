@@ -377,6 +377,8 @@ def render_orient(result: Mapping[str, Any]) -> str:
             f"Attention: next={attention['next_items']} "
             + (f"setup={setup} " if setup else "")
             + f"open_proposals={attention['open_proposals']}"
+            # psw F4: next=0 read as an empty queue over 18 drift rows.
+            + " (workspace rows not counted: next)"
         )
         lines.extend(f"  {line}" for line in attention["top"])
         lines.extend(f"  note: {line}" for line in attention.get("notes", ()))

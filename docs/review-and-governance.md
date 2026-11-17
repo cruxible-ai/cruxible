@@ -101,7 +101,7 @@ Active principal: reviewer (settings ~/keys/grace/cruxible.env)
 $ cruxible proposal approve sha256:9afd6283…
 Signing key for reviewer: ~/keys/grace/reviewer.ed25519 (from remembered settings ~/keys/grace/cruxible.env)
 ...
-Approved sha256:fc586140… as reviewer
+Approved sha256:fc586140… (sha256:9afd6283…) as reviewer
 Activated at 9b659ad32d3f…
 ~~~
 
@@ -114,15 +114,32 @@ the change lands; they run `proposal activate` later:
 
 ~~~text
 $ cruxible proposal approve sha256:93339c6f… --hold
-Approved sha256:64effc63… as reviewer
+Approved sha256:64effc63… (sha256:93339c6f…) as reviewer
 Held: not activated. Next: cruxible proposal activate sha256:93339c6f…
 ~~~
 
 If other changes were accepted after a proposal was checked, approving or
-activating recompiles it against the current state, as a fresh proposal that
-replaces the old one; approvals given to the old one don't carry over. The
-receipts name the old one (`readmits`), and the CLI says `NEW replaces OLD
-(readmitted at the head); act on NEW`. Activating a proposal whose approvals
+activating proposes it again against the current state, as a fresh proposal
+that replaces the old one; approvals given to the old one don't carry over.
+The old one closes as `superseded`: `get` and `proposal list` show
+`superseded_by` (the new proposal) and who closed it (`closed_by`, the
+principal who approved, activated or readmitted, often not its author). The
+receipts name the old one (`readmits`), and the CLI says `Landed at the head
+as NEW: the same change set (proposed as OLD)`.
+
+A new proposal is a new candidate with a new digest, even when every member is
+byte-identical. What `proposal approve` does with it depends on whether you
+named the candidate you reviewed, and is the same on the CLI
+(`--candidate-digest`), MCP (`candidate_digest`) and the SDK (`reviewed=`,
+always bound):
+
+| You passed | The proposal was proposed again at the head | Result |
+|---|---|---|
+| the reviewed candidate digest | yes | refuses `cruxible.approval.reviewed_candidate_changed`, naming the new proposal and `members identical: true` or `false`; nothing is signed; review the new proposal and approve it |
+| no digest | yes, members identical | signs the new candidate in the same call |
+| no digest | yes, members differ | signs nothing; the result names the new proposal to review |
+
+Activating a proposal whose approvals
 aren't in refuses first (`cruxible.approval.requirement_unsatisfied`, naming
 who may sign) and changes nothing. If what it changes has itself moved in the
 meantime, it's refused, and `proposal readmit` (by its author only) rebases it
@@ -176,7 +193,7 @@ $ cruxible context use --principal reviewer
 $ cruxible proposal approve sha256:86bd8301… --yes
 Signing sha256:8d23151f… (sha256:86bd8301…): 3 changes (3 create)
 ...
-Approved sha256:8d23151f… as reviewer
+Approved sha256:8d23151f… (sha256:86bd8301…) as reviewer
 Activated at e6c4614c7c6e28366962c8f125501260b13592fd
 ~~~
 
