@@ -1030,3 +1030,335 @@ def test_a_follower_reads_only_the_records_past_its_cursor(tmp_path: Path) -> No
     assert second[0] == first[0] and second[1] != first[1]
     assert store.records_after(1) == ((2, claim_id),)
     assert store.records_after(2) == ()
+
+
+# -- a batch's absence set keeps every admitted call (review 2g F-001) ---------
+
+
+def _append_batch(store, recorded: datetime, groups: list[dict[str, Any]]) -> None:  # type: ignore[no-untyped-def]
+    """Append one batch record stamped ``recorded`` and project it, as ``record_many`` does."""
+
+    payload = {"tag": "cruxible-claim-reobservation-batch-v1", "groups": groups}
+    with store._locked(create=True) as conn:
+        journal, bodies, head = store._writer_head()
+        stored = store._append(
+            journal,
+            bodies,
+            head,
+            payload,
+            accepted=store.instance.accepted_coordinate(),
+            actor_id="owner",
+            now=recorded,
+        )
+        store._apply_batch(conn, payload, stored.record.sequence, stored.record.recorded_at)
+        store._mark_applied(conn, stored)
+
+
+def test_a_delayed_older_absence_call_keeps_its_history_repeat_and_settlement(
+    tmp_path: Path,
+) -> None:
+    """Codex round 7 F-001: a call observed at 20 (ending 40) is recorded at 50,
+    then a delayed call observed at 10 (ending 15) at 60. The set projection
+    answers as the per-Claim projection of the same records does: both calls in
+    history, the delayed one recognized as a repeat and found for a deadline of
+    15, and live freshness still the observation at 20."""
+
+    from cruxible_core.evidence.claim_reobservations import ReobservationKey, ReobservationReader
+
+    instance, _owner = _freshness_world(tmp_path, stale_after=_HOUR)
+    store = ClaimReobservationStore(instance)
+    contract, content = "sha256:" + "1" * 64, "sha256:" + "2" * 64
+    version = "sha256:" + "3" * 64
+    newer, older = "sha256:" + "a" * 64, "sha256:" + "b" * 64
+
+    def minutes(value: int) -> datetime:
+        return _START + timedelta(minutes=value)
+
+    def groups(capture: str, observed: int, ended: int) -> list[dict[str, Any]]:
+        shared = {
+            "capture_digest": capture,
+            "contract_digest": contract,
+            "observed_content_digest": content,
+            "capture_content_digest": content,
+            "observed_at": _stamp(minutes(observed)),
+            "latest": _stamp(minutes(ended)),
+        }
+        return [
+            # Without an absence extraction a group projects per Claim; with
+            # one, as a set and a point.
+            {**shared, "claims": [["CLM-individual", version]]},
+            {**shared, "extraction": {"absence": {}}, "claims": [["CLM-batched", version]]},
+        ]
+
+    _append_batch(store, minutes(50), groups(newer, 20, 40))
+    _append_batch(store, minutes(60), groups(older, 10, 15))
+    reader = ReobservationReader(instance)
+    key = (ReobservationKey(newer, contract, content, shared=False, version=version),)
+
+    def answers(claim_id: str) -> dict[str, Any]:
+        with store._locked() as conn:
+            repeat = store._known(conn, claim_id, version, older, (minutes(10), minutes(15)))
+        settled = reader.latest_version_record(claim_id, version, observed_by=minutes(15))
+        assert settled is not None
+        return {
+            "history": sorted(
+                (item.capture_digest, item.observed_at, item.recorded_at)
+                for item in store.history(claim_id)
+            ),
+            "repeat": repeat,
+            "settled": (settled.record.capture_digest, settled.record.observed_at),
+            "settled_sequence": settled.sequence,
+            "none_before": reader.latest_version_record(claim_id, version, observed_by=minutes(9)),
+            "fresh": [
+                [
+                    (item.reobserving_capture_digest, item.observed_at, item.recorded_at)
+                    for item in reader.latest(claim_id, key, minutes(at)).evidence
+                ]
+                for at in (45, 55, 65)
+            ],
+            "sequence": reader.sequence(claim_id),
+        }
+
+    individual, batched = answers("CLM-individual"), answers("CLM-batched")
+    assert batched == individual
+    assert [observed for _capture, observed, _recorded in batched["history"]] == [
+        minutes(20),
+        minutes(10),
+    ]
+    assert batched["repeat"] is not None
+    assert batched["settled"] == (older, minutes(10)) and batched["settled_sequence"] == 2
+    # The older call recorded later never moves live freshness back.
+    step = [(newer, minutes(20), minutes(50))]
+    assert batched["fresh"] == [[], step, step]
+    # Rebuilt from the journal, the projection is the same bytes.
+    incremental = _dump(store)
+    store.path.unlink()
+    assert _dump(store) == incremental
+
+
+# -- a journal lost or replaced under a kept projection (journal-loss P1s) -----
+
+
+def _move_journal(store, aside: Path) -> None:  # type: ignore[no-untyped-def]
+    """Move the journal (its log and its locator index) out of the store's
+    directory; the projection stays."""
+
+    aside.mkdir()
+    for entry in list(store.root.iterdir()):
+        if not entry.name.startswith(store.path.name):
+            entry.rename(aside / entry.name)
+
+
+def _restore_journal(store, aside: Path) -> None:  # type: ignore[no-untyped-def]
+    import shutil
+
+    for entry in list(aside.iterdir()):
+        current = store.root / entry.name
+        if current.is_dir():
+            shutil.rmtree(current)
+        elif current.exists():
+            current.unlink()
+        entry.rename(current)
+
+
+def test_a_journal_lost_then_restored_under_a_kept_projection_rebuilds_it(
+    tmp_path: Path,
+) -> None:
+    """The projection is disposable: a journal behind what it applied, or one
+    that does not continue it, rebuilds it from the journal. New records are
+    never applied under sequences the lost journal's records held, and the
+    restored journal is read again without a refusal."""
+
+    from cruxible_core.evidence.claim_reobservations import ReobservationReader
+
+    (tmp_path / "world").mkdir()
+    instance, _owner = _freshness_world(tmp_path / "world", stale_after=_HOUR)
+    claim_id = _current_claim(instance).identity.name
+    store = ClaimReobservationStore(instance)
+    reader = ReobservationReader.of(instance)
+    for minute in (20, 40, 50):
+        _reobserve(instance, _START + timedelta(minutes=minute))
+    original = _dump(store)
+    assert reader.sequence(claim_id) == 3
+    assert _verdict(instance, _START + timedelta(minutes=100)).verdict == "supported"
+
+    # The journal is lost and the projection kept: nothing is recorded any more.
+    _move_journal(store, tmp_path / "aside")
+    assert reader.sequence(claim_id) == 0
+    assert _verdict(instance, _START + timedelta(minutes=100)).verdict == "stale_evidence"
+    assert store.history(claim_id) == ()
+
+    # A new record starts the new journal at sequence 1: it is the only record
+    # the projection holds, exactly as a projection built from that journal.
+    _reobserve(instance, _START + timedelta(minutes=110))
+    (only,) = store.history(claim_id)
+    assert only.observed_at == _START + timedelta(minutes=110)
+    assert reader.sequence(claim_id) == 1
+    verdict = _verdict(instance, _START + timedelta(minutes=130))
+    assert verdict.verdict == "supported", verdict
+    replaced = _dump(store)
+    store.path.unlink()
+    assert _dump(store) == replaced
+
+    # The lost journal is put back over the new one: its three records are not
+    # a continuation of the one applied. Reads rebuild, and never refuse.
+    _restore_journal(store, tmp_path / "aside")
+    assert reader.sequence(claim_id) == 3
+    assert _verdict(instance, _START + timedelta(minutes=100)).verdict == "supported"
+    assert sorted(item.observed_at for item in store.history(claim_id)) == [
+        _START + timedelta(minutes=minute) for minute in (20, 40, 50)
+    ]
+    assert _dump(store) == original
+    # And the store appends to it again.
+    _reobserve(instance, _START + timedelta(minutes=140))
+    assert reader.sequence(claim_id) == 4
+    assert len(store.history(claim_id)) == 4
+
+
+def test_a_warmed_reader_rereads_a_journal_that_went_away_and_came_back(tmp_path: Path) -> None:
+    """The reader last read the journal that is restored: it still catches up,
+    because the projection was rebuilt for another journal while it was gone."""
+
+    from cruxible_core.evidence.claim_reobservations import ReobservationReader
+
+    (tmp_path / "world").mkdir()
+    instance, _owner = _freshness_world(tmp_path / "world", stale_after=_HOUR)
+    claim_id = _current_claim(instance).identity.name
+    store = ClaimReobservationStore(instance)
+    reader = ReobservationReader.of(instance)
+    for minute in (20, 40, 50):
+        _reobserve(instance, _START + timedelta(minutes=minute))
+    assert reader.sequence(claim_id) == 3
+    _move_journal(store, tmp_path / "aside")
+    assert reader.sequence(claim_id) == 0
+    _reobserve(instance, _START + timedelta(minutes=110))  # the projection now holds 1 record
+    _restore_journal(store, tmp_path / "aside")
+    assert reader.sequence(claim_id) == 3
+
+
+def test_a_locator_index_that_outlived_its_log_is_an_empty_journal(tmp_path: Path) -> None:
+    """Review finding 2: a crash can keep the journal's locator index and lose
+    the log it locates (a first append commits the locator without the log
+    being durable). The log is the authority: the journal is then empty, the
+    kept projection is rebuilt to nothing, and the next record is sequence 1."""
+
+    from cruxible_core.evidence.claim_reobservations import _PARTITION, ReobservationReader
+    from cruxible_core.exhaust.backends import journal_log_path
+
+    (tmp_path / "world").mkdir()
+    instance, _owner = _freshness_world(tmp_path / "world", stale_after=_HOUR)
+    claim_id = _current_claim(instance).identity.name
+    store = ClaimReobservationStore(instance)
+    reader = ReobservationReader.of(instance)
+    for minute in (20, 40, 50):
+        _reobserve(instance, _START + timedelta(minutes=minute))
+    assert store.head_sequence() == 3
+
+    # Only the log is lost: its locator index and the projection survive.
+    journal_log_path(store.root, store.stream, _PARTITION).unlink()
+    assert (store.root / "event-index.sqlite3").exists() and store.path.exists()
+    assert store.head_sequence() == 0
+    assert store.history(claim_id) == ()
+    assert store.records_after(0) == ()
+    assert reader.sequence(claim_id) == 0
+    assert _verdict(instance, _START + timedelta(minutes=100)).verdict == "stale_evidence"
+
+    _reobserve(instance, _START + timedelta(minutes=110))
+    assert store.head_sequence() == 1
+    (only,) = store.history(claim_id)
+    assert only.observed_at == _START + timedelta(minutes=110)
+    assert reader.sequence(claim_id) == 1
+    replaced = _dump(store)
+    store.path.unlink()
+    assert _dump(store) == replaced
+
+
+def test_an_interrupted_projection_reset_never_mixes_two_journals(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review finding 3: the reset on divergence is interrupted after the
+    progress and applied marks are dropped. The next open still sees the old
+    projection whole, resets again, and holds only the journal's records."""
+
+    import shutil
+    import sqlite3
+
+    (tmp_path / "world").mkdir()
+    instance, _owner = _freshness_world(tmp_path / "world", stale_after=_HOUR)
+    claim_id = _current_claim(instance).identity.name
+    store = ClaimReobservationStore(instance)
+    for minute in (20, 40, 50):
+        _reobserve(instance, _START + timedelta(minutes=minute))
+    assert len(store.history(claim_id)) == 3
+    kept = tmp_path / "kept.sqlite3"
+    shutil.copy(store.path, kept)
+
+    # Another journal, of one record, and the projection built from it.
+    _move_journal(store, tmp_path / "aside")
+    _reobserve(instance, _START + timedelta(minutes=110))
+    expected = _dump(store)
+    # The first journal's projection is kept over the second journal.
+    shutil.copy(kept, store.path)
+
+    class Interrupted(sqlite3.Connection):
+        def execute(self, sql, *parameters):  # type: ignore[no-untyped-def]
+            if sql == "DROP TABLE IF EXISTS reobservations":
+                raise KeyboardInterrupt
+            return super().execute(sql, *parameters)
+
+    connect = sqlite3.connect
+
+    def interrupted(database, *args, **kwargs):  # type: ignore[no-untyped-def]
+        if str(database) == str(store.path):
+            kwargs["factory"] = Interrupted
+        return connect(database, *args, **kwargs)
+
+    with monkeypatch.context() as patched:
+        patched.setattr(sqlite3, "connect", interrupted)
+        with pytest.raises(KeyboardInterrupt):
+            store.history(claim_id)
+
+    (only,) = store.history(claim_id)
+    assert only.observed_at == _START + timedelta(minutes=110)
+    assert _dump(store) == expected
+
+
+def test_a_retained_record_whose_payload_is_gone_is_skipped_not_a_failed_open(
+    tmp_path: Path,
+) -> None:
+    """Review finding 5: a journal frame outlives its CAS payload (best-effort
+    exhaust), and the projection is rebuilt (here by a schema upgrade). The
+    record projects nothing and is named unavailable; every other record is
+    served, and the followers read past it."""
+
+    import sqlite3
+
+    from cruxible_core.evidence.claim_reobservations import _PARTITION, ReobservationReader
+    from cruxible_core.exhaust.backends import LocalJournalBackend
+
+    (tmp_path / "world").mkdir()
+    instance, _owner = _freshness_world(tmp_path / "world", stale_after=_HOUR)
+    claim_id = _current_claim(instance).identity.name
+    store = ClaimReobservationStore(instance)
+    for minute in (20, 40, 50):
+        _reobserve(instance, _START + timedelta(minutes=minute))
+    records = LocalJournalBackend(store.root).select_records(store.stream, partition_id=_PARTITION)
+    lost = records[1].record.payload_digest
+    instance.body_store()._path(lost).unlink()
+    # An earlier build's projection: the open drops it and replays the journal.
+    with sqlite3.connect(store.path) as conn:
+        conn.execute("PRAGMA user_version=19")
+
+    assert sorted(item.observed_at for item in store.history(claim_id)) == [
+        _START + timedelta(minutes=20),
+        _START + timedelta(minutes=50),
+    ]
+    assert store.unavailable() == ((2, lost),)
+    assert ReobservationReader.of(instance).sequence(claim_id) == 3
+    assert _verdict(instance, _START + timedelta(minutes=100)).verdict == "supported"
+    assert [sequence for sequence, _claim in store.records_after(0)] == [1, 3]
+    store.observed_after(0)
+    # The next open applies nothing again, and the store still appends.
+    assert store.unavailable() == ((2, lost),)
+    _reobserve(instance, _START + timedelta(minutes=110))
+    assert len(store.history(claim_id)) == 3

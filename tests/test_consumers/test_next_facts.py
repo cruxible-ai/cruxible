@@ -482,6 +482,293 @@ def test_expiry_fires_and_reobservations_recompute_only_their_claim(tmp_path: Pa
     assert work.claims[claim] == 1
 
 
+def test_a_reobservation_journal_lost_then_restored_is_followed_without_a_repair(
+    tmp_path: Path,
+) -> None:
+    """Journal-loss findings 1-3: the re-observation journal is lost (its
+    projection kept), a record is written to the new journal, then the lost
+    journal is put back. No pass fails, so no failed target pins the worker:
+    the cursors name another journal, the facts rebuild, and reads serve from
+    them again with no manual step."""
+
+    from tests.test_evidence.test_claim_reobservations import _move_journal, _restore_journal
+
+    (tmp_path / "world").mkdir()
+    instance, owner = _freshness_world(tmp_path / "world")
+    at = datetime(2026, 8, 16, 20, 0, 9, 800000, tzinfo=UTC)
+    store = ClaimReobservationStore(instance)
+
+    def followed() -> None:
+        _catch_up(instance, at)
+        _assert_rebuilt(instance, at)
+        with sqlite3.connect(facts._STATE.path(instance)) as connection:
+            assert connection.execute("SELECT failed,last_error FROM progress").fetchone() == (
+                None,
+                None,
+            )
+        # Served from the stored state: a fold would return None here.
+        assert facts._serving(
+            instance,
+            coordinate=None,
+            door_head=None,
+            evaluation_time=at,
+            read=lambda _connection, _coordinate: True,
+        )
+
+    for stamp in ("2026-08-16T20:00:07.000000Z", "2026-08-16T20:00:08.000000Z"):
+        _refresh_claim(instance, owner, timestamp=stamp)
+    followed()
+    assert store.head_sequence() == 2
+
+    _move_journal(store, tmp_path / "aside")
+    followed()
+    _refresh_claim(instance, owner, timestamp="2026-08-16T20:00:09.000000Z")
+    assert store.head_sequence() == 1
+    followed()
+
+    _restore_journal(store, tmp_path / "aside")
+    assert store.head_sequence() == 2
+    followed()
+    # The next record continues the restored journal and reaches its Claim.
+    _refresh_claim(instance, owner, timestamp="2026-08-16T20:00:09.500000Z")
+    followed()
+
+
+def _row_map_world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):  # type: ignore[no-untyped-def]
+    """A Claim whose extracted record is row X of its cited Capture, observed
+    again recently: ``observe(minute, capture, row, typing)`` records a row map,
+    and ``observe.conflict()`` records a second typing mapping the record to row
+    Y, so the Capture's maps disagree and the row evidence is withdrawn."""
+
+    from cruxible_core.evidence import claim_reobservations
+    from cruxible_core.evidence.claim_reobservations import ReobservationKey, RowMap
+    from tests.test_evidence.test_content_observations import _OTHER, _cited
+    from tests.test_evidence.test_content_observations import (
+        _freshness_world as _hour_world,
+    )
+
+    instance, _owner = _hour_world(tmp_path, stale_after=3_600_000_000)
+    claim, cited, key = _cited(instance)
+    store = ClaimReobservationStore(instance)
+    spec = "sha256:" + "5" * 64
+    row_x, row_y = "sha256:" + "6" * 64, "sha256:" + "7" * 64
+    start = datetime(2026, 8, 16, 21, 0, tzinfo=UTC)
+
+    def observe(minute: int, capture: str, row: str, typing: str) -> None:
+        instance.recording_clock = lambda: start + timedelta(minutes=minute)
+        store.observe_rows(
+            (RowMap(capture, spec, key.contract_digest, (("/0", row),), extraction=typing),),
+            earliest=start + timedelta(minutes=minute),
+            latest=start + timedelta(minutes=minute),
+            run_id=f"RUN-{minute}",
+            node_id="extract",
+            actor_id="o",
+        )
+
+    # The Claim depends on its extracted record's row, as ``claim_keys_on``
+    # names it for a Claim produced from an extracted record.
+    depends = (ReobservationKey(cited, key.contract_digest, "", row_record=(cited, spec, "/0")),)
+    real_keys = claim_reobservations.claim_reobservation_keys
+    monkeypatch.setattr(
+        claim_reobservations,
+        "claim_reobservation_keys",
+        lambda instance, **kwargs: (
+            depends if kwargs["claim"].identity == claim.identity else real_keys(instance, **kwargs)
+        ),
+    )
+    observe(1, cited, row_x, "t1")
+    observe(20, _OTHER, row_x, "t1")
+    observe.conflict = lambda minute=30: observe(minute, cited, row_y, "t2")  # type: ignore[attr-defined]
+    return instance, claim, cited, observe, start + timedelta(minutes=40)
+
+
+def test_a_typing_map_recorded_after_a_claims_facts_derives_the_claim_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review finding 1: the worker stores a supported, current Claim's facts
+    (its extracted record is row X, observed again recently). A second typing
+    of the cited Capture then maps the record to row Y: the maps disagree, the
+    direct reader withdraws the row evidence, and the worker derives the
+    Claim again, so next serves what a rebuild does."""
+
+    instance, claim, cited, observe, at = _row_map_world(tmp_path, monkeypatch)
+    identity = claim.identity.qualified
+
+    def stored_verdict() -> str:
+        _catch_up(instance, at)
+        tables = _assert_rebuilt(instance, at)
+        return str(next(row for row in tables["claim_facts"] if row[0] == identity)[_VERDICT])
+
+    assert stored_verdict() == "supported"
+    # The worker is caught up; only now is the conflicting map recorded.
+    observe.conflict()
+    with _counted() as work:
+        _catch_up(instance, at)
+    # Reached through the Capture: the Claims citing it, each once.
+    assert work.claims[identity] == 1
+    citing = {
+        item.identity.qualified
+        for item in _all_claims(instance)
+        if cited in item.backing.capture_digests
+    }
+    assert set(work.claims) <= citing
+    assert stored_verdict() != "supported"
+    # The same maps again are no new map: nothing is derived.
+    observe.conflict(35)
+    with _counted() as work:
+        _catch_up(instance, at)
+    assert identity not in work.claims
+
+
+def test_facts_stored_before_typing_maps_were_followed_rebuild_once_after_an_upgrade(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review round 2: a format-19 worker did not follow new row maps, so it
+    could store a Claim as supported and move its cursor past the conflicting
+    map. Records past the cursor never name that map again: only a rebuild
+    corrects the fact. A format-19 state is therefore not this format: reads
+    fold until the worker has rebuilt it, and both agree with the direct
+    freshness verdict."""
+
+    from tests.test_evidence.test_content_observations import _verdict
+
+    instance, claim, _cited, observe, at = _row_map_world(tmp_path, monkeypatch)
+    identity = claim.identity.qualified
+    stored = "SELECT verdict FROM claim_facts WHERE claim_id=?"
+
+    def served() -> Any:
+        """The verdict a read takes from the stored facts; None when it folds."""
+
+        answer = facts._serving(
+            instance,
+            coordinate=None,
+            door_head=None,
+            evaluation_time=at,
+            read=lambda connection, _coordinate: connection.execute(stored, (identity,)).fetchone(),
+        )
+        return None if answer is None else answer[0][0]
+
+    _catch_up(instance, at)
+    assert served() == "supported"
+    # The format-19 worker: the conflicting map lands and the cursor passes it
+    # with no Claim derived, as that build's change selection did.
+    observe.conflict()
+    with (
+        patch.object(ClaimReobservationStore, "maps_after", lambda *_a, **_k: frozenset()),
+        _counted() as work,
+    ):
+        _catch_up(instance, at)
+    assert identity not in work.claims
+    path = facts._STATE.path(instance)
+    with sqlite3.connect(path) as connection:
+        assert connection.execute(stored, (identity,)).fetchone() == ("supported",)
+        cursors = connection.execute("SELECT * FROM cursors").fetchall()
+    assert ClaimReobservationStore(instance).maps_after(0)
+    direct = _verdict(instance, at).verdict
+    assert direct != "supported"
+
+    # The same rows and cursors under the format-19 schema text, as that build left them.
+    current = path.with_suffix(".current")
+    path.rename(current)
+    prior = sqlite3.connect(path)
+    prior.executescript(
+        facts._SCHEMA.replace(f"v={facts.FORMAT}", "v=19").replace(
+            f"VALUES ({facts.FORMAT})", "VALUES (19)"
+        )
+    )
+    prior.execute("ATTACH DATABASE ? AS cur", (str(current),))
+    for (table,) in prior.execute(
+        "SELECT name FROM cur.sqlite_master WHERE type='table' AND name!='format'"
+    ).fetchall():
+        prior.execute(f"DELETE FROM main.{table}")
+        prior.execute(f"INSERT INTO main.{table} SELECT * FROM cur.{table}")
+    prior.commit()
+    prior.execute("DETACH DATABASE cur")
+    prior.close()
+    current.unlink()
+    with sqlite3.connect(path) as connection:
+        assert connection.execute("SELECT v FROM format").fetchone() == (19,)
+        assert connection.execute("SELECT * FROM cursors").fetchall() == cursors
+        assert connection.execute(stored, (identity,)).fetchone() == ("supported",)
+
+    # The first read after the upgrade does not serve the stored fact: it folds.
+    assert served() is None
+    # The worker rebuilds with no new record, and then serves the direct verdict.
+    _catch_up(instance, at)
+    _assert_rebuilt(instance, at)
+    assert served() == direct
+    with sqlite3.connect(path) as connection:
+        assert connection.execute("SELECT v FROM format").fetchone() == (facts.FORMAT,)
+
+
+def test_a_journal_tail_lost_in_place_and_regrown_before_a_pass_rebuilds_the_facts(
+    tmp_path: Path,
+) -> None:
+    """Review finding 4: the log loses its last record in place (same file) and
+    another record takes that sequence before the worker samples the journal.
+    The cursor's file and sequence still match; the projection's recovery
+    renamed the journal, so the facts are rebuilt, never kept from the lost
+    record."""
+
+    import os
+
+    from cruxible_core.evidence.claim_reobservations import _PARTITION
+    from cruxible_core.exhaust.backends import journal_log_path
+
+    instance, owner = _freshness_world(tmp_path)
+    at = datetime(2026, 8, 16, 20, 0, 9, 800000, tzinfo=UTC)
+    store = ClaimReobservationStore(instance)
+    log = journal_log_path(store.root, store.stream, _PARTITION)
+    for stamp in ("2026-08-16T20:00:07.000000Z", "2026-08-16T20:00:08.000000Z"):
+        _refresh_claim(instance, owner, timestamp=stamp)
+    kept = log.stat().st_size
+    _refresh_claim(instance, owner, timestamp="2026-08-16T20:00:09.500000Z")
+    _catch_up(instance, at)
+    before = _assert_rebuilt(instance, at)
+    file = (log.stat().st_dev, log.stat().st_ino)
+
+    os.truncate(log, kept)
+    _refresh_claim(instance, owner, timestamp="2026-08-16T20:00:08.500000Z")
+    assert store.head_sequence() == 3
+    assert (log.stat().st_dev, log.stat().st_ino) == file
+
+    _catch_up(instance, at)
+    after = _assert_rebuilt(instance, at)
+    assert after["claim_facts"] != before["claim_facts"]
+    with sqlite3.connect(facts._STATE.path(instance)) as connection:
+        assert connection.execute("SELECT failed,last_error FROM progress").fetchone() == (
+            None,
+            None,
+        )
+
+
+def test_a_target_that_failed_under_an_earlier_process_is_tried_once_more(
+    tmp_path: Path,
+) -> None:
+    """Review finding 6: a pass failed and pinned its target; what failed it is
+    repaired without any head moving (an upgrade). The same process leaves the
+    target alone; the next process tries it once and stores the facts."""
+
+    instance, owner = _freshness_world(tmp_path)
+    at = datetime(2026, 8, 16, 20, 0, 9, 800000, tzinfo=UTC)
+    _catch_up(instance, at)
+    _refresh_claim(instance, owner, timestamp="2026-08-16T20:00:07.000000Z")
+    PART.match(instance, now=at, daemon_id="test")
+    with sqlite3.connect(facts._STATE.path(instance)) as connection:
+        connection.execute("UPDATE progress SET failed=target,last_error='CasError: gone'")
+    assert tuple(PART.due(instance, now=at)) == ()
+    PART.match(instance, now=at, daemon_id="test")
+    assert tuple(PART.due(instance, now=at)) == ()
+
+    facts._RETRIED.clear()  # another daemon process
+    _catch_up(instance, at)
+    _assert_rebuilt(instance, at)
+    with sqlite3.connect(facts._STATE.path(instance)) as connection:
+        assert connection.execute(
+            "SELECT failed,last_error,target=(SELECT heads FROM cursors) FROM progress"
+        ).fetchone() == (None, None, 1)
+
+
 def test_invalid_cursors_and_a_new_format_rebuild_from_nothing(tmp_path: Path) -> None:
     instance, _owner = seed_claims(tmp_path)
     at = EVALUATION_TIME

@@ -92,6 +92,8 @@ from cruxible_core.triggers.journal import (
 )
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
     from cruxible_core.service.discovery.next import PlaybillNextItemV1, _Holds
     from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext
@@ -100,7 +102,10 @@ if TYPE_CHECKING:
 #: number is part of the schema text, so a new one rebuilds the state (R5).
 #: 17: a current Claim's facts end at its freshness expiry less next's lead, and
 #: a content observation derives only the Claims it changes (built at 16: rebuild).
-FORMAT = 19  # A stale reader's edges name its keys' observed sets (review 2c #6)
+#: 20: a new row map of a Capture derives the Claims citing it again. A state built
+#: at 19 can hold a supported Claim with its cursor already past the conflicting map,
+#: which no later record names: it must rebuild once.
+FORMAT = 20
 #: (<TEXT>, <CLAIM_ID>), and a due dispatch names its Line. A state built at 15 stores
 #: rows with the old commands and ids, so it must rebuild once. (15: subject-end entries
 #: per (end, pair) key; live key-object index.)
@@ -376,6 +381,7 @@ def read_heads(
 
     from cruxible_core.evidence.claim_reobservations import (
         ClaimReobservationStore,
+        ReobservationReader,
         reobservation_journal_identity,
     )
 
@@ -384,6 +390,9 @@ def read_heads(
     with instance.accepted_history_reader(at=public) as history:
         generation = history.sequence
     door = instance.claim_attestation_evidence_store().head() if door_head is None else door_head
+    # The journal's name includes the projection's last recovery from a journal
+    # it had not applied: let that happen before the name is recorded.
+    ReobservationReader.of(instance).follow()
     journal = reobservation_journal_identity(
         instance.root,
         exhaust=instance.descriptor.storage.exhaust,
@@ -1291,10 +1300,18 @@ def _touched(
         landed |= consulting
     reobs = heads.reobs
     if heads.reobs != cursors.reobs:
-        lineages, observed, observed_sets = ClaimReobservationStore(instance).observed_after(
-            cursors.reobs, through=heads.reobs
-        )
+        store = ClaimReobservationStore(instance)
+        lineages, observed, observed_sets = store.observed_after(cursors.reobs, through=heads.reobs)
         claims.update(f"Claim:{claim_id}" for claim_id in lineages)
+        # A new row map of a Capture changes which row its extracted records
+        # are (none, when its maps disagree): it can withdraw the row evidence
+        # of a supported, current Claim, which keeps no ``observed:`` edge. An
+        # extracted record's Capture is a backing Capture of its Claim, so the
+        # Claims citing that Capture are derived again: bounded by them, and
+        # only when a map not recorded before lands.
+        keys.update(
+            f"backing:{capture}" for capture in store.maps_after(cursors.reobs, through=heads.reobs)
+        )
         # Keyed by what the Claims depend on (content, row or enumeration),
         # and only where the observation changes a stored fact: the facts
         # writer keeps an ``observed:`` edge only for a Claim whose stored
@@ -3063,6 +3080,10 @@ def rebuilt_tables(instance: Any, *, at: datetime) -> dict[str, list[tuple[Any, 
 # -- the part ----------------------------------------------------------------------
 
 
+#: The states whose failed target this process has already tried again (``match``).
+_RETRIED: set[Path] = set()
+
+
 class ClaimFactsPart:
     name = "next"
 
@@ -3073,6 +3094,13 @@ class ClaimFactsPart:
         target = read_heads(instance).key()
         with _STATE.open(instance) as connection:
             assert connection is not None
+            path = _STATE.path(instance)
+            if path not in _RETRIED:
+                # A target that failed under an earlier process (an earlier
+                # build, for one) is tried once more by this one: what failed
+                # it may be repaired, and no head has to move for that.
+                _RETRIED.add(path)
+                connection.execute("UPDATE progress SET failed=NULL WHERE failed IS NOT NULL")
             row = connection.execute("SELECT target FROM progress").fetchone()
             if row is not None and row[0] == target:
                 return

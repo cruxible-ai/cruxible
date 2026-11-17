@@ -641,6 +641,20 @@ quickstart and concepts pages.
   `proof` too. A reader the section's Capture is withheld from sees the note,
   its Subjects and the Capture handle without the file, heading path or section
   digest, with a `withheld` notice, as `backlinks` does.
+- **A lost or replaced re-observation journal no longer fails reads.** When
+  the journal under `exhaust/claim-reobservations/` is behind its projection,
+  or is not the one the projection was built from, the projection rebuilds
+  from the journal instead of applying new records under reused sequences or
+  refusing `orient`, `next`, `get` and `query` with
+  `cruxible.claim.reobservation_journal_corrupt`.
+- **`next` follows a new typing of a cited Capture.** A row map recorded
+  after `next` stored a Claim's facts can withdraw the Claim's row evidence;
+  the Claims citing that Capture are now derived again, so `next` and a direct
+  read agree. The `next` state rebuilds once after the upgrade (format 20),
+  so the first `next` is slower.
+- **A re-observation record whose stored payload was lost no longer fails
+  reads.** The record is skipped as unavailable evidence when the projection
+  is rebuilt (after an upgrade, for one), and every other record is served.
 
 ## [0.3.2] - 2026-08-06
 
