@@ -1535,6 +1535,11 @@ def _load_named_principal_key(
     key keeps it; a token is added only from the same principal's remembered
     settings, and only when the process carries none. The principal the
     process named stays its principal whatever the command turns out to do.
+
+    The key is exported with the principal it belongs to (CRUXIBLE_PRINCIPAL_ID),
+    as a sourced settings file sets both: a key the CLI loaded is never an
+    unnamed key, so the lookup never offers it to another signer
+    (`--principal-id owner ... --signer-id reviewer`).
     """
 
     if os.environ.get(PRINCIPAL_KEY_ENV):
@@ -1551,7 +1556,10 @@ def _load_named_principal_key(
     if key is None or key.source not in ("remembered_settings", "folder"):
         # The default key directory is read where a key is needed, not exported.
         return
-    environment = {PRINCIPAL_KEY_ENV: str(key.private_key_path)}
+    environment = {
+        PRINCIPAL_ID_ENV: principal_id,
+        PRINCIPAL_KEY_ENV: str(key.private_key_path),
+    }
     if key.settings_path is not None and not os.environ.get(PRINCIPAL_TOKEN_ENV):
         try:
             token = read_principal_settings(key.settings_path).token

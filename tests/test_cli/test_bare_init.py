@@ -580,3 +580,25 @@ def test_the_printed_signer_form_signs_with_that_signers_key_never_the_owners(
     key = daemon / "rev" / "reviewer.ed25519"
     settings = daemon / "rev" / "cruxible.env"
     assert f"Signing key for reviewer: {key} (from remembered settings {settings})" in result.stderr
+
+
+def test_a_key_the_cli_loaded_for_the_named_actor_is_never_another_signers(
+    daemon: Path,
+) -> None:
+    """Review F-001: `--principal-id owner ... --signer-id reviewer` with no principal
+    variables. The CLI loaded the owner's key for the named actor and exported it
+    without its principal, so the lookup took it as an unnamed key for the reviewer."""
+
+    proposal, _ = _init_awaiting_reviewer(daemon)
+
+    result = _run(
+        "--principal-id", "owner", "proposal", "approve", proposal, "--signer-id", "reviewer",
+        "--yes",
+    )  # fmt: skip
+
+    assert result.exit_code == 0, result.output
+    key = daemon / "rev" / "reviewer.ed25519"
+    settings = daemon / "rev" / "cruxible.env"
+    assert f"Signing key for reviewer: {key} (from remembered settings {settings})" in result.stderr
+    # The named actor is still the actor.
+    assert _whoami("--principal-id", "owner")["actor_id"] == "owner"
