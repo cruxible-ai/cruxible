@@ -177,9 +177,16 @@ candidate that changed since review. A server started with a principal's
 key directory: the key is found by the lookup the CLI and the SDK use (see
 `principal add` in the [CLI reference](cli-reference.md)), never another
 principal's. With no key found, the tool refuses and says how to configure it.
-`cruxible_init` creates the owner only; a reviewer and independent approval
-are set up by one CLI step, `cruxible init --reviewer-key-dir DIR
---require-independent-approval` (or `cruxible principal add` later).
+`cruxible_init` creates the owner only: cosign setup on an existing instance (a reviewer
+principal and no self-approval) is two CLI steps, in this order: `cruxible
+principal add reviewer --key-dir DIR --signer-key OWNER_KEY`, then submit the
+approval policy (`cruxible authoring example approval-policy > policy.json`,
+`cruxible authoring submit policy.json`; its mode is
+`independent_approval_required`). Add the reviewer first: once the policy
+lands, the owner can no longer land a change alone. A new instance gets both
+at creation with `cruxible init --reviewer-key-dir DIR
+--require-independent-approval`; on an initialized instance that command
+answers "already initialized" and adds nothing.
 Set `CRUXIBLE_PRINCIPAL_ID` beside it: the key directory makes the
 environment the identity source, so with no principal ID the server's
 requests name no principal, and submitting the approval refuses

@@ -655,3 +655,44 @@ def test_a_named_principals_token_is_never_read_from_the_settings_a_second_time(
     assert result.exit_code == 0, result.output
     assert seen == {"token": "tok-verified", "key": str(key)}
     assert "CRUXIBLE_SERVER_BEARER_TOKEN" not in os.environ
+
+
+def test_cosign_setup_on_an_existing_owner_only_instance(
+    daemon: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review F-017: after an owner-only init (what MCP `cruxible_init` makes),
+    `cruxible init --reviewer-key-dir ...` answers already initialized and adds no
+    reviewer. The step the docs and MCP instructions name instead: add the reviewer,
+    then submit the approval policy; the reviewer is added first, while the owner can
+    still land it alone."""
+
+    assert _run("init", "--principal-id", "owner").exit_code == 0
+    instance_id = load_cli_context().instance_id
+    assert instance_id is not None
+    owner_key = daemon / "config" / "cruxible" / "keys" / instance_id / "owner" / "owner.ed25519"
+    again = _run("init", "--reviewer-key-dir", str(daemon / "rev2"))
+    assert again.exit_code != 0 and not (daemon / "rev2").exists(), again.output
+
+    added = _run(
+        "principal", "add", "reviewer", "--key-dir", str(daemon / "rev"),
+        "--signer-key", str(owner_key), "--yes",
+    )  # fmt: skip
+    assert added.exit_code == 0, added.output
+    example = _run("authoring", "example", "approval-policy")
+    assert example.exit_code == 0, example.output
+    policy = daemon / "policy.json"
+    policy.write_text(example.stdout[example.stdout.index("{") :])
+    assert json.loads(policy.read_text())["approval_policy"]["mode"] == (
+        "independent_approval_required"
+    )
+    submitted = _run("authoring", "submit", str(policy))
+    assert submitted.exit_code == 0, submitted.output
+    shown = _run("orient", "--section", "policies", "--json")
+    assert "independent_approval_required" in shown.stdout, shown.output
+
+    # The reviewer added this way cosigns by name, from its remembered settings.
+    monkeypatch.setenv("CRUXIBLE_PRINCIPAL_ID", "reviewer")
+    assert _whoami()["actor_id"] == "reviewer"
+    assert load_cli_context().principals[principal_binding(URL, instance_id)].settings[
+        "reviewer"
+    ] == str((daemon / "rev" / "cruxible.env").resolve())
