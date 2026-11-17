@@ -534,6 +534,47 @@ def test_a_reobservation_journal_lost_then_restored_is_followed_without_a_repair
     followed()
 
 
+def test_a_journal_tail_lost_in_place_and_regrown_before_a_pass_rebuilds_the_facts(
+    tmp_path: Path,
+) -> None:
+    """Review finding 4: the log loses its last record in place (same file) and
+    another record takes that sequence before the worker samples the journal.
+    The cursor's file and sequence still match; the projection's recovery
+    renamed the journal, so the facts are rebuilt, never kept from the lost
+    record."""
+
+    import os
+
+    from cruxible_core.evidence.claim_reobservations import _PARTITION
+    from cruxible_core.exhaust.backends import journal_log_path
+
+    instance, owner = _freshness_world(tmp_path)
+    at = datetime(2026, 8, 16, 20, 0, 9, 800000, tzinfo=UTC)
+    store = ClaimReobservationStore(instance)
+    log = journal_log_path(store.root, store.stream, _PARTITION)
+    for stamp in ("2026-08-16T20:00:07.000000Z", "2026-08-16T20:00:08.000000Z"):
+        _refresh_claim(instance, owner, timestamp=stamp)
+    kept = log.stat().st_size
+    _refresh_claim(instance, owner, timestamp="2026-08-16T20:00:09.500000Z")
+    _catch_up(instance, at)
+    before = _assert_rebuilt(instance, at)
+    file = (log.stat().st_dev, log.stat().st_ino)
+
+    os.truncate(log, kept)
+    _refresh_claim(instance, owner, timestamp="2026-08-16T20:00:08.500000Z")
+    assert store.head_sequence() == 3
+    assert (log.stat().st_dev, log.stat().st_ino) == file
+
+    _catch_up(instance, at)
+    after = _assert_rebuilt(instance, at)
+    assert after["claim_facts"] != before["claim_facts"]
+    with sqlite3.connect(facts._STATE.path(instance)) as connection:
+        assert connection.execute("SELECT failed,last_error FROM progress").fetchone() == (
+            None,
+            None,
+        )
+
+
 def test_invalid_cursors_and_a_new_format_rebuild_from_nothing(tmp_path: Path) -> None:
     instance, _owner = seed_claims(tmp_path)
     at = EVALUATION_TIME

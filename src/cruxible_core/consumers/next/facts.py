@@ -376,6 +376,7 @@ def read_heads(
 
     from cruxible_core.evidence.claim_reobservations import (
         ClaimReobservationStore,
+        ReobservationReader,
         reobservation_journal_identity,
     )
 
@@ -384,6 +385,9 @@ def read_heads(
     with instance.accepted_history_reader(at=public) as history:
         generation = history.sequence
     door = instance.claim_attestation_evidence_store().head() if door_head is None else door_head
+    # The journal's name includes the projection's last recovery from a journal
+    # it had not applied: let that happen before the name is recorded.
+    ReobservationReader.of(instance).follow()
     journal = reobservation_journal_identity(
         instance.root,
         exhaust=instance.descriptor.storage.exhaust,

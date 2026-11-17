@@ -756,6 +756,10 @@ class ClaimReobservationStore:
             )
         if continues:
             return records
+        # Before the first drop, durably: whatever followed the journal the
+        # projection was built from (next's facts) must not take this one for
+        # it, even when it regrows in the same file to the same sequence.
+        _mark_recovered(self.root)
         self._reset(conn)
         conn.executescript(_SCHEMA)
         return journal.select_records(self.stream, partition_id=_PARTITION, first_sequence=1)
@@ -2157,14 +2161,44 @@ def reobservation_journal_signature(root: Path, *, exhaust: str, instance_id: st
     return None if found is None else found[1]
 
 
+#: Written (a fresh random value) each time projection recovery finds the
+#: journal is not the one it applied. Named after the projection, whose
+#: recovery state it is.
+_RECOVERED = "reobservations.sqlite3.recovered"
+
+
+def _mark_recovered(directory: Path) -> None:
+    """Durably give the journal in ``directory`` a new identity (see ``_RECOVERED``)."""
+
+    import os
+    from uuid import uuid4
+
+    temporary = directory / f".{_RECOVERED}.{uuid4().hex}"
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        os.write(descriptor, uuid4().hex.encode())
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    os.replace(temporary, directory / _RECOVERED)
+    descriptor = os.open(directory, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
 def reobservation_journal_identity(
     root: Path, *, exhaust: str, instance_id: str
 ) -> tuple[str, str] | None:
-    """The re-observation log's file (device and inode) and its full signature, from one stat.
+    """The re-observation journal a cursor is kept against, and the log's full signature.
 
-    The file names the journal a cursor was kept against: a journal rebuilt
-    from nothing is a different file. The signature moves with every append.
-    ``None`` when nothing was ever recorded.
+    The journal is named by its log file (device and inode: a journal rebuilt
+    from nothing is a different file) and by the last recovery that found the
+    log was not the one the projection had applied (a log that lost its tail
+    in place and regrew is the same file at the same sequence, and another
+    journal). The signature moves with every append. ``None`` when nothing was
+    ever recorded. One stat and, after a recovery, one small read.
     """
 
     stream = JournalStreamIdentityV1(
@@ -2177,8 +2211,12 @@ def reobservation_journal_identity(
         stat = log.stat()
     except FileNotFoundError:
         return None
+    try:
+        recovered = ":" + (root / exhaust / REOBSERVATION_DIRECTORY / _RECOVERED).read_text()
+    except FileNotFoundError:
+        recovered = ""
     return (
-        f"{stat.st_dev}:{stat.st_ino}",
+        f"{stat.st_dev}:{stat.st_ino}{recovered}",
         f"{stat.st_dev}:{stat.st_ino}:{stat.st_size}:{stat.st_mtime_ns}:{stat.st_ctime_ns}",
     )
 
@@ -2348,6 +2386,16 @@ class ReobservationReader:
             self._signature = signature
             self._shared = None
         return self._conn
+
+    def follow(self) -> None:
+        """Catch the projection up to the journal, recovering it when the journal
+        is not the one it applied: two stats when nothing changed. A caller
+        about to name the journal (``reobservation_journal_identity``) does this
+        first, so the name it records is the one that recovery left."""
+
+        self._guard_fork()
+        with self._lock:
+            self._connection()
 
     def sequence(self, claim_id: str, keys: Sequence[ReobservationKey] = ()) -> int:
         """The last journal sequence that observed this lineage: 0 when none did.
