@@ -1030,3 +1030,106 @@ def test_a_follower_reads_only_the_records_past_its_cursor(tmp_path: Path) -> No
     assert second[0] == first[0] and second[1] != first[1]
     assert store.records_after(1) == ((2, claim_id),)
     assert store.records_after(2) == ()
+
+
+# -- a batch's absence set keeps every admitted call (review 2g F-001) ---------
+
+
+def _append_batch(store, recorded: datetime, groups: list[dict[str, Any]]) -> None:  # type: ignore[no-untyped-def]
+    """Append one batch record stamped ``recorded`` and project it, as ``record_many`` does."""
+
+    payload = {"tag": "cruxible-claim-reobservation-batch-v1", "groups": groups}
+    with store._locked(create=True) as conn:
+        journal, bodies, head = store._writer_head()
+        stored = store._append(
+            journal,
+            bodies,
+            head,
+            payload,
+            accepted=store.instance.accepted_coordinate(),
+            actor_id="owner",
+            now=recorded,
+        )
+        store._apply_batch(conn, payload, stored.record.sequence, stored.record.recorded_at)
+
+
+def test_a_delayed_older_absence_call_keeps_its_history_repeat_and_settlement(
+    tmp_path: Path,
+) -> None:
+    """Codex round 7 F-001: a call observed at 20 (ending 40) is recorded at 50,
+    then a delayed call observed at 10 (ending 15) at 60. The set projection
+    answers as the per-Claim projection of the same records does: both calls in
+    history, the delayed one recognized as a repeat and found for a deadline of
+    15, and live freshness still the observation at 20."""
+
+    from cruxible_core.evidence.claim_reobservations import ReobservationKey, ReobservationReader
+
+    instance, _owner = _freshness_world(tmp_path, stale_after=_HOUR)
+    store = ClaimReobservationStore(instance)
+    contract, content = "sha256:" + "1" * 64, "sha256:" + "2" * 64
+    version = "sha256:" + "3" * 64
+    newer, older = "sha256:" + "a" * 64, "sha256:" + "b" * 64
+
+    def minutes(value: int) -> datetime:
+        return _START + timedelta(minutes=value)
+
+    def groups(capture: str, observed: int, ended: int) -> list[dict[str, Any]]:
+        shared = {
+            "capture_digest": capture,
+            "contract_digest": contract,
+            "observed_content_digest": content,
+            "capture_content_digest": content,
+            "observed_at": _stamp(minutes(observed)),
+            "latest": _stamp(minutes(ended)),
+        }
+        return [
+            # Without an absence extraction a group projects per Claim; with
+            # one, as a set and a point.
+            {**shared, "claims": [["CLM-individual", version]]},
+            {**shared, "extraction": {"absence": {}}, "claims": [["CLM-batched", version]]},
+        ]
+
+    _append_batch(store, minutes(50), groups(newer, 20, 40))
+    _append_batch(store, minutes(60), groups(older, 10, 15))
+    reader = ReobservationReader(instance)
+    key = (ReobservationKey(newer, contract, content, shared=False, version=version),)
+
+    def answers(claim_id: str) -> dict[str, Any]:
+        with store._locked() as conn:
+            repeat = store._known(conn, claim_id, version, older, (minutes(10), minutes(15)))
+        settled = reader.latest_version_record(claim_id, version, observed_by=minutes(15))
+        assert settled is not None
+        return {
+            "history": sorted(
+                (item.capture_digest, item.observed_at, item.recorded_at)
+                for item in store.history(claim_id)
+            ),
+            "repeat": repeat,
+            "settled": (settled.record.capture_digest, settled.record.observed_at),
+            "settled_sequence": settled.sequence,
+            "none_before": reader.latest_version_record(claim_id, version, observed_by=minutes(9)),
+            "fresh": [
+                [
+                    (item.reobserving_capture_digest, item.observed_at, item.recorded_at)
+                    for item in reader.latest(claim_id, key, minutes(at)).evidence
+                ]
+                for at in (45, 55, 65)
+            ],
+            "sequence": reader.sequence(claim_id),
+        }
+
+    individual, batched = answers("CLM-individual"), answers("CLM-batched")
+    assert batched == individual
+    assert [observed for _capture, observed, _recorded in batched["history"]] == [
+        minutes(20),
+        minutes(10),
+    ]
+    assert batched["repeat"] is not None
+    assert batched["settled"] == (older, minutes(10)) and batched["settled_sequence"] == 2
+    # The older call recorded later never moves live freshness back.
+    step = [(newer, minutes(20), minutes(50))]
+    assert batched["fresh"] == [[], step, step]
+    # Rebuilt from the journal, the projection is the same bytes.
+    incremental = _dump(store)
+    store.path.unlink()
+    assert _dump(store) == incremental

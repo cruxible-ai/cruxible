@@ -101,7 +101,7 @@ ROW_MAP_BODY = "cruxible-row-map-v1"
 #: The row maps of one extract step's Captures (run-free).
 ROW_MAPS_BODY = "cruxible-row-maps-v1"
 _ACCESS = BodyAccessContext(principal_id="claim-reobservation", can_read_body=True)
-_SCHEMA_VERSION = 19
+_SCHEMA_VERSION = 20
 REOBSERVATION_DIRECTORY = "claim-reobservations"
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 # ``reobservations`` keeps the full history (audit, historical verification).
@@ -204,8 +204,11 @@ CREATE INDEX IF NOT EXISTS absence_members_by_set ON absence_members (set_digest
 CREATE TABLE IF NOT EXISTS absence_points (
  set_digest TEXT NOT NULL, recorded_us INTEGER NOT NULL, observed_us INTEGER NOT NULL,
  latest_us INTEGER NOT NULL, capture_digest TEXT NOT NULL, sequence INTEGER NOT NULL,
+ step INTEGER NOT NULL,
  PRIMARY KEY(set_digest, recorded_us, observed_us, capture_digest)
 ) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS absence_steps
+ ON absence_points (set_digest, recorded_us, observed_us, capture_digest) WHERE step=1;
 CREATE INDEX IF NOT EXISTS absence_points_by_capture
  ON absence_points (set_digest, capture_digest, observed_us);
 CREATE INDEX IF NOT EXISTS absence_points_by_observed
@@ -217,6 +220,11 @@ CREATE INDEX IF NOT EXISTS absence_points_by_observed
 # members written once per distinct set, and one point per group per run. An
 # unchanged run's absences are the set before: one point row, however many
 # Claims it holds, and every historical instant still answers exactly.
+# Every admitted call keeps its point (history, repeat detection and deadline
+# settlement read them all, as they read ``reobservations``). ``step`` marks
+# the points that raised the set's running latest observation, as
+# ``reobservation_points`` does per Claim: freshness reads only those, so an
+# older call recorded later is kept and never moves freshness back.
 # Content observations (ruling 1a) and row observations (2026-11-16), as maintained heads.
 #
 # ``observed_sets`` holds one row per member of each distinct observed set,
@@ -409,14 +417,15 @@ def _absence_sets(
 
 
 def _absence_last(
-    conn: sqlite3.Connection, set_digest: str, *, at_us: int, through: int
+    conn: sqlite3.Connection, set_digest: str, *, at_us: int, through: int, steps: bool = True
 ) -> tuple[str, int, int, int] | None:
-    """A set's last point recorded by ``at_us`` through ``through``:
-    (Capture, observed, recorded, sequence). One seek on its key."""
+    """A set's last freshness step recorded by ``at_us`` through ``through``:
+    (Capture, observed, recorded, sequence). One seek on its key. With
+    ``steps`` false, its last point of any kind (a delayed older call's too)."""
 
     row = conn.execute(
         "SELECT capture_digest, observed_us, recorded_us, sequence FROM absence_points "
-        "WHERE set_digest=? AND recorded_us<=? AND sequence<=? "
+        f"WHERE set_digest=? AND recorded_us<=? AND sequence<=? {'AND step=1 ' if steps else ''}"
         "ORDER BY recorded_us DESC, observed_us DESC, capture_digest DESC LIMIT 1",
         (set_digest, at_us, through),
     ).fetchone()
@@ -719,18 +728,23 @@ class ClaimReobservationStore:
                     [(claim, version, contract, content, set_digest) for claim, version in members],
                 )
             observed_us = _micros(_instant(group["observed_at"]))
+            capture = str(group["capture_digest"])
+            # Every admitted call is kept (review 2g F-001). Only one that
+            # raises the set's latest observation is a freshness step (the
+            # larger Capture digest breaks a tie, as per Claim): an older call
+            # recorded later never moves freshness back.
             last = _absence_last(conn, set_digest, at_us=_NEVER, through=_NEVER)
-            if last is not None and observed_us < last[1]:
-                continue  # an older call recorded later never moves it back
+            step = last is None or (observed_us, capture) > (last[1], last[0])
             conn.execute(
-                "INSERT OR IGNORE INTO absence_points VALUES (?,?,?,?,?,?)",
+                "INSERT OR IGNORE INTO absence_points VALUES (?,?,?,?,?,?,?)",
                 (
                     set_digest,
                     recorded_us,
                     observed_us,
                     _micros(_instant(group["latest"])),
-                    str(group["capture_digest"]),
+                    capture,
                     sequence,
+                    int(step),
                 ),
             )
         conn.execute("INSERT OR REPLACE INTO progress VALUES(1,?,?)", (sequence, recorded_us))
@@ -2229,7 +2243,7 @@ class ReobservationReader:
         found = 0
         for set_digest in _absence_sets(conn, claim_id):
             self.probes += 1
-            last = _absence_last(conn, set_digest, at_us=_NEVER, through=through)
+            last = _absence_last(conn, set_digest, at_us=_NEVER, through=through, steps=False)
             if last is not None:
                 found = max(found, last[3])
         return found
@@ -2786,7 +2800,8 @@ class ReobservationReader:
                             last = _absence_last(conn, set_digest, at_us=at_us, through=through)
                             ahead = conn.execute(
                                 "SELECT recorded_us FROM absence_points WHERE set_digest=? "
-                                "AND recorded_us>? AND sequence<=? ORDER BY recorded_us LIMIT 1",
+                                "AND recorded_us>? AND sequence<=? AND step=1 "
+                                "ORDER BY recorded_us LIMIT 1",
                                 (set_digest, at_us, through),
                             ).fetchone()
                             if ahead is not None:
