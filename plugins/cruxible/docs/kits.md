@@ -14,10 +14,13 @@ by ordinary authoring. `kit add` previews first and writes nothing. Its
 commit proceeds in two phases, each change accepted under the instance's
 approval policy: when bundled providers are missing, first a registration
 change for each missing provider, then one change with the kit's definitions.
-An earlier change can be accepted before a later one stops: an
-`awaiting_providers` or `blocked` result means the definitions are not in yet,
-not that nothing changed. An upgrade names every definition you have edited; the release's
-version replaces your edit unless you keep it.
+So where a second principal must approve, a kit that carries three providers
+is four proposals, not one: one per provider install, then the definitions,
+which are filed automatically once the installs activate. An earlier change
+can be accepted before a later one stops: an `awaiting_providers` or `blocked`
+result means the definitions are not in yet, not that nothing changed. An
+upgrade names every definition you have edited; the release's version replaces
+your edit unless you keep it.
 
 Every instance starts with one kit already installed: the **base kit**, which
 holds the capabilities shared across kits (fetching a web page, reading a
@@ -26,14 +29,14 @@ kit suggests, and building and documenting kits. Command details are in the CLI 
 
 ## A worked example: installing car parts
 
-The car parts kit is published as `car-parts`. `kit add` previews first and
-writes nothing:
+The car parts kit is a folder, `kits/car-parts` in a checkout of the kits
+repository. `kit add` takes the folder's path, previews first and writes
+nothing:
 
-<!-- publish: fill the car-parts digests -->
 ~~~text
-$ cruxible kit add car-parts:1.0.0
-car-parts 1.0.0: would_propose (install)
-Built by … (claimed)
+$ cruxible kit add ../kits/kits/car-parts
+car-parts 2.0.0: would_propose (install)
+Built by owner on inst_de98fea953864570 at 34f5e2a690f7 (claimed)
 CaptureContract:
   add: CaptureContract:cruxible.coordinator-self-source-v1
 ClaimType:
@@ -48,23 +51,34 @@ SubjectKind:
   add: SubjectKind:catalog.note
   add: SubjectKind:catalog.part
   add: SubjectKind:catalog.vehicle
-Preview at 8a8fa804bbb3; nothing was written.
-Commit it: rerun the same command with --commit --at 8a8fa804bbb3
+Preview at 4d1d73961885; nothing was written.
+Commit it: rerun the same command with --commit --at 4d1d73961885
 ~~~
 
 Committing at the previewed coordinate lands exactly what you saw, or refuses
 if the instance moved in between:
 
 ~~~text
-$ cruxible kit add car-parts:1.0.0 --commit --at 8a8fa804bbb3
-car-parts 1.0.0: accepted (install)
+$ cruxible kit add ../kits/kits/car-parts --commit --at 4d1d73961885
+car-parts 2.0.0: accepted (install)
 ...
+Proposal: sha256:90d28c62…
 
 $ cruxible kit status
-car-parts 1.0.0 content sha256:3d992c39…; …
-  source: ghcr.io/cruxible-ai/kits/car-parts@sha256:<car-parts 1.0.0 digest>
-  built by … (claimed)
+base 1.0.0 content sha256:07e64748…; up to date
+  source: bundled
+car-parts 2.0.0 content sha256:7a99e029…; update check local source
+  source: car-parts
+  built by owner on inst_de98fea953864570 at 34f5e2a690f7 (claimed)
 ~~~
+
+`accepted` is what an instance whose owner may approve its own changes prints.
+Where a second principal must approve, the same commit prints `proposed` and
+the approve command, and the kit is installed once that proposal is approved.
+
+A kit id with a version (`cruxible kit add car-parts:2.0.0`) names a release
+in the kit registry. No kit is published there yet, so today that form refuses
+`cruxible.kit.not_found`; use the folder path.
 
 Reads say who owns each definition: `orient --section claim_types` ends each
 row the kit owns with `kit=car-parts`. From here the vocabulary is yours to
@@ -87,7 +101,7 @@ A kit carries definitions from eight families:
 | Capabilities | Immutable, versioned kinds of call that Procedure slots name |
 | QueryDefinitions | Named queries |
 | Procedures | Runnable graphs over provider calls |
-| Documents | Governed Documents, such as guidance linked by `guides` |
+| Documents | Governed Documents, such as guidance linked by `guides`; each one's body travels beside it, at `bodies/<sha256 hex>` |
 
 Beside the definitions, a release can carry inert files for its reader: its
 README, other reference pages, `examples/` and agent skills under
@@ -103,7 +117,11 @@ Triggers, no mandates, no principals, no approval policy. Those belong to the
 instance that installs the kit. A Line that should run a kit's Procedure is
 authored and enabled by the consumer.
 
-A kit names the provider packages its definitions need in one of two ways:
+A kit names the provider packages its definitions need in one of two ways.
+Which way follows from who uses the provider: a general-purpose provider that
+more than one kit uses (such as `cruxible-provider-web`) is a published
+dependency, which the kit names at an exact version and the daemon fetches
+from the package index; a provider specific to one kit ships inside that kit.
 
 - **Bundled**: a kit's own domain code (for example a parser for one domain's
   feed) travels inside the kit as the package's built wheel and lock file,
@@ -114,6 +132,12 @@ A kit names the provider packages its definitions need in one of two ways:
   version, and the kit carries none of its files. Installing the kit installs
   it by name from the provider index, only when builds already installed do
   not serve every slot the kit's Procedures declare.
+
+In the manifest a bundled package is an entry of `providers` with its `wheel`,
+`lock` and `dependencies` files; a default has `"delivery": "index"`, names
+its `operations`, and lists no dependency files. A build made to test a kit
+before its general-purpose provider is published may bundle that provider
+instead; the kit's released form names it as a dependency.
 
 ## Procedures, capabilities and providers
 
@@ -144,7 +168,9 @@ layout that covers this instance's.
 
 `cruxible orient --section capabilities` lists the capabilities this instance
 holds; `--section operations` lists the provider operations a slot can bind
-to, with the capabilities each serves.
+to, each with its request and result Contracts, effect and refusals. Which
+capabilities an operation serves is on `get Provider:NAME` (and in the
+section's `--json`).
 
 A Line binds every slot to one exact build and operation when it is accepted,
 and its runs never rebind. A direct run fits each slot it is not told about to
@@ -190,7 +216,7 @@ Approval policy: self_approval_allowed
 Base kit: base 1.0.0 installed
 ...
 $ cruxible kit status
-base 1.0.0 content sha256:433a7768…; up to date
+base 1.0.0 content sha256:07e64748…; up to date
   source: bundled
 ~~~
 
@@ -208,9 +234,12 @@ base 1.0.0 content sha256:433a7768…; up to date
   proposal sha256:… (cruxible proposal approve sha256:… --signer-id reviewer,
   as a second principal)`). Until it is approved, the capabilities are
   absent, and `kit status` lists the pending add with its proposal and the
-  approve command. If other writes land before the approval, the kit proposal
-  is stale and is not rebased: run `cruxible kit add base` again for a fresh
-  proposal and have that approved (the refusal names this repair).
+  approve command. If other changes land before the approval, the approval
+  lands the same change set at the new head (`Landed at the head as sha256:…:
+  the same change set`). A kit with vocabulary that was proposed while the
+  base kit waited is different: once the base kit lands, that proposal was
+  planned against an older head and must be committed again
+  ([Install](#install)), so approve the base kit first.
 - **Upgrading.** The base kit changes only with a Cruxible release. A newer
   release may bundle a newer version; `kit status` compares the installed one
   with the bundled one (no registry is asked), and says when the installed
@@ -240,7 +269,7 @@ the bundle and records the base kit at the version installed where you build:
 
 ~~~text
 $ cruxible kit build --id catalog --version 1.0.0 --owns catalog. --out ./catalog-1.0.0
-catalog 1.0.0: 27 artifacts, 0 provider package(s), content sha256:ee5571b5…
+catalog 1.0.0: 21 artifacts, 0 provider package(s), content sha256:2616b6a2…
   requires: base >= 1.0.0
 ~~~
 
@@ -258,8 +287,9 @@ $ cruxible kit add ./catalog-1.0.0
 Error: cruxible.kit.requires_missing: Kit catalog 1.0.0 requires kit base 1.0.0 or later; this instance holds none. Add it first: kit add base (or the path of a local build of base 1.0.0 or later).
 Repair: cruxible kit add base
 
-$ cruxible kit remove base
-Error: cruxible.kit.remove_required: Kit base cannot be removed: kit catalog requires it.
+$ cruxible kit remove base          # on an instance with the security kit
+Error: cruxible.kit.remove_required: Kit base cannot be removed: kit security requires it.
+Repair: cruxible kit remove security
 ~~~
 
 The base kit itself is never removed (see [Remove](#remove)).
@@ -317,7 +347,7 @@ provider: cruxible-builtin
 ...
 operations:
   workspace.file  workspace.file.handoff@1 -> workspace.file.result@1 (pure)  serves workspace.file
-    Reads one workspace file in the daemon's own process and returns its exact bytes as one Capture. ...
+    Reads one file from an authorized workspace and returns its exact bytes as one Capture. ...
     source src/cruxible_core/providers/builtin_workspace_file.py (https://github.com/cruxible-ai/cruxible)
     ...
 ~~~
@@ -326,28 +356,35 @@ operations:
 
 ### Find and inspect
 
-A kit comes from a registry reference, a kit directory, or an OCI image
-layout. A bare name resolves under `ghcr.io/cruxible-ai/kits`, so `car-parts:1.0.0`
-means `ghcr.io/cruxible-ai/kits/car-parts:1.0.0`.
+A kit comes from a kit directory, an OCI image layout, or a registry
+reference. A directory works today: a checkout of the kits repository, a
+folder `kit build` wrote, or one `kit pull --out` wrote. Registry references
+resolve once kits are published to the registry, which no kit is yet: a bare
+name resolves under `ghcr.io/cruxible-ai/kits`, so `car-parts:2.0.0` means
+`ghcr.io/cruxible-ai/kits/car-parts:2.0.0`, and until that release exists
+`kit add` and `kit pull` refuse it (`cruxible.kit.not_found`).
 
 ~~~bash
-cruxible kit pull car-parts:1.0.0 --out ./car-parts-1.0.0     # fetch and verify, install nothing
+cruxible kit pull ../kits/kits/car-parts --out ./car-parts    # verify and copy, install nothing
+cruxible kit pull car-parts:2.0.0 --out ./car-parts-2.0.0     # from the registry, once published
 ~~~
 
-`kit pull` prints the digest-pinned reference it fetched. Installing by that
-digest reference installs exactly those bytes even if the tag later moves.
+`kit pull` of a registry reference prints the digest-pinned reference it
+fetched. Installing by that digest reference installs exactly those bytes even
+if the tag later moves.
 
 ### Install
 
 `kit add` previews by default and writes nothing:
 
 ~~~bash
-cruxible kit add ghcr.io/cruxible-ai/kits/car-parts@sha256:<digest>
+cruxible kit add /abs/path/kits/security
 ~~~
 
-`kit add` also takes a local kit directory (one holding `cruxible-kit.json`,
-such as a checkout or a `kit pull --out` folder) or an OCI image layout:
-`cruxible kit add /abs/path/kits/security`.
+KIT is a local kit directory (one holding `cruxible-kit.json`, such as a
+checkout or a `kit pull --out` folder), an OCI image layout, or, once kits are
+published, a registry reference
+(`ghcr.io/cruxible-ai/kits/car-parts@sha256:<digest>`).
 `cruxible_kit_add` takes the same local paths.
 
 The preview lists the plan grouped by kind (what each definition does and
@@ -362,7 +399,7 @@ record is claimed by the builder, not proven. The preview ends with the
 command that commits exactly what you saw:
 
 ~~~bash
-cruxible kit add ghcr.io/cruxible-ai/kits/car-parts@sha256:<digest> --commit --at <oid>
+cruxible kit add /abs/path/kits/security --commit --at <oid>
 ~~~
 
 The result is one of:
@@ -370,17 +407,68 @@ The result is one of:
 | Status | Meaning | Next |
 |---|---|---|
 | `accepted` | The change set landed: the approval policy required no approval. | Nothing. |
-| `proposed` | It awaits approval. | `cruxible proposal approve`; the approval that completes it activates it. If other writes land first, run the same `kit add` again (the stale proposal is not rebased; its refusal names this repair). |
-| `awaiting_providers` | A provider installation the kit needs awaits approval. | Approve that installation; its activation proposes the definitions on their own, as you (`kit status` shows the resume). |
+| `proposed` | It awaits approval. | `cruxible proposal approve`, as a second principal; the approval that completes it activates it. |
+| `awaiting_providers` | One or more provider installations the kit needs await approval, each its own proposal. | Approve each installation; when the last one activates, the definitions are proposed on their own, as you (`kit status` shows the resume). Then approve that proposal too. |
 | `blocked` | Something in current state stops it; the detail says what. | Fix the cause, or choose another release. |
+
+Under independent approval the security kit, which carries three providers,
+goes like this:
+
+~~~text
+$ cruxible kit add /abs/path/kits/security --commit --at b0a3ac708d13
+security 1.3.0: awaiting_providers (install)
+  provider cruxible-provider-web (cruxible-provider-web 0.7.0): awaiting approval, proposal sha256:e4d45ca1…
+  provider security-osv-provider (security-osv-provider 0.1.0.dev0): awaiting approval, proposal sha256:c7ba6329…
+  provider security-sarif-provider (security-sarif-provider 0.1.0.dev0): awaiting approval, proposal sha256:d351f954…
+  requires base >= 1.0.0: met (installed 1.0.0)
+...
+$ cruxible kit status --offline
+security 1.3.0: kit add waiting (as owner); waiting on provider install cruxible-provider-web, security-osv-provider, security-sarif-provider
+...
+~~~
+
+After the reviewer approves the three installs, the fourth proposal is there
+without another `kit add`:
+
+~~~text
+$ cruxible kit status --offline
+security 1.3.0: kit add proposed (as owner); proposal sha256:11b0a727…
+  next: cruxible proposal approve sha256:11b0a727… --signer-id '<SIGNER_ID>' (the approval that completes it activates it)
+...
+~~~
+
+Approving it installs the kit, and `kit status` then lists it like any
+installed kit, with each provider `installed`.
+
+**A kit proposal planned against an older head must be committed again.** A
+kit change that holds vocabulary is planned against the instance as it was
+(kit ownership, requirements, provider pins, your edits), so it is never
+rebased. If another change lands between the commit and the approval, the
+approval refuses and the author runs the same `kit add ... --commit` at the
+current head, which files a fresh proposal to approve:
+
+~~~text
+$ cruxible proposal approve sha256:f47a43c8… --yes
+...
+Error: cruxible.proposal.readmit_requires_resubmission: proposal sha256:f47a43c8… is a kit change planned against an earlier state (kit ownership, requirements, provider pins, local edits), so it is not readmitted or landed by its old bytes; its author 'owner' adds kit car-parts again at the current head (kit add): kit car-parts 2.0.0, from the kit directory, layout or registry reference it was added from (recorded as car-parts); the daemon holds the kit's bytes and that label, not a reference it can vouch for
+...
+~~~
+
+The daemon does not know the path the kit came from, so the author names the
+kit's folder again. The proposal left behind stays in `proposal list --status
+open` and can never be approved.
+
+The provider installs and the base kit hold no vocabulary, so their approvals
+land at the head whatever landed first.
 
 Installing the provider packages a kit needs requires `admin` permission. A
 `governed_write` caller can add a kit whose providers are already installed or
 satisfied.
 
-Your own definitions under a kit's prefix are not an ownership collision. A
-different definition appears as `takes_over_outside_definition` in the plan.
-Next: pass `--keep IDENTITY` to keep your version.
+Your own definitions under a kit's prefix are not an ownership collision. One
+the release also defines appears in the plan as `replace: ... (takes over a
+definition you defined outside the kit)` (`takes_over_outside_definition` in
+`--json`). Next: pass `--keep IDENTITY` to keep your version.
 
 Two installed kits cannot own overlapping prefixes, and a kit cannot replace a
 definition another kit still holds, even outside that kit's current prefixes.
@@ -435,15 +523,20 @@ cruxible kit status
 
 `kit status` lists each installed kit with its version and content digest
 (the one `kit add` pins, labelled `content sha256:`), the definitions edited
-here since install, the ones kept on purpose, its provider packages
-with their delivery and state (`installed`, `differs`, `satisfied` or
-`missing`),
+here since install (`edited locally: PATH`), the ones kept on purpose
+(`kept: IDENTITY (your edit)`), its provider packages with their state
+(`installed`, `differs`, `satisfied` or `missing`), the kits it requires,
 and, for a kit installed from a registry, the newest release available (it
 lists the repository's tags; `--offline` skips that). An installed release
 whose content differs from the available one of the same version says so,
 rather than `up to date`. A kit installed from a directory or layout reports
-a local source. A kit add waiting on its proposal is listed with the command
-that approves it.
+`update check local source`. Two kinds of kit add still under way are listed
+first, each with the command that approves it: the base kit proposal `init`
+filed, and an add that stopped at `awaiting_providers` (while it waits, and
+then with the definitions proposal it filed). An ordinary `proposed` add of a
+kit without missing providers is not in `kit status`: find it with `cruxible
+proposal list --status open`. Once its proposal is accepted, a kit is listed
+as installed and the pending line is gone.
 
 Installing a newer release is the same `kit add` with the new version. An
 upgrade always proposes, and the release's version wins by default. The
@@ -451,7 +544,9 @@ preview names what each replacement does:
 
 - it overwrites an edit you made since install;
 - it re-adds a definition retired outside the kit's record (for example after
-  `kit remove`);
+  `kit remove`); the plan names it, and in this release the add is then
+  refused, because a retired definition cannot be added back
+  ([Remove](#remove));
 - it takes over a definition you defined outside the kit;
 - it replaces a definition the kit carried in as a dependency.
 
@@ -466,7 +561,26 @@ To keep your version instead, name it with `--keep` (repeatable, by identity
 such as `--keep ClaimType:catalog.part.title`), or keep every definition you
 edited since install with `--keep-local-edits`. The kit's record notes what
 you kept on purpose, so later upgrades do not ask again while the release's
-version is unchanged.
+version is unchanged. Copy the identity as the preview prints it, and read the
+preview again with the flag before committing: a `--keep` that matches nothing
+in the plan is ignored without a message, and a Document's identity is
+lowercase (`--keep document:catalog.fitment-review`; `Document:...` does not
+match).
+
+**Fields you add beside a kit's.** A field you add to a kit's kind
+(`catalog.part.shelf`, say) is yours: it lands with no kit marker and no
+warning, `kit status` does not list it, and an upgrade leaves it alone for as
+long as no release defines that name. If a later release adds a definition
+with the same identity, the upgrade replaces yours with the release's and the
+kit owns it from then on, unless you keep yours; the preview says so and names
+the flag:
+
+~~~text
+ClaimType:
+  replace: ClaimType:catalog.part.weight_grams (takes over a definition you defined outside the kit)
+...
+Next: rerun cruxible kit add with --keep ClaimType:catalog.part.weight_grams to keep yours.
+~~~
 
 A kit add installs the builds the release ships and moves every live Line bound
 to another build of those provider names, including Lines over your own
@@ -526,12 +640,68 @@ carried, or one you authored yourself, names none.
 `--allow-downgrade`; the preview names the transition (install, upgrade,
 downgrade or reinstall).
 
+### Revise a kit's Document
+
+A Document a kit installs (its review guidance, say) lands as a Document
+only: no file appears in your workspace and `.cruxible/files.yaml` gets no
+entry. To revise it, write its body to a file, catalogue the file as that
+Document, record its links, then propose the edited file:
+
+~~~bash
+cruxible get Document:catalog.fitment-review                  # title, kind, links
+cruxible get Document:catalog.fitment-review --detail body --output docs/fitment-review.md
+cruxible files add fitment-review docs/fitment-review.md --document-id catalog.fitment-review \
+  --document-kind guidance --title "Fitment review" --scope catalog
+cruxible link docs/fitment-review.md --guides ClaimType:catalog.part.fits
+# edit docs/fitment-review.md, then:
+cruxible files propose --file fitment-review --name fitment-review-local
+~~~
+
+Give `files add` the Document's own id, kind and title, and its governance
+scope, which `get` does not print: it is `governance_scope` in the kit
+directory's `artifacts/documents/<id>.json`. Run `cruxible link FILE --guides
+IDENTITY` for every link `get` lists before the first `files propose`: the
+catalog entry carries the links, and a revision proposed from an entry without
+them drops them (run `link` again to restore one). Afterwards `kit status`
+lists the Document as `edited locally: documents/catalog.fitment-review.json`,
+and an upgrade replaces your revision unless you keep it (`--keep
+document:catalog.fitment-review` or `--keep-local-edits`).
+
 ### Remove
 
 ~~~bash
 cruxible kit remove car-parts                 # preview
 cruxible kit remove car-parts --commit --at <oid>
 ~~~
+
+**Removal is one-way in this release.** It retires the kit's definitions that
+are still live, and a retired definition cannot be added back: after a
+removal, `kit add` of the same kit (any version that carries those
+definitions) is refused on that instance. Remove a kit only when you will not
+want it there again; to start over with it, use a new instance. The preview
+says so on its `one-way:` line:
+
+~~~text
+$ cruxible kit remove car-parts
+car-parts 2.0.0: would_propose
+ClaimType:
+  retire: ClaimType:catalog.decision.amends
+  ...
+QueryDefinition:
+  retire: QueryDefinition:catalog.parts_for_vehicle
+SubjectKind:
+  retire: SubjectKind:catalog.decision
+  retire: SubjectKind:catalog.note
+  retire: SubjectKind:catalog.part
+  retire: SubjectKind:catalog.vehicle
+one-way: the definitions this removal retires cannot be added back in this release
+Preview at 4b947a8393e9; nothing was written.
+Commit it: rerun the same command with --commit --at 4b947a8393e9
+~~~
+
+A definition that stays is listed as `keep:` with its reason, for example
+`keep: document:catalog.fitment-review (Documents have no retired state and
+remain accepted)`.
 
 Removing retires the definitions the kit owns: its ClaimTypes, SubjectKinds,
 CaptureContracts, QueryDefinitions and Procedures. It does not retire what the
@@ -540,8 +710,11 @@ definitions stay accepted, each with its reason on the preview's `keep` line:
 Contracts and capabilities (their versions are immutable), Documents (they have
 no retired state), and the endpoint ClaimTypes of a pair kind (a pair kind's
 endpoints are fixed for life; the security kit keeps six). A definition you
-edited since install must be reverted or retired on its own first, and removal
-is refused while an installed kit requires the kit
+edited since install blocks the removal (`would_block`, `edited kit paths must
+be reverted or retired by their own change first: PATH`): revert it (`kit add`
+of the installed release again replaces your edit with the release's) or
+retire it on its own first. An edit you kept on purpose at an upgrade does not
+block. Removal is refused while an installed kit requires the kit
 (`cruxible.kit.remove_required`).
 
 Removal is also refused while live Claims or definitions you authored (Lines,
@@ -567,11 +740,27 @@ proposal. Below `graph_write` (an MCP server capped by `CRUXIBLE_MODE`, say),
 `kit add` and `kit remove` stay proposed and the result says who can activate
 them.
 
-Removal retires the kit's definitions that are still live, and the removal preview says that
-they cannot be added back in this release (or `retires nothing` when every path is kept). A
-retired definition cannot be revived, so a later `kit add` that would re-add one refuses with a
-`revival_refused` or `lifecycle_invalid` code, printed once per kind with a count (for example
-`cruxible.capture_contract.revival_refused: ... (8 definitions)`).
+After a removal, adding the kit again previews as `would_block`: each
+definition is listed as `replace: ... (re-adds a retired definition)`, and the
+refusal follows, one code per kind with a count. The commit prints the same
+and exits 1:
+
+~~~text
+$ cruxible kit add ../kits/kits/car-parts
+car-parts 2.0.0: would_block (install)
+...
+ClaimType:
+  replace: ClaimType:catalog.decision.amends (re-adds a retired definition)
+  ...
+Refused: cruxible.claim_type.lifecycle_invalid: A retired ClaimType cannot be revived or revised. (19 definitions); cruxible.query_definition.lifecycle_invalid: A retired QueryDefinition cannot be revived or revised.; cruxible.subject_kind.revival_refused: A retired SubjectKind cannot be revived; propose a new SubjectKind name instead. (4 definitions). Definitions retired here cannot be added back in this release: add the kit on a new instance
+Preview at 64b5d915270e; nothing was written.
+~~~
+
+When Subjects were retired to clear the way for the removal, their retired
+Claims still name the old definitions and the same add refuses
+`cruxible.change_set.unresolved_pin` instead; the repair is the same, a new
+instance. A removal whose every path is kept says `retires nothing` in place
+of the `one-way:` line.
 
 The base kit cannot be removed:
 
@@ -647,11 +836,16 @@ cruxible kit build --id car-parts --version 1.0.0 --owns catalog. --out ./car-pa
   Cruxible's built-in provider is pinned as it is and never exported.
 - The manifest records who built the release, on which instance and at which
   accepted coordinate.
-- A field's evidence rule that names one workspace file's own contract
-  (`cruxible.foreign-source.NAME`) refuses the build
+- A kit cannot carry a rule that names one workspace file. Own words and
+  workspace file and section citations are admitted on every field that is not
+  `evidence_requirement: captured`, and need no rule; `captured` means a
+  shaped payload under a CaptureContract the field names in `evidence:`, and
+  that contract travels in the kit. A rule that names one workspace file's own
+  contract (`cruxible.foreign-source.NAME`) can no longer be authored
+  (`cruxible.claim_type.per_file_evidence_rule`), and a field that still holds
+  one from an earlier build refuses the kit build
   (`cruxible.kit.per_file_evidence_rule`): the consumer may not have that
-  file. Workspace file and section citations need no rule; a field that needs
-  a particular kind of source lists its shaped CaptureContract in `evidence:`.
+  file.
 - `--automation-template FILE` names the kit's automation template (it sits at
   the kit's root under its own file name). The build refuses
   (`cruxible.kit.automation_template_invalid`, naming the template and its first
@@ -659,13 +853,22 @@ cruxible kit build --id car-parts --version 1.0.0 --owns catalog. --out ./car-pa
   definitions. The check is an authoring preview: nothing is stored. The
   template travels as one of the kit's files, outside the release's content
   digest, and is never installed.
-- `--file PATH` (repeatable) copies a plain file for the kit's reader, such as
-  `README.md` or a reference page, into the kit at its path relative to the
-  workspace root, and lists it in the manifest's `files` with its sha256 (a
-  root `README*` is the `readme`, `examples/...` an `example`, anything else a
-  `reference`). Like the template it is outside the content digest. A missing
-  file or one outside the workspace refuses `cruxible.kit.file_refused` with
-  its repair.
+- `--file PATH` (repeatable; new in 0.5.0) copies a plain file for the kit's
+  reader, such as `README.md` or a reference page, into the kit at its path
+  relative to the workspace root, and lists it in the manifest's `files` with
+  its sha256 (a root `README*` is the `readme`, `examples/...` an `example`,
+  `skills/<name>/...` a `skill`, anything else a `reference`). Like the
+  template it is outside the content digest. A missing file or one outside the
+  workspace refuses `cruxible.kit.file_refused` with its repair.
+
+~~~text
+$ cruxible kit build --id car-parts --version 1.0.0 --owns catalog. --out ../car-parts-1.0.0 \
+    --file README.md --file reference.md --file examples/parts.csv
+car-parts 1.0.0: 16 artifacts, 0 provider package(s), content sha256:967b563a…
+$ cruxible kit build --id car-parts --version 1.0.0 --owns catalog. --out ../x --file nope.md
+Error: cruxible.kit.file_refused: nope.md: is not a file in the workspace; repair:
+Repair: check the path, or create the file before building
+~~~
 
 ### Bundle your own provider
 
@@ -803,19 +1006,23 @@ covers, in order:
 - **Operating notes**: the network hosts it reaches, how stale a source may
   get, and how much it retains.
 
-Beside it, a `reference.md` lists every kind, field, saved query and
-Procedure the kit defines. Generate it from the definitions, as the security
-kit does, so it can't drift from what the kit installs. A larger kit can move
-long material into companion pages beside the README (the security kit has
-`walkthroughs.md`, `intake.md` and `in-depth.md`), listed in the manifest
-like `reference.md`, with a closing **Where next** section in the README
-that links each one.
+Beside it, a `reference.md` can list every kind, field, saved query and
+Procedure the kit defines. Cruxible has no command that writes one: generate
+it with a script of your own over the instance's definitions (`cruxible orient
+--section claim_types --json`, and likewise `subject_kinds`, `queries` and
+`procedures`), run before each build, so it can't drift from what the kit
+installs. A larger kit can move long material into companion pages beside the
+README (the security kit ships a `reference/` folder of them), with a closing
+**Where next** section in the README that links each one. Name every such
+file with `--file` at build, so the manifest lists it.
 
 ### Share it
 
 The kit directory holds `cruxible-kit.json` (the manifest), `artifacts/`
-(one file per definition), `providers/` (the bundled wheels and lock
-files) and the inert files the manifest lists, at their own paths (README,
+(one file per definition), `bodies/` (the body of each Document the kit
+carries, one file named by its sha256 in hex; absent when the kit carries no
+Document), `providers/` (the bundled wheels and lock
+files; absent when it bundles none) and the inert files the manifest lists, at their own paths (README,
 `reference.md` and any companion pages, `examples/`, `skills/<name>/`). Other files in the directory
 (build scripts, tests) are never read. Each skill installs as its own
 `<kit>-<skill>/` directory (the name stays as is when it already starts with
@@ -831,6 +1038,11 @@ there never moves to different content.
   its example automation deliberately.
 - **Upgrading without reading the preview.** A release replaces your edits
   unless you keep them.
+- **Removing a kit to reinstall it.** Removal is one-way in this release: the
+  definitions it retires cannot be added back on that instance.
+- **Counting on one approval.** Under independent approval a kit with
+  providers is one proposal per provider install and then one for the
+  definitions.
 - **Building a kit over another kit's prefix.** Two installed kits can't own
   overlapping prefixes, so give a kit you build a prefix of its own.
 - **Copying shared definitions into your kit.** Use the base kit's

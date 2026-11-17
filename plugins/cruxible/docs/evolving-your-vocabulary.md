@@ -46,20 +46,19 @@ changes to it.
 
 ~~~text
 $ cruxible vocabulary export
-Wrote .cruxible/vocabulary.yaml (4 kind(s), 13 field(s)) at 2938ae08d54c
+Wrote .cruxible/vocabulary.yaml (4 kind(s), 16 field(s)) at abd7c8b678fe
 ~~~
 
 Edit the file, then see what applying it would change. `plan` writes nothing:
 
 ~~~text
 $ cruxible vocabulary plan
-Vocabulary plan: .cruxible/vocabulary.yaml (based on 148364df5e71)
+Vocabulary plan: .cruxible/vocabulary.yaml (based on abd7c8b678fe)
 Changes:
   add ClaimType:catalog.part.warranty_months
   add SubjectKind:catalog.supplier
   add ClaimType:catalog.supplier.name
 Preflight: passed
-...
 ~~~
 
 `apply` submits the same changes as one ordinary change set, which lands at
@@ -69,7 +68,7 @@ and `export` then moves the file to the new head:
 ~~~text
 $ cruxible vocabulary apply --rationale "Warranty terms, and suppliers as a kind."
 ...
-landed: accepted at 99ae6ac69012
+landed: accepted at d61feee0616d
 Next: cruxible vocabulary export
 ~~~
 
@@ -85,6 +84,12 @@ accepted value; write `null` to clear one that may be empty. Only `retired:
 true` retires. Definitions a kit installed are edited the same way; `plan`
 marks them `kit=<id>`, and export marks them `# kit: <id>`.
 
+A field you add to a kit's kind is yours, not the kit's: it carries no kit
+marker, and nothing warns when it lands. An upgrade of the kit leaves it alone
+unless the new release defines a field of the same name; then the release's
+definition replaces yours and the kit owns it, unless you keep yours
+([Upgrading a kit you've edited](#upgrading-a-kit-youve-edited)).
+
 **Keeping it in step.** Only `export` writes the file; the daemon never does.
 When accepted vocabulary moves past the file's export (someone proposed a
 field from the CLI, say, or a kit upgrade landed), `orient` says so and
@@ -93,7 +98,7 @@ field from the CLI, say, or a kit upgrade landed), `orient` says so and
 ~~~text
 $ cruxible orient
 ...
-Vocabulary file: .cruxible/vocabulary.yaml at 63de72d1d932, behind by 1 definition(s); refresh: cruxible vocabulary export
+Vocabulary file: .cruxible/vocabulary.yaml at abd7c8b678fe, behind by 3 definition(s); refresh: cruxible vocabulary export
 ...
 $ cruxible next
 warning  vocabulary_file_behind  .cruxible/vocabulary.yaml  next=cruxible.vocabulary.export
@@ -101,14 +106,14 @@ warning  vocabulary_file_behind  .cruxible/vocabulary.yaml  next=cruxible.vocabu
 ~~~
 
 `orient`'s `next=` count covers accepted state only; the vocabulary row is in
-`cruxible next`. A header naming an export this instance does not know is
+`cruxible next`, as `orient` notes under its `Attention:` line. A header naming an export this instance does not know is
 `vocabulary_file_baseline_invalid`: restore the header, or `vocabulary export
 --force`. Export replaces a file only when nothing in it would be lost; a file
 holding edits not yet applied refuses, naming them:
 
 ~~~text
 $ cruxible vocabulary export
-Error: cruxible.vocabulary.export_refused: .cruxible/vocabulary.yaml holds changes not in accepted state (ClaimType:catalog.part.title): apply them (`cruxible vocabulary apply`), or pass --force to replace the file
+Error: cruxible.vocabulary.export_refused: .cruxible/vocabulary.yaml holds changes not in accepted state (ClaimType:catalog.part.title): apply them (cruxible vocabulary apply), or run cruxible vocabulary export --force to replace the file
 ~~~
 
 **When someone else changed the same field.** `plan` and `apply` read at the
@@ -119,12 +124,11 @@ that moved (`moved` in the result) with the repair:
 
 ~~~text
 $ cruxible vocabulary apply --rationale "My edit."
-Vocabulary plan: .cruxible/vocabulary.yaml (based on e5db9b1208d3)
+Vocabulary plan: .cruxible/vocabulary.yaml (based on 305dc6416d93)
 Changes:
   replace ClaimType:catalog.part.title (description)
 Preflight: refused
   cruxible.authoring.claim_type_succession_invalid at members[0].successor: cruxible.claim_type.migration_invalid: successor does not pin the current ClaimType
-...
 Refused: nothing was submitted.
 Changed since the file's export: ClaimType:catalog.part.title
 Next: Save your edits to .cruxible/vocabulary.yaml elsewhere, run cruxible vocabulary export --force to read the definitions as they are now, redo your edits, check them with cruxible vocabulary plan, then cruxible vocabulary apply
@@ -137,13 +141,13 @@ the car parts instance:
 
 ~~~yaml
 format: cruxible-vocabulary-v1
-instance: inst_f42e670feacb4f97
+instance: inst_01286013bfab4b93
 based_on:
-  git_oid: 1646c6bf80001577a1914bacfdd070692ca95b58
-  semantic_root: sha256:0d6d9218…
-  generation_root: sha256:9979a436…
-  compiler_digest: sha256:f537406e…
-  vocabulary_digest: sha256:4f2c0207…
+  git_oid: 5a03be4bbf6ca1da970c77a0f588bb99da59a0cb
+  semantic_root: sha256:02dd3eef…
+  generation_root: sha256:d3479846…
+  compiler_digest: sha256:5b1e93a0…
+  vocabulary_digest: sha256:6a30df07…
 kinds:
   catalog.decision:
     description: A ruling the shop made; its reasoning lives in a doc section.
@@ -152,24 +156,34 @@ kinds:
         key: true
         value: 'string{min_len: 1, max_len: 64}'
         description: A short slug for the ruling; the key.
+        permitted_roles:
+        - normative
       decided_on:
         value: date
         description: The day the shop made the ruling, as the ruling states it.
+        permitted_roles:
+        - normative
       governs:
         link:
         - catalog.part
         - catalog.vehicle
         many: true
         description: The parts and vehicles the ruling applies to.
+        permitted_roles:
+        - normative
       status:
         enum:
         - proposed
         - accepted
         - superseded
         description: Where the ruling stands.
+        permitted_roles:
+        - normative
       summary:
         value: 'string{max_len: 200}'
         description: The ruling in one line; it cites the section that gives the reasoning.
+        permitted_roles:
+        - normative
   catalog.part:
     description: A part the shop stocks, named by its part number.
     fields:
@@ -177,6 +191,8 @@ kinds:
         key: true
         value: 'string{min_len: 1, max_len: 64}'
         description: The part number; the key.
+        permitted_roles:
+        - normative
         canonical_form:
         - nfkc
         - trim
@@ -189,9 +205,13 @@ kinds:
           lighting: null
           wipers: Wiper blades.
         description: The part's shelf category.
+        permitted_roles:
+        - normative
       discontinued:
         value: bool
         description: The supplier has stopped making the part, as its discontinued-parts file says.
+        permitted_roles:
+        - observation
         evidence_admission_policy:
           rules:
           - rule_id: acme-file
@@ -206,19 +226,42 @@ kinds:
                 kind: CaptureContract
                 name: catalog.acme-discontinued
         default_role: observation
+        evidence_requirement: captured
       fits:
         link: catalog.vehicle
         many: true
         description: A vehicle the part fits.
+        permitted_roles:
+        - normative
       replaces:
         link: catalog.part
         many: true
         description: An older part this one supersedes.
+        permitted_roles:
+        - normative
       title:
-        description: What the supplier calls the part.
+        description: The part's name on the supplier's invoice.
+        permitted_roles:
+        - normative
       warranty_months:
         value: int{0..120}
         description: How many months the supplier's warranty runs.
+        permitted_roles:
+        - normative
+  catalog.supplier:
+    description: A parts supplier, named by its name.
+    fields:
+      name:
+        key: true
+        value: 'string{min_len: 1, max_len: 256}'
+        description: The supplier's name; its key.
+        permitted_roles:
+        - normative
+        canonical_form:
+        - nfkc
+        - trim
+        - collapse_whitespace
+        - casefold
   catalog.vehicle:
     description: A car, named by make, model and year.
     fields:
@@ -226,6 +269,8 @@ kinds:
         key: true
         value: 'string{min_len: 1, max_len: 128}'
         description: Make, model and year; the key.
+        permitted_roles:
+        - normative
         canonical_form:
         - nfkc
         - trim
@@ -262,8 +307,9 @@ A kind with only `fields` changes no SubjectKind.
 
 **A field** is one ClaimType, named `<kind>.<field>` (`catalog.part.category`).
 `{}` takes every default: one value, a string of at most 256 characters,
-normative, backed by its writer's own words. Beside any property of the full
-ClaimType input form, a field takes these shorthands:
+normative, backed by its writer's own words or by a workspace file or section
+citation. Beside any property of the full ClaimType input form, a field takes
+these shorthands:
 
 | Shorthand | Means |
 |---|---|
@@ -275,16 +321,31 @@ ClaimType input form, a field takes these shorthands:
 
 The other properties are the full ClaimType input form, written in the same
 entry: `value` (below), `description`, `default_role`, `permitted_roles`,
-`canonical_form`, `evidence_requirement`, `evidence_admission_policy`,
+`canonical_form`, `evidence_requirement`, `evidence`,
+`evidence_admission_policy`,
 `evidence_freshness` (`{stale_after: P30D}`), `inverse`, `requires_complete_input`
 and `incomplete_fallback`, `allowed_subject_kinds` (for a field several kinds
 share), and the rest that `cruxible claim-type propose --template --expanded`
 prints with their defaults. Anything shorthand cannot say is written this way,
 so an export never loses meaning (a ClaimType's `inverse` included; when some
-field cannot be written faithfully, export refuses once, naming each one): `discontinued` above states its evidence
-rule in full. Hand-written, the same rule may name the contract briefly
+field cannot be written faithfully, export refuses once, naming each one).
+Export writes every field's `permitted_roles`, and `evidence_requirement:
+captured` where a field has it, so applying an export unchanged plans no
+change.
+<!-- TODO(0.5.0): freshness limits note -->
+
+**Evidence.** Own words, and workspace file and section citations, back every
+field that is not `evidence_requirement: captured`; none of them needs a rule.
+`captured` means a shaped payload: a Capture under a CaptureContract the field
+names. Name the contracts in `evidence: [catalog.acme-discontinued]`, the
+short form, which export writes back as it is. A rule that needs more than
+that is written as `evidence_admission_policy`: `discontinued` above states
+its rule in full. Hand-written, the same rule may name the contract briefly
 (`capture_contracts: [CaptureContract:catalog.acme-discontinued]`), and export
-writes it back in full. Evidence and
+writes it back in full. A hand `set` on a `captured` field that cites only
+your own words or a file section is refused (`cruxible.write.evidence_required`,
+naming the contract). A rule can no longer name one workspace file
+(`cruxible.claim_type.per_file_evidence_rule`). Evidence and
 admission covers evidence
 rules.
 
@@ -337,7 +398,7 @@ names its line:
 
 ~~~text
 $ cruxible vocabulary plan
-Error: cruxible.vocabulary.file_invalid: 'yes' at line 78, column 15 reads as a boolean: write true or false, or quote it
+Error: cruxible.vocabulary.file_invalid: 'yes' at line 98, column 15 reads as a boolean: write true or false, or quote it
 $ cruxible vocabulary plan
 Error: cruxible.vocabulary.file_invalid: kinds.catalog.part.fields.fits: Value error, unknown field property plural; a field takes key, enum, link, many, retired, reason or a ClaimType input field
 ~~~
@@ -380,17 +441,17 @@ it. In the file, the split is one edit: add the two new members, and say that
 
 ~~~text
 $ cruxible vocabulary plan
-Vocabulary plan: .cruxible/vocabulary.yaml (based on 84066bb057b3)
+Vocabulary plan: .cruxible/vocabulary.yaml (based on 732d4d75563b)
 Claims:
-  CLM-016b6497e106c48920a7df8cf28c03ec catalog.part/bp-2210 catalog.part.category: brakes becomes brake-pads
-  CLM-e399f3db867bbd66ddc10c94c945e174 catalog.part/bp-1142 catalog.part.category: brakes becomes brake-pads
+  CLM-027c62b3b1f74fb09b9f5127c80c930e catalog.part/bp-2210 catalog.part.category: brakes becomes brake-pads
+  CLM-5b670cc2987466db3e186ed831ca8d5e catalog.part/bp-1142 catalog.part.category: brakes becomes brake-pads
 Changes:
   replace ClaimType:catalog.part.category (member_descriptions, value)
 Preflight: passed
 
 $ cruxible vocabulary apply --rationale "Split brakes: the shop now stocks rotors; both brake parts on file are pads."
 ...
-landed: accepted at 63de72d1d932
+landed: accepted at 10d6f3b38894
 
 $ cruxible query catalog.part --select category
 subject               category    flags
@@ -429,14 +490,15 @@ defaults:
 ~~~text
 $ cruxible vocabulary apply
 ...
-landed: accepted at 99ae6ac69012
+landed: accepted at d61feee0616d
 
 $ cruxible set catalog.part/bp-1142 warranty_months 24 --because "Acme's warranty card."
 ...
-  set catalog.part/bp-1142 warranty_months: 24  [CLM-a3a9ce1d…; verdict supported]
+  set catalog.part/bp-1142 warranty_months: 24  [CLM-ab603653…; verdict supported]
 ~~~
 
-By default a field is normative and backed by its writer's own words. Add a
+By default a field is normative and backed by its writer's own words (a
+workspace file or section citation is admitted too). Add a
 `description`, the roles it takes, and evidence rules when it needs other
 evidence (Evidence and
 admission shows a field
@@ -468,7 +530,7 @@ its key, and Cruxible creates it and assigns its id:
 
 ~~~text
 $ cruxible set "catalog.supplier/Bolt Supply" name "Bolt Supply" --because "A second supplier."
-accepted (generation 24, 1646c6bf8000)
+accepted (generation 10, 305dc6416d93)
   create catalog.supplier/bolt-supply: created
   + subject catalog.supplier/bolt-supply
 ~~~
@@ -606,7 +668,7 @@ the vocabulary, and a write to it is refused, as here for a retired
 
 ~~~text
 $ cruxible set catalog.part/bp-1142 price_cents 4200 --because "…"
-refused (generation 25, b2bab12aeb51)
+refused (generation 13, c52cbf99eebb)
 cruxible.write.unknown_field (change 0): catalog.part has no field 'price_cents'
   repair: Use a field of catalog.part; cruxible orient --kind catalog.part lists them
 ~~~
@@ -652,39 +714,48 @@ the upgrade, and names every definition where your version differs from the
 kit's:
 
 ~~~text
-$ cruxible kit add car-parts:1.1.0
-car-parts 1.1.0: would_propose (upgrade from 1.0.0)
-...
+$ cruxible kit add ./car-parts-2.1.0
+car-parts 2.1.0: would_propose (upgrade from 2.0.0)
+Built by owner on inst_0f4ae3ef62c94365 at 04b09ca6417c (claimed)
 ClaimType:
-  replace: ClaimType:catalog.part.title (overwrites your edit; 1 dependent(s))
-  add: ClaimType:catalog.part.weight_grams
-QueryDefinition:
-  replace: QueryDefinition:catalog.parts_for_vehicle
-Preview at 246e273be249; nothing was written.
+  replace: ClaimType:catalog.part.title (overwrites your edit)
+  add: ClaimType:catalog.part.warranty_months
+unchanged: 24 (--detail lists each)
+Preview at b307b5d080ff; nothing was written.
+Commit it: rerun the same command with --commit --at b307b5d080ff
 ~~~
 
 Here the shop reworded the title field's description, and the release
-rewords it too. (The saved query is replaced because the release's version
-reads the new title definition; that isn't an edit of yours.) `--keep
-IDENTITY` keeps your version of one definition, and `--keep-local-edits`
-keeps every one you've changed:
+rewords it too. `--keep IDENTITY` keeps your version of one definition, and
+`--keep-local-edits` keeps every one you've changed:
 
 ~~~text
-$ cruxible kit add car-parts:1.1.0 --keep ClaimType:catalog.part.title --commit --at 246e273be249
-car-parts 1.1.0: accepted (upgrade from 1.0.0)
+$ cruxible kit add ./car-parts-2.1.0 --keep ClaimType:catalog.part.title --commit --at b307b5d080ff
+car-parts 2.1.0: accepted (upgrade from 2.0.0)
 ...
 ClaimType:
   keep: ClaimType:catalog.part.title (keeps your edit)
-  add: ClaimType:catalog.part.weight_grams
+  add: ClaimType:catalog.part.warranty_months
+...
 
 $ cruxible kit status
-car-parts 1.1.0 sha256:0164a4b4…; …
-  ...
+...
+car-parts 2.1.0 content sha256:df724fce…; update check local source
+  source: car-parts-2.1.0
+  built by owner on inst_0f4ae3ef62c94365 at 04b09ca6417c (claimed)
   kept: ClaimType:catalog.part.title (your edit)
 ~~~
 
-The kept divergence is recorded, so a later release
-that leaves that definition alone doesn't ask again. A release that narrows a
+Write the identity as the preview prints it: a `--keep` that matches nothing
+in the plan is ignored without a message, so check that the line reads `keep:`
+before you commit. The kept divergence is recorded, so a later release
+that leaves that definition alone doesn't ask again.
+
+The upgrade treats a field of your own on the kit's kind the same way when the
+release brings a field of that name: the plan lists it as `replace: ... (takes
+over a definition you defined outside the kit)` and names the `--keep` that
+keeps yours. A field of yours the release does not define is not in the plan
+and stays as it is. A release that narrows a
 field your Claims use needs the same decisions as any succession; see
 [Kits](kits.md) for upgrades in full.
 
