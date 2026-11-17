@@ -2308,8 +2308,10 @@ diagnostic with its repair; `repr()` stays one line. A `WriteOutcome` and an
 `intent.outcome` print as the CLI prints them, through
 `contracts.text_display`. Every SDK result that prints as CLI text (write
 outcomes, landings, orient, next pages, get cards, proposal reviews, vocabulary
-results) has a `repr()` of that text's first line; `model_dump()` (or the
-result's fields) is the model.
+results, inbox items and dispositions, Line enablements, Runbook previews and
+runs, proposal pages, whoami, kit status, and approval and activation receipts)
+has a `repr()` of that text's first line (a proposal page's counts it);
+`model_dump()` (or the result's fields) is the model.
 
 <a id="api-intent-from-preflight"></a>
 

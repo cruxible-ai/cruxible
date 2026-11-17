@@ -494,6 +494,14 @@ quickstart and concepts pages.
   activated after the head moved landed by its own bytes with no rationale, so
   `get --detail history` and the successor's review showed no `reason:` for
   it. The landed proposal now carries its source's `--because`.
+- **SDK results print short text.** `print()` on `cx.whoami()`, `cx.kits()`,
+  `cx.proposals()`, a Runbook's `preview()` and `run()`, an approval or
+  activation receipt, a Line enablement and `inbox().get()` (and an inbox
+  disposition) showed a one-line model dump thousands of characters long. Each
+  prints what the CLI prints for it (whoami, kit status and receipts a short
+  text of their own), and `repr()` is its first line. An approval receipt
+  names who signed and who sent it: `approved ... by reviewer (sent by
+  owner)`, then who activated.
 - **`get RUN-...` prints a short card.** A finished run's text listed every
   outcome and terminal detail (120-380 KB on a security kit run). It now
   prints the nodes block, outcome counts by kind, one line per terminal and a

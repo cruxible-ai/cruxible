@@ -288,6 +288,18 @@ class InboxItem(_StrictInboxModel):
     def _payload(cls, value: object) -> CanonicalValue:
         return normalize_canonical(value)
 
+    def __str__(self) -> str:
+        """The item as ``cruxible inbox get`` prints it; ``repr()`` is its first line."""
+
+        from cruxible_client.contracts.text_display import inbox_item_lines
+
+        return "\n".join(inbox_item_lines(self))
+
+    def __repr__(self) -> str:
+        from cruxible_client.contracts.text_display import one_line_repr
+
+        return one_line_repr(self)
+
 
 class InboxDismissRequest(_StrictInboxModel):
     tag: Literal["cruxible-inbox-dismiss-request-v1"] = "cruxible-inbox-dismiss-request-v1"
@@ -305,6 +317,16 @@ class InboxDispositionResult(_StrictInboxModel):
     tag: Literal["cruxible-inbox-disposition-result-v1"] = "cruxible-inbox-disposition-result-v1"
     item: InboxItemEnvelope
     recorded: bool
+
+    def __str__(self) -> str:
+        """The item's row after the disposition, as the CLI prints it; ``repr()`` too."""
+
+        from cruxible_client.contracts.text_display import inbox_disposition_line
+
+        return inbox_disposition_line(self)
+
+    def __repr__(self) -> str:
+        return str(self)
 
 
 #: The most characters a compact inbox row's title takes.

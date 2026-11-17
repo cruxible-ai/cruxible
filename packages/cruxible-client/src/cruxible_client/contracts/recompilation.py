@@ -53,3 +53,15 @@ class ProposalRecompiled(BaseModel):
                 "a recompiled proposal names its successor exactly when one was proposed"
             )
         return self
+
+    def __str__(self) -> str:
+        """The replacement proposal to review, as text; ``repr()`` is its first line."""
+
+        from cruxible_client.contracts.text_display import approval_result_lines
+
+        return "\n".join(approval_result_lines(self))
+
+    def __repr__(self) -> str:
+        from cruxible_client.contracts.text_display import one_line_repr
+
+        return one_line_repr(self)

@@ -859,3 +859,65 @@ def test_a_run_card_prints_counts_and_one_line_per_terminal_not_every_outcome() 
     result_line = next(line for line in text.splitlines() if line.startswith("result: "))
     assert len(result_line) < 260
     assert text.splitlines()[-1] == "next: cruxible get ProcedureRun:RUN-1 --detail proof"
+
+
+def test_sdk_results_print_short_text_not_a_model_dump() -> None:
+    """coldsdk-03: whoami, kits, proposals and receipts printed a raw repr."""
+
+    from cruxible_client.contracts import ApprovalReceipt, ProposalList, WhoAmI
+    from cruxible_client.contracts.kits import InstalledKit, KitStatus
+
+    coordinate = _COORDINATE.model_dump(mode="json")
+    whoami = WhoAmI.model_validate(
+        {
+            "actor_id": "owner",
+            "credential_label": None,
+            "actor_id_source": "principal_claim",
+            "authenticated": False,
+            "credential_permission_mode": "admin",
+            "principal_registration_status": "active",
+            "active_principal_ids": ["owner", "reviewer"],
+            "coordinate": coordinate,
+            "can_author": True,
+            "authoring_refusal": None,
+        }
+    )
+    assert repr(whoami) == "actor: owner (principal setting; unauthenticated)"
+    assert str(whoami).splitlines()[1:] == [
+        "mode: admin; principal active; principals owner, reviewer",
+        "can author: yes",
+        "coordinate: 0123456789ab",
+    ]
+
+    kits = KitStatus(kits=(InstalledKit(kit_id="security", version="1.3.0", content_digest="d"),))
+    assert repr(kits) == "kits: security 1.3.0"
+    assert repr(KitStatus()) == "No kits installed."
+
+    page = ProposalList.model_validate({"coordinate": coordinate, "entries": []})
+    assert repr(page) == "0 proposals"
+    assert str(page).splitlines()[-1] == f"Coordinate: {_OID}"
+
+    # sec N5: the reviewer's key signed; the owner's connection sent it and activated.
+    receipt = ApprovalReceipt.model_validate(
+        {
+            "proposal_id": "sha256:" + "1" * 64,
+            "candidate_digest": "sha256:" + "2" * 64,
+            "signer_id": "reviewer",
+            "submitted_by": "owner",
+            "signing_semantic_root": "sha256:" + "3" * 64,
+            "attestation_digest": "sha256:" + "4" * 64,
+            "key_history_ref": "principals/reviewer.json@sha256:" + "3" * 64,
+            "activation": {
+                "proposal_id": "sha256:" + "1" * 64,
+                "activated_by": "owner",
+                "status": "accepted",
+                "accepted_coordinate": coordinate,
+                "workspace_advertisement": {"status": "not_attached", "workspace_path": None},
+            },
+        }
+    )
+    assert repr(receipt) == f"approved sha256:{'1' * 64} by reviewer (sent by owner)"
+    assert str(receipt).splitlines()[1] == (
+        f"activated sha256:{'1' * 64} by owner: accepted at 0123456789ab"
+    )
+    assert "tag=" not in str(receipt) + repr(receipt)

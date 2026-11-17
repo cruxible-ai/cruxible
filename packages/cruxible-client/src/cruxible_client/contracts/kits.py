@@ -1263,3 +1263,15 @@ class KitStatus(_Strict):
     kits: tuple[InstalledKit, ...] = ()
     #: Kit adds waiting on provider installs, or whose resume proposed or refused.
     resumes: tuple[KitResumeStatus, ...] = ()
+
+    def __str__(self) -> str:
+        """The installed kits, as text; ``repr()`` is its first line."""
+
+        from cruxible_client.contracts.text_display import kit_status_lines
+
+        return "\n".join(kit_status_lines(self))
+
+    def __repr__(self) -> str:
+        from cruxible_client.contracts.text_display import one_line_repr
+
+        return one_line_repr(self)

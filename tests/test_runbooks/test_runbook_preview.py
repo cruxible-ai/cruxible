@@ -792,7 +792,7 @@ def test_a_fetch_names_its_request_max_bytes_beside_the_contract_budget() -> Non
     """coldcli-15: the contract's budget and the Line's request max_bytes both show."""
 
     from cruxible_client.contracts.procedures.models import CallNode, ProjectNode
-    from cruxible_core.cli.commands.playbill import _runbook_input_lines
+    from cruxible_client.contracts.text_display import _runbook_input_lines
     from cruxible_core.service.runbook_preview import DefinitionReader, _inputs
     from tests.core_support._light_capture_support import JSON_DECODING, http_contract
     from tests.support.lines import line_spec
