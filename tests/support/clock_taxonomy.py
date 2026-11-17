@@ -598,6 +598,7 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("StaleProposal", "admitted_at"): "ASSERTION TIME",
     ("TerminalEgressRequestV1", "prepared_at"): "EVALUATION INSTANT",
     ("TerminalEgressRequestV1", "observation_calls"): "EVALUATION INSTANT",
+    ("ReobservationRequest", "call"): "EVALUATION INSTANT",
     ("TerminalEgressRequestV2", "evaluation_time"): "EVALUATION INSTANT",
     ("VerifiedClaimAttestation", "recorded_at"): "ASSERTION TIME",
     ("VerifiedExhaustRecordV1", "sequence"): "SETTLEMENT ORDER",

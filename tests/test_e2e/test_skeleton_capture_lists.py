@@ -803,6 +803,113 @@ def test_an_absence_is_reconfirmed_per_claim_by_every_complete_run(tmp_path: Pat
     assert len(records) == 3  # one per complete run
 
 
+def _stored(root: Path) -> tuple[int, int]:
+    """Apparent bytes of (journal and bodies, re-observation projection) under one instance."""
+
+    journal = projection = 0
+    for path in root.rglob("*"):
+        if not path.is_file():
+            continue
+        if path.name.startswith("reobservations.sqlite3"):
+            projection += path.stat().st_size
+        else:
+            journal += path.stat().st_size
+    return journal, projection
+
+
+def test_absence_reconfirmations_store_one_record_per_run_at_12_and_120(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Round 6 item 1: a run's absence reconfirmations are one journal record.
+
+    The real absence reconfirmation of the delisted CVE (its receipt, value and
+    call) is taken from a real run, then recorded for 12 and for 120 Claims,
+    once per Claim (the round 5 shape) and once batched. Admission is the real
+    record's own, held fixed, so only the storage shape is measured. Each
+    Claim still reads back as its own record.
+    """
+
+    from dataclasses import replace
+    from datetime import timedelta
+
+    from cruxible_core.evidence.claim_reobservations import ClaimReobservationStore
+
+    instance = pages_world(tmp_path)
+    install(instance, list_spec(), line="test.kev-pages-line")
+    first = run_pages(instance, Pages(split(catalog())), line="test.kev-pages-line")
+    held = _by(proposed(instance, first))
+    activate(instance, first)
+    delisted = split(catalog("kev-catalog-delisted"))
+    second = run_pages(instance, Pages(delisted), line="test.kev-pages-line", minute=1)
+    activate(instance, second)
+    inverse = held[(_cve(DELISTED), LISTED_IN)].identity.name
+    seen: list[Any] = []
+    batched = ClaimReobservationStore.record_many
+
+    def spy(self: Any, requests: Any, **kwargs: Any) -> Any:
+        seen.extend(requests)
+        return batched(self, requests, **kwargs)
+
+    monkeypatch.setattr(ClaimReobservationStore, "record_many", spy)
+    state = run_pages(
+        instance,
+        Pages(delisted, observed=NOW + timedelta(minutes=2)),
+        line="test.kev-pages-line",
+        minute=2,
+    )
+    assert state.status == "succeeded", state.terminal
+    (real,) = [item for item in seen if item.claim_id == inverse]
+    assert real.extraction is not None and real.extraction.absence is not None
+    store = ClaimReobservationStore(instance)
+    admitted = store._admissible(  # noqa: SLF001 - held fixed: only storage is measured
+        claim_id=real.claim_id,
+        capture_digest=real.capture_digest,
+        coordinate=instance.accepted_coordinate(),
+        extraction=real.extraction,
+        extracted_value=real.extracted_value,
+        repeat=True,
+    )
+    monkeypatch.setattr(store, "_admissible", lambda **_kwargs: admitted)
+    assert real.call is not None
+    measured: dict[tuple[str, int], tuple[int, int]] = {}
+    step = 0
+    for shape in ("per_claim", "batched"):
+        for count in (12, 120):
+            step += 1
+            call = (real.call[0] + timedelta(seconds=step), real.call[1] + timedelta(seconds=step))
+            requests = [
+                replace(real, claim_id=f"{inverse}-{shape}-{count}-{index:04d}", call=call)
+                for index in range(count)
+            ]
+            before = _stored(instance.root)
+            if shape == "per_claim":
+                for item in requests:
+                    store.record(
+                        claim_id=item.claim_id,
+                        capture_digest=item.capture_digest,
+                        actor_id="owner",
+                        extraction=item.extraction,
+                        extracted_value=item.extracted_value,
+                        call=item.call,
+                    )
+            else:
+                assert store.record_many(requests, actor_id="owner") == {}
+            after = _stored(instance.root)
+            measured[(shape, count)] = (after[0] - before[0], after[1] - before[1])
+            for item in requests[:: count // 3]:
+                (record,) = store.history(item.claim_id)
+                assert record.capture_digest == real.capture_digest
+    per_claim = {
+        shape: (measured[(shape, 120)][0] - measured[(shape, 12)][0]) / 108
+        for shape in ("per_claim", "batched")
+    }
+    print("ABSENCE_COST", measured, per_claim)
+    # Round 5 stored a whole record per Claim (~2.3 KB); batched, a Claim
+    # costs its id and version in the one record's body.
+    assert per_claim["per_claim"] > 1500, measured
+    assert per_claim["batched"] < 200, measured
+
+
 def _inverse_freshness(instance: Any, claim_id: str) -> Any:
     """The latest instant the absence Claim's freshness reads (recorded, observed)."""
 

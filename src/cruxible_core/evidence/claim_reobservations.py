@@ -67,6 +67,18 @@ _LOCK = threading.RLock()
 _FENCE = "claim-reobservation-local-v1"
 _PARTITION = "reobservations"
 _EVENT_TAG = "cruxible-claim-reobservation-v1"
+#: One delivery's per-Claim re-observations in one journal record (the 0.5.0
+#: absence fallback's storage shape): what the records share is stated once
+#: per group, and each Claim costs its id and version. Read back, each Claim is
+#: exactly the per-Claim record it would have been.
+_BATCH_TAG = "cruxible-claim-reobservation-batch-v1"
+_GROUP_FIELDS = (
+    "capture_digest",
+    "contract_digest",
+    "observed_content_digest",
+    "observed_at",
+    "latest",
+)
 #: One acquiring call's observation of every content it fetched (ruling 1a):
 #: recorded at the fetch, keyed by (contract, observed content), never per Claim.
 CONTENT_OBSERVATION_TAG = "cruxible-content-observation-v1"
@@ -289,6 +301,31 @@ class RecordedReobservation:
     accepted_coordinate: AcceptedCoordinate
 
 
+@dataclass(frozen=True)
+class ReobservationRequest:
+    """One per-Claim re-observation a delivery asks the store to record."""
+
+    claim_id: str
+    capture_digest: str
+    extraction: ClaimEvidenceReceipt | None = None
+    extracted_value: object = None
+    call: tuple[datetime, datetime] | None = None
+
+
+def _batch_records(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """The per-Claim records one batch record holds, in its stored order."""
+
+    found: list[dict[str, Any]] = []
+    for group in payload["groups"]:
+        shared: dict[str, Any] = {"tag": _EVENT_TAG, **{key: group[key] for key in _GROUP_FIELDS}}
+        if "extraction" in group:
+            shared["extraction"] = group["extraction"]
+            shared["extracted_value"] = group.get("extracted_value")
+        for claim_id, version in group["claims"]:
+            found.append({**shared, "claim_id": claim_id, "claim_artifact_digest": version})
+    return found
+
+
 def _instant(value: object) -> datetime:
     parsed = parse_datetime(str(value))
     if parsed is None:
@@ -480,6 +517,12 @@ class ClaimReobservationStore:
                             stored.record.sequence,
                             stored.record.recorded_at,
                         )
+                        continue
+                    if isinstance(payload, dict) and payload.get("tag") == _BATCH_TAG:
+                        for item in _batch_records(payload):
+                            self._apply(
+                                conn, item, stored.record.sequence, stored.record.recorded_at
+                            )
                         continue
                     if isinstance(payload, dict) and payload.get("tag") != _EVENT_TAG:
                         _refuse_retired_tag(payload.get("tag"))
@@ -1174,6 +1217,222 @@ class ClaimReobservationStore:
             conn.commit()
         return record
 
+    def record_many(
+        self,
+        requests: Sequence[ReobservationRequest],
+        *,
+        actor_id: str,
+        cited_envelopes: dict[str, CaptureEnvelopeAny] | None = None,
+        verified_witnesses: dict[object, None] | None = None,
+    ) -> dict[int, ClaimReobservationRefused]:
+        """Record many per-Claim re-observations as one journal record; the refusals by index.
+
+        Each request is judged exactly as :meth:`record` judges it (a repeat is
+        the record already held; a refused one is left out), and each admitted
+        one reads back as the per-Claim record it would have been. Only the
+        storage shape differs: one journal record per delivery, what the
+        records share stated once per group, each Claim its id and version
+        (the 0.5.0 absence fallback: one reconfirmation per held absence per
+        complete run).
+        """
+
+        refused: dict[int, ClaimReobservationRefused] = {}
+        if not requests:
+            return refused
+        if is_previewing():
+            now = self.instance.recording_clock()
+            coordinate = self.instance.accepted_coordinate()
+            for index, request in enumerate(requests):
+                try:
+                    envelope, _cited, _version = self._admissible(
+                        claim_id=request.claim_id,
+                        capture_digest=request.capture_digest,
+                        coordinate=coordinate,
+                        extraction=request.extraction,
+                        extracted_value=request.extracted_value,
+                        cited_envelopes=cited_envelopes,
+                        verified_witnesses=verified_witnesses,
+                        repeat=request.call is not None,
+                    )
+                    self._at(
+                        claim_id=request.claim_id,
+                        capture_digest=request.capture_digest,
+                        envelope=envelope,
+                        now=now,
+                    )
+                except ClaimReobservationRefused as exc:
+                    refused[index] = exc
+            return refused
+        with self.instance.holding_accepted_head() as main, self._locked(create=True) as conn:
+            accepted = self.instance.accepted_coordinate()
+            admitted: list[tuple[int, ReobservationRequest, CaptureEnvelopeAny, str, str]] = []
+            for index, request in enumerate(requests):
+                if self._known(conn, request.claim_id, request.capture_digest, request.call):
+                    continue
+                if accepted.git_oid != main:
+                    refused[index] = ClaimReobservationRefused(
+                        "accepted state moved past this instance's verified head; "
+                        "the re-observation is judged again at the new head",
+                        reason="head_moved",
+                    )
+                    continue
+                try:
+                    envelope, cited_content, version = self._admissible(
+                        claim_id=request.claim_id,
+                        capture_digest=request.capture_digest,
+                        coordinate=accepted,
+                        extraction=request.extraction,
+                        extracted_value=request.extracted_value,
+                        cited_envelopes=cited_envelopes,
+                        verified_witnesses=verified_witnesses,
+                        repeat=request.call is not None,
+                    )
+                except ClaimReobservationRefused as exc:
+                    refused[index] = exc
+                    continue
+                admitted.append((index, request, envelope, cited_content, version))
+            if not admitted:
+                return refused
+            journal, bodies, head = self._writer_head()
+            now = self.instance.recording_clock()
+            last = conn.execute("SELECT recorded_us FROM progress WHERE singleton=1").fetchone()
+            stamp = (
+                _from_micros(last[0]) if last is not None and _micros(now) < int(last[0]) else now
+            )
+            groups: dict[bytes, dict[str, Any]] = {}
+            for index, request, envelope, cited_content, version in admitted:
+                try:
+                    record = self._at(
+                        claim_id=request.claim_id,
+                        capture_digest=request.capture_digest,
+                        envelope=envelope,
+                        now=now,
+                    )
+                except ClaimReobservationRefused as exc:
+                    refused[index] = exc
+                    continue
+                shared = self._shared_fields(
+                    replace(record, observed_content_digest=cited_content),
+                    call=request.call,
+                    stamp=stamp,
+                )
+                if request.extraction is not None:
+                    shared["extraction"] = request.extraction.model_dump(mode="json")
+                    shared["extracted_value"] = request.extracted_value
+                group = groups.setdefault(canonical_bytes(shared), {**shared, "claims": []})
+                group["claims"].append([request.claim_id, version])
+            if not groups:
+                return refused
+            payload: dict[str, Any] = {
+                "tag": _BATCH_TAG,
+                "groups": [groups[key] for key in sorted(groups)],
+            }
+            stored = self._append(
+                journal, bodies, head, payload, accepted=accepted, actor_id=actor_id, now=stamp
+            )
+            for item in _batch_records(payload):
+                self._apply(conn, item, stored.record.sequence, stored.record.recorded_at)
+            conn.commit()
+        return refused
+
+    @staticmethod
+    def _known(
+        conn: sqlite3.Connection,
+        claim_id: str,
+        capture_digest: str,
+        call: tuple[datetime, datetime] | None,
+    ) -> tuple[Any, ...] | None:
+        """The held record a repeat names (with a call: one observed at that call)."""
+
+        row = conn.execute(
+            "SELECT contract_digest, observed_content_digest, observed_at, recorded_at "
+            "FROM reobservations WHERE claim_id=? AND capture_digest=? "
+            "AND (? IS NULL OR observed_us=?)",
+            (
+                claim_id,
+                capture_digest,
+                None if call is None else _micros(call[0]),
+                None if call is None else _micros(call[0]),
+            ),
+        ).fetchone()
+        return None if row is None else tuple(row)
+
+    def _writer_head(self) -> tuple[LocalJournalBackend, Any, Any]:
+        """Recover reserved material, then activate the writer at the journal head."""
+
+        journal = self._journal(create=True)
+        assert journal is not None
+        from cruxible_core.storage.material_reservations import (
+            ProcedureMaterialReservationStore,
+        )
+
+        bodies = self.instance.body_store()
+        ProcedureMaterialReservationStore(bodies.reservation_root).recover_run_material(
+            lambda reservation: journal.select_records(
+                self.stream,
+                event_kind="claim_reobservation",
+                payload_digest=reservation.body_digest,
+            ),
+            bodies=bodies,
+            intended_event_kinds=frozenset({"claim_reobservation"}),
+        )
+        head = journal.read_head(self.stream, _PARTITION)
+        journal.activate_writer(self.stream, _PARTITION, fencing_token=_FENCE, expected_head=head)
+        return journal, bodies, head
+
+    @staticmethod
+    def _shared_fields(
+        record: ReobservationRecord, *, call: tuple[datetime, datetime] | None, stamp: datetime
+    ) -> dict[str, Any]:
+        """A record's observation fields; ``record.recorded_at`` is the clock's actual read.
+
+        With the fetching call known, it is observed at the call's earliest
+        (clamped to the clock) and ends at the call's latest (clamped to the
+        durable ``stamp``); otherwise it ends at ``stamp``.
+        """
+
+        observed_at = record.observed_at
+        if call is not None:
+            observed_at = max(observed_at, min(call[0].astimezone(UTC), record.recorded_at))
+        return {
+            "capture_digest": record.capture_digest,
+            "contract_digest": record.contract_digest,
+            "observed_content_digest": record.observed_content_digest,
+            "observed_at": format_datetime(observed_at),
+            "latest": format_datetime(
+                stamp if call is None else max(observed_at, min(call[1].astimezone(UTC), stamp))
+            ),
+        }
+
+    def _append(
+        self,
+        journal: LocalJournalBackend,
+        bodies: Any,
+        head: Any,
+        payload: dict[str, Any],
+        *,
+        accepted: Any,
+        actor_id: str,
+        now: datetime,
+    ) -> Any:
+        return ProcedureExhaustWriter(journal=journal, bodies=bodies, fencing_token=_FENCE).append(
+            stream=self.stream,
+            partition_id=_PARTITION,
+            event_kind="claim_reobservation",
+            accepted_coordinate=AcceptedCoordinate.from_internal(accepted),
+            definition_digest=self.stream.identity_digest,
+            actor_context=GovernedActorContext(
+                actor_type="service_account",
+                actor_id=actor_id,
+                org_id=self.instance.descriptor.instance_id,
+                operation_id=new_id("op", length=16, separator="_"),
+                timestamp=now,
+            ),
+            recorded_at=now,
+            payload=payload,
+            expected_head=head,
+        )
+
     def observe(
         self,
         contents: Sequence[ObservedContent],
@@ -1422,6 +1681,12 @@ class ClaimReobservationStore:
             )
             if isinstance(payload, dict) and payload.get("tag") in _SHARED_TAGS:
                 continue  # keyed by content, not by a lineage (``observed_after``)
+            if isinstance(payload, dict) and payload.get("tag") == _BATCH_TAG:
+                records.extend(
+                    (stored.record.sequence, str(item["claim_id"]))
+                    for item in _batch_records(payload)
+                )
+                continue
             if not isinstance(payload, dict) or payload.get("tag") != _EVENT_TAG:
                 raise ValueError("invalid Claim re-observation record")
             records.append((stored.record.sequence, str(payload["claim_id"])))
@@ -1489,6 +1754,8 @@ class ClaimReobservationStore:
                     )
                 elif tag == _EVENT_TAG:
                     claims.add(str(payload["claim_id"]))
+                elif tag == _BATCH_TAG:
+                    claims.update(str(item["claim_id"]) for item in _batch_records(payload))
                 else:
                     _refuse_retired_tag(tag)
         return frozenset(claims), frozenset(keys), frozenset(sets)
@@ -2375,6 +2642,7 @@ __all__ = [
     "ReobservationReading",
     "ReobservationRecord",
     "RecordedReobservation",
+    "ReobservationRequest",
     "cited_content_keys",
     "content_keys_on",
     "cited_reobservation_keys",
