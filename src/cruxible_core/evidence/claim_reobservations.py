@@ -2079,7 +2079,8 @@ class ReobservationReading:
 
     ``evidence`` is the latest applicable record per cited Capture;
     ``boundaries`` every instant that answer can change at (each record's
-    observation and recording, and the next recording of each key);
+    observation and recording, the next recording of each key, and each
+    recording of a row map of an extracted record's Capture);
     ``sequence`` the lineage's last journal sequence, which names its whole
     record set for a remembered answer.
     """
@@ -2426,21 +2427,28 @@ class ReobservationReader:
         *,
         at_us: int | None,
         through: int,
+        boundaries: set[datetime] | None = None,
     ) -> tuple[str, str] | None:
         capture_digest, spec_digest, locator = record
         self.probes += 1
         # One map per selection and typing of the Capture's records a step
         # read (review 2c #4), each recorded when it was first seen. Only the
         # maps that existed at the read count (review 2f #2): a later map can
-        # never change an answer about an instant before it.
-        maps = [
-            str(row[0])
-            for row in conn.execute(
-                "SELECT map_digest FROM capture_maps WHERE capture_digest=? AND spec_digest=? "
-                "AND sequence<=? AND recorded_us<=?",
-                (capture_digest, spec_digest, through, _NEVER if at_us is None else at_us),
-            )
-        ]
+        # never change an answer about an instant before it. Each map's
+        # recording is an instant the answer can change at, whether the maps
+        # agree or not (review 2g F-002): ``boundaries`` takes them all, so a
+        # remembered answer never spans one.
+        limit = _NEVER if at_us is None else at_us
+        maps = []
+        for map_digest, recorded_us in conn.execute(
+            "SELECT map_digest, recorded_us FROM capture_maps WHERE capture_digest=? "
+            "AND spec_digest=? AND sequence<=?",
+            (capture_digest, spec_digest, through),
+        ):
+            if boundaries is not None:
+                boundaries.add(_from_micros(recorded_us))
+            if int(recorded_us) <= limit:
+                maps.append(str(map_digest))
         # A typing can make the locator another row (review 2e #3): the
         # Claim's row is known only when every map holding the locator then
         # agrees; otherwise None, and the Claim depends on its cited content
@@ -2762,7 +2770,14 @@ class ReobservationReader:
             for key in keys:
                 pair = (key.contract_digest, key.observed_content_digest)
                 if key.row_record is not None:
-                    resolved = self._row_on(conn, key.row_record, at_us=at_us, through=through)
+                    # The maps of its Capture name the record set too, as
+                    # ``sequence`` counts them, whatever they resolve to.
+                    sequence = max(
+                        sequence, self._maps_sequence(conn, *key.row_record[:2], through)
+                    )
+                    resolved = self._row_on(
+                        conn, key.row_record, at_us=at_us, through=through, boundaries=boundaries
+                    )
                     if resolved is None:
                         continue
                     pair = resolved

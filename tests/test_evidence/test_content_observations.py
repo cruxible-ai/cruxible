@@ -478,6 +478,75 @@ def test_a_later_typing_never_changes_a_row_lookup_before_it(tmp_path: Path) -> 
     )
 
 
+@pytest.mark.parametrize("order", [(25, 40), (40, 25)])
+def test_a_remembered_verdict_never_spans_a_later_typing_map(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, order: tuple[int, int]
+) -> None:
+    """Review 2g F-002: a later typing map of A (recorded at 30) changes what
+    record /0 is from then on, with no journal change between two reads. The
+    warm verdict memo serves each instant its own side of the map change, in
+    either read order: fresh at 25 (row X observed at 20), not after 30 (the
+    maps disagree: no row)."""
+
+    from cruxible_client.contracts.projection import AcceptedCoordinate
+    from cruxible_core.evidence import claim_reobservations
+    from cruxible_core.evidence.claim_reobservations import ReobservationKey, RowMap
+    from cruxible_core.service.discovery.claim_status import claim_resolution_statuses
+
+    instance, _owner = _freshness_world(tmp_path, stale_after=_HOUR)
+    claim, cited, key = _cited(instance)
+    store = ClaimReobservationStore(instance)
+    spec = "sha256:" + "5" * 64
+    row_x, row_y = "sha256:" + "6" * 64, "sha256:" + "7" * 64
+
+    def minutes(value: int) -> datetime:
+        return _START + timedelta(hours=1, minutes=value)
+
+    def observe(at: int, capture: str, row: str, typing: str) -> None:
+        instance.recording_clock = lambda: minutes(at)
+        store.observe_rows(
+            (RowMap(capture, spec, key.contract_digest, (("/0", row),), extraction=typing),),
+            earliest=minutes(at),
+            latest=minutes(at),
+            run_id=f"RUN-{at}",
+            node_id="extract",
+            actor_id="o",
+        )
+
+    observe(1, cited, row_x, "t1")
+    observe(20, _OTHER, row_x, "t1")
+    observe(30, cited, row_y, "t2")
+    # The Claim depends on its extracted record's row (as ``claim_keys_on``
+    # names it for a Claim produced from an extracted record).
+    depends = (ReobservationKey(cited, key.contract_digest, "", row_record=(cited, spec, "/0")),)
+    monkeypatch.setattr(
+        claim_reobservations, "claim_reobservation_keys", lambda instance, **_kwargs: depends
+    )
+
+    def verdict(at: int) -> str:
+        verdicts: dict[str, object] = {}
+        claim_resolution_statuses(
+            instance,
+            claims=(claim,),
+            at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+            evaluation_time=minutes(at),
+            verdicts_by_identity=verdicts,
+        )
+        return str(verdicts[claim.identity.qualified].verdict)  # type: ignore[attr-defined]
+
+    signature = ReobservationReader.of(instance).sequence(claim.identity.name, depends)
+    answers = {at: verdict(at) for at in order}
+    assert answers[25] == "supported", answers
+    assert answers[40] != "supported", answers
+    # Warm again, both sides still answer their own instant; nothing was recorded.
+    assert {at: verdict(at) for at in order} == answers
+    assert ReobservationReader.of(instance).sequence(claim.identity.name, depends) == signature
+    reading = ReobservationReader.of(instance).latest(claim.identity.name, depends, minutes(40))
+    # The ambiguous read reports the map recordings too, and names the maps.
+    assert reading.evidence == () and minutes(30) in reading.boundaries
+    assert reading.sequence == signature == 3
+
+
 def test_a_journal_from_an_unreleased_transition_build_refuses_with_re_initialise(
     tmp_path: Path,
 ) -> None:
