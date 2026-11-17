@@ -347,47 +347,123 @@ def test_a_context_that_cannot_be_saved_never_strands_the_initialized_folder(
     assert (reviewer_dir / "reviewer.ed25519").is_file()
 
 
-def test_a_retry_completes_the_local_setup_an_interrupted_init_left(
+def _incomplete(*args: Any, **kwargs: Any) -> Any:
+    from cruxible_core.mcp.init import McpInitIncomplete
+
+    with pytest.raises(McpInitIncomplete) as refused:
+        handlers.handle_init(*args, **kwargs)
+    assert str(refused.value).startswith("cruxible.mcp.init_local_setup_incomplete: ")
+    return refused.value
+
+
+def _keys(*directories: Path) -> dict[str, bytes]:
+    return {
+        str(path): path.read_bytes()
+        for directory in directories
+        for path in sorted(directory.glob("*.ed25519"))
+    }
+
+
+def test_a_complete_setup_is_verified_and_reported_without_rewriting_anything(
+    world: dict[str, Path],
+) -> None:
+    """The verified-complete success: identity, both keys, both settings files for this
+    instance and daemon, and the reviewer's context entry all check out."""
+
+    reviewer_dir = world["config"] / "reviewer-keys"
+    first = handlers.handle_init("owner", reviewer_key_dir=str(reviewer_dir))
+    files = [Path(first.key_dir or "") / "cruxible.env", reviewer_dir / "cruxible.env"]
+    files += [world["folder"] / ".cruxible" / "identity.json"]
+    files += [Path(os.environ["CRUXIBLE_CLI_CONTEXT_PATH"])]
+    stamps = [path.stat().st_mtime_ns for path in files]
+    keys = _keys(Path(first.key_dir or ""), reviewer_dir)
+
+    again = handlers.handle_init("owner", reviewer_key_dir=str(reviewer_dir))
+
+    assert (again.status, again.principal_id, again.key_dir) == (
+        "already_initialized",
+        "owner",
+        first.key_dir,
+    )
+    assert [path.stat().st_mtime_ns for path in files] == stamps
+    assert _keys(Path(first.key_dir or ""), reviewer_dir) == keys
+
+
+def test_a_retry_without_the_identity_record_refuses_with_the_attach_command(
     world: dict[str, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The daemon committed and the local setup stopped before the identity record:
-    calling init again writes it from the owner key that init generated."""
+    """Review round 3, F-003: the daemon committed and the identity record was never
+    written. A retry answered `already_initialized` with no principal; it now refuses,
+    naming the record and the CLI command that records the owner with its own key."""
 
     from cruxible_core.mcp import init as mcp_init
 
     def interrupted(*_args: object, **_kwargs: object) -> None:
         raise OSError("disk full")
 
-    reviewer_dir = world["config"] / "reviewer-keys"
     with monkeypatch.context() as patched:
         patched.setattr(mcp_init, "write_folder_identity", interrupted)
         with pytest.raises(OSError, match="disk full"):
-            handlers.handle_init("owner", reviewer_key_dir=str(reviewer_dir))
+            handlers.handle_init("owner")
+    instance_id = require_instance_id()
+    key = world["config"].resolve() / "cruxible" / "keys" / instance_id / "owner"
+    before = _keys(key)
+
+    refused = _incomplete("owner")
+
+    ((what, repair),) = refused.problems
+    record = world["folder"] / ".cruxible" / "identity.json"
+    assert what == f"{record} is missing, so this folder names no principal to act as"
+    assert repair == (
+        f"CLI step: `CRUXIBLE_PRINCIPAL_ID=owner CRUXIBLE_PRINCIPAL_KEY={key / 'owner.ed25519'} "
+        "cruxible workspace attach --replace`, with the owner's own key"
+    )
     assert not (world["folder"] / ".cruxible" / "identity.json").exists()
+    assert _keys(key) == before
 
-    again = handlers.handle_init("owner", reviewer_key_dir=str(reviewer_dir))
-
-    assert (again.status, again.principal_id) == ("already_initialized", "owner")
-    assert again.folder_identity_path == str(world["folder"] / ".cruxible" / "identity.json")
-    whoami = handlers.handle_playbill_whoami(require_instance_id())
-    assert (whoami.identity_source, whoami.identity.actor_id) == ("folder", "owner")
-    from cruxible_core.cli.context import load_cli_context
-
-    remembered = [entry for entry in load_cli_context().principals.values()]
-    assert remembered and "reviewer" in remembered[0].settings
+    # The owner's key gone as well: said, and still no key is generated.
+    (key / "owner.ed25519").rename(key / "moved")
+    ((what, repair),) = _incomplete("owner").problems
+    assert what.endswith("; the owner's key was not found where init keeps it")
+    assert "CRUXIBLE_PRINCIPAL_KEY=/abs/keys/ID.ed25519" in repair
+    assert _keys(key) == {}
 
 
-def test_a_retry_completes_reviewer_setup_that_failed_after_the_owner_identity(
+def test_a_retry_names_an_owner_key_that_is_gone_and_a_different_owner(
+    world: dict[str, Path],
+) -> None:
+    first = handlers.handle_init("owner")
+    key = Path(first.key_dir or "") / "owner.ed25519"
+
+    ((what, repair),) = _incomplete("alice").problems
+    assert (what, repair) == (
+        "this folder acts as owner, not alice",
+        "call cruxible_init without principal_id, or as owner",
+    )
+
+    # With its key gone the server cannot act as the folder's owner at all; the
+    # verification itself names the key and never makes another.
+    from cruxible_core.mcp.init import McpInitIncomplete, _verify_local_setup
+
+    key.rename(key.with_name("moved"))
+    with pytest.raises(McpInitIncomplete) as gone:
+        _verify_local_setup(world["folder"], first.instance_id, str(world["socket"]), None, None)
+    ((what, repair),) = gone.value.problems
+    assert what == f"the owner's key {key} is missing"
+    assert repair.startswith("restore that key file at that path") and "CLI step" in repair
+    assert not key.exists()
+
+
+def test_a_retry_writes_only_a_missing_settings_file_beside_an_existing_key(
     world: dict[str, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Review round 2, F-003: the reviewer's settings write failed after the owner
-    identity existed, and a retry answered `already_initialized` with the reviewer
-    neither set up nor remembered. The retry finishes it with the same keys."""
+    """Round 2 F-003, under the simpler rule: the reviewer's settings write failed after
+    the owner identity existed. The retry writes that one missing file from the existing
+    key, generates nothing, and refuses for the context entry it does not write."""
 
-    from cruxible_core.cli.context import load_cli_context
     from cruxible_core.mcp import init as mcp_init
 
-    reviewer_dir = world["config"] / "reviewer-keys"
+    reviewer_dir = world["config"] / "reviewer keys"
     write = mcp_init.write_principal_settings
 
     def owner_only(key_dir: Path, **kwargs: Any) -> Path:
@@ -399,53 +475,76 @@ def test_a_retry_completes_reviewer_setup_that_failed_after_the_owner_identity(
         patched.setattr(mcp_init, "write_principal_settings", owner_only)
         with pytest.raises(OSError, match="cannot write reviewer"):
             handlers.handle_init("owner", reviewer_key_dir=str(reviewer_dir))
-    assert (world["folder"] / ".cruxible" / "identity.json").is_file()
-    key = (reviewer_dir / "reviewer.ed25519").read_bytes()
-    assert not (reviewer_dir / "cruxible.env").exists()
+    before = _keys(reviewer_dir)
+    assert before and not (reviewer_dir / "cruxible.env").exists()
 
-    again = handlers.handle_init("owner", reviewer_key_dir=str(reviewer_dir))
+    refused = _incomplete("owner", reviewer_key_dir=str(reviewer_dir))
 
-    assert (again.status, again.principal_id) == ("already_initialized", "owner")
-    assert (reviewer_dir / "reviewer.ed25519").read_bytes() == key
-    assert "export CRUXIBLE_PRINCIPAL_ID=reviewer" in (reviewer_dir / "cruxible.env").read_text()
-    (remembered,) = load_cli_context().principals.values()
-    assert remembered.settings["reviewer"] == str((reviewer_dir / "cruxible.env").resolve())
-    # A third call finds everything in place and rewrites nothing.
-    stamp = (reviewer_dir / "cruxible.env").stat().st_mtime_ns
-    assert handlers.handle_init("owner", reviewer_key_dir=str(reviewer_dir)).status == (
-        "already_initialized"
+    settings = reviewer_dir / "cruxible.env"
+    text = settings.read_text()
+    assert "export CRUXIBLE_PRINCIPAL_ID=reviewer" in text
+    assert f"export CRUXIBLE_INSTANCE_ID={require_instance_id()}" in text
+    assert _keys(reviewer_dir) == before
+    ((what, repair),) = refused.problems
+    assert what.startswith("the reviewer's settings are not remembered in the CLI context")
+    # A CLI step, with the path quoted for the shell.
+    assert repair.startswith(
+        f"CLI step: load them in the reviewer's own process, `set -a; . '{settings}'; set +a`"
     )
-    assert (reviewer_dir / "cruxible.env").stat().st_mtime_ns == stamp
-
-
-def test_a_retry_that_cannot_finish_reviewer_setup_refuses_saying_what_is_left(
-    world: dict[str, Path], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Never `already_initialized` with the requested reviewer setup incomplete: a
-    context that still cannot be saved, or a directory that holds no reviewer key."""
-
-    from cruxible_core.mcp import init as mcp_init
-
-    def refuse(*_args: object, **_kwargs: object) -> None:
-        raise OSError("read-only context")
-
-    reviewer_dir = world["config"] / "reviewer keys"
-    monkeypatch.setattr(mcp_init, "save_cli_context", refuse)
-    with pytest.raises(ConfigError, match="could not remember"):
-        handlers.handle_init("owner", reviewer_key_dir=str(reviewer_dir))
-
-    with pytest.raises(ConfigError) as unfinished:
-        handlers.handle_init("owner", reviewer_key_dir=str(reviewer_dir))
-
-    message = str(unfinished.value)
-    assert "its settings are not remembered: read-only context" in message
-    # The repair survives the retry, with a path that has a space quoted for the shell.
-    assert f". '{reviewer_dir / 'cruxible.env'}'; set +a" in message
-    # Without the reviewer the folder itself is complete.
+    # Without the reviewer the folder itself verifies.
     assert handlers.handle_init("owner").status == "already_initialized"
 
+
+@pytest.mark.parametrize("remembered", [True, False])
+def test_a_retry_refuses_reviewer_settings_written_for_another_daemon_endpoint(
+    world: dict[str, Path], remembered: bool
+) -> None:
+    """Review round 3, F-006: settings naming this instance and `reviewer` at an old
+    socket were accepted and remembered under the current endpoint, where the key
+    lookup then rejects them. Whether or not the context already names the file."""
+
+    from cruxible_core.cli.context import load_cli_context, save_cli_context
+
+    reviewer_dir = world["config"] / "reviewer-keys"
+    handlers.handle_init("owner", reviewer_key_dir=str(reviewer_dir))
+    settings = reviewer_dir / "cruxible.env"
+    stale = settings.read_text().replace(str(world["socket"]), "/review/old.sock")
+    assert stale != settings.read_text()
+    settings.write_text(stale)
+    context = load_cli_context()
+    if not remembered:
+        save_cli_context(context.__class__())
+    before = _keys(reviewer_dir)
+
+    ((what, repair),) = _incomplete("owner", reviewer_key_dir=str(reviewer_dir)).problems
+
+    instance_id = require_instance_id()
+    assert what == (
+        f"{settings} names principal reviewer of {instance_id} at unix:///review/old.sock, "
+        f"not reviewer of {instance_id} at unix://{world['socket']}"
+    )
+    assert f"CLI step: `rm {settings}`" in repair
+    assert settings.read_text() == stale and _keys(reviewer_dir) == before
+    if not remembered:
+        assert load_cli_context().principals == {}
+
+
+def test_a_retry_lists_every_unfinished_piece_in_one_refusal(world: dict[str, Path]) -> None:
+    """One refusal, each piece with its own repair: a different owner named, and a
+    reviewer directory that holds no key (the CLI adds one)."""
+
+    handlers.handle_init("owner")
     elsewhere = world["config"] / "no-such-reviewer"
-    with pytest.raises(ConfigError) as absent:
-        handlers.handle_init("owner", reviewer_key_dir=str(elsewhere))
-    assert "holds no reviewer key" in str(absent.value)
-    assert "cruxible principal add reviewer --key-dir" in str(absent.value)
+
+    refused = _incomplete("alice", reviewer_key_dir=str(elsewhere))
+
+    assert [what for what, _ in refused.problems] == [
+        "this folder acts as owner, not alice",
+        f"{elsewhere} holds no reviewer key",
+    ]
+    assert refused.problems[1][1].startswith(
+        f"CLI step: `cruxible principal add reviewer --key-dir {elsewhere}`"
+    )
+    assert "(1) this folder acts as owner" in str(refused)
+    assert f"(2) {elsewhere} holds no reviewer key" in str(refused)
+    assert not elsewhere.exists()
