@@ -878,6 +878,10 @@ def test_a_signer_is_found_in_the_context_the_connection_was_opened_with(
     assert cx._client.principal_id == "reviewer"
     assert cx.signer("reviewer").private_key_path == (keys / "reviewer.ed25519").resolve()
     assert cx.signer().signer_id == "reviewer"
+    # Review round 6: a pinned context of the same connection keeps that context too
+    # (`cx.at` built a new Cruxible that read the process default).
+    pinned = cx.at(cx.coordinate)
+    assert pinned.signer("reviewer").private_key_path == (keys / "reviewer.ed25519").resolve()
     # A connection opened with the default context does not see the custom one.
     with pytest.raises(SigningKeyError, match="no signing key for principal reviewer"):
         Cruxible.connect(workspace=workspace).signer("reviewer")

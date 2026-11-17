@@ -3044,6 +3044,8 @@ class Cruxible:
         result._coordinate = AcceptedCoordinate.model_validate(coordinate.model_dump(mode="json"))
         result._pinned = True
         result._owns_client = False
+        # The pinned context is the same connection: the same remembered context.
+        result._context_path = self._context_path
         return result
 
     def _read_at(
