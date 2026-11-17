@@ -960,3 +960,34 @@ def test_a_query_card_prints_its_clauses_by_their_authored_names() -> None:
         "description: Judgments older than three days.",
         "next: cruxible get query:sec.old --detail proof",
     ]
+
+
+def test_a_printed_proposal_page_names_its_next_page_on_each_client() -> None:
+    """Review F-002: print(cx.proposals(limit=1)) never said the page was partial."""
+
+    from cruxible_client.contracts import ProposalList
+    from cruxible_client.contracts.text_display import proposal_list_lines
+
+    page = ProposalList.model_validate(
+        {
+            "coordinate": _COORDINATE.model_dump(mode="json"),
+            "status_filter": "open",
+            "entries": [
+                {
+                    "proposal_id": "sha256:" + "1" * 64,
+                    "actor_id": "owner",
+                    "target_ref": None,
+                    "admitted_at": None,
+                    "verdict": "candidate",
+                    "status": "open",
+                }
+            ],
+            "truncated": True,
+            "next_cursor": "NEXT-PAGE",
+        }
+    )
+    printed = str(page).splitlines()
+    # The CLI prints the same rows, then its own `Truncated. Next: --cursor NEXT-PAGE`.
+    assert printed[:-1] == proposal_list_lines(page)
+    assert printed[-1] == "Truncated. Next: cx.proposals(status='open', cursor='NEXT-PAGE')"
+    assert repr(page) == "1 proposal (open 1); more: next_cursor"

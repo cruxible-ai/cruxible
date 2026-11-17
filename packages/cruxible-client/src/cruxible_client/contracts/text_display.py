@@ -1373,6 +1373,16 @@ def proposal_list_lines(result: Any) -> list[str]:
     return lines
 
 
+def proposal_list_sdk_lines(result: Any) -> list[str]:
+    """The page as the SDK prints it: the CLI's rows, then the SDK call for the next page."""
+
+    lines = proposal_list_lines(result)
+    if result.next_cursor is not None:
+        status = "" if result.status_filter is None else f"status={result.status_filter!r}, "
+        lines.append(f"Truncated. Next: cx.proposals({status}cursor={result.next_cursor!r})")
+    return lines
+
+
 def proposal_list_summary(result: Any) -> str:
     """A proposal page on one line: how many, by status, and whether more follow."""
 
@@ -1381,7 +1391,8 @@ def proposal_list_summary(result: Any) -> str:
         counts[entry.status] = counts.get(entry.status, 0) + 1
     by = ", ".join(f"{status} {count}" for status, count in sorted(counts.items()))
     more = "; more: next_cursor" if result.next_cursor else ""
-    return f"{len(result.entries)} proposals" + (f" ({by})" if by else "") + more
+    count = len(result.entries)
+    return f"{count} proposal{'' if count == 1 else 's'}" + (f" ({by})" if by else "") + more
 
 
 def line_enablement_lines(result: Any) -> list[str]:

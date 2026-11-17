@@ -905,11 +905,14 @@ class ProposalList(BaseModel):
     next_cursor: str | None = None
 
     def __str__(self) -> str:
-        """The page as ``cruxible proposal list`` prints it; ``repr()`` counts it."""
+        """The page as ``cruxible proposal list`` prints it, next page in SDK syntax.
 
-        from cruxible_client.contracts.text_display import proposal_list_lines
+        ``repr()`` counts it.
+        """
 
-        return "\n".join(proposal_list_lines(self))
+        from cruxible_client.contracts.text_display import proposal_list_sdk_lines
+
+        return "\n".join(proposal_list_sdk_lines(self))
 
     def __repr__(self) -> str:
         from cruxible_client.contracts.text_display import proposal_list_summary
