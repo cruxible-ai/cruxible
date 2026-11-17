@@ -910,6 +910,77 @@ def test_a_recheck_association_is_the_latest_of_its_claim_version(tmp_path: Path
     assert port.rechecked(claim_id, version, digest("B"))
 
 
+def test_a_successor_version_is_reconfirmed_on_a_capture_its_predecessor_was(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review 2f #1: a re-check recorded for one Claim version never stands for
+    its successor's. The same Capture and call reconfirming the next version
+    (after a revision) is judged and recorded for that version."""
+
+    from datetime import timedelta
+
+    from cruxible_core.evidence.claim_reobservations import (
+        ClaimReobservationStore,
+        ReobservationReader,
+    )
+
+    instance = pages_world(tmp_path)
+    install(instance, list_spec(), line="test.kev-pages-line")
+    first = run_pages(instance, Pages(split(catalog())), line="test.kev-pages-line")
+    held = _by(proposed(instance, first))
+    activate(instance, first)
+    delisted = split(catalog("kev-catalog-delisted"))
+    second = run_pages(instance, Pages(delisted), line="test.kev-pages-line", minute=1)
+    activate(instance, second)
+    inverse = held[(_cve(DELISTED), LISTED_IN)].identity.name
+    seen: list[Any] = []
+    batched = ClaimReobservationStore.record_many
+
+    def spy(self: Any, requests: Any, **kwargs: Any) -> Any:
+        seen.extend(requests)
+        return batched(self, requests, **kwargs)
+
+    monkeypatch.setattr(ClaimReobservationStore, "record_many", spy)
+    state = run_pages(
+        instance,
+        Pages(delisted, observed=NOW + timedelta(minutes=2)),
+        line="test.kev-pages-line",
+        minute=2,
+    )
+    assert state.status == "succeeded", state.terminal
+    (real,) = [item for item in seen if item.claim_id == inverse]
+    store = ClaimReobservationStore(instance)
+    assert len(store.history(inverse)) == 1
+    current = store._version_at(inverse, instance.accepted_coordinate().git_oid)  # noqa: SLF001
+    assert ReobservationReader(instance).rechecked(inverse, current) is not None
+    # The Claim is revised (its successor version is live); the same Capture
+    # and call reconfirm it.
+    successor = "sha256:" + "9" * 64
+    envelope, cited, _version = store._admissible(  # noqa: SLF001
+        claim_id=real.claim_id,
+        capture_digest=real.capture_digest,
+        coordinate=instance.accepted_coordinate(),
+        extraction=real.extraction,
+        extracted_value=real.extracted_value,
+        repeat=True,
+    )
+    admitted: list[str] = []
+
+    def admit(**kwargs: Any) -> Any:
+        admitted.append(kwargs["claim_id"])
+        return envelope, cited, successor
+
+    monkeypatch.setattr(store, "_version_at", lambda _claim, _oid: successor)
+    monkeypatch.setattr(store, "_admissible", admit)
+    assert store.record_many([real], actor_id="owner") == {}
+    assert admitted == [inverse]  # judged for the successor, not taken as known
+    assert len(store.history(inverse)) == 2
+    assert ReobservationReader(instance).rechecked(inverse, successor) is not None
+    # A repeat for the successor itself is the record it already holds.
+    assert store.record_many([real], actor_id="owner") == {}
+    assert admitted == [inverse] and len(store.history(inverse)) == 2
+
+
 def _cas_files(root: Path) -> dict[str, int]:
     return {
         str(path): path.stat().st_size
@@ -1076,6 +1147,7 @@ def test_absence_reconfirmations_store_one_record_per_run_at_12_and_120(
         repeat=True,
     )
     monkeypatch.setattr(store, "_admissible", lambda **_kwargs: admitted)
+    monkeypatch.setattr(store, "_version_at", lambda _claim, _oid: admitted[2])
     assert real.call is not None
     measured: dict[tuple[str, int], tuple[int, int]] = {}
     step = 0

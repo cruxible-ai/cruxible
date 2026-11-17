@@ -101,7 +101,7 @@ ROW_MAP_BODY = "cruxible-row-map-v1"
 #: The row maps of one extract step's Captures (run-free).
 ROW_MAPS_BODY = "cruxible-row-maps-v1"
 _ACCESS = BodyAccessContext(principal_id="claim-reobservation", can_read_body=True)
-_SCHEMA_VERSION = 16
+_SCHEMA_VERSION = 17
 REOBSERVATION_DIRECTORY = "claim-reobservations"
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 # ``reobservations`` keeps the full history (audit, historical verification).
@@ -128,7 +128,7 @@ CREATE TABLE IF NOT EXISTS reobservations (
  observed_us INTEGER NOT NULL, recorded_us INTEGER NOT NULL, sequence INTEGER NOT NULL,
  claim_artifact_digest TEXT NOT NULL, latest_us INTEGER NOT NULL,
  capture_content_digest TEXT NOT NULL,
- PRIMARY KEY(claim_id, capture_digest, observed_us)
+ PRIMARY KEY(claim_id, claim_artifact_digest, capture_digest, observed_us)
 ) STRICT;
 CREATE INDEX IF NOT EXISTS reobservations_by_sequence ON reobservations (claim_id, sequence);
 CREATE INDEX IF NOT EXISTS reobservations_by_version
@@ -1111,17 +1111,9 @@ class ClaimReobservationStore:
         # durable append, under the locks every acceptance takes in the order
         # it takes them (instance state, ledger activation), then this store's.
         with self.instance.holding_accepted_head() as main, self._locked(create=True) as conn:
-            known = conn.execute(
-                "SELECT contract_digest, observed_content_digest, observed_at, recorded_at "
-                "FROM reobservations WHERE claim_id=? AND capture_digest=? "
-                "AND (? IS NULL OR observed_us=?)",
-                (
-                    claim_id,
-                    capture_digest,
-                    None if call is None else _micros(call[0]),
-                    None if call is None else _micros(call[0]),
-                ),
-            ).fetchone()
+            # The version live at the verified coordinate (whatever main says).
+            live = self._version_at(claim_id, self.instance.accepted_coordinate().git_oid)
+            known = self._known(conn, claim_id, live, capture_digest, call) if live else None
             if known is not None:
                 return ReobservationRecord(
                     claim_id=claim_id,
@@ -1291,7 +1283,10 @@ class ClaimReobservationStore:
             accepted = self.instance.accepted_coordinate()
             admitted: list[tuple[int, ReobservationRequest, CaptureEnvelopeAny, str, str]] = []
             for index, request in enumerate(requests):
-                if self._known(conn, request.claim_id, request.capture_digest, request.call):
+                live = self._version_at(request.claim_id, accepted.git_oid)
+                if live and self._known(
+                    conn, request.claim_id, live, request.capture_digest, request.call
+                ):
                     continue
                 if accepted.git_oid != main:
                     refused[index] = ClaimReobservationRefused(
@@ -1364,17 +1359,21 @@ class ClaimReobservationStore:
     def _known(
         conn: sqlite3.Connection,
         claim_id: str,
+        version: str,
         capture_digest: str,
         call: tuple[datetime, datetime] | None,
     ) -> tuple[Any, ...] | None:
-        """The held record a repeat names (with a call: one observed at that call)."""
+        """The held record a repeat names: of this exact Claim version (review 2f
+        #1: a predecessor's re-check is never its successor's), with a call one
+        observed at that call."""
 
         row = conn.execute(
             "SELECT contract_digest, observed_content_digest, observed_at, recorded_at "
-            "FROM reobservations WHERE claim_id=? AND capture_digest=? "
-            "AND (? IS NULL OR observed_us=?)",
+            "FROM reobservations WHERE claim_id=? AND claim_artifact_digest=? "
+            "AND capture_digest=? AND (? IS NULL OR observed_us=?)",
             (
                 claim_id,
+                version,
                 capture_digest,
                 None if call is None else _micros(call[0]),
                 None if call is None else _micros(call[0]),
