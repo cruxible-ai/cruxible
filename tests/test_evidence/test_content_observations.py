@@ -309,5 +309,36 @@ def test_an_unchanged_complete_enumeration_is_one_head_update_at_any_size(
         observe(_START + timedelta(hours=2))
         with store._locked() as conn:  # noqa: SLF001
             assert conn.execute("SELECT COUNT(*) FROM observed_sets").fetchone()[0] == members
-        added[size] = sum(1 for path in (instance.root / "cas").rglob("*") if path.is_file()) - files
+        added[size] = (
+            sum(1 for path in (instance.root / "cas").rglob("*") if path.is_file()) - files
+        )
     assert added[12] == added[120] == 1  # the repeat's own journal payload
+
+
+def test_a_later_selection_of_the_same_captures_records_maps_its_rows_too(
+    tmp_path: Path,
+) -> None:
+    """Review 2c #4: a runtime ``only_keys`` reads another subset of the same
+    Capture under the same extract spec; both subsets' records resolve."""
+
+    from cruxible_core.evidence.claim_reobservations import RowMap
+
+    instance, _owner = _freshness_world(tmp_path, stale_after=_HOUR)
+    _claim, cited, key = _cited(instance)
+    store = ClaimReobservationStore(instance)
+    spec = "sha256:" + "5" * 64
+    rows = {"/0": "sha256:" + "6" * 64, "/1": "sha256:" + "7" * 64}
+    for index, locator in enumerate(("/0", "/1")):
+        at = _START + timedelta(hours=1 + index)
+        instance.recording_clock = lambda at=at: at
+        store.observe_rows(
+            (RowMap(cited, spec, key.contract_digest, ((locator, rows[locator]),)),),
+            earliest=at - timedelta(minutes=1),
+            latest=at,
+            run_id=f"RUN-{index}",
+            node_id="extract",
+            actor_id="o",
+        )
+    reader = ReobservationReader(instance)
+    for locator, row in rows.items():
+        assert reader.row_of(cited, spec, locator) == (key.contract_digest, row)

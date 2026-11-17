@@ -87,7 +87,7 @@ ROW_MAP_BODY = "cruxible-row-map-v1"
 #: The row maps of one extract step's Captures (run-free).
 ROW_MAPS_BODY = "cruxible-row-maps-v1"
 _ACCESS = BodyAccessContext(principal_id="claim-reobservation", can_read_body=True)
-_SCHEMA_VERSION = 11
+_SCHEMA_VERSION = 12
 REOBSERVATION_DIRECTORY = "claim-reobservations"
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 # ``reobservations`` keeps the full history (audit, historical verification).
@@ -169,7 +169,7 @@ CREATE TABLE IF NOT EXISTS key_heads (
 ) STRICT, WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS capture_maps (
  capture_digest TEXT NOT NULL, spec_digest TEXT NOT NULL, map_digest TEXT NOT NULL,
- PRIMARY KEY(capture_digest, spec_digest)
+ PRIMARY KEY(capture_digest, spec_digest, map_digest)
 ) STRICT, WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS seen_maps (digest TEXT PRIMARY KEY) STRICT, WITHOUT ROWID;
 """
@@ -1723,13 +1723,21 @@ class ReobservationReader:
             if conn is None:
                 return None
             self.probes += 1
-            row = conn.execute(
-                "SELECT map_digest FROM capture_maps WHERE capture_digest=? AND spec_digest=?",
-                (capture_digest, spec_digest),
-            ).fetchone()
-        if row is None:
-            return None
-        return _row_map(self.instance, str(row[0])).get(locator)
+            # One map per selection of the Capture's records the step read
+            # (a runtime ``only_keys`` can select others another run): the
+            # record is in whichever map holds its locator (review 2c #4).
+            maps = [
+                str(row[0])
+                for row in conn.execute(
+                    "SELECT map_digest FROM capture_maps WHERE capture_digest=? AND spec_digest=?",
+                    (capture_digest, spec_digest),
+                )
+            ]
+        for digest in maps:
+            found = _row_map(self.instance, digest).get(locator)
+            if found is not None:
+                return found
+        return None
 
     def content_observed(self) -> bool:
         """Whether any content or row observation was ever recorded (one probe)."""
