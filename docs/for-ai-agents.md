@@ -40,7 +40,8 @@ carries its credential. `cruxible principal add NAME --key-dir DIR` writes
 exactly these settings to `DIR/cruxible.env`. Setup (starting a daemon,
 `cruxible init`, adding principals) is operator work on the CLI; on MCP,
 `cruxible_init` initializes the workspace folder as `cruxible init` does, and
-nothing else sets up. It creates the owner only: cosign setup on an existing instance (a reviewer
+nothing else sets up. It creates the owner only, under `self_approval_allowed`,
+and takes one argument (`principal_id`): cosign setup on an existing instance (a reviewer
 principal and no self-approval) is two CLI steps, in this order: `cruxible
 principal add reviewer --key-dir DIR --signer-key OWNER_KEY --mode graph_write`
 (the tier that may submit approvals when the daemon runs with auth), then submit the
@@ -52,25 +53,51 @@ at creation with `cruxible init --reviewer-key-dir DIR
 --require-independent-approval`; on an initialized instance that command
 answers "already initialized" and adds nothing. See [MCP tools](mcp-tools.md) for every variable.
 
+Some operator acts have no MCP tool, so an agent asks for them or runs them
+as CLI steps: making a principal's key (`cruxible principal add NAME --key-dir
+DIR`, and `cruxible init` for the owner's and the reviewer's), registering a
+file in the file catalog (`cruxible files add PATH`), and stopping the daemon
+(`cruxible server stop`).
+
 First setup on one machine, in order:
 
-1. `git init` the project, so `init` can attach it.
-2. Start a daemon (`cruxible server start --socket ~/.cruxible/run/daemon.sock`,
-   or let the MCP server auto-start it there).
-3. `cruxible --server-socket ~/.cruxible/run/daemon.sock init --principal-id owner
-   --key-dir DIR --reviewer-key-dir DIR2`. The CLI needs the socket until the
-   project is bound to the daemon; "use server mode" in a refusal means it had
-   none.
-4. If init reports `workspace_advertisement.status: not_attached`, run
-   `cruxible workspace attach` from the Git worktree. Its
-   `.cruxible/coverage.json` then gives CLI and MCP the daemon and instance.
+1. In the project folder, run `cruxible init --principal-id owner
+   --reviewer-key-dir DIR --require-independent-approval`. This is the
+   recommended setup, cosign: an owner who writes and a reviewer who approves.
+   With no daemon running, the CLI starts one on
+   `~/.cruxible/run/daemon.sock` and says so (`cruxible server stop` stops
+   it). The folder may be a Git repository or not; init writes
+   `.cruxible/coverage.json` there, which gives CLI and MCP the daemon and
+   instance. A plain `cruxible init --principal-id owner` is the one-owner
+   option: no reviewer, and every write lands at once.
+2. Approve the base kit as the reviewer; under cosign it waits like any other
+   change. Init prints the command (`cruxible proposal approve ID --signer-id
+   reviewer`).
+3. A refusal that says a command "needs server mode" means no daemon was found
+   and none could be started (`--no-autostart`, for example): start one with
+   `cruxible server start --socket ~/.cruxible/run/daemon.sock`, or pass
+   `--server-socket PATH`.
+4. In a Git repository the daemon also mirrors the ledger into it (the
+   `cruxible-ledger` remote that `proposal review --detail` diffs against). A
+   plain folder has no mirror; after `git init` there, `cruxible workspace
+   attach` turns it on.
 5. An agent started in the project acts as its owner with no configuration:
    init's `.cruxible/identity.json` names the owner (see
-   [MCP tools](mcp-tools.md#instances-and-the-adapter-environment)). Give a
-   session that should be another principal its own: `CRUXIBLE_PRINCIPAL_ID` and
-   `CRUXIBLE_PRINCIPAL_KEY` (the key file, for `cruxible_proposal_approve` and
-   `cruxible_claim_attest`), copied from that principal's `cruxible.env`. Add more principals with
-   `cruxible principal add NAME --key-dir DIR`.
+   [MCP tools](mcp-tools.md#instances-and-the-adapter-environment)). A
+   reviewing session is its own MCP server or shell with
+   `CRUXIBLE_PRINCIPAL_ID=reviewer` in its environment (`cruxible context use
+   --principal reviewer` on the CLI). The key that signs as a principal is
+   found in one order on CLI, SDK and MCP: an explicit key
+   (`CRUXIBLE_PRINCIPAL_KEY`, the CLI's `--key`), then the settings remembered
+   for that principal on this instance, then the folder identity if it names
+   that principal, then the default key directory `cruxible init` uses;
+   otherwise the call refuses and names the repair, and never signs with
+   another principal's key. Add more principals with `cruxible
+   principal add NAME --key-dir DIR`.
+
+Cosign between agents on one machine is a convention, not a security boundary:
+any process of the OS user can read both keys ([Review and
+governance](review-and-governance.md#what-approval-protects-and-what-it-doesnt)).
 
 The agent plugin's README (`plugins/README.md`) walks the same path through to
 installing a kit.
@@ -155,37 +182,58 @@ tiers and approval policy.
 
 ### 1. Orient
 
-`orient` maps the instance in one call: each kind with its fields, value
-types, evidence and counts, who you are, what needs attention, and the next
+`orient` maps the instance in one call, as a small index: each kind with its
+Subject count and field names, who you are, what needs attention, and the next
 calls to make.
 
 ~~~text
 $ cruxible orient
-Cruxible inst_902ea44b9b334717 generation=19 at 1a04bbdcd90b accepted 2026-10-21T20:06:49.528502Z
-Floor: .cruxible/floor at 1a04bbdcd90b, current
-You: YOUR_ID, can author
-Kinds (4):
-  ...
-  catalog.part  subjects=4  evidence=cruxible.coordinator-self-source-v1
-    category  one  enum[brakes|filters|wipers|lighting]
-    fits  many  subject<catalog.vehicle>  evidence=cruxible.coordinator-self-source-v1,cruxible.foreign-source.catalog,cruxible.foreign-source.fitment
-    ...
-Queries:
-  catalog.parts_for_vehicle(vehicle: string)  The parts that fit one vehicle.
+Cruxible inst_12acc3474754447c generation=23 at b05914f1229d proposed 2026-11-17T23:05:05.876506Z
+Floor: .cruxible/floor at b05914f1229d, current
+Vocabulary file: .cruxible/vocabulary.yaml at 7ad067b7d160, current
+You: owner, can author
+Kinds (3):
+  catalog.decision  subjects=1  fields=decided_on,governs,slug,status,summary
+  catalog.part  subjects=3  fields=category,fits,name,price,replaces (+1)
+  catalog.vehicle  subjects=1  fields=make,slug
+Artifacts: claim_types=15 documents=4 operations=2 captures=16 capture_contracts=5 capabilities=8 claims.accepted=16
 Attention: next=0 open_proposals=0 (workspace rows not counted: next)
 Next:
   cruxible orient --kind catalog.part
+  cruxible query catalog.part --select category,fits,name --limit 10
+  cruxible orient --section operations
+~~~
+
+The `next=` count covers accepted state only, and the line says so: rows that
+come from the workspace (a drifted citation, a modified Document, a stale
+block, the vocabulary file) are not counted there. Run `next` for the whole
+queue.
+
+`orient --kind K` reads one kind in full, each field with its value type,
+cardinality, evidence and counts:
+
+~~~text
+$ cruxible orient --kind catalog.part
+...
+Kind catalog.part  subjects=3  evidence=cruxible.coordinator-self-source-v1
+  category  one  enum[brakes|filters|wipers|lighting]  claims=1  subjects=1
+  fits  many  subject<catalog.vehicle>  claims=2  subjects=2
+  ...
+  price  one  int{0..}  claims=0  subjects=0  evidence=web.search-results
   ...
 ~~~
 
-`orient --kind K` reads one kind in full; `orient --section S` pages one
-family (claim_types, queries, lines, documents, generations, graph, pins, …).
+`orient --section S` pages one family (claim_types, queries, lines, documents,
+generations, graph, pins, …).
 
 ### 2. See what needs attention
 
 `next` lists what is wrong or waiting, most urgent first, each row with the
 exact repair: drifted or stale evidence, disagreements, uncovered Claims,
-stale proposals, stale pages, Line gaps and inbox items. Work it top down,
+proposals waiting for approval or activation, stale proposals, stale pages,
+Line gaps, Trigger
+instants missed while no daemon ran (`trigger_instants_missed`) and inbox
+items. Work it top down,
 judging each repair rather than running it blindly. When it's clear, `audit`
 ranks the Claims most worth verifying. [Keeping knowledge
 current](keeping-knowledge-current.md) goes through every family.
@@ -410,10 +458,21 @@ kind of change costs.
 ## Approving
 
 Approval signs locally and sends only the public signature. `cruxible proposal
-approve` and `cruxible_proposal_approve` do it in one call; the MCP tool signs
-with the acting principal's key (`CRUXIBLE_PRINCIPAL_KEY` or
-`CRUXIBLE_MCP_KEY_DIR` in the server's environment), and passing the reviewed
-`candidate_digest` makes it refuse a candidate that changed since you read it.
+approve` and `cruxible_proposal_approve` do it in one call. The MCP tool signs
+as the principal its server acts as: the owner by default, the reviewer when
+the server's environment sets `CRUXIBLE_PRINCIPAL_ID=reviewer`. The key is
+found by the lookup in [Connect](#connect) (`CRUXIBLE_PRINCIPAL_KEY` names one
+explicitly, and `CRUXIBLE_MCP_KEY_DIR` a directory of keys); no tool argument
+takes a key.
+
+Pass the candidate digest you reviewed (`candidate_digest`, the CLI's
+`--candidate-digest`, the SDK's `reviewed=`). If accepted state moved since,
+the daemon has proposed the change again at the head as a new proposal, and
+the old one reads `superseded` with `superseded_by`. With the digest, approve
+then refuses `cruxible.approval.reviewed_candidate_changed`, names the new
+proposal, says whether its members are identical, and signs nothing: review
+the new proposal and approve it. Without a digest, approve signs the new
+proposal in the same call when its members are identical.
 A signer outside the MCP process uses the full-profile pair
 `cruxible_proposal_approve_prepare` (the exact statement to sign) and
 `cruxible_proposal_approve_submit` (the public signature).
@@ -455,7 +514,10 @@ automation](lines-and-automation.md) guide walks through one. From the SDK:
   `.measure(run=...)` and `.readings(...)` for its measurements.
 - Read what a Line posted with `inbox list` and `inbox get`, and record your
   judgment with `inbox link`, `dismiss` or `ack`: the inbox never changes
-  accepted state.
+  accepted state. An inbox item is a call for attention, not storage. When the
+  list already exists as state (a Query) or as evidence (a Capture), a Line
+  posts one summary item pointing at it; it posts one item per element only
+  when each needs its own decision that is recorded nowhere else.
 
 ## Operating rules
 
