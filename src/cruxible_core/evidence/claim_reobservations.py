@@ -2117,7 +2117,8 @@ class ReobservationReader:
                 if (
                     key.row_record is not None
                     and conn.execute(
-                        "SELECT 1 FROM capture_maps WHERE capture_digest=? AND spec_digest=? LIMIT 1",
+                        "SELECT 1 FROM capture_maps "
+                        "WHERE capture_digest=? AND spec_digest=? LIMIT 1",
                         key.row_record[:2],
                     ).fetchone()
                 ):
