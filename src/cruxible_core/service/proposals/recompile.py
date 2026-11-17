@@ -335,7 +335,9 @@ def _recompile_proposal(
             ) from exc
         if inputs.already_live:
             # Outside the preview overlay: closing the answered source is a write.
-            return _close_already_live(instance, source, inputs, head, preview=preview)
+            return _close_already_live(
+                instance, source, inputs, head, preview=preview, triggered_by=triggered_by
+            )
         if checked.candidate is None:
             raise ProposalStale(
                 source_id,
@@ -442,11 +444,14 @@ def _close_already_live(
     head: AcceptedCoordinate,
     *,
     preview: bool,
+    triggered_by: str | None = None,
 ) -> Recompilation:
     """Nothing is left to propose at the head: the stale source is answered.
 
-    The source closes under its own author, with no successor; a preview
-    reports the outcome and records nothing. Work is this source's own members.
+    The source closes with no successor, under the principal whose approval,
+    activation or readmit met it (its author when none is named, as for a
+    superseded source); a preview reports the outcome and records nothing.
+    Work is this source's own members.
     """
     from cruxible_core.service.change_preview import ChangeMode
     from cruxible_core.service.proposals.proposals import _close_once
@@ -465,7 +470,7 @@ def _close_already_live(
             ChangeMode(instance, previewing=False),
             ProposalWithdrawalRecord(
                 proposal_id=source_id,
-                actor_id=source.admission.actor_id,
+                actor_id=triggered_by or source.admission.actor_id,
                 reason=ALREADY_LIVE_REASON,
                 withdrawn_at=str(format_datetime(datetime.now(timezone.utc))),
             ),
