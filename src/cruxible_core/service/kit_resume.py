@@ -372,6 +372,68 @@ def resume_pending_kits(instance: PlaybillInstance) -> tuple[str, ...]:
     return tuple(resumed)
 
 
+def record_kit_removal(
+    instance: PlaybillInstance, *, kit_id: str, version: str, proposal_id: str
+) -> None:
+    """An accepted kit removal, kept per kit id: a later add of the id refuses.
+
+    Written by the activation that lands the removal (``kit_transition`` remove),
+    beside the resume rows: retained operational authority, never rebuilt. The
+    first removal of an id stays the record.
+    """
+
+    with retained_records(instance, write=True) as connection:
+        assert connection is not None
+        connection.execute(
+            "INSERT OR IGNORE INTO kit_removals (kit_id,version,proposal_id,recorded_at) "
+            "VALUES (?,?,?,?)",
+            (kit_id, version, proposal_id, format_datetime(utc_now())),
+        )
+
+
+def kit_removed(instance: PlaybillInstance, kit_id: str) -> bool:
+    """Whether a removal of this kit id was accepted here: one keyed row."""
+
+    with retained_records(instance, write=False) as connection:
+        return bool(
+            _rows(connection, "SELECT 1 FROM kit_removals WHERE kit_id=? LIMIT 1", (kit_id,))
+        )
+
+
+def record_removals_after_activation(
+    instance: PlaybillInstance,
+    *,
+    proposal_id: str,
+    kit_transition: str | None,
+    paths: Iterable[str],
+) -> None:
+    """Record the kit a just-accepted removal proposal removed, named by its receipt path.
+
+    Called after the activation committed; never raises into it. A proposal that
+    is not a kit removal costs one comparison; a removal reads its one receipt.
+    """
+
+    if kit_transition != "remove":
+        return
+    from cruxible_core.service.kits import _RECEIPT_PATH_PREFIX, _receipt_at
+
+    try:
+        head = instance.accepted_coordinate().git_oid
+        for path in paths:
+            if not (path.startswith(_RECEIPT_PATH_PREFIX) and path.endswith(".json")):
+                continue
+            kit_id = path[len(_RECEIPT_PATH_PREFIX) : -len(".json")]
+            raw = instance.blob_at(head, path)
+            found = None if raw is None else _receipt_at(instance, path, raw, kit_id)
+            if found is None:
+                continue
+            record_kit_removal(
+                instance, kit_id=kit_id, version=found[1].version, proposal_id=proposal_id
+            )
+    except Exception as exc:  # noqa: BLE001 - the activation is already committed
+        _log.warning("kit_removal_unrecorded", error=f"{type(exc).__name__}: {exc}")
+
+
 def kit_resume_statuses(instance: PlaybillInstance) -> tuple[KitResumeStatus, ...]:
     with retained_records(instance, write=False) as connection:
         rows = _rows(
@@ -451,5 +513,7 @@ __all__ = [
     "record_kit_resume",
     "record_proposed_kit",
     "resume_kits_after_activation",
+    "record_removals_after_activation",
+    "kit_removed",
     "resume_pending_kits",
 ]

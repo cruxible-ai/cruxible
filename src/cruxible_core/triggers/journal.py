@@ -114,6 +114,10 @@ _KIT_RESUME_SCHEMA = (
     "PRIMARY KEY(provider_path, kit_id)) STRICT",
     "CREATE INDEX IF NOT EXISTS kit_resume_waits_by_kit ON kit_resume_waits(kit_id)",
     "CREATE INDEX IF NOT EXISTS kit_resumes_by_state ON kit_resumes(state)",
+    # One row per kit id whose removal was accepted here: removal is one-way in
+    # 0.5.0 (morning-rulings-1116 (8)), so a later kit add of that id refuses.
+    "CREATE TABLE IF NOT EXISTS kit_removals (kit_id TEXT PRIMARY KEY, version TEXT NOT NULL, "
+    "proposal_id TEXT NOT NULL, recorded_at TEXT NOT NULL) STRICT",
 )
 
 

@@ -392,8 +392,8 @@ Reusing an installed `kit_id` with wholly disjoint owned prefixes is refused
 (`cruxible.kit.id_reused`), rather than planned as an upgrade. The refusal names
 both prefix sets. Releases with the same prefixes, or with a shared parent or
 sub-prefix, can still upgrade normally.
-Next: remove the installed kit first with `cruxible kit remove KIT`, then add
-the other kit.
+Next: build the other kit under its own id (`kit build --id`), or add it on a
+new instance; a removed kit's id cannot be added again in this release.
 
 A default provider is installed at exactly the version the kit names, and only
 as the build the kit recorded: the provider index must list the recorded wheel
@@ -565,9 +565,10 @@ proposal. Below `graph_write` (an MCP server capped by `CRUXIBLE_MODE`, say),
 `kit add` and `kit remove` stay proposed and the result says who can activate
 them.
 
-Removal is one-way, and the removal preview says so. A removed kit cannot be added back: its
-retired definitions cannot be revived, so a later `kit add` of it is blocked before anything is
-installed or proposed, with one line counting its retired definitions per kind.
+Removal is one-way, and the removal preview says so. An accepted removal is recorded for the
+kit id, and a later `kit add` of that id is blocked before anything is installed or proposed,
+whatever the release holds (its retired definitions cannot be revived), with one line counting
+the release's definitions retired here per kind. Another kit takes its own id.
 
 The base kit cannot be removed:
 

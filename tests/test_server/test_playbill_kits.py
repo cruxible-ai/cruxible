@@ -1024,18 +1024,27 @@ def test_reusing_an_installed_kit_id_with_disjoint_prefixes_is_refused(
     assert refusal.owning_kit_id == "acme"
     assert refusal.our_prefixes == ("beta.",)
     assert refusal.installed_prefixes == ("acme.",)
-    assert "Remove the" in refusal.repair and "kit acme first (kit remove)" in refusal.repair
+    assert "its own kit id (kit build --id), or add it on a new instance" in refusal.repair
+    assert "kit remove" not in refusal.repair
     assert consumer.tree() == before
     assert result.plan == ()
 
-    # Removing the installed kit is the exit, not a permanent reservation of its id.
+    # Removal does not free the id in this release (ruling 1116 (8)): the different
+    # kit under the same id is refused too, so the removed kit can never come back
+    # through it (round-two F-003).
     removal = playbill_api.playbill_kit_remove(
         consumer.instance_id, KitRemoveRequest(kit_id="acme", dry_run=False)
     )
     consumer.settle(removal)
     preview = playbill_api.playbill_kit_add(consumer.instance_id, KitAddRequest(bundle=unrelated))
-    assert preview.status == "would_propose", preview.detail
-    assert preview.refusals == ()
+    assert preview.status == "would_block" and preview.refusals == ()
+    assert (preview.detail or "").startswith("kit acme was removed here")
+    # Under its own id, the same definitions install.
+    renamed = publisher.build("2.0.0", owns=("beta.",), kit_id="beta")
+    assert (
+        playbill_api.playbill_kit_add(consumer.instance_id, KitAddRequest(bundle=renamed)).status
+        == "would_propose"
+    )
 
 
 @pytest.mark.parametrize(
@@ -3126,3 +3135,29 @@ def test_kit_status_keeps_a_kit_add_whose_proposal_awaits_readmit(
 
     assert base.kit_id == "base" and base.state == "proposed"
     assert base.proposal_awaiting_readmit and not base.proposal_open
+
+
+def test_a_kit_with_an_emptied_receipt_that_was_never_removed_is_not_refused(
+    worlds: tuple[_World, _World], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Round-two F-003: the guard inferred a removal from an empty receipt; only an
+    accepted removal recorded for the kit id refuses."""
+
+    from cruxible_core.service import kits
+
+    publisher, consumer = worlds
+    publisher.author(_claim_type(SEATS, {"type": "integer"}))
+    release = publisher.build("1.0.0")
+    consumer.add(release)
+    read = kits._read_receipt
+
+    def emptied(*args, **kwargs):  # type: ignore[no-untyped-def]
+        found = read(*args, **kwargs)
+        if found is None:
+            return None
+        shell, receipt = found
+        return shell, receipt.model_copy(update={"artifacts": ()})
+
+    monkeypatch.setattr(kits, "_read_receipt", emptied)
+    preview = playbill_api.playbill_kit_add(consumer.instance_id, KitAddRequest(bundle=release))
+    assert "was removed here" not in (preview.detail or "")

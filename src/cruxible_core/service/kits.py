@@ -2134,8 +2134,8 @@ def _removed_kit_refusal(
 ) -> str:
     """Why a kit removed here cannot be added back (morning-rulings-1116 (8): removal
     is one-way in this release), with how many of this release's definitions are
-    retired here to explain it. The kit's emptied receipt decides; the count only
-    explains (O(kit size), on a re-add only).
+    retired here to explain it. The recorded removal decides; the count only
+    explains (O(kit size), on a refused re-add only).
     """
 
     retired: dict[str, int] = {}
@@ -2794,8 +2794,9 @@ def _add_kit(
             installed_prefixes=receipt.owns,
             detail=f"kit id {manifest.kit_id} is installed with prefixes {receipt.owns}; "
             f"release prefixes {manifest.owns} share no prefix with that kit",
-            repair=f"Remove the installed kit {receipt.kit_id} first (kit remove), then add "
-            "this release.",
+            repair=f"Build this release under its own kit id (kit build --id), or add it on "
+            f"a new instance: kit id {receipt.kit_id} stays with the installed kit, and a "
+            "removed kit's id cannot be added again in this release.",
         )
         return KitChangeResult(
             kit_id=manifest.kit_id,
@@ -2808,20 +2809,12 @@ def _add_kit(
             detail=refusal.detail,
             coordinate=mode.coordinate,
         )
-    if (
-        receipt is not None
-        and not receipt.artifacts
-        and any(
-            ours.startswith(theirs) or theirs.startswith(ours)
-            for ours in manifest.owns
-            for theirs in receipt.owns
-        )
-    ):
-        # The kit's accepted receipt was emptied by its removal: removal is one-way
-        # in this release whatever the incoming release holds, so this refuses
-        # before anything is installed or proposed. A release sharing no prefix
-        # with the removed kit is another kit reusing the id (the id-reuse
-        # refusal's repair): it goes on.
+    from cruxible_core.service.kit_resume import kit_removed
+
+    if kit_removed(instance, manifest.kit_id):
+        # A removal of this kit id was accepted here: removal is one-way in this
+        # release (morning-rulings-1116 (8)), whatever this release holds, so the
+        # add refuses before anything is installed or proposed. One keyed row.
         return KitChangeResult(
             kit_id=manifest.kit_id,
             version=manifest.version,

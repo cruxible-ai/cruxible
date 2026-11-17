@@ -1062,6 +1062,7 @@ def _activate_candidate(
         if status == "accepted":
             _finalize_completed_intents(instance)
             _resume_waiting_kits(instance, candidate)
+            _record_kit_removal(instance, proposal, candidate)
         advertisement = instance.advertise_workspace()
         # Publish accepted main and remove the closed review branch.
         instance.request_ledger_mirror()
@@ -1256,6 +1257,20 @@ def _resume_waiting_kits(instance: PlaybillInstance, candidate: CandidateRecord)
     from cruxible_core.service.kit_resume import resume_kits_after_activation
 
     resume_kits_after_activation(instance, (member.path for member in candidate.members))
+
+
+def _record_kit_removal(
+    instance: PlaybillInstance, proposal: ProposalResult, candidate: CandidateRecord
+) -> None:
+    """A kit removal this acceptance landed is recorded per kit id (one-way in 0.5.0)."""
+    from cruxible_core.service.kit_resume import record_removals_after_activation
+
+    record_removals_after_activation(
+        instance,
+        proposal_id=proposal.admission.proposal_id,
+        kit_transition=proposal.admission.kit_transition,
+        paths=(member.path for member in candidate.members),
+    )
 
 
 def _finalize_completed_intents(instance: PlaybillInstance) -> None:
