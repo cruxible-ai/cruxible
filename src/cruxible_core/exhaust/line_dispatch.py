@@ -456,13 +456,16 @@ class LineDispatchStore:
         conn.execute("INSERT OR REPLACE INTO progress VALUES(1,?)", (sequence,))
 
     def advance_coverage(self, conn: sqlite3.Connection, session: dict[str, Any]) -> None:
-        """Move an active segment's time-only coverage in the projection, journaling nothing.
+        """Move an active segment's coverage that matched nothing, journaling nothing.
 
-        Coverage that matched nothing is not retained: the journal keeps every
-        coverage record that moved a position, cursor, detail or a timed
-        Trigger's first reach. A rebuilt projection therefore reads an idle
-        stretch as uncovered from the last of those, which only widens the
-        range a restart asks to be evaluated explicitly.
+        Coverage that matched nothing (time-only progress, or run-journal
+        positions that moved with no new occurrence) is not retained: the
+        journal keeps every coverage record that matched, moved a cursor,
+        recorded a partial scan, changed the detail or a timed Trigger's first
+        reach. A rebuilt projection therefore reads an idle stretch as
+        uncovered from the last of those: its positions only lag, so a re-scan
+        pages from there and finds nothing new, and a restart rolls over from
+        the head and asks the (wider) time gap to be evaluated explicitly.
         """
 
         conn.execute(
