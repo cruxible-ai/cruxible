@@ -3005,3 +3005,105 @@ def test_a_repeated_kit_refusal_prints_once_with_its_count() -> None:
         "revived. (10 definitions); cruxible.trigger.revival_refused: A retired trigger "
         "cannot be revived."
     )
+
+
+def _count_installs_and_proposals(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    from cruxible_core.service import kits
+
+    calls: list[str] = []
+    install, admit = kits._install_providers, kits.admit_change_set
+    monkeypatch.setattr(
+        kits, "_install_providers", lambda *a, **k: calls.append("install") or install(*a, **k)
+    )
+    monkeypatch.setattr(
+        kits, "admit_change_set", lambda *a, **k: calls.append("propose") or admit(*a, **k)
+    )
+    return calls
+
+
+def test_a_removed_documents_only_kit_cannot_come_back(
+    worlds: tuple[_World, _World], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review F-003: removal keeps a kit's Documents, so a Documents-only kit left no
+    retired path behind and its re-add went through; the emptied receipt decides."""
+
+    publisher, consumer = worlds
+    stored = playbill_api.playbill_store_body(
+        publisher.instance_id, content_base64=base64.b64encode(b"# Guide\n").decode("ascii")
+    )
+    proposed = playbill_api.playbill_propose_document(
+        publisher.instance_id,
+        shell=DocumentShell(
+            identity="document:acme.guide",
+            document_kind="guidance",
+            title="Guide",
+            media_type="text/markdown",
+            body_digest=stored.digest,
+            governance_scope=("guidance",),
+            lifecycle=DocumentLifecycle(revision=1),
+        ),
+        proposal_name="acme-guide",
+        accept="never",
+    )
+    publisher.activate(proposed.proposal["admission"]["proposal_id"])
+    release = publisher.build("1.0.0")
+    assert {path.split("/", 1)[0] for path in release.contents()} == {"documents"}
+    # The adapters stage a kit's Document bodies before kit add; so does this test.
+    playbill_api.playbill_store_body(
+        consumer.instance_id, content_base64=base64.b64encode(b"# Guide\n").decode("ascii")
+    )
+    consumer.add(release)
+    removed = playbill_api.playbill_kit_remove(
+        consumer.instance_id, KitRemoveRequest(kit_id="acme", dry_run=False)
+    )
+    consumer.settle(removed)
+    assert {item.action for item in removed.plan} == {"keep"}
+    calls = _count_installs_and_proposals(monkeypatch)
+
+    readded = playbill_api.playbill_kit_add(
+        consumer.instance_id, KitAddRequest(bundle=release, source="test", dry_run=False)
+    )
+
+    assert readded.status == "blocked" and readded.proposal_id is None
+    assert readded.detail == (
+        "kit acme was removed here, and a removed kit cannot be added back in this release "
+        "(none of this release's definitions is retired here); add it on a new instance"
+    )
+    assert calls == []
+
+
+def test_a_newer_release_of_a_removed_kit_omitting_its_retired_paths_is_refused(
+    worlds: tuple[_World, _World], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    publisher, consumer = worlds
+    publisher.author(_claim_type(SEATS, {"type": "integer"}))
+    consumer.add(publisher.build("1.0.0"))
+    consumer.settle(
+        playbill_api.playbill_kit_remove(
+            consumer.instance_id, KitRemoveRequest(kit_id="acme", dry_run=False)
+        )
+    )
+    # The same kit's prefixes, with a field the removal never touched; SEATS (retired
+    # here) is retired at the publisher too, so the release omits it.
+    publisher.author(_claim_type(PLAN, {"type": "string"}))
+    seats = publisher.claim_type(SEATS)
+    retired = seats.model_copy(
+        update={
+            "lifecycle": ArtifactLifecycle(
+                predecessor_digest=claim_type_digest(seats).tagged, state="retired"
+            )
+        }
+    )
+    publisher.author(successions=(retired,))
+    newer = publisher.build("2.0.0")
+    assert _path(SEATS) not in newer.contents() and _path(PLAN) in newer.contents()
+    calls = _count_installs_and_proposals(monkeypatch)
+
+    for dry_run in (None, False):
+        result = playbill_api.playbill_kit_add(
+            consumer.instance_id, KitAddRequest(bundle=newer, source="test", dry_run=dry_run)
+        )
+        assert result.status == ("would_block" if dry_run is None else "blocked")
+        assert "kit acme was removed here" in (result.detail or "")
+        assert "none of this release's definitions is retired here" in (result.detail or "")
+    assert calls == []

@@ -2130,12 +2130,11 @@ def _submit(
 
 def _removed_kit_refusal(
     tree: Mapping[str, bytes], contents: Mapping[str, bytes], kit_id: str
-) -> str | None:
-    """Why a kit removed here cannot be added back, or None when nothing it ships is
-    retired here (morning-rulings-1116 (8): removal is one-way in this release).
-
-    Reads the release's own paths only (O(kit size)), before anything is installed
-    or proposed, so the re-add refuses once instead of once per retired definition.
+) -> str:
+    """Why a kit removed here cannot be added back (morning-rulings-1116 (8): removal
+    is one-way in this release), with how many of this release's definitions are
+    retired here to explain it. The kit's emptied receipt decides; the count only
+    explains (O(kit size), on a re-add only).
     """
 
     retired: dict[str, int] = {}
@@ -2147,13 +2146,15 @@ def _removed_kit_refusal(
         if state.lifecycle.state != "live":
             kind = state.identity.qualified.partition(":")[0]
             retired[kind] = retired.get(kind, 0) + 1
-    if not retired:
-        return None
-    counts = ", ".join(f"{kind} {count:,}" for kind, count in sorted(retired.items()))
+    explained = (
+        f"{sum(retired.values()):,} of its definitions are retired: "
+        + ", ".join(f"{kind} {count:,}" for kind, count in sorted(retired.items()))
+        if retired
+        else "none of this release's definitions is retired here"
+    )
     return (
         f"kit {kit_id} was removed here, and a removed kit cannot be added back in this "
-        f"release ({sum(retired.values()):,} of its definitions are retired: {counts}); "
-        "add it on a new instance"
+        f"release ({explained}); add it on a new instance"
     )
 
 
@@ -2806,18 +2807,29 @@ def _add_kit(
             detail=refusal.detail,
             coordinate=mode.coordinate,
         )
-    if receipt is not None and not receipt.artifacts:
-        removed = _removed_kit_refusal(tree, contents, manifest.kit_id)
-        if removed is not None:
-            return KitChangeResult(
-                kit_id=manifest.kit_id,
-                version=manifest.version,
-                status="would_block" if mode.previewing else "blocked",
-                transition=transition,
-                provenance=manifest.provenance,
-                detail=removed,
-                coordinate=mode.coordinate,
-            )
+    if (
+        receipt is not None
+        and not receipt.artifacts
+        and any(
+            ours.startswith(theirs) or theirs.startswith(ours)
+            for ours in manifest.owns
+            for theirs in receipt.owns
+        )
+    ):
+        # The kit's accepted receipt was emptied by its removal: removal is one-way
+        # in this release whatever the incoming release holds, so this refuses
+        # before anything is installed or proposed. A release sharing no prefix
+        # with the removed kit is another kit reusing the id (the id-reuse
+        # refusal's repair): it goes on.
+        return KitChangeResult(
+            kit_id=manifest.kit_id,
+            version=manifest.version,
+            status="would_block" if mode.previewing else "blocked",
+            transition=transition,
+            provenance=manifest.provenance,
+            detail=_removed_kit_refusal(tree, contents, manifest.kit_id),
+            coordinate=mode.coordinate,
+        )
     # Kit-add work only: indexed receipt documents and their recorded definitions,
     # never the instance's Claims or Subjects. Reuse this inventory for both guards.
     receipts = tuple(_receipts(instance, tree))
