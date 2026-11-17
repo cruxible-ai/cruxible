@@ -5093,7 +5093,8 @@ def _already_done(
 ) -> WriteOutcome:
     """Every change is already live: unchanged, with nothing submitted (S2).
 
-    A write that also carries doc edits answers accepted at the head, as
+    A write that also carries doc edits, or any change but a set/add (a
+    create resolving to an existing Subject), answers accepted at the head, as
     before: its doc writes and confirmations happen on the client.
     """
 
@@ -5111,9 +5112,11 @@ def _already_done(
         because=request.because,
     )
     first = next((item.subject for item in changes if item.subject is not None), None)
-    if request.docs:
+    if request.docs or any(item.op not in ("set", "add") for item in plan.changes):
         # A write carrying doc edits is not unchanged: the client writes the
         # files and confirms them against this answer (accepted, at the head).
+        # Nor is a create that resolved to the Subject holding its key: S2's
+        # unchanged answer is for set/add restating a live value.
         return WriteOutcome(
             status="would_accept" if request.dry_run else "accepted",
             changes=changes,
