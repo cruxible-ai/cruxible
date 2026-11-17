@@ -2177,6 +2177,9 @@ accepted state moved and the daemon proposed the change again at the head,
 (`ReviewedCandidateChanged`), naming the new proposal and whether its members
 are identical, and signs nothing; review that proposal and approve it. A
 `ProposalRecompiled` is returned only when every change is already live.
+A daemon older than this client cannot bind an approval: `approve` raises
+`cruxible.approval.reviewed_binding_unsupported` and signs nothing; upgrade
+the daemon.
 Activation
 refuses `cruxible.approval.requirement_unsatisfied` until the approvals are
 in, also when the base moved, and changes nothing; acting again on an accepted

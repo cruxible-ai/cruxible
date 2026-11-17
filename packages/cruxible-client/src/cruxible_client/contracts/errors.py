@@ -745,6 +745,28 @@ class ReviewedCandidateChanged(ApprovalIntegrityError):
         )
 
 
+class ReviewedBindingUnsupported(ApprovalIntegrityError):
+    """The daemon is older than this client and cannot bind an approval to a reviewed candidate.
+
+    A daemon from before bound approvals rejects the request's
+    ``reviewed_candidate_digest`` field. The client never drops the field and
+    approves unbound on its own: that would sign something the caller asked not
+    to. It refuses here, with nothing signed or stored, and names the skew.
+    """
+
+    error_code = "cruxible.approval.reviewed_binding_unsupported"
+
+    def __init__(self, proposal_id: str, *, client_version: str) -> None:
+        self.proposal_id = proposal_id
+        self.client_version = client_version
+        super().__init__(
+            f"{self.error_code}: the daemon is older than this client ({client_version}) "
+            "and does not accept reviewed_candidate_digest, so it cannot bind the approval "
+            f"of {proposal_id} to the candidate you reviewed; nothing was signed. Repair: "
+            "upgrade the daemon to this client's version"
+        )
+
+
 class ApprovalRequirementUnmet(ApprovalIntegrityError):
     """Activation refused: the candidate's approval requirement is not met yet.
 

@@ -390,3 +390,85 @@ def test_modified_token_digest_refuses_before_challenge(setup) -> None:
     with pytest.raises(ApprovalReviewMismatch):
         proposal.approve(signer=signer, reviewed=reviewed)
     assert client.prepared == signer.calls == client.submitted == 0
+
+
+def test_a_bound_approval_names_the_skew_when_an_older_daemon_rejects_the_field() -> None:
+    """Review F-004: a daemon from before bound approvals forbids unknown request
+    fields, so a request carrying ``reviewed_candidate_digest`` fails its
+    validation. The client says that is version skew, typed, on both calls; it
+    never drops the digest and retries unbound. An unbound request sends the
+    bytes the older daemon accepts."""
+
+    import json
+
+    import httpx
+    from pydantic import BaseModel, ConfigDict, ValidationError
+
+    from cruxible_client import CruxibleClient
+    from cruxible_client.contracts.errors import ReviewedBindingUnsupported
+
+    class _Strict(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+
+    class OlderChallengeRequest(_Strict):
+        signer_id: str
+        include_body: bool = False
+
+    class OlderApprovalRequest(_Strict):
+        attestation: dict[str, Any]
+        hold: bool = False
+
+    seen: list[tuple[str, dict[str, Any]]] = []
+
+    def older_daemon(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        seen.append((request.url.path.rsplit("/", 1)[-1], body))
+        model = (
+            OlderChallengeRequest
+            if request.url.path.endswith("approval-challenge")
+            else OlderApprovalRequest
+        )
+        try:
+            model.model_validate(body)
+        except ValidationError as exc:
+            return httpx.Response(
+                422,
+                json={
+                    "error_type": "RequestValidationError",
+                    "message": "Request validation failed",
+                    "error_code": "cruxible.request.invalid",
+                    "errors": [
+                        f"body.{'.'.join(str(part) for part in error['loc'])}: {error['msg']}"
+                        for error in exc.errors()
+                    ],
+                },
+            )
+        return httpx.Response(500, json={"error_type": "CoreError", "message": "accepted"})
+
+    client = CruxibleClient(base_url="http://cruxible")
+    client._client = httpx.Client(  # type: ignore[attr-defined]
+        base_url="http://cruxible", transport=httpx.MockTransport(older_daemon)
+    )
+    digest = "sha256:" + "3" * 64
+    attestation = {"signer_id": "reviewer", "sig": "0" * 128}
+    for call in (
+        lambda **bound: client.prepare_approval("inst_1", "PROP-1", signer_id="reviewer", **bound),
+        lambda **bound: client.submit_approval(
+            "inst_1", "PROP-1", attestation=attestation, **bound
+        ),
+    ):
+        with pytest.raises(ReviewedBindingUnsupported) as refused:
+            call(reviewed_candidate_digest=digest)
+        assert refused.value.error_code == "cruxible.approval.reviewed_binding_unsupported"
+        assert "the daemon is older than this client" in str(refused.value)
+        assert "nothing was signed" in str(refused.value)
+        assert "upgrade the daemon" in str(refused.value)
+        # Unbound: the older daemon's own request, which it validates and answers.
+        with pytest.raises(Exception, match="accepted"):
+            call()
+    assert [(name, "reviewed_candidate_digest" in body) for name, body in seen] == [
+        ("approval-challenge", True),
+        ("approval-challenge", False),
+        ("approvals", True),
+        ("approvals", False),
+    ]

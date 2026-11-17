@@ -221,7 +221,9 @@ quickstart and concepts pages.
   candidate when its members are identical, as before, and refuse the same
   way when a landing for a late-registered signer changed them. The HTTP approval
   challenge and approval requests take an optional
-  `reviewed_candidate_digest`.
+  `reviewed_candidate_digest`; against a daemon too old to accept it, a bound
+  approval refuses `cruxible.approval.reviewed_binding_unsupported` and signs
+  nothing (it is never sent unbound instead).
 - **A proposal proposed again at the head closes as `superseded`, not
   `withdrawn`.** `get` and `proposal list` show `superseded_by` and
   `closed_by`, the principal whose approval, activation or readmit closed it;

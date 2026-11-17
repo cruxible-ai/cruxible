@@ -36,6 +36,7 @@ from cruxible_client.contracts.claim_reads import (
 from cruxible_client.contracts.declared_blocks import DeclaredBlockPageObservation
 from cruxible_client.contracts.duplicates import DuplicatesAuditRequest, DuplicatesAuditResult
 from cruxible_client.contracts.errors import (
+    ReviewedBindingUnsupported,
     SinceRequestInvalid,
 )
 from cruxible_client.contracts.floor import FloorDelta
@@ -193,6 +194,31 @@ def _reviewed(candidate_digest: str | None) -> dict[str, str]:
     """An approval's reviewed-candidate binding; nothing on the wire when unbound."""
 
     return {} if candidate_digest is None else {"reviewed_candidate_digest": candidate_digest}
+
+
+def _refuse_unbindable(
+    response: httpx.Response, proposal_id: str, candidate_digest: str | None
+) -> None:
+    """Refuse, typed, when an older daemon rejected the reviewed-candidate field.
+
+    Such a daemon's request models forbid unknown fields, so a bound request
+    fails its validation naming ``reviewed_candidate_digest``. That is version
+    skew, not a fault in the request: the caller is told so. The field is never
+    dropped and the approval retried unbound.
+    """
+
+    if candidate_digest is None or response.status_code != 422:
+        return
+    try:
+        body = ErrorResponse.model_validate(response.json())
+    except Exception:
+        return
+    if body.error_type == "RequestValidationError" and any(
+        "reviewed_candidate_digest" in error for error in body.errors
+    ):
+        from cruxible_client import __version__
+
+        raise ReviewedBindingUnsupported(proposal_id, client_version=__version__)
 
 
 class CruxibleClient:
@@ -1085,6 +1111,7 @@ class CruxibleClient:
                 **_reviewed(reviewed_candidate_digest),
             },
         )
+        _refuse_unbindable(response, proposal_id, reviewed_candidate_digest)
         return self._parse_model(response, contracts.ApprovalChallenge)
 
     def submit_approval(
@@ -1113,6 +1140,7 @@ class CruxibleClient:
                 **_reviewed(reviewed_candidate_digest),
             },
         )
+        _refuse_unbindable(response, proposal_id, reviewed_candidate_digest)
         if response.is_success and response.json().get("tag") == "cruxible-proposal-recompiled-v1":
             return self._parse_model(response, contracts.ProposalRecompiled)
         if response.is_success and response.json().get("tag") == "playbill-activation-receipt-v1":
