@@ -11,7 +11,6 @@ from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from cruxible_client._error_base import CoreError as CruxibleCoreError
 from cruxible_client.contracts.candidates import CandidateRecord
 from cruxible_client.contracts.canonical import ProposalDigest
 from cruxible_client.contracts.errors import (
@@ -27,7 +26,7 @@ from cruxible_client.contracts.errors import (
     ProposalStale,
     ProposalWithdrawNotAuthor,
 )
-from cruxible_client.contracts.kits import KitReceipt
+from cruxible_client.contracts.kits import KitReceipt, registry_source
 from cruxible_client.contracts.principals import AuthoringRefusal
 from cruxible_client.contracts.procedures.node_summary import (
     ReobservationRefusalReason,
@@ -36,6 +35,7 @@ from cruxible_client.contracts.procedures.node_summary import (
 from cruxible_client.contracts.proposal_models import ProposalReadmissionLink
 from cruxible_client.contracts.repairs import RepairOperation
 from cruxible_core.authoring.id_prefixes import AmbiguousIdPrefix, resolve_id_prefix
+from cruxible_core.errors import CoreError
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.indexes.proposals.proposal_index import timestamp
 from cruxible_core.proposals.proposal_evidence import ProposalEvidenceStore
@@ -1492,7 +1492,7 @@ def _proposed_kit_receipt(
             kit_id,
             proposal_id=source.admission.proposal_id,
         )
-    except (CruxibleCoreError, ValueError, KeyError):
+    except (CoreError, ValueError, KeyError):
         return None
 
 
@@ -1506,7 +1506,6 @@ def _kit_reference(receipt: KitReceipt | None, kit_id: str) -> str | None:
     from the kit's id.
     """
 
-    from cruxible_client.kits import registry_source
     from cruxible_core.kits.base_kit import BASE_KIT_REFERENCE, BUNDLED_KIT_SOURCE
 
     recorded = None if receipt is None else receipt.source
