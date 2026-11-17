@@ -20,6 +20,7 @@ from cruxible_client.authoring.folder_identity import write_folder_identity
 from cruxible_client.authoring.principal_settings import principal_key, principal_key_missing
 from cruxible_client.authoring.sdk import Cruxible
 from cruxible_client.contracts.errors import SigningKeyError
+from cruxible_client.contracts.get_reads import GetPrincipalCard
 from cruxible_core.governance.keys import generate_client_principal_key
 
 INSTANCE = "inst_1"
@@ -178,10 +179,27 @@ def _cx(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *principals: str) -> tu
         base_url=None,
         socket_path=str(socket),
         whoami=lambda instance: SimpleNamespace(actor_id="owner"),
-        orient=lambda instance, **_: SimpleNamespace(
-            principals=records, truncated=False, next_cursor=None
-        ),
+        orient=lambda *args, **kwargs: pytest.fail("a signer lists no principals"),
     )
+    cards = {
+        record.principal_id: GetPrincipalCard(
+            principal=record.principal_id,
+            kind=record.kind,
+            status=record.status,
+            algorithm=record.algorithm,
+            public_key=record.public_key,
+        )
+        for record in records
+    }
+    read: list[str] = []
+
+    def get(self: Cruxible, ref: str, **_: Any) -> Any:
+        # The one addressed read cx.signer makes: recorded, so a test can count it.
+        read.append(ref)
+        return SimpleNamespace(value=cards[ref.removeprefix("Principal:")])
+
+    monkeypatch.setattr(Cruxible, "get", get)
+    monkeypatch.setattr(Cruxible, "_principal_reads", read, raising=False)
     workspace = tmp_path / "project"
     workspace.mkdir()
     cx = Cruxible(
@@ -227,3 +245,18 @@ def test_the_sdk_refuses_a_signer_with_no_key_naming_the_sdk_repair(
 
     assert "cx.signer('reviewer', key=FILE)" in str(refused.value)
     assert "cruxible context use" not in str(refused.value)
+
+
+@pytest.mark.parametrize("registered", [2, 60])
+def test_opening_one_signer_reads_one_principal_whatever_the_registry_holds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, registered: int
+) -> None:
+    """Review F-005: cx.signer(X) paged and validated the whole principal registry to
+    find X. It reads Principal:X by address: one read at either registry size."""
+
+    names = ("owner", "reviewer", *(f"agent-{n}" for n in range(registered - 2)))
+    cx, _keys = _cx(tmp_path, monkeypatch, *names)
+
+    assert cx.signer("reviewer").signer_id == "reviewer"
+
+    assert cx._principal_reads == ["Principal:reviewer"]  # type: ignore[attr-defined]

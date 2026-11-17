@@ -4983,8 +4983,8 @@ class Cruxible:
         Next: ``cx.proposal(ID).approve(signer=cx.signer("reviewer"), reviewed=review)``.
         """
 
-        from cruxible_client.authoring.attestations import principal_records
         from cruxible_client.contracts.errors import SigningKeyError
+        from cruxible_client.contracts.get_reads import GetPrincipalCard
 
         who = principal_id if principal_id is not None else self.whoami().actor_id
         if who is None:
@@ -5003,23 +5003,15 @@ class Cruxible:
         )
         if found is None:
             raise SigningKeyError(principal_key_missing(who, client="sdk"))
-        record = next(
-            (
-                item
-                for item in principal_records(self._client, self._instance_id)
-                if item.principal_id == who
-            ),
-            None,
-        )
-        if record is None:
-            raise SigningKeyError(
-                f"{who} is not a registered principal of {self._instance_id}; "
-                "cx.orient(section='principals') lists them"
-            )
+        # One addressed read of this principal: its registered public key. An
+        # unknown principal refuses there, naming how to list them.
+        card = self.get(f"Principal:{who}").value
+        if not isinstance(card, GetPrincipalCard):
+            raise SigningKeyError(f"Principal:{who} did not read as a principal card")
         return LocalEd25519ApprovalSigner.open(
             signer_id=who,
             private_key_path=found.private_key_path,
-            expected_public_key=record.public_key,
+            expected_public_key=card.public_key,
             forbidden_roots=() if self._workspace is None else (self._workspace,),
         )
 

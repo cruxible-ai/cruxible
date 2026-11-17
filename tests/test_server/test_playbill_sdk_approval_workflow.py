@@ -5,6 +5,7 @@ from __future__ import annotations
 import runpy
 from pathlib import Path
 
+import pytest
 from cryptography.hazmat.primitives import serialization
 
 from cruxible_client import Cruxible, LocalEd25519ApprovalSigner
@@ -63,3 +64,26 @@ def test_public_claim_review_and_repair_example(playbill_http, tmp_path: Path, m
     assert result["value"] == 49 and result["verdict"] == "supported"
     assert result["revision"] == 2
     assert len(set(recovered)) == 2
+
+
+def test_cx_signer_opens_a_principals_key_against_its_registered_card(
+    playbill_http, tmp_path: Path
+) -> None:
+    """`cx.signer(ID, key=...)` on a real instance: one `Principal:ID` read gives the
+    registered public key the key file is checked against; an unknown principal refuses."""
+
+    from cruxible_client.contracts.errors import ReadRefusalError
+
+    http, instance_id, private_path = playbill_http
+    transport = CruxibleClient(base_url="http://cruxible")
+    transport._client = http
+    workspace = tmp_path / "demo-workspace"
+    workspace.mkdir()
+    cx = Cruxible._from_client(transport, instance_id=instance_id, workspace=workspace)
+
+    signer = cx.signer("reviewer", key=private_path)
+
+    assert signer.signer_id == "reviewer"
+    assert signer.public_key == cx.get("Principal:reviewer").value.public_key
+    with pytest.raises(ReadRefusalError, match="no accepted Principal"):
+        cx.signer("nobody", key=private_path)
