@@ -100,7 +100,10 @@ any process of the OS user can read both keys ([Review and
 governance](review-and-governance.md#what-approval-protects-and-what-it-doesnt)).
 
 The agent plugin's README (`plugins/README.md`) walks the same path through to
-installing a kit.
+installing a kit. The plugin, for Claude Code and Codex, also supplies five
+general skills: `survey` for a project with no instance or kit yet,
+`adopt-kit` to start from a kit, and `create-state`, `automate-state` and
+`review-state` for the work after that.
 
 The `default` profile advertises 13 tools, the everyday loop: `orient`,
 `query`, `get`, `next`, `set`, `retire`, `write`, `proposal_list`,

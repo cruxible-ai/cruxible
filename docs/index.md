@@ -38,8 +38,9 @@ judgment; Cruxible checks it, records it and serves it back.
 - [Evolving your vocabulary](evolving-your-vocabulary.md): the vocabulary
   file, its format, and changing what you record without losing what you
   already know.
-- [For AI agents](for-ai-agents.md): connecting an agent, and the loop it
-  runs.
+- [For AI agents](for-ai-agents.md): connecting an agent, the loop it runs,
+  and the agent plugin's five skills, `survey` first for a project with no
+  instance or kit.
 - [Kits](kits.md): the base kit every instance starts with, installing
   shared vocabularies built by others, capabilities and provider packages.
 
