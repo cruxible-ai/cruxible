@@ -94,6 +94,10 @@ class _StrictOperationalReadModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
+#: The endings one closing record (``ProposalWithdrawalRecord``) makes.
+_CLOSED_REASONS = frozenset({"superseded", "rejected", "withdrawn"})
+
+
 class PlaybillProposalListEntryV1(_StrictOperationalReadModel):
     tag: Literal["playbill-proposal-list-entry-v1"] = "playbill-proposal-list-entry-v1"
     proposal_id: str
@@ -112,17 +116,28 @@ class PlaybillProposalListEntryV1(_StrictOperationalReadModel):
     #: ``settled`` + ``accepted`` only: the accepted generation its change set
     #: settled in (the proposal index's maintained settlement record).
     accepted_generation: int | None = Field(default=None, exclude_if=lambda value: value is None)
-    #: ``settled`` + ``superseded`` only: the proposal that took its place, and
-    #: the principal whose approval, activation, readmit or Line run closed it.
+    #: ``settled`` + ``superseded`` only: the proposal that took its place.
     superseded_by: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    #: A closed proposal (``superseded``, ``rejected`` or ``withdrawn``): the
+    #: principal whose act closed it (a reviewer's rejection, the author's
+    #: withdrawal, or the approval, activation, readmit or Line run that
+    #: superseded it).
     closed_by: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    #: ``rejected`` or ``withdrawn`` only: when it closed, and the reason its
+    #: closer gave, from its closing record.
+    closed_at: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    closed_reason: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @model_validator(mode="after")
     def _status_shape(self) -> "PlaybillProposalListEntryV1":
         if (self.superseded_by is not None) != (self.terminal_reason == "superseded"):
             raise ValueError("exactly a superseded proposal names its successor")
-        if self.closed_by is not None and self.superseded_by is None:
-            raise ValueError("only a superseded proposal names who closed it")
+        if self.closed_by is not None and self.terminal_reason not in _CLOSED_REASONS:
+            raise ValueError("only a closed proposal names who closed it")
+        if (self.closed_at is not None or self.closed_reason is not None) and (
+            self.terminal_reason not in {"rejected", "withdrawn"}
+        ):
+            raise ValueError("only a rejected or withdrawn proposal carries its closing reason")
         if (self.accepted_generation is not None) != (self.terminal_reason == "accepted"):
             raise ValueError("exactly an accepted proposal names its accepted generation")
         if bool(self.stale_paths) != (self.status == "awaiting_readmit"):
@@ -298,7 +313,8 @@ def service_list_playbill_proposals(
     return PlaybillProposalListV1(
         coordinate=coordinate,
         status_filter=status,
-        entries=page,
+        # Closing details for this page's rows only, after the cursor's digest.
+        entries=_with_closing_details(instance, tuple(page)),
         truncated=truncated,
         next_cursor=(
             encode_list_cursor(
@@ -355,6 +371,7 @@ def service_playbill_proposal_status(
             evidence.read_candidate(evaluation.candidate_digest)
     if entry.withdrawal_present:
         evidence.read_withdrawal(resolved)
+    (entry,) = _with_closing_details(instance, (entry,))
     return entry
 
 
@@ -537,6 +554,35 @@ def _proposal_entries(
             )
         )
     return tuple(entries)
+
+
+def _with_closing_details(
+    instance: PlaybillInstance, entries: tuple[PlaybillProposalListEntryV1, ...]
+) -> tuple[PlaybillProposalListEntryV1, ...]:
+    """The entries a caller is about to return, each rejected or withdrawn one
+    with who closed it, when and the reason given.
+
+    Read from the closing record, one keyed read per such entry, and only for
+    the entries handed in: a list page's rows after the page is selected, or
+    the one entry of a by-ID read. The entries a listing filters, pages and
+    pins in its cursor never carry reason text.
+    """
+
+    evidence = instance.proposal_evidence()
+    detailed = []
+    for entry in entries:
+        if entry.terminal_reason in {"rejected", "withdrawn"}:
+            closed = evidence.read_withdrawal(entry.proposal_id)
+            if closed is not None:
+                entry = entry.model_copy(
+                    update={
+                        "closed_by": closed.actor_id,
+                        "closed_at": closed.withdrawn_at,
+                        "closed_reason": closed.reason,
+                    }
+                )
+        detailed.append(entry)
+    return tuple(detailed)
 
 
 @contextmanager
@@ -1597,6 +1643,13 @@ def _readmit_exact_bytes(
         generation = instance.accepted_history()[-1]
         if generation.record is None:  # pragma: no cover - stale source requires a successor
             raise ProposalIntegrityError("readmission requires an accepted candidate timestamp")
+        # The readmission is judged no earlier than its source was: a head
+        # generation authored before the source (a sibling proposal that landed
+        # first) has an earlier timestamp, and judged then, every Capture the
+        # source's own write observed would lie in the future and back nothing
+        # (each value would review as uncovered, then land supported). Both
+        # times are fixed by the link, so the readmission stays idempotent.
+        timestamp = max(generation.record.candidate.timestamp, source.admission.admitted_at)
         actor = AuthenticatedActor(actor_id=actor_id)
         request = ProposalAdmissionRequest(
             target_ref=_readmission_target_ref(actor_id, operation_digest),
@@ -1628,7 +1681,7 @@ def _readmit_exact_bytes(
                 actor=actor,
                 request=request,
                 candidate_tree=candidate_tree,
-                timestamp=generation.record.candidate.timestamp,
+                timestamp=timestamp,
                 readmits=link,
             )
             return PlaybillProposalReadmitResultV1(
@@ -1645,7 +1698,7 @@ def _readmit_exact_bytes(
                 actor=actor,
                 request=request,
                 candidate_tree=candidate_tree,
-                timestamp=generation.record.candidate.timestamp,
+                timestamp=timestamp,
                 readmits=link,
                 originating_line=source.admission.originating_line,
                 confirm_head=mode.confirm_head,

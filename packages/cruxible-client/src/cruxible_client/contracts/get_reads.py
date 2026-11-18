@@ -705,11 +705,17 @@ class GetProposalCard(_StrictGetModel):
     incomplete: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
     verdict: str | None = Field(default=None, exclude_if=_omit_none)
     reason: str | None = Field(default=None, exclude_if=_omit_none)
-    #: A superseded proposal (``reason``): the proposal that took its place,
-    #: and the principal whose approval, activation, readmit or Line run closed
-    #: this one (absent on records that predate it). ``actor`` is its author.
+    #: A superseded proposal (``reason``): the proposal that took its place.
     superseded_by: str | None = Field(default=None, exclude_if=_omit_none)
+    #: A superseded, rejected or withdrawn proposal: the principal whose act
+    #: closed this one (the approval, activation, readmit or Line run that
+    #: superseded it, absent on records that predate it; the reviewer who
+    #: rejected it; whoever withdrew it). ``actor`` is its author.
     closed_by: str | None = Field(default=None, exclude_if=_omit_none)
+    #: A rejected or withdrawn proposal: when it closed, and the reason given
+    #: (the reviewer's ``proposal reject --reason`` text, whole).
+    closed_at: str | None = Field(default=None, exclude_if=_omit_none)
+    closed_reason: str | None = Field(default=None, exclude_if=_omit_none)
     actor: str | None = Field(default=None, exclude_if=_omit_none)
     admitted_at: str | None = Field(default=None, exclude_if=_omit_none)
     rationale: str | None = Field(default=None, exclude_if=_omit_none)
