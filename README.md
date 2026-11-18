@@ -9,34 +9,103 @@
 
 # Cruxible
 
-A knowledge layer for AI agents that models the world instead of writing
-notes about it, so their work compounds instead of piling up.
+Cruxible is a toolset that lets AI agents create, update and manage what
+they’ve learned through a typed, code-like interface, so they model the world
+rather than solely write notes about it. Their observations and judgments
+become building blocks that later sessions reuse instead of re-deriving.
 
-It is the long-term memory your agents share, kept true by checking it
-against the world. Agents record what they learn as typed facts, each with
-its evidence. Automation pipelines you define keep those facts current: they
-fetch the sources you point them at, extract what matters and re-check the
-facts that depend on them. When evidence changes (an advisory is revised, a
-cited file is edited, a scan finds something new), Cruxible flags the facts
-resting on it, and the conclusions built on those facts too. What hasn't moved
-stays settled, so the next session, or the next agent, starts from what is
-already known instead of working it out again.
+<!-- TODO(0.5.0): the examples below are from one run on the integration build
+(a shop's delivery promises; 2026-11-18, outputs and definitions in
+wt-i/promise), trimmed: ids shortened; sequence numbers, generation ids and
+times of day cut; the query's flags column cut. The run wrote the evidence as
+a dict, not FileEvidence. Re-run them on the release build. -->
+
+An agent recording a judgment with the Python SDK:
+
+```python
+w = cx.world()                        # typed handles for this shop's own vocabulary
+
+# what a scheduled check last read from the supplier
+widget = w.shop.item["blue-widget"]
+stock = widget.in_stock[0]            # 40
+
+# the judgment: promise Friday delivery, citing the stock line it rests on
+w.shop.order.define("ord-1042", item=widget, needed=12).set(
+    promised_for="2026-11-20",
+    promise="open",
+    evidence=FileEvidence(file='supplier/stock.json#{"sku": "blue-widget", "in_stock": 40}'),
+).write(because=f"Friday delivery for order 1042: {stock.value} in stock, we need 12.")
+# -> a proposal; it takes effect when the reviewer approves it
+```
+
+Agents today have two places to put what they learn. Notes in markdown are
+easy to write and hold reasoning well, but they can only be searched, not
+queried, and they pile up: a later note can contradict an earlier one, and
+nothing marks which is current. Structured data can be checked and queried,
+and a new value replaces the old one, but reducing everything an agent learns
+to fields loses detail. Research on agent memory finds both costs. In
+[LongMemEval](https://arxiv.org/abs/2410.10813) (ICLR 2025), storing only the
+facts extracted from a conversation, in place of its text, lowered accuracy,
+while keeping the text and indexing it with those facts beat the text alone.
+In [MemoryAgentBench](https://arxiv.org/abs/2507.05257), when a later
+statement contradicted an earlier one, the memory systems tested often failed
+to answer from the newer one.
+
+In Cruxible a fact keeps the reasoning it was recorded with:
+
+```text
+$ cruxible get shop.order/ord-1042 --detail history --field promise
+promise
+  proposed 2026-11-18 by owner, approved by reviewer  stated  open
+      reason: Friday delivery for order 1042: 40 in stock, we need 12.
+```
+
+And a later statement replaces the earlier one, while the history keeps both:
+
+```text
+$ cruxible get shop.item/blue-widget --detail history --field in_stock
+in_stock
+  proposed 2026-11-18 by owner  changed  40 -> 5
+      reason: As the supplier's stock feed says.  (Procedure shop.stock-check, run RUN-ab9c47be...)
+  proposed 2026-11-18 by owner  stated  40
+      reason: As the supplier's stock feed says.  (Procedure shop.stock-check, run RUN-c632bf87...)
+```
+
+Cruxible is designed to keep the strengths of both. Facts are typed and
+queryable like structured data, and types can grow as agents learn more
+about your domain. Each fact has one current value: a new one replaces it, and
+the earlier values are kept as history. Reasoning stays in prose, in your own pages, and facts cite
+the passages they rest on. Your files, repos and services remain the source
+of truth: Cruxible points to them and keeps a snapshot only of the evidence a
+fact was drawn from, so every claim can be traced back.
+
+That stock level comes from a pipeline the shop approved, which re-reads the
+supplier's feed on a schedule. When what it reads no longer covers a promise,
+a saved query flags the order
+([Lines and automation](docs/lines-and-automation.md) shows how both are
+defined):
+
+```text
+$ cruxible line run shop.stock-check
+Counts: written 1 (settled 1, proposed 0); unchanged 0; refused 0; inbox 0
+
+$ cruxible query --name shop.promises_at_risk
+subject              in_stock  needed  promised_for  sku
+shop.order/ord-1042  5         12      2026-11-20    blue-widget
+```
+
+It runs unattended as a local daemon. Pipelines you approve re-check sources
+on a schedule, and when the evidence behind a fact changes, the fact is
+flagged instead of going quietly stale. Agents reach it through a Python SDK,
+an MCP server or the CLI; all three talk to the same daemon, so they share one
+record.
 
 ## Why this beats notes alone
 
-Notes are good at prose: reasoning, context, decisions in your own words.
-Cruxible keeps them, and facts cite them. What notes alone can't do is stay
-true. Agent sessions produce endless markdown, each page true when written and
-never checked again, so every new session reads and re-derives it. Retrieval
-finds relevant text; Cruxible tracks the facts your agents record from it, the
-evidence behind them, and what needs another look when that evidence changes.
-You keep the strengths of notes and lose their weaknesses:
-
 - **Fresh, not silently stale.** Pipelines re-check facts on the schedule you
-  set, and every answer shows how fresh its evidence is.
-- **Changes ripple to what depends on them.** When a fact moves, the
-  judgments and derived facts built on it are flagged as well, naming the
-  input that changed, so second-order conclusions don't quietly go wrong.
+  set. When a source changes, the fact is updated or flagged, and a fact whose
+  evidence is older than the window you set reads as stale instead of passing
+  as current.
 - **Knowledge compounds.** A fact checked once is reused by every later
   session and every agent until its evidence moves; work goes where the world
   changed.
@@ -44,13 +113,6 @@ You keep the strengths of notes and lose their weaknesses:
   governed ledger instead of overwriting each other's notes. Every change is a
   proposal; your approval policy decides what lands at once and what waits for
   a second agent's review.
-- **Every belief has a receipt.** What was concluded, from which evidence,
-  accepted by whom and when. Each fact keeps its own history, and earlier
-  values can be read back.
-- **Never a second source of truth.** Your files, repos and services stay
-  authoritative. Cruxible holds the conclusions drawn from them, with pointers
-  back to the source, and keeps only the slices of evidence each conclusion
-  rests on, so you can always see what was seen and when.
 - **Deterministic.** No LLM runs inside Cruxible. Agents and people propose
   and judge; Cruxible applies declared rules deterministically.
 
@@ -68,59 +130,77 @@ stays in pages instead of being forced into fields. Tables generated from
 facts are flagged when the facts behind them change and re-rendered on sync,
 and you can browse the current facts as plain files you can grep.
 
-## A short example
+## The security kit: the same loop on real work
 
-The security kit keeps a project's dependencies, their known vulnerabilities
-and your team's judgments about them current.
+A kit is a ready-made domain. The security kit keeps a project's dependencies,
+their known vulnerabilities and your team's judgments about them current. One
+Runbook reads the SBOM and asks OSV, CISA KEV and EPSS; here on a deliberately
+vulnerable Django app with 32 components:
 
-<!-- TODO: replace with output from the security walkthrough rerun after integration. -->
+<!-- TODO(0.5.0): from the upgrade run on the integration build (2026-11-18,
+wt-i/upgr/out/01, 02, 03, 11), trimmed: each Line's two output lines joined,
+run ids, "succeeded", zero counts and the sixth Line cut (in the rerun also
+the settled/proposed counts and Lines 5-6); ids shortened; the reason wrapped.
+Re-run on the release build, and add the console screenshots here (the state
+graph, and the judgment with what it rests on). -->
 
-~~~text
-$ cruxible kit add ../cruxible-kits/kits/security --commit --at OID
-$ cruxible runbook run security.start          # read the SBOM, check OSV, KEV and EPSS
-$ cruxible query --name security.urgent_exposures --limit 3
-<rows: the unjudged exposures, most likely to be exploited first>
+```text
+$ cruxible runbook run security.start
+   1  Line:security.sbom-import.app              written 32 (settled 32, proposed 0)
+   2  Line:security.osv-query                    written 181 (settled 181, proposed 0)
+   3  Line:security.kev-triage                   written 181 (settled 181, proposed 0)
+   4  Line:security.epss-triage                  written 543 (settled 543, proposed 0)
+   5  Line:security.exposure-attention.unjudged  inbox 7 new
+```
 
-$ cruxible set <exposure> verdict not_affected \
-    --because "We never call the vulnerable function; see the scanner result."
-<proposal; a second agent reviews and approves it>
-~~~
+Facts copied from sources settle without review. The seven inbox items are
+unjudged exposures above the kit's exploit-likelihood threshold, and judging
+one is the agent's work: it reads
+the code, records its verdict with the passage it rests on, and a second agent
+reviews it.
 
-A day later the scheduled run finds that the advisory behind that judgment has
-changed:
+```text
+$ cruxible get security.app_exposure/sbom.cdx.json--pkg-pypi-pyyaml-5.1--cve-2020-14343 --detail history
+justification
+  proposed 2026-11-18 by owner, approved by reviewer  stated  vulnerable_code_not_in_execute_path
+      reason: CVE-2020-14343: the only yaml.load in the repo is in dockerized_labs/a9_uckv_lab, a
+      separate container with its own requirements; the Django app this SBOM describes never imports yaml.
+```
 
-~~~text
-$ cruxible next
-<one row: the judgment, the advisory that changed, and what to do>
-~~~
+When PyYAML is upgraded and the Runbook runs again, only what changed is
+written; everything else is re-checked and left as it is:
 
-The hundreds of facts whose sources were unchanged were re-checked and stay
-settled; the run that re-checked them stored almost nothing.
-<!-- TODO: keep the storage clause only if the release measurement confirms it. -->
-<!-- TODO: confirm in the rerun how far the dependency flags reach in one step. -->
+```text
+$ cruxible runbook run security.start
+   1  Line:security.sbom-import.app              written 1; unchanged 31; retired 1
+   2  Line:security.osv-query                    written 1; unchanged 178
+   3  Line:security.kev-triage                   written 0; unchanged 179
+   4  Line:security.epss-triage                  written 0; unchanged 537
+```
 
+The [security walkthrough](docs/security-walkthrough.md) goes through all of
+it on your own project. `cruxible console` opens a read-only view of the same
+state in your browser.
 
 ## Install and start
 
 Requirements: Python 3.11+ and Git. Linux x86-64 and macOS on Apple silicon;
 on Windows, use WSL2.
 
-~~~bash
+```bash
 pip install cruxible        # or: uv tool install cruxible
-cruxible server start --socket ~/.cruxible/run/daemon.sock
-~~~
-
-In another shell, inside the Git repository you want to work in:
-
-~~~bash
-export CRUXIBLE_SERVER_SOCKET=~/.cruxible/run/daemon.sock
-cruxible init
+cd your-project
+cruxible init --principal-id owner \
+  --reviewer-key-dir ../reviewer-keys --require-independent-approval
 cruxible orient          # what this instance holds
 cruxible next            # what needs attention
-~~~
+```
 
-The [Quickstart](docs/quickstart.md) continues with the security kit on your
-own project.
+`init` starts a local daemon if none is running and creates this project's
+instance. The two reviewer options set up a second principal whose approval
+every proposal needs; `cruxible init --principal-id owner` alone lets one
+owner approve everything. The [Quickstart](docs/quickstart.md) continues from
+here with the security kit.
 
 ## Use it from your agent
 
@@ -129,26 +209,14 @@ One daemon owns the state; three clients talk to it:
 - **MCP:** an MCP client launches `cruxible mcp` (`uvx cruxible mcp` from the
   registry listing). See [MCP tools](docs/mcp-tools.md).
 - **CLI:** every command above, for agents with a shell and for people.
-- **Python SDK:** `cruxible-client`, installed with the package. See the
+- **Python SDK:** `cruxible-client`, installed with the package. It reads your
+  vocabulary into typed Python, as in the example at the top. See the
   [SDK reference](packages/cruxible-client/README.md).
 
-Knowledge as code: the SDK reads your vocabulary into typed Python, so an
-agent writes facts the way it writes code. Defining something that already
-exists lands on it instead of making a duplicate.
-
-~~~python
-from cruxible_client import Cruxible
-
-with Cruxible.connect() as cx:
-    w = cx.world()
-    requests = w.pypi.release.define(package="requests", version="2.32.4")
-    w.write(
-        requests,
-        w.app.service.define("payments").add(depends_on=requests),
-        because="Pinned in the payments service's requirements.txt.",
-    )
-~~~
-
+The [plugin](plugins/README.md) for Claude Code and Codex adds five general
+skills: `survey` works out what in a project with no kit is worth holding as
+state, `adopt-kit` starts from a kit, and `create-state`, `automate-state` and
+`review-state` cover the work after that.
 [For AI agents](docs/for-ai-agents.md) covers how an agent should read and
 write.
 
@@ -164,13 +232,23 @@ write.
 - **Reviewed history.** Every change is a proposal, checked deterministically
   and accepted under your approval policy with signed approvals. Accepted
   state is a signed Git ledger. [Review and governance](docs/review-and-governance.md).
-- **Pipelines and attention.** A Procedure is a governed, deterministic
-  pipeline: read state, call providers (fetch a URL, read a file, run a
-  scanner), extract typed records, and propose or confirm facts. A Line runs
-  it on Triggers (a schedule, a new capture, an accepted change), and agents
-  author new ones as they find sources worth watching. `next` lists what needs
-  attention; `cruxible link` attaches notes to Subjects and review guidance to
-  ClaimTypes. [Lines and automation](docs/lines-and-automation.md).
+- **Procedures.** A Procedure is how repeatable work gets done with no agent
+  in the loop. It is a reviewed, typed sequence of steps that reads accepted
+  state, calls tools through declared interfaces (parse a dependency list,
+  read a scanner's report, query an API), turns the results into typed
+  records, and writes them back as facts, proposals or inbox items. The
+  security kit's Procedures import an SBOM, match it against three
+  vulnerability sources and flag the unjudged exposures worth attention. Runs
+  are deterministic and replayable: each tool is pinned to an exact build,
+  inputs and outputs are checked against contracts, and nothing reads the
+  clock. A Procedure does only what it has been granted: observe, propose for
+  review, or settle named fields on its own.
+- **Lines and attention.** A Line runs a Procedure with its inputs, budgets
+  and an authority ceiling, on Triggers (a schedule, a new capture, an
+  accepted change), once you enable it. Agents author new ones as they find
+  sources worth watching. `next` lists what needs attention; `cruxible link`
+  attaches notes to Subjects and review guidance to ClaimTypes.
+  [Lines and automation](docs/lines-and-automation.md).
 - **Kits.** A domain (vocabulary, pipelines, guidance) travels between
   instances as a kit, installed and upgraded as one reviewed change.
   [Kits](docs/kits.md).
@@ -179,11 +257,9 @@ The [concepts guide](docs/concepts.md) explains all of this in order.
 
 ## Credentials and principals
 
-A credential (`cruxible credential`) is a daemon bearer token with a tier; a
-principal (`cruxible principal`) is a signing key that attributes acts and
-signs approvals, and its private key never leaves the client. A Unix-socket
-daemon runs with auth off and says so; a TCP daemon refuses to start without
-`--auth`. [Who acts](docs/concepts.md#who-acts).
+A credential is a daemon bearer token with a permission tier; a principal is a
+signing key that attributes acts and signs approvals. See
+[Who acts](docs/concepts.md#who-acts).
 
 ## Documentation
 
@@ -202,12 +278,12 @@ daemon runs with auth off and says so; a TCP daemon refuses to start without
 
 ## Develop
 
-~~~bash
+```bash
 git clone https://github.com/cruxible-ai/cruxible
 cd cruxible
 uv sync --all-packages --all-extras
 uv run pytest -n auto --dist loadfile
-~~~
+```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the provider-runtime tests, lint,
 format and type checks.
