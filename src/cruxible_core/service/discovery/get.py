@@ -601,22 +601,20 @@ def _resolve_get_ref_as_written(
                 key_reader=_tree_key_reader(instance, coordinate),
                 subject_suggestions=subject_suggestions,
             )
-        try:
-            return _resolve_bare(projection, value, surface=surface)
-        except ReadRefusalError as exc:
-            if exc.error_code != "cruxible.get.ref_not_found" or not _BARE_PROPOSAL_ID.fullmatch(
-                value
-            ):
-                raise
-            unnamed = exc
-    # No artifact has this name, and it reads as a proposal id or prefix
-    # without its ``sha256:``: one keyed lookup on the proposal index.
-    from cruxible_client.contracts.errors import ProposalNotFoundError
+        found = _bare_match(projection, value)
+        if found is not None:
+            return found
+        if _BARE_PROPOSAL_ID.fullmatch(value):
+            # No artifact has this name, and it reads as a proposal id or
+            # prefix without its ``sha256:``: one keyed lookup on the proposal
+            # index, before any refusal's nearest-name read.
+            from cruxible_client.contracts.errors import ProposalNotFoundError
 
-    try:
-        return _resolve_proposal(instance, value)
-    except ProposalNotFoundError:
-        raise unnamed from None
+            try:
+                return _resolve_proposal(instance, value)
+            except ProposalNotFoundError:
+                pass
+        raise _bare_not_found(projection, value, surface=surface)
 
 
 #: A proposal id, or a prefix of one, written without ``sha256:``.
@@ -1171,8 +1169,12 @@ def _resolve_claim_type(
     )
 
 
-def _resolve_bare(projection: Any, value: str, *, surface: ReadSurface) -> ResolvedRef:
-    """A bare name: a predicate (full or unique leaf), or another artifact's name."""
+def _bare_match(projection: Any, value: str) -> ResolvedRef | None:
+    """A bare name: a predicate (full or unique leaf), or another artifact's name.
+
+    Indexed lookups only; None when nothing has the name (``_bare_not_found``
+    then builds the refusal). Several matches refuse as ambiguous.
+    """
 
     matches: list[ResolvedRef] = []
     # An exact predicate, else the live predicates it is the dotted tail of:
@@ -1194,7 +1196,15 @@ def _resolve_bare(projection: Any, value: str, *, surface: ReadSurface) -> Resol
         return ResolvedRef(found.kind, found.identity, found.display, row.path if row else None)
     if matches:
         raise _ambiguous(value, [item.display for item in matches])
-    # Only a refusal reads every name, for its nearest-name repair.
+    return None
+
+
+def _bare_not_found(projection: Any, value: str, *, surface: ReadSurface) -> ReadRefusalError:
+    """The refusal for a bare name nothing has, with its nearest names.
+
+    Only a refusal reads every name, for its nearest-name repair.
+    """
+
     names = [f"ClaimType:{item}" for item in _names_of(projection, "claim_type")]
     for typed_kind in _NAMED_KINDS:
         names.extend(
@@ -1202,7 +1212,7 @@ def _resolve_bare(projection: Any, value: str, *, surface: ReadSurface) -> Resol
         )
     by_name = {item.split(":", 1)[1]: item for item in names}
     candidates = tuple(by_name[item] for item in nearest(value, by_name))
-    raise _not_found("artifact named", value, candidates, surface=surface)
+    return _not_found("artifact named", value, candidates, surface=surface)
 
 
 # -- rendering next steps for the caller's surface -----------------------------

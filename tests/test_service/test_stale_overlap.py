@@ -1313,3 +1313,156 @@ def test_the_author_of_a_rejected_proposal_reads_who_when_and_why(tmp_path: Path
     with pytest.raises(ReadRefusalError) as missing:
         _card(instance, "0" * 16)
     assert missing.value.error_code == "cruxible.get.ref_not_found"
+
+
+def test_a_bare_proposal_id_resolves_without_the_refusal_name_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review F-001: a bare-hex proposal lookup that succeeds built the
+    not-found suggestions first (every definition name, fuzzy matched). The
+    proposal is tried right after the indexed name checks miss, so a successful
+    lookup hands the suggestion builder no name, however many definitions the
+    instance holds; only a miss of both builds them."""
+
+    from cruxible_client.contracts.errors import ReadRefusalError
+    from cruxible_core.service.discovery import get as get_module
+
+    instance, reviewer = _world(tmp_path)
+    proposal_id = _pending(instance, _set(f"{KIND}/wi-1", "title", "held"))
+    bare = proposal_id.removeprefix("sha256:")
+
+    enumerated: list[int] = []
+    suggested: list[int] = []
+    names_of, nearest = get_module._names_of, get_module.nearest
+
+    def counted_names(projection, kind):  # type: ignore[no-untyped-def]
+        names = names_of(projection, kind)
+        enumerated.append(len(names))
+        return names
+
+    def counted_nearest(value, names, *args, **kwargs):  # type: ignore[no-untyped-def]
+        suggested.append(len(names))
+        return nearest(value, names, *args, **kwargs)
+
+    monkeypatch.setattr(get_module, "_names_of", counted_names)
+    monkeypatch.setattr(get_module, "nearest", counted_nearest)
+
+    def work(ref: str) -> tuple[int, int]:
+        enumerated.clear()
+        suggested.clear()
+        assert _card(instance, ref).card.proposal == proposal_id
+        return sum(enumerated), sum(suggested)
+
+    small = (work(bare), work(bare[:12]))
+    # A larger vocabulary: more definitions for a refusal to enumerate.
+    _accept_members(
+        instance,
+        reviewer,
+        {
+            claim_type_path(f"{KIND}.extra_{n}"): render_claim_type(
+                _claim_type(f"extra_{n}", value_type={"type": "string"})
+            )
+            for n in range(12)
+        },
+        "more-vocabulary",
+    )
+    large = (work(bare), work(bare[:12]))
+    assert small == large == ((0, 0), (0, 0))
+
+    # The instrument sees the refusal's read, which does grow with the names.
+    enumerated.clear()
+    suggested.clear()
+    with pytest.raises(ReadRefusalError) as missing:
+        _card(instance, "0" * 16)
+    assert missing.value.error_code == "cruxible.get.ref_not_found"
+    assert sum(suggested) >= 12 and sum(enumerated) >= 12
+
+
+def test_a_list_page_loads_closing_reasons_for_its_own_rows_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review F-002: the closing reason was copied into every matching entry
+    and hashed into the cursor before the page was selected. The entries a
+    listing filters, pages and pins never carry closing details; they are read
+    for the selected page's rows, so a one-row page over N rejections handles
+    one reason, and the cursor's digest is what it was without them."""
+
+    from cruxible_core.service.proposals import proposals as proposals_module
+    from cruxible_core.service.proposals.proposals import service_reject_playbill_proposal
+
+    instance, _reviewer = _world(tmp_path)
+    at = "2026-11-17T12:00:00.000000Z"
+    pinned: list[list[dict[str, object]]] = []
+    detailed: list[int] = []
+    list_snapshot = proposals_module.list_snapshot
+    with_details = proposals_module._with_closing_details
+
+    def counted_snapshot(rows):  # type: ignore[no-untyped-def]
+        pinned.append(list(rows))
+        return list_snapshot(rows)
+
+    def counted_details(instance, entries):  # type: ignore[no-untyped-def]
+        result = with_details(instance, entries)
+        detailed.append(sum(len(entry.closed_reason or "") for entry in result))
+        return result
+
+    monkeypatch.setattr(proposals_module, "list_snapshot", counted_snapshot)
+    monkeypatch.setattr(proposals_module, "_with_closing_details", counted_details)
+
+    def reject(count: int, start: int) -> None:
+        for n in range(start, start + count):
+            proposal_id = _pending(instance, _set(f"{KIND}/wi-1", "title", f"value {n}"))
+            service_reject_playbill_proposal(
+                instance,
+                proposal_id=proposal_id,
+                actor_id="reviewer",
+                reason=f"reason {n:03d} " + "r" * 989,
+                rejected_at=at,
+            )
+
+    def one_row_page(cursor: str | None = None) -> tuple[int, int, str | None]:
+        pinned.clear()
+        detailed.clear()
+        page = service_list_playbill_proposals(instance, status="settled", limit=1, cursor=cursor)
+        (entry,) = page.entries
+        if entry.terminal_reason == "rejected":
+            assert (entry.closed_by, entry.closed_at) == ("reviewer", at)
+            assert entry.closed_reason is not None and len(entry.closed_reason) == 1_000
+        (rows,) = pinned
+        # Nothing the cursor pins names a closing detail of a rejection.
+        assert not any(
+            key in row
+            for row in rows
+            if row["terminal_reason"] == "rejected"
+            for key in ("closed_by", "closed_at", "closed_reason")
+        )
+        (reason_characters,) = detailed
+        return len(rows), reason_characters, page.next_cursor
+
+    def walk() -> tuple[int, list[int]]:
+        """Every one-row page: the rows pinned, and the reason text each page read."""
+
+        rows, read, cursor = one_row_page()
+        per_page = [read]
+        while cursor is not None:
+            _rows, read, cursor = one_row_page(cursor)
+            per_page.append(read)
+        return rows, per_page
+
+    reject(3, 0)
+    small_rows, small = walk()
+    reject(6, 3)
+    large_rows, large = walk()
+    assert large_rows == small_rows + 6
+    # Each page reads its own row's reason, whatever the rejections behind it.
+    assert max(small) == max(large) == 1_000
+    assert (sum(small), sum(large)) == (3_000, 9_000)
+
+    # The cursor still refuses a listing that changed under it.
+    _rows, _read, cursor = one_row_page()
+    assert cursor is not None
+    reject(1, 9)
+    from cruxible_core.service.list_pages import ListCursorStale
+
+    with pytest.raises(ListCursorStale):
+        service_list_playbill_proposals(instance, status="settled", limit=1, cursor=cursor)

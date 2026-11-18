@@ -313,7 +313,8 @@ def service_list_playbill_proposals(
     return PlaybillProposalListV1(
         coordinate=coordinate,
         status_filter=status,
-        entries=page,
+        # Closing details for this page's rows only, after the cursor's digest.
+        entries=_with_closing_details(instance, tuple(page)),
         truncated=truncated,
         next_cursor=(
             encode_list_cursor(
@@ -370,6 +371,7 @@ def service_playbill_proposal_status(
             evidence.read_candidate(evaluation.candidate_digest)
     if entry.withdrawal_present:
         evidence.read_withdrawal(resolved)
+    (entry,) = _with_closing_details(instance, (entry,))
     return entry
 
 
@@ -509,18 +511,10 @@ def _proposal_entries(
         awaiting_readmit = bool(stale_paths) and not missing
         if reason == "stale":
             reason = None
-        superseded_by = closed_by = closed_at = closed_reason = None
+        superseded_by = closed_by = None
         if reason == "withdrawn":
             # One closing record carries every ending; its kind tells them apart.
             closed = evidence.read_withdrawal(row["proposal_id"])
-            if closed is not None and not closed.is_superseded and not missing:
-                # A rejection or a withdrawal: who closed it, when, and the
-                # reason given, as the record (already read here) holds them.
-                closed_by, closed_at, closed_reason = (
-                    closed.actor_id,
-                    closed.withdrawn_at,
-                    closed.reason,
-                )
             if closed is not None and closed.kind == "rejected":
                 reason = "rejected"
             elif closed is not None and closed.is_superseded and not missing:
@@ -557,11 +551,38 @@ def _proposal_entries(
                 ),
                 superseded_by=superseded_by,
                 closed_by=closed_by,
-                closed_at=closed_at,
-                closed_reason=closed_reason,
             )
         )
     return tuple(entries)
+
+
+def _with_closing_details(
+    instance: PlaybillInstance, entries: tuple[PlaybillProposalListEntryV1, ...]
+) -> tuple[PlaybillProposalListEntryV1, ...]:
+    """The entries a caller is about to return, each rejected or withdrawn one
+    with who closed it, when and the reason given.
+
+    Read from the closing record, one keyed read per such entry, and only for
+    the entries handed in: a list page's rows after the page is selected, or
+    the one entry of a by-ID read. The entries a listing filters, pages and
+    pins in its cursor never carry reason text.
+    """
+
+    evidence = instance.proposal_evidence()
+    detailed = []
+    for entry in entries:
+        if entry.terminal_reason in {"rejected", "withdrawn"}:
+            closed = evidence.read_withdrawal(entry.proposal_id)
+            if closed is not None:
+                entry = entry.model_copy(
+                    update={
+                        "closed_by": closed.actor_id,
+                        "closed_at": closed.withdrawn_at,
+                        "closed_reason": closed.reason,
+                    }
+                )
+        detailed.append(entry)
+    return tuple(detailed)
 
 
 @contextmanager
