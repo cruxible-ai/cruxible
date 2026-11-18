@@ -1,4 +1,4 @@
-<!-- Bundled from cruxible 0.0.0 docs/evolving-your-vocabulary.md. -->
+<!-- Bundled from cruxible 0.5.0 docs/evolving-your-vocabulary.md. -->
 
 # Evolving your vocabulary
 

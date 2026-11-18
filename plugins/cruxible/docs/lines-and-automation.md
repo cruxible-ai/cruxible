@@ -1,4 +1,4 @@
-<!-- Bundled from cruxible 0.0.0 docs/lines-and-automation.md. -->
+<!-- Bundled from cruxible 0.5.0 docs/lines-and-automation.md. -->
 
 # Lines and automation
 
