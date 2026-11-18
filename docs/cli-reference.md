@@ -4397,8 +4397,9 @@ names), `Capability:<name>@N`, `Contract:<name>@N`, `query:<name>`,
 adds `next_fire`, its next instant after the read), `Principal:<id>`,
 `Provider:<name>` (each operation with what it serves and its source),
 `ApprovalPolicy:instance`, `ProcedureRuntimePolicy:instance`, an artifact path,
-or a proposal id or prefix (a proposal's status, and for a refusal its code,
-message and repair). A built-in name resolves in the `cruxible.` spelling
+or a proposal id or prefix, with or without `sha256:` (a proposal's status,
+for a refusal its code, message and repair, and for a rejected or withdrawn
+proposal who closed it, when and why). A built-in name resolves in the `cruxible.` spelling
 cards print (`get CaptureContract:cruxible.coordinator-self-source-v1`): a ref
 resolves as written first, and only on a miss through that printed spelling. Operational things resolve too: `ProcedureRun:RUN-…` (or
 the bare run id) answers a run's state, outcomes and terminal detail;
@@ -5069,7 +5070,13 @@ cruxible get PROPOSAL_ID [--detail proof]
 `get` is the one proposal read. Its card names the status, verdict, actor,
 rationale, originating Line and exact digest (when run from a Line), and changes; a refused proposal's card carries every refusal
 diagnostic with its code, message and repair, and `--detail proof` adds the
-admission, evaluation and candidate records.
+admission, evaluation and candidate records. A rejected or withdrawn
+proposal's card adds `closed_by` (the reviewer who rejected it, or the author
+who withdrew it), `closed_at` and `closed_reason` (the `--reason` text,
+whole); `proposal list` prints the same under the row as `rejected by WHO at
+WHEN: REASON`, the reason cut at 200 characters. `get` also takes a proposal
+id without `sha256:`, whole or as a unique prefix of at least 8 hex characters
+(bare or after `Proposal:`), when no artifact has that name.
 
 `cruxible whoami` names the actor and where its ID came from (the
 credential's principal, the configured principal ID, or the local operator),
@@ -5237,7 +5244,8 @@ rejects it with a required `--reason`. It writes the same immutable closing
 record, marked `rejected`, moves the proposal out of the open inventory with
 terminal reason `rejected`, and every settlement door (approve, activate,
 readmit) then refuses `cruxible.proposal_rejected` naming who rejected it, when,
-and why. A proposal's own actor withdraws rather than rejects; rejecting an
+and why. The author reads the same in `get PROPOSAL_ID` (`closed_by`,
+`closed_at`, `closed_reason`) and under the row in `proposal list`. A proposal's own actor withdraws rather than rejects; rejecting an
 already-rejected proposal repeats the first answer, and a withdrawn proposal
 cannot also be rejected. The rejection record keeps each Claim the candidate
 proposed (`refused_claims`): its statement and the Captures it cites, from

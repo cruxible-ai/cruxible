@@ -160,7 +160,10 @@ owner with no further setup. `cruxible orient` and `cruxible next` show it
 what is there and what needs attention, and the kit's governed guidance
 (`cruxible get Document:security.guidance.dependency`) says how to judge an
 exposure. What it proposes waits for the reviewer: a second agent that runs
-the CLI as `reviewer`, as above.
+the CLI as `reviewer`, as above. The agent plugin for Claude Code and Codex
+adds five general skills (`survey`, `adopt-kit`, `create-state`,
+`automate-state` and `review-state`); [For AI agents](for-ai-agents.md#connect)
+says where to find it.
 
 ## 8. Look around in the console
 

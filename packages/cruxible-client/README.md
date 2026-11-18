@@ -471,7 +471,7 @@ Builds a ClaimTypeDraft with explicit object, cardinality, role, evidence, admis
 | `admission_policy` | Required | Typed policy governing Claim admission. |
 | `resolution_policy` | Required | Typed policy governing Claim resolution; separate from acceptance. |
 | `pins` | Required | Declared ArtifactPin dependencies. Exact pins belong to their artifact contract. |
-| `evidence_freshness` | Required | Optional freshness duration. None leaves it unspecified. <!-- TODO(0.5.0): freshness limits note --> |
+| `evidence_freshness` | Required | Optional freshness duration; only a field that sets one ages. None leaves it unspecified. See [freshness in 0.5.0](../../docs/evidence-and-admission.md#what-freshness-does-and-does-not-do-in-050). |
 | `attestation_consequence_policy` | `None` | Optional policy for consequences of accepted signed attestations. |
 | `canonical_form` | `None` | Ordered transforms literal values are stored in; left out, a successor keeps its predecessor's. |
 | `evidence` | `()` | Shaped CaptureContract names that back the field (the short form's `evidence`). Own words and workspace file and section citations need no entry. |
@@ -917,7 +917,7 @@ Activates one proposal and returns its `ActivationReceipt` (`api.ProposalActivat
 proposals(*, status: Literal['open', 'awaiting_readmit', 'settled', 'incomplete'] | None=None, limit: int | None=None, cursor: str | None=None) -> api.ProposalList
 ```
 
-One page of proposals; follow `next_cursor` while `truncated`. Read one with `cx.get(proposal_id)`. `print(page)` shows the table `cruxible proposal list` prints; a proposal the daemon proposed again at the head reads `settled` with reason `superseded` and a `superseded_by` line naming its successor.
+One page of proposals; follow `next_cursor` while `truncated`. Read one with `cx.get(proposal_id)`. `print(page)` shows the table `cruxible proposal list` prints; a proposal the daemon proposed again at the head reads `settled` with reason `superseded` and a `superseded_by` line naming its successor. A rejected or withdrawn entry carries `closed_by`, `closed_at` and `closed_reason`, and `print(page)` shows them under its row (`rejected by reviewer at 2026-11-18T15:29:21.560470Z: ...`, the reason cut at 200 characters; `cx.get` has it whole).
 
 <a id="api-cruxible-refresh-workspace"></a>
 
@@ -1006,7 +1006,7 @@ Reads retained capture metadata and available bytes at cx.coordinate. Does not r
 get(ref: str | TypedRef, *, detail: GetDetail = "summary", range: tuple[int, int] | str | None = None, field: str | ClaimTypeRef | None = None) -> KnowledgeCard
 ```
 
-Reads one thing by reference; the daemon resolves the reference directly (never through search). `ref` is a typed Subject/ClaimType/Claim/Procedure/Query/Source ref (read at its coordinate) or any string an agent sees: `CLM-...` or a unique prefix, `kind/id`, a predicate (full or a unique leaf), `ClaimType:`/`Document:`/`Procedure:`/`query:`/`CaptureContract:<name>`, an artifact path, a proposal id or prefix, or an operational reference (`Line:<name>` or the Line identity digest `next` names, `CAP-<12+ hex>`/`Capture:<digest>`, `ResolutionContract:<name>`, `Mandate:<name>`, `ProcedureRun:<run_id>` or `RUN-<12+ hex>`; their cards live in `cruxible_client.contracts.operational_reads`), or a governance reference: `Trigger:<name>`, `Principal:<id>`, `ApprovalPolicy:instance`, `ProcedureRuntimePolicy:instance`, `Capability:<name>@N`, `Contract:<name>@N`, `Provider:NAME` or `Provider:NAME/BUILD`. A provider name selects its newest live build; tied registrations refuse with the exact builds and a `provider list` repair. Provider summaries use `GetProviderCard`; `history` and `proof` read that exact build. A Claim summary is a `ClaimView`; other summaries are the values-first card (`GetSubjectCard`, `GetClaimTypeCard`, ...) from `cruxible_client.contracts.get_reads`; other details carry their payload (`GetEvidence`, whose `value` is the Claim's whole value; `GetHistory`, newest first, with every page read, each revision with its `change` and `reason`; on a Subject `GetSubjectHistory`: its shell's revisions and every page of its field events (`GetFieldStated`, `GetFieldChanged` with `before`, `GetFieldReobserved`, `GetFieldRetired`), which `field=` narrows to one field; `GetBody`, whose `body_digest` names the whole body even when `range` reads part of it; the explain dict for `why`, on a Claim, Subject or Document; and for `proof` a `ClaimViewRecord` on a Claim or the envelope dict otherwise). A summary card shows a string value over 500 characters as a `TruncatedText` (`cruxible_client.contracts.read_values`: `preview`, `length`, and `read_whole`, the exact `{ref, detail, at}` read of the whole value at the generation it was previewed at), never as the value; `cx.read_whole(preview)` makes that read. An object value is a `ShownObject` (`object`, the value whole), so an object shaped like a preview or marker never reads as one. Query rows and Claim cells, `World.values` and write outcomes use the same types; a plain query row cell and a write's `after` name no `read_whole` (use `claims=True` for a cell's Claims; `after` is the value the write sent). The card's `coordinate` is the full accepted coordinate: the SDK asks the daemon for it (`full_coordinate`), where MCP and CLI summaries carry only the 12-hex git oid prefix and generation.
+Reads one thing by reference; the daemon resolves the reference directly (never through search). `ref` is a typed Subject/ClaimType/Claim/Procedure/Query/Source ref (read at its coordinate) or any string an agent sees: `CLM-...` or a unique prefix, `kind/id`, a predicate (full or a unique leaf), `ClaimType:`/`Document:`/`Procedure:`/`query:`/`CaptureContract:<name>`, an artifact path, a proposal id or prefix (with or without `sha256:`; without it, the whole hex id or at least 8 hex characters), or an operational reference (`Line:<name>` or the Line identity digest `next` names, `CAP-<12+ hex>`/`Capture:<digest>`, `ResolutionContract:<name>`, `Mandate:<name>`, `ProcedureRun:<run_id>` or `RUN-<12+ hex>`; their cards live in `cruxible_client.contracts.operational_reads`), or a governance reference: `Trigger:<name>`, `Principal:<id>`, `ApprovalPolicy:instance`, `ProcedureRuntimePolicy:instance`, `Capability:<name>@N`, `Contract:<name>@N`, `Provider:NAME` or `Provider:NAME/BUILD`. A provider name selects its newest live build; tied registrations refuse with the exact builds and a `provider list` repair. Provider summaries use `GetProviderCard`; `history` and `proof` read that exact build. A Claim summary is a `ClaimView`; other summaries are the values-first card (`GetSubjectCard`, `GetClaimTypeCard`, ...) from `cruxible_client.contracts.get_reads`; other details carry their payload (`GetEvidence`, whose `value` is the Claim's whole value; `GetHistory`, newest first, with every page read, each revision with its `change` and `reason`; on a Subject `GetSubjectHistory`: its shell's revisions and every page of its field events (`GetFieldStated`, `GetFieldChanged` with `before`, `GetFieldReobserved`, `GetFieldRetired`), which `field=` narrows to one field; `GetBody`, whose `body_digest` names the whole body even when `range` reads part of it; the explain dict for `why`, on a Claim, Subject or Document; and for `proof` a `ClaimViewRecord` on a Claim or the envelope dict otherwise). A summary card shows a string value over 500 characters as a `TruncatedText` (`cruxible_client.contracts.read_values`: `preview`, `length`, and `read_whole`, the exact `{ref, detail, at}` read of the whole value at the generation it was previewed at), never as the value; `cx.read_whole(preview)` makes that read. An object value is a `ShownObject` (`object`, the value whole), so an object shaped like a preview or marker never reads as one. Query rows and Claim cells, `World.values` and write outcomes use the same types; a plain query row cell and a write's `after` name no `read_whole` (use `claims=True` for a cell's Claims; `after` is the value the write sent). The card's `coordinate` is the full accepted coordinate: the SDK asks the daemon for it (`full_coordinate`), where MCP and CLI summaries carry only the 12-hex git oid prefix and generation.
 
 A Subject card read at the head lists `pending`: the open proposals that would write its fields (`proposal`, `fields`, `by`), while its values stay the accepted ones. Its `next` names `cx.backlinks(subject)` when a note or a cited section points at it, and `cx.get(proposal)` for each pending proposal. In `GetEvidence`, each Capture's `byte_length` says how many bytes it holds.
 
@@ -1251,7 +1251,7 @@ Creates a governed proposal for an independent resolution contract over an alrea
 
 **Conditions and effects:** Does not approve or accept the proposal.
 
-<!-- TODO(0.5.0): freshness limits note -->
+Settlement has known limits in 0.5.0; see [freshness in 0.5.0](../../docs/evidence-and-admission.md#what-freshness-does-and-does-not-do-in-050).
 
 | Parameter | Default | Meaning |
 |---|---|---|
@@ -1278,7 +1278,7 @@ Evaluates and records settlement for a prediction named by contract name or boun
 
 **Conditions and effects:** terminal_run_id and terminal_record_digest must be supplied together. Missing/non-Boolean outcome refuses; procedure success alone is not settlement.
 
-<!-- TODO(0.5.0): freshness limits note -->
+An observation counts at the time its Claim version was accepted, or at that version's own per-Claim re-check observed by the window's close; the identical bytes and row sets that keep a Claim fresh do not settle a prediction. See [freshness in 0.5.0](../../docs/evidence-and-admission.md#what-freshness-does-and-does-not-do-in-050).
 
 | Parameter | Default | Meaning |
 |---|---|---|
@@ -1335,7 +1335,7 @@ Scans the attached workspace and reads actionable work with explicit access prof
 
 | Parameter | Default | Meaning |
 |---|---|---|
-| `expiring_within` | `None` (seven days) | A `cruxible_client.Duration`: how far ahead expiring evidence counts. <!-- TODO(0.5.0): freshness limits note --> |
+| `expiring_within` | `None` (seven days) | A `cruxible_client.Duration`: how far ahead expiring evidence counts. Only fields that set `stale_after` expire; see [freshness in 0.5.0](../../docs/evidence-and-admission.md#what-freshness-does-and-does-not-do-in-050). |
 
 <a id="api-cruxible-duplicates"></a>
 
@@ -2619,7 +2619,7 @@ Recompiles retained authoring/write or Procedure input at head (other origins re
 reject(reason: str, *, dry_run: bool | None=None, at: str | None=None) -> api.ProposalRejectResult
 ```
 
-A reviewer's terminal statement on another actor's open or stale proposal, with the reason its author reads: the proposal leaves the open inventory and every settlement door refuses it. Your own proposal you withdraw instead (the refusal says so). Needs graph write; `dry_run=True` checks it and records nothing.
+A reviewer's terminal statement on another actor's open or stale proposal, with the reason its author reads: the proposal leaves the open inventory and every settlement door refuses it. Your own proposal you withdraw instead (the refusal says so). Needs graph write; `dry_run=True` checks it and records nothing. The author reads who rejected it, when and why as `closed_by`, `closed_at` and `closed_reason` on `cx.get(proposal_id)` (the reason whole) and on its `cx.proposals()` entry; a withdrawn proposal carries the same three, with its author as `closed_by`.
 
 <a id="api-proposal-withdraw"></a>
 

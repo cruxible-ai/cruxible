@@ -499,6 +499,16 @@ one reads the source on a schedule, and the other runs on what it read. The
 daemon's own housekeeping (floor refresh, evidence sweeps) also runs on
 Triggers; see [Internal triggers](cli-reference.md#internal-triggers).
 
+A run in which no source changed stores no new document and fires no Trigger,
+and its values are counted `unchanged`. It still appends its run records to
+the instance's journal: the journal grows with every run by design, no
+command prunes it, and it is part of the instance, backed up with the ledger
+([Isolated deployment](isolated-deployment.md#recovery)). When a source's raw
+response changes without changing what is derived from it (a vulnerability
+database editing an advisory's metadata, say), the derived document is
+recorded again with its new inputs and its Trigger runs once more; that run
+changes no Claim and adds no new inbox item.
+
 ## What a Line may do
 
 A Line's `max_authority` caps it, and anything past observing also needs a
@@ -643,12 +653,15 @@ repair  line_inbox_unread  Line:catalog.acme-notices  next=cruxible.inbox.list
 ...
 
 $ cruxible inbox list --line catalog.acme-notices --status unread
-STATUS  ITEM  LINE  SEEN  LAST_POSTED
-unread  INB-961a51ad102e  Line:catalog.acme-notices  -  2026-11-16T03:18:10.513063+00:00
-  {"notice": "2026-10-21 Price change: all wiper blades up 5% from 2026-11-01."}
-unread  INB-877f3d1e627e  Line:catalog.acme-notices  -  2026-11-16T03:18:10.513063+00:00
-  {"notice": "2026-10-20 Recall: bp-2210 ceramic pads, batch 4471, may delaminate under heavy braking."}
+STATUS  ITEM  LINE  KIND  SEEN  TITLE
+unread  INB-961a51ad102e  Line:catalog.acme-notices  post  1  {"notice":"2026-10-21 Price change: all wiper blades up 5% from 2026-11-01."}
+unread  INB-877f3d1e627e  Line:catalog.acme-notices  post  1  {"notice":"2026-10-20 Recall: bp-2210 ceramic pads, batch 4471, may delaminate …
 ~~~
+
+Each row is the item's status, id, Line, the step that posted it (`KIND`),
+how many times it was posted (`SEEN`) and a one-line title: the payload's
+`title`, `name`, `summary`, `subject` or `id` field when it has one, otherwise
+the payload itself, cut at 80 characters.
 
 An inbox item is a call for attention, not storage. When the list already
 exists as state (a Query answers it) or as evidence (a Capture holds it), post
@@ -713,12 +726,17 @@ the same rows twice:
 
 ~~~text
 $ cruxible inbox list --line catalog.acme-notices
-STATUS  ITEM  LINE  SEEN  LAST_POSTED
+STATUS  ITEM  LINE  KIND  SEEN  TITLE
+dismissed  INB-961a51ad102e  Line:catalog.acme-notices  post  2  {"notice":"2026-10-21 Price change: all wiper blades up 5% from 2026-11-01."}
+linked  INB-877f3d1e627e  Line:catalog.acme-notices  post  2  {"notice":"2026-10-20 Recall: bp-2210 ceramic pads, batch 4471, may delaminate …
+
+$ cruxible inbox get INB-961a51ad102e
 dismissed (+1 since)  INB-961a51ad102e  Line:catalog.acme-notices  x2  2026-11-16T03:18:48.151453+00:00
-  {"notice": "2026-10-21 Price change: all wiper blades up 5% from 2026-11-01."}
-linked (+1 since)  INB-877f3d1e627e  Line:catalog.acme-notices  x2  2026-11-16T03:18:48.151453+00:00
-  {"notice": "2026-10-20 Recall: bp-2210 ceramic pads, batch 4471, may delaminate under heavy braking."}
+...
 ~~~
+
+`inbox get` (and the line `ack`, `dismiss` and `link` print) says how often a
+decided item was posted again since your decision.
 
 An item you linked to a proposal comes back unread if that proposal is
 rejected or withdrawn, since your decision no longer stands.
@@ -855,14 +873,24 @@ attestations.
       role: observation
 ```
 
+The subject's `create` is `never` (the default: the run does not create a
+Subject) or `if_absent`: the run creates the Subject when no live Subject has
+that key, and the node line counts it (`Node step_3 claims succeeded: 1
+written, 1 subjects created; settled`). In the SDK's Sequence builder the same
+subject is `subject={"kind": "shop.item", "key": {"sku": item("key", "sku")},
+"create": "if_absent"}`.
+
 Each ClaimType declares its `value` with the Contract field grammar. Its
 `precedence.roles` orders roles from highest to lowest;
 `precedence.revisable_by_procedures` lists the roles Procedures may replace.
 A mapping's optional `replaces` can only narrow that policy. The same extracted
-value and record key produce a re-observation of the new Capture, even when
-source bytes, the extract specification or the Procedure version change. The
-re-observation records the new production receipt; the Claim keeps its original
-receipt, the accepted generation stays unchanged, and freshness advances. A one-valued slot revises
+value and record key make no new Claim version, even when source bytes, the
+extract specification or the Procedure version change: the Claim keeps its
+original receipt, the accepted generation stays unchanged, and freshness
+advances, through the run's observation of the same row, or, when another
+field of the record changed, through a per-Claim re-observation that records
+the new Capture ([what freshness does in
+0.5.0](evidence-and-admission.md#what-freshness-does-and-does-not-do-in-050)). A one-valued slot revises
 its one eligible holder when the value changes; several eligible holders
 report `slot_contested`. A protected holder with the same value is a counted,
 quiet no-op; a different value reports `held_disagrees` with both values.

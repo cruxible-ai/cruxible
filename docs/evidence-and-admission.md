@@ -303,6 +303,47 @@ accepted (generation 15, 65a4644294d3)
 A Line can do the re-checking on a schedule; see [Lines and
 automation](lines-and-automation.md).
 
+### What freshness does and does not do in 0.5.0
+
+Freshness windows and prediction settlement have known limits in this
+release, and both are being redesigned. What the build does today:
+
+- **Only fields that declare a window age.** `stale_after` applies to the
+  fields whose ClaimType sets `evidence_freshness`; a field without one never
+  goes stale from age. A none (an inverse) uses its own `stale_after` when it
+  declares one, else its field's.
+- **What counts as seen again.** A Claim's age counts from the latest of
+  these, and none of them revises the Claim or makes a generation:
+  - a fetch that returns exactly the bytes a cited Capture holds, under the
+    same contract, whichever run made it and whether or not that run restated
+    the Claim;
+  - for a Claim a Procedure extracted from a record, an extract step that
+    reads a row set still holding the Claim's row (the same contract, source,
+    record key and typed values), in whatever bytes;
+  - a per-Claim re-check: a run restating the Claim from a record whose other
+    fields changed, a write restating it on a new Capture of content it
+    already cites, or a complete run reconfirming a held none.
+- **What does not.** Nothing refreshes a Claim on its own. When the Line that
+  re-reads its source stops (disabled, failing, or no longer reaching the
+  record), the Claim ages: `next` warns `evidence_expiring`, then lists
+  `claim_stale_evidence`. A value computed by `derive` or `aggregate`, or
+  parsed by a provider, refreshes only when the exact bytes it cites are
+  observed again. A record's typed values come from the definitions its
+  extract reads; if a definition changes between runs so that the same
+  record types differently, the row observations of that record stop
+  counting for its Claims, which then refresh only from identical bytes or a
+  per-Claim re-check.
+- **Where it is kept.** These observations are recorded in the instance's
+  `exhaust/` journal, not in the ledger. A deleted journal cannot be
+  recovered; freshness then counts from when each cited Capture was first
+  observed. Back up `exhaust/` with the ledger.
+- **Predictions.** A prediction settles on the observation Claim version
+  accepted inside its window, or on that version's own per-Claim re-checks
+  observed by the window's close. Identical bytes and identical row sets keep
+  a Claim fresh but do not settle a prediction, so an unchanged value
+  refreshed only that way settles nothing until a per-Claim re-check or a new
+  version lands inside the window ([Predictions](concepts.md#predictions)).
+
 ## Citation or Document
 
 A **citation** commits to the exact bytes it quotes. It stays current as long

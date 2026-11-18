@@ -140,7 +140,8 @@ Held: not activated. Next: cruxible proposal activate sha256:93339c6f…
 If other changes were accepted after a proposal was checked, approving or
 activating proposes it again against the current state, as a fresh proposal
 that replaces the old one; approvals given to the old one don't carry over.
-The old one closes as `superseded`: `get` and `proposal list` show
+The new one is judged no earlier than the old one was proposed, so `proposal
+review` shows the verdicts it will land with. The old one closes as `superseded`: `get` and `proposal list` show
 `superseded_by` (the new proposal) and who closed it (`closed_by`, the
 principal who approved, activated or readmitted, often not its author). The
 receipts name the old one (`readmits`), and the CLI says `Landed at the head
@@ -200,6 +201,36 @@ accepted refuses `cruxible.proposal.already_accepted`. A stale field proposal fr
 A reviewer who decides a change shouldn't land rejects it, saying why
 (`proposal reject ID --reason "…"`); an author drops their own proposal with
 `proposal withdraw ID --reason "…"`.
+
+The author reads the reason where they read the proposal. `proposal list`
+prints who closed it, when and why under its row (the reason cut at 200
+characters), and `get` prints the reason whole as `closed_reason`:
+
+~~~text
+$ cruxible proposal list
+STATUS  TERMINAL_REASON  PROPOSAL_ID  TARGET_REF  COORDINATE_TIME
+...
+settled  rejected  sha256:d446f1dc…  refs/proposals/owner/intent-9df46499…  2026-11-18T15:29:12.850970Z
+  rejected by reviewer at 2026-11-18T15:29:21.560470Z: The November list is not out yet; cite the October price list or wait for November.
+
+$ cruxible get d446f1dc
+proposal: sha256:d446f1dc3889f1a2e3275fdb9814ee330e868b5e2a083153d2f8c199f4a04065
+status: settled
+verdict: candidate
+reason: rejected
+closed_by: reviewer
+closed_at: 2026-11-18T15:29:21.560470Z
+closed_reason: The November list is not out yet; cite the October price list or wait for November.
+actor: owner
+...
+~~~
+
+A withdrawn proposal reads the same way, with its author as `closed_by`. The
+SDK's `cx.get(ID)` and each `cx.proposals()` entry, and MCP's `cruxible_get`
+and `cruxible_proposal_list`, carry the same `closed_by`, `closed_at` and
+`closed_reason`. `get` takes a proposal id with or without `sha256:`, whole or
+as a unique prefix of at least 8 hex characters; the `proposal` commands take
+the `sha256:` form.
 
 ### A second agent reviews
 

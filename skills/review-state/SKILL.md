@@ -5,8 +5,8 @@ description: Diagnose requested questions about Cruxible state, evidence, propos
 
 # Review state
 
-An instance describes its own vocabulary through `cruxible orient`,
-ClaimType descriptions, named queries and governed Documents linked by
+An instance describes its own vocabulary through `cruxible orient` (the
+index), ClaimType descriptions (`cruxible get ClaimType:NAME`), named queries and governed Documents linked by
 `guides`. Read the part relevant to the user's question. A requested diagnosis
 does not imply an audit of every kind or permission to repair the instance.
 

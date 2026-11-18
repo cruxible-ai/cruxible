@@ -332,7 +332,8 @@ field cannot be written faithfully, export refuses once, naming each one).
 Export writes every field's `permitted_roles`, and `evidence_requirement:
 captured` where a field has it, so applying an export unchanged plans no
 change.
-<!-- TODO(0.5.0): freshness limits note -->
+`stale_after` ages only the fields that declare it, and freshness has known
+limits in 0.5.0: see what freshness does and does not do.
 
 **Evidence.** Own words, and workspace file and section citations, back every
 field that is not `evidence_requirement: captured`; none of them needs a rule.
