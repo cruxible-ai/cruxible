@@ -661,8 +661,8 @@ Approve and activate on a proposal whose base moved behave as `cruxible proposal
 CaptureContract input uses the closed shapes `http_response`, `procedure_output`,
 `foreign_span`, `database_snapshot`. Defaults: `grade: observed`, `replay: attested`
 for HTTP and `exact` otherwise, `retention: P30D`, `erasable: false`,
-`max_bytes: 16777216`, `selector_privacy: direct_allowed`. Derived grade requires
-`procedure_output`. The engine supplies components; clients author this compact
+`max_bytes: 16777216`, `selector_privacy: direct_allowed`. Derived grade (a
+provider derive's output) is declared on `http_response`. The engine supplies components; clients author this compact
 form. A rule's `capture_contracts` accepts names or
 `{contract: NAME, logical_sources: [SOURCE]}`. Empty sources means any; a
 restricted entry matches the external Capture's recorded source and cannot

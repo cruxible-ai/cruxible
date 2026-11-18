@@ -190,8 +190,10 @@ with the authored form:
 `--template --expanded` includes its defaults. Propose it with `--input FILE`.
 The shapes are `http_response`, `procedure_output`, `foreign_span` and
 `database_snapshot`. Grade defaults to `observed`; a `derived` kind (a
-derive's output) takes `procedure_output`, `http_response` or `foreign_span`
-and declares `json` or `csv` decoding, so an extract can read it. Replay
+provider derive's output) is declared on `http_response` with `replay:
+attested`, and declares `json` or `csv` decoding, so an extract can read it.
+A provider's output cannot land as a `procedure_output` kind in this release:
+the run fails with `provider_protocol_violation`. Replay
 defaults to `attested` for HTTP responses and `exact` otherwise. Retention defaults to `P30D`, `erasable` to `false`,
 `max_bytes` to 16777216, and `selector_privacy` to `direct_allowed`.
 The engine supplies the component definitions. An edit keeps omitted fields;
