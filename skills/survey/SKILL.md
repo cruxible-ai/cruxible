@@ -31,12 +31,17 @@ than a complete mirror nobody queries.
 The assessment names, in the project's own words: the few kinds of thing that
 recur (what each one is and what identifies it across sessions), the handful
 of fields per kind that carry the conclusions and changing facts above, which
-fields are judgments (reviewed, cited) and which are observations of a
-source, the documents that stay documents, and what was left out on purpose.
+fields are judgments (reviewed, cited) and which are read off a source, the
+documents that stay documents, and what was left out on purpose. A value read
+off one of the project's own files is an ordinary field that cites the file
+line; the observation role is for fields a Procedure or Line keeps current
+from captured payloads, and a field limited to it requires that captured
+evidence. Move a field there when such automation exists.
 Where a published kit already models the domain, say so: `adopt-kit` starts
 from it, and its vocabulary can be revised like any definition. State whose
 job is tracking the project's own work (roadmap items, decisions, rulings)
-is what the project-state kit models.
+is what the project-state kit models; `cruxible kit add REFERENCE` previews a
+kit's vocabulary without writing anything.
 
 Setting up follows the user's agreement. `cruxible init` attaches the project
 and proposes the base kit. The default sets up a second, reviewing principal
@@ -50,10 +55,14 @@ shows what waits for whom. The first vocabulary goes in
 the bundled [vocabulary reference](../../docs/evolving-your-vocabulary.md)
 gives its format and what each later change costs. Start with what the
 assessment named and no more: adding a field or a kind later costs nothing,
-while narrowing one means re-authoring its Claims.
+while narrowing one means re-authoring its Claims. Each field's description
+says what its value means; a later session reads it with `cruxible get
+ClaimType:NAME`, so a meaning left out of the description is lost.
 
 Then record a first few real values, each citing the passage or file it came
-from, and read them back with `cruxible get` and `cruxible orient`.
+from, and read them back with `cruxible get` and `cruxible orient`. Several
+values and the Subjects they are about can go in one `cruxible write FILE`
+(`--dry-run` first; `cruxible write --schema` gives the file's shapes).
 `create-state` covers writes, evidence and vocabulary changes from there;
 [governance](../_shared/references/governance-flow.md) covers proposals that
 wait for review. Report the assessment as agreed, the accepted references and
