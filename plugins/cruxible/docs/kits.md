@@ -327,6 +327,23 @@ kit.
   the address it checked, so DNS rebinding cannot reach behind it. It needs
   direct outbound access and fetches pages as served. Any package whose
   operation serves `web.fetch` and fits fills the same slots.
+- **From a wheel file.** A built wheel installs without the index, on an
+  instance with no kit: pass the lock it was built with and each locked
+  dependency wheel. The client reads the files and sends their bytes, so this
+  also works against a remote daemon. Here under an approval policy, so it
+  stops at a proposal:
+
+  ~~~text
+  $ cruxible provider install ./cruxible_provider_web-0.7.0-py3-none-any.whl \
+      --lock ./cruxible-provider-web-0.7.0.uv.lock \
+      --dependency ./cruxible_provider_runtime-0.5.0-py3-none-any.whl --commit
+  cruxible-provider-web/f3543a2990f61a7aaab8bfcd7263fc0334577142e7ef1ee40de389ab68373e93: awaiting_approval
+  Installation and registration grant no execution permissions. Runtime resources require verification.
+  Proposal: sha256:7e748e91dc8d94ddbbe867c1d906e536a4fd41c356342ac4f20064734cd4d624
+  ...
+  ~~~
+
+  `--dry-run` previews an install by name only; a local wheel refuses it.
 - **From a kit.** A kit's own domain provider arrives bundled in the kit; a
   kit's default provider is installed by name when the kit is added and the
   kit's slots are not already served here.

@@ -1,7 +1,9 @@
 # Cruxible agent plugin
 
 One plugin supplies five general skills and a lean MCP client of the Cruxible
-daemon. The instance's ClaimTypes, governed guidance Documents and Runbooks
+daemon. `survey` assesses a project with no instance or kit and sets up a
+first small vocabulary; `adopt-kit` starts from a kit; `create-state`,
+`automate-state` and `review-state` cover the work after that. The instance's ClaimTypes, governed guidance Documents and Runbooks
 describe the domain. The plugin contains no kit-specific audit method.
 
 ## Package and install
