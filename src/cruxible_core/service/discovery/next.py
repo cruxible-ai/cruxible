@@ -103,6 +103,7 @@ from cruxible_client.contracts.procedures.line_specs import (
 from cruxible_client.contracts.public_names import public_name
 from cruxible_client.contracts.refusal_receipts import PriorRefusalCoverage
 from cruxible_client.contracts.repair_spelling import (
+    CLI_ONLY_OPERATIONS,
     _mcp_call,
     _sdk_example,
 )
@@ -893,12 +894,18 @@ _REPAIR_TOOLS: Mapping[str, str | None] = {
     "cruxible.line.enable": "cruxible_line_enable",
     "cruxible.line.evaluate": "cruxible_line_evaluate",
     "cruxible.line.dispatch": "cruxible_line_dispatch",
+    "cruxible.runbook.run": "cruxible_runbook_run",
+    "cruxible.action.run": "cruxible_action_run",
     "cruxible.inbox.list": "cruxible_inbox_list",
     "cruxible.prediction.settle": "cruxible_prediction_settle",
     "cruxible.kit.add": "cruxible_kit_add",
     "cruxible.vocabulary.export": "cruxible_vocabulary_export",
     "hand_edit": None,
 }
+#: Repairs only the CLI performs (no MCP tool, no SDK method): an MCP caller is
+#: not told it needs another tool profile; its row's command is the CLI one,
+#: saying so (``next_repair_command``).
+_CLI_ONLY_REPAIRS = CLI_ONLY_OPERATIONS
 _GOVERNED_WRITE_RUNG = 1
 #: Repairs whose served door writes nothing and so never meets the principal
 #: boundary; every other served repair is refused to a caller that cannot author.
@@ -910,9 +917,10 @@ _AUTHORING_FREE_REPAIRS = frozenset(
 def _tool_rung(tool: str) -> int:
     """The least caller rung (``PermissionMode.value - 1``) a tool runs at."""
 
-    from cruxible_core.runtime.permissions import TOOL_PERMISSIONS
+    from cruxible_core.runtime.permissions import PERMISSION_REQUIREMENTS
 
-    return int(TOOL_PERMISSIONS[tool]) - 1
+    # A CLI-only door (``action run``) is a runtime operation, not an MCP tool.
+    return int(PERMISSION_REQUIREMENTS[tool]) - 1
 
 
 #: The most contenders a contest row offers a keep-one option for.
@@ -4705,9 +4713,29 @@ def _line_attention_items(
 
     gaps, pending = line_attention(instance, now=evaluation_time)
     items: list[PlaybillNextItemV1] = []
+    # A cadence or cron Trigger's instants in the Line's uncovered ranges, summed
+    # across every range into one row per Trigger: its first and last missed
+    # instant and the count. Its repair evaluates the earliest range holding its
+    # instants; once that range is covered the row moves on to the next one.
+    missed: dict[tuple[str, str], list[Any]] = {}
     for gap in gaps:
         line = gap.line.removeprefix("Line:")
         since, until = format_datetime(gap.since), format_datetime(gap.until)
+        evaluate = PlaybillNextRepairV1(
+            operation="cruxible.line.evaluate",
+            target=gap.line,
+            required_change="evaluate_the_uncovered_range_then_dispatch_what_it_finds",
+            arguments={"line": line, "since": since, "until": until},
+        )
+        if gap.missed:
+            for trigger, first, last, count in gap.missed:
+                held = missed.get((gap.line, trigger))
+                if held is None:
+                    missed[(gap.line, trigger)] = [first, last, count, evaluate]
+                else:
+                    held[0], held[1] = min(held[0], first), max(held[1], last)
+                    held[2] += count
+            continue
         items.append(
             _item(
                 severity="repair",
@@ -4726,6 +4754,12 @@ def _line_attention_items(
                 ),
             )
         )
+    items.extend(
+        _missed_instants_item(
+            trigger, target=target, first=first, last=last, count=count, repair=repair
+        )
+        for (target, trigger), (first, last, count, repair) in missed.items()
+    )
     for work in pending:
         items.append(
             _item(
@@ -4746,6 +4780,126 @@ def _line_attention_items(
                     required_change="dispatch_the_lines_pending_work",
                     arguments={"line": work.line.removeprefix("Line:")},
                 ),
+            )
+        )
+    return tuple(items)
+
+
+def _missed_record_binds(row: Any, current: Any) -> bool:
+    """Whether a missed-instants record is the live Trigger version's own.
+
+    A v8 record names its Trigger version. One migrated from v7 names none
+    (``version=''``): it binds only when it fires the same target and the live
+    version was already accepted when its first instant fell due -- otherwise a
+    succession (retarget or reschedule) may have come after the outage, and
+    the record is conservatively its predecessor's.
+    """
+
+    if row.version:
+        return bool(row.version == current.version)
+    return bool(row.action == current.action and current.accepted_at <= row.first_due)
+
+
+def _missed_instants_item(
+    trigger: str,
+    *,
+    target: str,
+    first: datetime,
+    last: datetime,
+    count: int,
+    repair: PlaybillNextRepairV1,
+) -> PlaybillNextItemV1:
+    return _item(
+        severity="repair",
+        reason="trigger_instants_missed",
+        subject_identity=trigger,
+        # An action is no artifact a reader can `get`; a Runbook or Line is.
+        related_identities=() if target.startswith("action ") else (target,),
+        detail={
+            "since": format_datetime(first),
+            "until": format_datetime(last),
+            "count": count,
+            "target": target,
+            "detail": (
+                "Its scheduled instants fell due while no daemon ran; they are skipped, "
+                "never run late."
+            ),
+        },
+        repair=repair,
+    )
+
+
+def _trigger_missed_items(
+    instance: PlaybillInstance,
+    *,
+    access_profile: CoverageAccessProfile,
+) -> tuple[PlaybillNextItemV1, ...]:
+    """Authored timer Triggers aimed at a Runbook or an action that missed instants.
+
+    The first evaluation after a restart records, per timer, the instants that
+    fell due while no daemon ran; this reads that record (one row per timer),
+    the live Triggers at the head (read once per generation), and per row one
+    seek for the target's latest run. A row stands until its target runs after
+    the restart: a run of the Runbook, or a fire of the action, scheduled or
+    by hand. Line targets are read from the Line's own coverage gaps.
+    """
+
+    if not access_profile.permits("instance"):
+        return ()
+    from cruxible_client.contracts.triggers import RUNBOOK_FIRE_PREFIX, UNSERVED_INTERNAL_ACTIONS
+    from cruxible_core.service.runbooks import latest_runbook_run
+    from cruxible_core.triggers.journal import (
+        internal_triggers,
+        last_fired_at,
+        missed_trigger_instants,
+    )
+
+    missed = missed_trigger_instants(instance)
+    if not missed:
+        return ()
+    live = {item.trigger: item for item in internal_triggers(instance)}
+    items = []
+    for row in missed:
+        current = live.get(row.trigger)
+        if row.action in UNSERVED_INTERNAL_ACTIONS:
+            # An accepted Trigger aimed at an action this release does not
+            # serve: nothing runs it, and its repair would refuse.
+            continue
+        if current is None or not _missed_record_binds(row, current):
+            # Retired, or succeeded since (another target or schedule): the
+            # record is its predecessor's, and nothing owes it now.
+            continue
+        if row.action.startswith(RUNBOOK_FIRE_PREFIX):
+            runbook = row.action.removeprefix(RUNBOOK_FIRE_PREFIX)
+            ran = latest_runbook_run(instance, runbook)
+            if ran is not None and ran.started_at >= row.restarted_at:
+                continue
+            target = f"Runbook:{runbook}"
+            repair = PlaybillNextRepairV1(
+                operation="cruxible.runbook.run",
+                target=target,
+                required_change="run_the_target_now_or_let_its_next_instant_run_it",
+                arguments={"runbook": runbook},
+            )
+        else:
+            fired = last_fired_at(instance, action=row.action)
+            if fired is not None and fired >= row.restarted_at:
+                continue
+            target = f"action {row.action}"
+            repair = PlaybillNextRepairV1(
+                operation="cruxible.action.run",
+                target=target,
+                required_change="run_the_target_now_or_let_its_next_instant_run_it",
+                arguments={"action": row.action},
+            )
+        items.append(
+            _missed_instants_item(
+                row.trigger,
+                target=target,
+                first=row.first_due,
+                last=row.last_due,
+                count=row.count,
+                repair=repair,
             )
         )
     return tuple(items)
@@ -5249,7 +5403,8 @@ def _triggers_health(
     delivery_enabled = record is not None and record.floor_delivery
     # Workspace delivery defaults on when attached: an instance with it disabled
     # needs no floor schedule. Findings actions retain their existing advisory.
-    # An opt-in action (curation detection, beta) is expected to be unscheduled.
+    # An opt-in action (curation detection, not served in this release) is
+    # expected to be unscheduled.
     unscheduled = [
         action
         for action, spec in INTERNAL_ACTIONS.items()
@@ -6327,8 +6482,9 @@ class _CallerView:
 
     def _required_rung(self, repair: PlaybillNextRepairV1, tool: str) -> int:
         static = _tool_rung(tool)
-        if repair.operation == "cruxible.line.evaluate":
-            # The tool's own tier is a dry-run read; enqueueing the range writes.
+        if repair.operation in {"cruxible.line.evaluate", "cruxible.runbook.run"}:
+            # The tool's own tier is a dry-run read; enqueueing the range, or
+            # running steps that retain their journals, writes.
             return _GOVERNED_WRITE_RUNG
         if repair.operation == "cruxible.block.sync" and self.surface not in ("mcp", "sdk"):
             # The tool's own tier is a pure check. The CLI's rendering of
@@ -6365,7 +6521,12 @@ class _CallerView:
         tool = _REPAIR_TOOLS[repair.operation]
         if tool is None:
             return None
-        unadvertised = self.surface == "mcp" and self.tools is not None and tool not in self.tools
+        unadvertised = (
+            self.surface == "mcp"
+            and self.tools is not None
+            and tool not in self.tools
+            and repair.operation not in _CLI_ONLY_REPAIRS
+        )
         unauthored = (
             self.authoring_refusal is not None and repair.operation not in _AUTHORING_FREE_REPAIRS
         )
@@ -6734,6 +6895,7 @@ def _queue_at(
         *_line_attention_items(
             instance, evaluation_time=request.evaluation_time, access_profile=request.access_profile
         ),
+        *_trigger_missed_items(instance, access_profile=request.access_profile),
         *_line_settled_refusal_items(
             instance, coordinate=coordinate, access_profile=request.access_profile
         ),
@@ -6788,6 +6950,7 @@ def _queue_at(
 #: which it awaits approval), and the prediction window's close.
 _SINCE_FROM_DETAIL: Mapping[str, tuple[str, ...]] = {
     "line_coverage_gap": ("since",),
+    "trigger_instants_missed": ("since",),
     "line_work_pending": ("oldest_eligible_at",),
     "line_run_failed": ("finalized_at",),
     "claim_contradicting_evidence_available": ("attested_at",),

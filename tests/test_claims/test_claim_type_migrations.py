@@ -1117,7 +1117,6 @@ def test_migration_surfaces_nonblocking_policy_and_source_lint(
     successor = _decision_only_successor(instance, enum=["blocked", "ready"]).model_copy(
         update={
             "evidence_admission_policy": {"rules": []},
-            "anticipated_source_ids": ("corpus.runbook",),
         }
     )
 
@@ -1130,7 +1129,6 @@ def test_migration_surfaces_nonblocking_policy_and_source_lint(
     assert result.lint is not None
     assert {warning.code for warning in result.lint.warnings} == {
         "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
-        "cruxible.claim_type.anticipated_source_contract_omitted",
         "cruxible.claim_type.description_missing",
     }
 

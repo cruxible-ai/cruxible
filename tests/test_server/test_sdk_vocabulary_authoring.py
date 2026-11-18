@@ -104,7 +104,6 @@ def _drafted_field(cx: Cruxible, name: str, value: object) -> object:
         cardinality="one",
         permitted_roles=["normative"],
         referent_sensitivity="identity",
-        sources=[],
         admission_policy=ClaimAdmissionPolicy(),
         resolution_policy=ClaimResolutionPolicy(
             cardinality="one", eligible_verdicts=("supported",), selector="only_contender"

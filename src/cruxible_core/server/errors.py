@@ -65,7 +65,7 @@ from cruxible_core.errors import (
 from cruxible_core.evidence.claim_attestation_store import ClaimAttestationStoreError
 from cruxible_core.service.claims.claim_types import ClaimTypeNotFoundError
 from cruxible_core.service.discovery.audit import AuditError
-from cruxible_core.service.discovery.curation import CurationError
+from cruxible_core.service.discovery.block_observations import BlockObservationInvalid
 from cruxible_core.service.discovery.next import NextError
 from cruxible_core.service.discovery.since import SinceError
 from cruxible_core.service.procedures.predictions import PredictionRefused
@@ -220,7 +220,7 @@ def _status_for_error(exc: CoreError) -> int:
             DocumentFormatError,
             FormatError,
             AuditError,
-            CurationError,
+            BlockObservationInvalid,
             NextError,
             SinceError,
             ReviewOperationalStoreError,

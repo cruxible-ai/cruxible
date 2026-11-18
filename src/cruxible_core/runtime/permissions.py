@@ -119,13 +119,8 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_inbox_link": PermissionMode.GOVERNED_WRITE,
     "cruxible_since": PermissionMode.READ_ONLY,
     "cruxible_next": PermissionMode.READ_ONLY,
-    "cruxible_curation_list": PermissionMode.READ_ONLY,
-    "cruxible_curation_duplicates": PermissionMode.READ_ONLY,
+    "cruxible_duplicates": PermissionMode.READ_ONLY,
     "cruxible_audit": PermissionMode.READ_ONLY,
-    "cruxible_curation_overrule": PermissionMode.GOVERNED_WRITE,
-    "cruxible_curation_accept_fixed": PermissionMode.GOVERNED_WRITE,
-    "cruxible_curation_suppress": PermissionMode.GOVERNED_WRITE,
-    "cruxible_curation_unsuppress": PermissionMode.GOVERNED_WRITE,
     "cruxible_floor_export": PermissionMode.READ_ONLY,
     # The vocabulary file: export writes the workspace file (no state) and plan
     # previews write-free; apply submits an ordinary change set.
@@ -160,6 +155,7 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_set": PermissionMode.GOVERNED_WRITE,
     "cruxible_retire": PermissionMode.GOVERNED_WRITE,
     "cruxible_write": PermissionMode.GOVERNED_WRITE,
+    "cruxible_link": PermissionMode.GOVERNED_WRITE,
     "cruxible_prediction_list": PermissionMode.READ_ONLY,
     "cruxible_prediction_propose": PermissionMode.GOVERNED_WRITE,
     "cruxible_prediction_settle": PermissionMode.GOVERNED_WRITE,

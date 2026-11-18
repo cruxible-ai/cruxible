@@ -373,7 +373,7 @@ def card_guidance(
     return shown, total
 
 
-#: Definitions one review asks for guidance about, and Documents shown per definition.
+#: Guided definitions one review shows, and Documents shown per definition.
 REVIEW_GUIDANCE_MAX_DEFINITIONS = 20
 REVIEW_GUIDANCE_PER_DEFINITION = 5
 
@@ -386,10 +386,15 @@ def review_guidance(
 ) -> tuple[ReviewGuidance, ...]:
     """The Documents that ``guides`` each definition a proposal touches, at the head.
 
-    ``definitions`` are ClaimType (and Procedure) identities; ``line`` the
-    originating Line, whose Procedure is asked too. Bounded: at most
-    ``REVIEW_GUIDANCE_MAX_DEFINITIONS`` definitions, each one indexed range of
-    ``REVIEW_GUIDANCE_PER_DEFINITION`` rows.
+    ``definitions`` are every ClaimType (and Procedure) identity the change
+    set touches; ``line`` the originating Line, whose Procedure is asked too.
+    Each is asked, in identity order, until ``REVIEW_GUIDANCE_MAX_DEFINITIONS``
+    of them have guidance: the cap counts guided definitions, never the ones
+    asked, so which lines a review shows depends on the definitions and not on
+    the order of the change set's members (Claim paths are content ids, which
+    differ between two submissions of the same change). One indexed range of
+    ``REVIEW_GUIDANCE_PER_DEFINITION`` rows per definition asked: work follows
+    the change set's distinct definitions, never the instance.
     """
 
     wanted = sorted(set(definitions), key=lambda item: item.encode("utf-8"))
@@ -404,7 +409,11 @@ def review_guidance(
             if found is not None:
                 wanted.insert(0, str(found[0]))
         guidance: list[ReviewGuidance] = []
-        for definition in wanted[:REVIEW_GUIDANCE_MAX_DEFINITIONS]:
+        guided = 0
+        for definition in wanted:
+            if guided == REVIEW_GUIDANCE_MAX_DEFINITIONS:
+                break
+            shown = len(guidance)
             for document, title in connection.execute(
                 "SELECT b.source_identity,d.title FROM backlinks b "
                 "LEFT JOIN documents d ON d.identity=b.source_identity "
@@ -418,6 +427,7 @@ def review_guidance(
                         title=None if title is None else str(title),
                     )
                 )
+            guided += len(guidance) > shown
     return tuple(guidance)
 
 

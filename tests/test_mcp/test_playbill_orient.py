@@ -27,7 +27,7 @@ def _answer() -> contracts.OrientResult:
         instance="inst",
         coordinate=AcceptedCoordinate.model_validate(COORDINATE.model_dump(mode="json")),
         generation=4,
-        accepted_at=datetime(2026, 9, 1, tzinfo=UTC),
+        proposed_at=datetime(2026, 9, 1, tzinfo=UTC),
         evaluation_time=datetime(2026, 9, 2, tzinfo=UTC),
         kinds=(),
         next=("cruxible_next()",),

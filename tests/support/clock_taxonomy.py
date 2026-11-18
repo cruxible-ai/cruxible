@@ -113,6 +113,8 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     # enabled Line: ranges of the dispatch store's validity windows.
     ("LineCoverageGap", "since"): "VALIDITY WINDOW",
     ("LineCoverageGap", "until"): "VALIDITY WINDOW",
+    # Each timer's first and last instant inside that range.
+    ("LineCoverageGap", "missed"): "VALIDITY WINDOW",
     ("LinePendingWork", "oldest_eligible_at"): "VALIDITY WINDOW",
     ("FixedWindow", "starts_at"): "VALIDITY WINDOW",
     ("FixedWindow", "duration_seconds"): "VALIDITY WINDOW",
@@ -133,6 +135,8 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("ActionRunRequest", "wait_timeout_seconds"): "VALIDITY WINDOW",
     ("ReobservationReading", "sequence"): "SETTLEMENT ORDER",
     ("RecordedReobservation", "sequence"): "SETTLEMENT ORDER",
+    # A content observation's journal sequence: where a read's position cuts it.
+    ("_Point", "sequence"): "SETTLEMENT ORDER",
     ("LandingHead", "sequence"): "SETTLEMENT ORDER",
     ("Landing", "sequence"): "SETTLEMENT ORDER",
     ("ReobservationReading", "boundaries"): "VALIDITY WINDOW",
@@ -324,13 +328,9 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("PlaybillClaimExplanation", "evaluation_time"): "EVALUATION INSTANT",
     ("PlaybillClaimVerdictQuery", "evaluation_time"): "EVALUATION INSTANT",
     ("ClaimViewRecord", "admission_evaluation_time"): "EVALUATION INSTANT",
-    ("CurationActionResult", "generation"): "SETTLEMENT ORDER",
     ("PlaybillCurationActionResultV1", "generation"): "SETTLEMENT ORDER",
-    ("CurationListResult", "generation"): "SETTLEMENT ORDER",
     ("PlaybillCurationListResultV1", "generation"): "SETTLEMENT ORDER",
     # Detection runs at its Trigger fire's recorded instant, through a generation.
-    ("CurationDetection", "detected_at"): "EVALUATION INSTANT",
-    ("CurationDetection", "detected_through_generation"): "SETTLEMENT ORDER",
     ("PlaybillCurationDetectionV1", "detected_at"): "EVALUATION INSTANT",
     ("PlaybillCurationDetectionV1", "detected_through_generation"): "SETTLEMENT ORDER",
     ("BlockObserveResult", "generation"): "SETTLEMENT ORDER",
@@ -365,16 +365,18 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("_RememberedSlot", "interval"): "VALIDITY WINDOW",
     ("ProposalListEntry", "admitted_at"): "ASSERTION TIME",
     ("PlaybillProposalListEntryV1", "admitted_at"): "ASSERTION TIME",
+    ("ProposalListEntry", "closed_at"): "ASSERTION TIME",
+    ("PlaybillProposalListEntryV1", "closed_at"): "ASSERTION TIME",
     ("PlaybillReviewOperationalEventV1", "accepted_generation"): "SETTLEMENT ORDER",
     ("PlaybillReviewOperationalEventV1", "recorded_at"): "ASSERTION TIME",
     ("PlaybillReviewOperationalEventV1", "sequence"): "SETTLEMENT ORDER",
     # The accepted candidate's own timestamp: the author's assertion of when
     # the head generation was made, surfaced by orient beside its sequence.
-    ("OrientResult", "accepted_at"): "ASSERTION TIME",
+    ("OrientResult", "proposed_at"): "ASSERTION TIME",
     ("OrientResult", "evaluation_time"): "EVALUATION INSTANT",
     ("OrientResult", "generation"): "SETTLEMENT ORDER",
     ("OrientGeneration", "sequence"): "SETTLEMENT ORDER",
-    ("OrientGeneration", "accepted_at"): "ASSERTION TIME",
+    ("OrientGeneration", "proposed_at"): "ASSERTION TIME",
     # The activity feed: each row's own record instant (a journal record's, or a
     # generation's acceptance), the generation a ledger row lists, and the
     # instant a due occurrence is eligible from.
@@ -388,11 +390,15 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("GetRequest", "evaluation_time"): "EVALUATION INSTANT",
     ("GetResult", "evaluation_time"): "EVALUATION INSTANT",
     ("GetProposalCard", "admitted_at"): "ASSERTION TIME",
+    ("GetProposalCard", "closed_at"): "ASSERTION TIME",
     ("GetProcedureTrackRecord", "first_sequence"): "SETTLEMENT ORDER",
     ("GetProcedureTrackRecord", "last_sequence"): "SETTLEMENT ORDER",
     ("GetCaptureEvidence", "observed_at"): "ASSERTION TIME",
     ("GetAttestationEvidence", "at"): "ASSERTION TIME",
     ("GetRevision", "sequence"): "SETTLEMENT ORDER",
+    # The candidate's timestamp: when the change set was proposed (S4).
+    ("GetRevision", "proposed_at"): "ASSERTION TIME",
+    ("GetClaimCard", "proposed_at"): "ASSERTION TIME",
     ("GetRevision", "effective_from"): "VALIDITY WINDOW",
     ("GetRevision", "effective_until"): "VALIDITY WINDOW",
     ("GetClaimCard", "effective_from"): "VALIDITY WINDOW",
@@ -400,6 +406,7 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("_Shown", "effective_from"): "VALIDITY WINDOW",
     ("_Shown", "effective_until"): "VALIDITY WINDOW",
     ("_GetFieldEvent", "sequence"): "SETTLEMENT ORDER",
+    ("_GetFieldEvent", "proposed_at"): "ASSERTION TIME",
     ("GetCoordinate", "generation"): "SETTLEMENT ORDER",
     ("_RevisionEntry", "sequence"): "SETTLEMENT ORDER",
     # Operational reads: Lines, Captures, predictions, mandates and runs. An
@@ -418,6 +425,8 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("GetPredictionWindow", "starts_at"): "VALIDITY WINDOW",
     ("GetPredictionWindow", "ends_at"): "VALIDITY WINDOW",
     ("OrientPrediction", "next_close"): "VALIDITY WINDOW",
+    # A timer Trigger's next instant after the read: its schedule from acceptance.
+    ("GetTriggerCard", "next_fire"): "VALIDITY WINDOW",
     ("GetMandateCard", "valid_from"): "VALIDITY WINDOW",
     ("GetMandateCard", "expires_at"): "VALIDITY WINDOW",
     ("OrientMandate", "expires_at"): "VALIDITY WINDOW",
@@ -594,8 +603,9 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("SourceEffectiveTime", "effective_until"): "VALIDITY WINDOW",
     ("SubjectProfileV1", "evaluation_time"): "EVALUATION INSTANT",
     ("StaleProposal", "admitted_at"): "ASSERTION TIME",
-    ("TerminalChildReceiptV1", "sequence"): "SETTLEMENT ORDER",
     ("TerminalEgressRequestV1", "prepared_at"): "EVALUATION INSTANT",
+    ("TerminalEgressRequestV1", "observation_calls"): "EVALUATION INSTANT",
+    ("ReobservationRequest", "call"): "EVALUATION INSTANT",
     ("TerminalEgressRequestV2", "evaluation_time"): "EVALUATION INSTANT",
     ("VerifiedClaimAttestation", "recorded_at"): "ASSERTION TIME",
     ("VerifiedExhaustRecordV1", "sequence"): "SETTLEMENT ORDER",
@@ -611,6 +621,11 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("_ProcessOutcome", "duration_seconds"): "VALIDITY WINDOW",
     ("_RecordedCurationPatternObservedV1", "accepted_generation"): "SETTLEMENT ORDER",
     ("_RunState", "wall_clock_microseconds"): "VALIDITY WINDOW",
+    # `now - 3d`: a fixed shift of the query's explicit evaluation instant.
+    ("QueryEvaluationTimeRef", "offset_seconds"): "EVALUATION INSTANT",
+    ("FilterOperand", "offset_seconds"): "EVALUATION INSTANT",
+    # When each fetched Capture's acquiring call observed its members (ruling 1b).
+    ("_RunState", "capture_spans"): "EVALUATION INSTANT",
 }
 
 # Discovered by name, carrying no clock value: a supplier of instants, a boolean

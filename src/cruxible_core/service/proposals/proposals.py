@@ -24,7 +24,9 @@ from cruxible_client.contracts.errors import (
     ProposalReadmitRequiresResubmission,
     ProposalSelectorAmbiguousError,
     ProposalStale,
+    ProposalWithdrawNotAuthor,
 )
+from cruxible_client.contracts.kits import KitReceipt
 from cruxible_client.contracts.principals import AuthoringRefusal
 from cruxible_client.contracts.procedures.node_summary import (
     ReobservationRefusalReason,
@@ -33,6 +35,7 @@ from cruxible_client.contracts.procedures.node_summary import (
 from cruxible_client.contracts.proposal_models import ProposalReadmissionLink
 from cruxible_client.contracts.repairs import RepairOperation
 from cruxible_core.authoring.id_prefixes import AmbiguousIdPrefix, resolve_id_prefix
+from cruxible_core.errors import CoreError
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.indexes.proposals.proposal_index import timestamp
 from cruxible_core.proposals.proposal_evidence import ProposalEvidenceStore
@@ -73,7 +76,7 @@ from cruxible_core.service.list_pages import (
 #: approval or activation lands at the head as the same change set.
 ProposalInventoryStatus = Literal["open", "awaiting_readmit", "settled", "incomplete"]
 ProposalIncompleteReason = Literal["missing_admission", "missing_evaluation", "missing_candidate"]
-ProposalTerminalReason = Literal["accepted", "refused", "withdrawn", "rejected"]
+ProposalTerminalReason = Literal["accepted", "refused", "withdrawn", "rejected", "superseded"]
 _UNSETTLED_STATUSES = frozenset({"open", "awaiting_readmit"})
 #: Where the actor ID came from. ``runtime_credential`` is the principal the
 #: bearer credential is bound to; ``unbound_credential`` is a credential that
@@ -89,6 +92,10 @@ CredentialPermissionMode = Literal["read_only", "governed_write", "graph_write",
 
 class _StrictOperationalReadModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+#: The endings one closing record (``ProposalWithdrawalRecord``) makes.
+_CLOSED_REASONS = frozenset({"superseded", "rejected", "withdrawn"})
 
 
 class PlaybillProposalListEntryV1(_StrictOperationalReadModel):
@@ -109,9 +116,28 @@ class PlaybillProposalListEntryV1(_StrictOperationalReadModel):
     #: ``settled`` + ``accepted`` only: the accepted generation its change set
     #: settled in (the proposal index's maintained settlement record).
     accepted_generation: int | None = Field(default=None, exclude_if=lambda value: value is None)
+    #: ``settled`` + ``superseded`` only: the proposal that took its place.
+    superseded_by: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    #: A closed proposal (``superseded``, ``rejected`` or ``withdrawn``): the
+    #: principal whose act closed it (a reviewer's rejection, the author's
+    #: withdrawal, or the approval, activation, readmit or Line run that
+    #: superseded it).
+    closed_by: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    #: ``rejected`` or ``withdrawn`` only: when it closed, and the reason its
+    #: closer gave, from its closing record.
+    closed_at: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    closed_reason: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @model_validator(mode="after")
     def _status_shape(self) -> "PlaybillProposalListEntryV1":
+        if (self.superseded_by is not None) != (self.terminal_reason == "superseded"):
+            raise ValueError("exactly a superseded proposal names its successor")
+        if self.closed_by is not None and self.terminal_reason not in _CLOSED_REASONS:
+            raise ValueError("only a closed proposal names who closed it")
+        if (self.closed_at is not None or self.closed_reason is not None) and (
+            self.terminal_reason not in {"rejected", "withdrawn"}
+        ):
+            raise ValueError("only a rejected or withdrawn proposal carries its closing reason")
         if (self.accepted_generation is not None) != (self.terminal_reason == "accepted"):
             raise ValueError("exactly an accepted proposal names its accepted generation")
         if bool(self.stale_paths) != (self.status == "awaiting_readmit"):
@@ -287,7 +313,8 @@ def service_list_playbill_proposals(
     return PlaybillProposalListV1(
         coordinate=coordinate,
         status_filter=status,
-        entries=page,
+        # Closing details for this page's rows only, after the cursor's digest.
+        entries=_with_closing_details(instance, tuple(page)),
         truncated=truncated,
         next_cursor=(
             encode_list_cursor(
@@ -344,6 +371,7 @@ def service_playbill_proposal_status(
             evidence.read_candidate(evaluation.candidate_digest)
     if entry.withdrawal_present:
         evidence.read_withdrawal(resolved)
+    (entry,) = _with_closing_details(instance, (entry,))
     return entry
 
 
@@ -384,11 +412,17 @@ def open_proposal_at_target(
 def proposal_is_open(instance: PlaybillInstance, proposal_id: str) -> bool:
     """Whether one proposal is still open: one indexed inventory row, no evidence read."""
 
+    return proposal_inventory_status(instance, proposal_id) == "open"
+
+
+def proposal_inventory_status(instance: PlaybillInstance, proposal_id: str) -> str | None:
+    """One proposal's list status (``open``, ``awaiting_readmit``, ``settled``,
+    ``incomplete``), or None when the inventory has no row: one indexed row."""
+
     coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
-    return any(
-        entry.status == "open"
-        for entry in _proposal_entries(instance, coordinate, proposal_id, require_evidence=False)
-    )
+    for entry in _proposal_entries(instance, coordinate, proposal_id, require_evidence=False):
+        return entry.status
+    return None
 
 
 def _proposal_entries(
@@ -477,11 +511,18 @@ def _proposal_entries(
         awaiting_readmit = bool(stale_paths) and not missing
         if reason == "stale":
             reason = None
+        superseded_by = closed_by = None
         if reason == "withdrawn":
-            # One closing record carries both endings; its kind tells them apart.
+            # One closing record carries every ending; its kind tells them apart.
             closed = evidence.read_withdrawal(row["proposal_id"])
             if closed is not None and closed.kind == "rejected":
                 reason = "rejected"
+            elif closed is not None and closed.is_superseded and not missing:
+                reason = "superseded"
+                superseded_by = closed.superseded_by
+                # A record from before the superseded kind names the author,
+                # who did not close it: who did is not recorded, so not shown.
+                closed_by = closed.actor_id if closed.kind == "superseded" else None
         entries.append(
             PlaybillProposalListEntryV1(
                 proposal_id=row["proposal_id"],
@@ -508,9 +549,40 @@ def _proposal_entries(
                 accepted_generation=(
                     int(row["accepted_sequence"]) if not missing and reason == "accepted" else None
                 ),
+                superseded_by=superseded_by,
+                closed_by=closed_by,
             )
         )
     return tuple(entries)
+
+
+def _with_closing_details(
+    instance: PlaybillInstance, entries: tuple[PlaybillProposalListEntryV1, ...]
+) -> tuple[PlaybillProposalListEntryV1, ...]:
+    """The entries a caller is about to return, each rejected or withdrawn one
+    with who closed it, when and the reason given.
+
+    Read from the closing record, one keyed read per such entry, and only for
+    the entries handed in: a list page's rows after the page is selected, or
+    the one entry of a by-ID read. The entries a listing filters, pages and
+    pins in its cursor never carry reason text.
+    """
+
+    evidence = instance.proposal_evidence()
+    detailed = []
+    for entry in entries:
+        if entry.terminal_reason in {"rejected", "withdrawn"}:
+            closed = evidence.read_withdrawal(entry.proposal_id)
+            if closed is not None:
+                entry = entry.model_copy(
+                    update={
+                        "closed_by": closed.actor_id,
+                        "closed_at": closed.withdrawn_at,
+                        "closed_reason": closed.reason,
+                    }
+                )
+        detailed.append(entry)
+    return tuple(detailed)
 
 
 @contextmanager
@@ -1277,7 +1349,11 @@ def _readmit(
 
     try:
         recompiled = recompile_proposal(
-            instance, source, preview=mode.previewing, confirm_head=mode.confirm_head
+            instance,
+            source,
+            preview=mode.previewing,
+            confirm_head=mode.confirm_head,
+            triggered_by=actor_id,
         )
     except ProposalStale as exc:
         if exc.reason == "cruxible.authoring.slot_membership_changed":
@@ -1310,9 +1386,9 @@ def _readmit(
             reobservations_refused=recompiled.reobservations_refused,
         )
     if exact_bytes_cannot_rebase(source):
-        raise requires_resubmission(source)
+        raise requires_resubmission(source, instance)
     if landing and not mode.previewing:
-        landed = land_exact_bytes(instance, source, mode=mode)
+        landed = land_exact_bytes(instance, source, mode=mode, triggered_by=actor_id)
         assert isinstance(landed, ProposalResult)
         link = landed.admission.readmits
         assert link is not None
@@ -1392,18 +1468,21 @@ def exact_bytes_cannot_rebase(source: ProposalResult) -> bool:
     return cannot_rebase(source) is not None
 
 
-def requires_resubmission(source: ProposalResult) -> ProposalReadmitRequiresResubmission:
+def requires_resubmission(
+    source: ProposalResult, instance: PlaybillInstance | None = None
+) -> ProposalReadmitRequiresResubmission:
     """The refusal for a change set that cannot be rebased by its bytes, by kind."""
 
     reason = cannot_rebase(source)
     assert reason is not None
     why, command = reason
     if why.startswith("is a generated"):
-        return ProposalReadmitRequiresResubmission(repair=author_repair(source))
+        return ProposalReadmitRequiresResubmission(repair=author_repair(source, instance))
     return ProposalReadmitRequiresResubmission(
         f"proposal {source.admission.proposal_id} {why}, so it is not readmitted or "
-        f"landed by its old bytes; its author {source.admission.actor_id!r} {command}",
-        repair=author_repair(source),
+        f"landed by its old bytes; its author {source.admission.actor_id!r} {command}"
+        + kit_source_note(source, instance),
+        repair=author_repair(source, instance),
     )
 
 
@@ -1421,13 +1500,17 @@ def _is_kit_removal(source: ProposalResult) -> bool:
 
     Additions and removals share the ``kit-{id}-{digest}`` target, and the
     candidate does not tell them apart by itself (a removal that only keeps
-    and carries retires nothing). The one transition the submitter records on
-    the proposal is its rationale, written by one format for each: ``Remove kit
-    {id} {version}.`` for a removal, Install/Upgrade/Downgrade/Reinstall for the
-    rest. The check is that exact form.
+    and carries retires nothing). The kit door records the transition on the
+    admission (``kit_transition``). A kit proposal admitted before that field
+    existed falls back to its rationale, written by one format for each:
+    ``Remove kit {id} {version}.`` for a removal, Install/Upgrade/Downgrade/
+    Reinstall for the rest; the check is that exact form.
     """
 
     kit_id = _kit_id(source)
+    recorded = source.admission.kit_transition
+    if kit_id is not None and recorded is not None:
+        return recorded == "remove"
     rationale = source.admission.rationale or ""
     return (
         kit_id is not None
@@ -1436,23 +1519,91 @@ def _is_kit_removal(source: ProposalResult) -> bool:
     )
 
 
-def author_repair(source: ProposalResult) -> RepairOperation:
+def author_repair(
+    source: ProposalResult, instance: PlaybillInstance | None = None
+) -> RepairOperation:
     """The author's command that remakes a change set its bytes cannot carry to the head.
 
     A kit change is its kit's own commit again: ``kit remove`` with the kit's id
-    for a removal, ``kit add`` for an addition (which release or build to add is
-    the author's, so its reference is left to name); a migration, or another
-    closure, is authored again.
+    for a removal, ``kit add`` for an addition, naming ``base`` when it is the
+    bundled base kit (``_kit_reference``) and otherwise leaving the kit operand
+    to its author; a migration, or another closure, is authored again.
     """
 
     kit_id = _kit_id(source)
     if kit_id is not None:
         if _is_kit_removal(source):
             return RepairOperation(operation="cruxible.kit.remove", arguments={"kit_id": kit_id})
-        return RepairOperation(operation="cruxible.kit.add")
+        reference = _kit_reference(_proposed_kit_receipt(source, kit_id, instance), kit_id)
+        return RepairOperation(
+            operation="cruxible.kit.add",
+            arguments={} if reference is None else {"kit": reference},
+        )
     if _target_leaf(source).startswith("claim-type-migration-"):
         return RepairOperation(operation="cruxible.claim-type.migrate")
     return RepairOperation(operation="cruxible.authoring.list")
+
+
+def _proposed_kit_receipt(
+    source: ProposalResult, kit_id: str, instance: PlaybillInstance | None
+) -> KitReceipt | None:
+    """The receipt a kit proposal installs, read from the proposal itself: one blob.
+
+    It records the release (``version``) and where the author's client read the
+    kit (``source``). None when it cannot be read; the repair then names less.
+    """
+
+    if instance is None:
+        return None
+    from cruxible_core.service.kits import proposed_kit_receipt
+
+    try:
+        return proposed_kit_receipt(
+            instance,
+            source.admission.candidate_tree_oid,
+            kit_id,
+            proposal_id=source.admission.proposal_id,
+        )
+    except (CoreError, ValueError, KeyError):
+        return None
+
+
+def _kit_reference(receipt: KitReceipt | None, kit_id: str) -> str | None:
+    """The ``kit add`` reference that remakes a kit proposal, when the daemon vouches for one.
+
+    Only the base kit this core bundles, recognized by its id and content
+    digest (``kit add base`` adds exactly that). The source a client recorded
+    is a free-form label (a folder's name, a ``--source`` value, a registry
+    reference the daemon never resolved): it is shown in the message for the
+    author to read and is never rendered as a command.
+    """
+
+    if receipt is None:
+        return None
+    from cruxible_core.service.kits import bundled_base_reference
+
+    return bundled_base_reference(kit_id, receipt.content_digest)
+
+
+def kit_source_note(source: ProposalResult, instance: PlaybillInstance | None) -> str:
+    """What a stale kit addition's refusal adds when the repair cannot name its kit.
+
+    The release it was and the source label its author's client recorded, for
+    the author to choose the directory, layout or registry reference again.
+    """
+
+    kit_id = _kit_id(source)
+    if kit_id is None or _is_kit_removal(source):
+        return ""
+    receipt = _proposed_kit_receipt(source, kit_id, instance)
+    if receipt is None or _kit_reference(receipt, kit_id) is not None:
+        return ""
+    recorded = f" (recorded as {receipt.source})" if receipt.source else ""
+    return (
+        f": kit {kit_id} {receipt.version}, from the kit directory, layout or registry "
+        f"reference it was added from{recorded}; the daemon holds the kit's bytes and "
+        "that label, not a reference it can vouch for"
+    )
 
 
 def _readmit_exact_bytes(
@@ -1492,6 +1643,13 @@ def _readmit_exact_bytes(
         generation = instance.accepted_history()[-1]
         if generation.record is None:  # pragma: no cover - stale source requires a successor
             raise ProposalIntegrityError("readmission requires an accepted candidate timestamp")
+        # The readmission is judged no earlier than its source was: a head
+        # generation authored before the source (a sibling proposal that landed
+        # first) has an earlier timestamp, and judged then, every Capture the
+        # source's own write observed would lie in the future and back nothing
+        # (each value would review as uncovered, then land supported). Both
+        # times are fixed by the link, so the readmission stays idempotent.
+        timestamp = max(generation.record.candidate.timestamp, source.admission.admitted_at)
         actor = AuthenticatedActor(actor_id=actor_id)
         request = ProposalAdmissionRequest(
             target_ref=_readmission_target_ref(actor_id, operation_digest),
@@ -1507,6 +1665,8 @@ def _readmit_exact_bytes(
             ),
             source_compilation_digest=operation_digest,
             claim_type_expansions=source.admission.claim_type_expansions,
+            # The same change set, so the same reason: history and review read it here.
+            rationale=source.admission.rationale,
         )
         # Read as a delta over its accepted base: the bytes this proposal
         # changed, over a tree the instance already holds, never the whole
@@ -1521,7 +1681,7 @@ def _readmit_exact_bytes(
                 actor=actor,
                 request=request,
                 candidate_tree=candidate_tree,
-                timestamp=generation.record.candidate.timestamp,
+                timestamp=timestamp,
                 readmits=link,
             )
             return PlaybillProposalReadmitResultV1(
@@ -1538,7 +1698,7 @@ def _readmit_exact_bytes(
                 actor=actor,
                 request=request,
                 candidate_tree=candidate_tree,
-                timestamp=generation.record.candidate.timestamp,
+                timestamp=timestamp,
                 readmits=link,
                 originating_line=source.admission.originating_line,
                 confirm_head=mode.confirm_head,
@@ -1568,6 +1728,7 @@ def land_exact_bytes(
     *,
     mode: ChangeMode | None = None,
     check_first: bool = False,
+    triggered_by: str | None = None,
 ) -> ProposalResult | ProposalPreview:
     """Land a moved proposal whose origin does not lower at the head, by its own bytes.
 
@@ -1575,8 +1736,10 @@ def land_exact_bytes(
     (``staleness.overlap_check``), when an approval or an activation meets it:
     the same change set is readmitted at the head under its author (the
     admission's ``readmits`` link names the source, proposed at its base, and
-    the head it lands at), and the source closes as superseded by it. The
-    author is not asked. Serialized with withdrawal and rejection of the source.
+    the head it lands at), and the source closes as superseded by it, under
+    ``triggered_by``: the principal whose approval, activation or readmit landed
+    it (its author when none is named). The author is not asked. Serialized
+    with withdrawal and rejection of the source.
     A readmission the head refuses is returned as it is, and closes nothing.
 
     ``check_first`` (an approval's or activation's landing) evaluates the
@@ -1594,7 +1757,7 @@ def land_exact_bytes(
             return carried
         instance.proposal_evidence().refuse_closed(source_id)
         if exact_bytes_cannot_rebase(source):
-            raise requires_resubmission(source)
+            raise requires_resubmission(source, instance)
         binding: dict[str, Any] = {}
         if check_first:
             with preview_guards(True):
@@ -1652,9 +1815,9 @@ def land_exact_bytes(
         _close_once(
             instance,
             ChangeMode(instance, previewing=False),
-            ProposalWithdrawalRecord(
+            ProposalWithdrawalRecord.superseded(
                 proposal_id=source_id,
-                actor_id=source.admission.actor_id,
+                actor_id=triggered_by or source.admission.actor_id,
                 reason=LANDED_REASON.format(successor=successor.admission.proposal_id),
                 withdrawn_at=str(format_datetime(datetime.now(timezone.utc))),
                 superseded_by=successor.admission.proposal_id,
@@ -1745,7 +1908,6 @@ def service_withdraw_playbill_proposal(
     actor_id: str,
     reason: str,
     withdrawn_at: str,
-    unscoped_operator: bool = False,
     dry_run: bool | None = None,
     at: str | None = None,
 ) -> PlaybillProposalWithdrawResultV1:
@@ -1766,21 +1928,12 @@ def service_withdraw_playbill_proposal(
     intent would lose the outcome. A proposal awaiting readmit (its base moved)
     has no ending yet, so it may be withdrawn instead of readmitted.
 
-    WHO may withdraw. Ordinarily the proposal's own actor, matched on
-    `admission.actor_id` -- which is the runtime credential's LABEL, because a
-    label is the only identity a proposal carries and the only one a later
-    request can present. That is deliberately not a tier check: an ADMIN of the
-    same instance is still not the author of somebody else's proposal, and
-    withdrawal is a statement of intent, which only its author has.
-
-    A label is not durable, though. Rotating, revoking or re-minting a
-    credential under a different label would leave that actor's open proposals
-    withdrawable by nobody and permanently in the inventory -- card 110's
-    graveyard, back through the door this verb exists to close. So an UNSCOPED
-    operator, holding a daemon-wide credential rather than an instance-bound
-    one, may withdraw any withdrawable proposal. It is the authority that
-    already allocates and stops hosts, and withdrawal touches no accepted state,
-    so it is a strictly smaller lever than the ones it holds.
+    WHO may withdraw: only the proposal's own actor, matched on
+    `admission.actor_id`. Withdrawal is a statement of intent, which only its
+    author has; it is deliberately not a tier check. Anyone else is refused
+    ``cruxible.proposal.withdraw_not_author`` with the reviewer's repair,
+    rejecting it with a reason. (A later run of a Line supersedes its Line's
+    open proposal through its own path, not this verb.)
     """
 
     with change_scope(
@@ -1798,7 +1951,6 @@ def service_withdraw_playbill_proposal(
             actor_id=actor_id,
             reason=reason,
             withdrawn_at=withdrawn_at,
-            unscoped_operator=unscoped_operator,
         )
 
 
@@ -1810,13 +1962,10 @@ def _withdraw(
     actor_id: str,
     reason: str,
     withdrawn_at: str,
-    unscoped_operator: bool,
 ) -> PlaybillProposalWithdrawResultV1:
     admission = instance.proposal_evidence().read_admission(proposal_id)
-    if admission.actor_id != actor_id and not unscoped_operator:
-        raise ProposalAdmissionError(
-            "only the source proposal actor, or a daemon-wide operator, may withdraw it"
-        )
+    if admission.actor_id != actor_id:
+        raise ProposalWithdrawNotAuthor(proposal_id, author=admission.actor_id)
     record, already, coordinate = _close(
         instance,
         mode,
@@ -1942,7 +2091,7 @@ def _close_once(
     )
     if entry is None:  # pragma: no cover - a read admission always lists
         raise ProposalNotFoundError(record.proposal_id)
-    verb = "withdrawn" if record.kind == "withdrawn" else "rejected"
+    verb = record.kind
     if entry.terminal_reason == "accepted":
         # Typed as approve and activate refuse it: settled, nothing to close.
         from cruxible_core.service.authoring.documents import refuse_accepted
@@ -1951,7 +2100,9 @@ def _close_once(
             instance,
             record.proposal_id,
             entry.candidate_digest,
-            acts="withdraw" if record.kind == "withdrawn" else "reject",
+            acts={"withdrawn": "withdraw", "rejected": "reject", "superseded": "supersede"}[
+                record.kind
+            ],
         )
     if entry.status not in _UNSETTLED_STATUSES:
         raise ProposalAdmissionError(

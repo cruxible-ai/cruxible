@@ -1692,8 +1692,19 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
         nodes.append(node)
     leaves = any(isinstance(step, ProjectStep) and step.leaf for step in spec.steps)
     claims_terminal = any(isinstance(step, ClaimsStep) for step in spec.steps)
+    # A Procedure whose only effect is posting to the inbox, declaring no output,
+    # returns nothing: its result is the inbox items, like a claims Procedure's.
+    inbox_terminal = (
+        not claims_terminal
+        and not leaves
+        and not spec.output
+        and spec.output_contract is None
+        and any(isinstance(step, InboxStep) for step in spec.steps)
+        and not any(isinstance(step, (EmitStep, InvokeStep)) for step in spec.steps)
+    )
+    effect_terminal = claims_terminal or inbox_terminal
     returns: Any = (
-        None if (leaves or claims_terminal) and spec.returns is None else spec.returns or previous
+        None if (leaves or effect_terminal) and spec.returns is None else spec.returns or previous
     )
     if isinstance(returns, (ReturnFrom, ReturnFields)):
         fields_template: Any = (
@@ -1771,7 +1782,7 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
         None if spec.output_contract is not None else spec.output
     )
     if root_shape is None and spec.output_contract is None:
-        root_shape = {} if claims_terminal and returns is None else shapes.get(returns or "")
+        root_shape = {} if effect_terminal and returns is None else shapes.get(returns or "")
         if root_shape is None:
             if resolve is not None and not leaves:
                 raise ProcedureSpecError(

@@ -203,12 +203,12 @@ def test_two_adds_on_one_many_valued_field_land_in_one_change_set(
 
     head = instance.accepted_coordinate().git_oid
     again = _write(instance, _add(WI1, "governs", WI2))
-    assert again.status == "accepted" and again.proposal is None
+    assert again.status == "unchanged" and again.proposal is None
     (change,) = again.changes
     assert change.already_live and change.claim in claims and change.after == WI2
     assert change.verdict == "supported"
     assert instance.accepted_coordinate().git_oid == head  # no change set was submitted
-    assert _write(instance, _add(WI1, "governs", WI2), dry_run=True).status == "would_accept"
+    assert _write(instance, _add(WI1, "governs", WI2), dry_run=True).status == "unchanged"
 
     # In a batch, only the new value is submitted.
     mixed = _write(instance, _add(WI1, "governs", WI2), _set(WI1, "status", "ready"))
@@ -666,16 +666,72 @@ def test_a_captured_claim_type_refuses_own_words_naming_its_contracts(
     _move_to_v7(instance, "measured", evidence_requirement="captured")
     refusal = _refusal(_write(instance, _set(WI1, "measured", 3)))
     assert refusal.code == "cruxible.write.evidence_required"
-    # Prose and candidates name the contract as a reader sees it (public name).
-    assert refusal.candidates == (public_name(REPORTS.identity.name),)
-    assert "cruxible.foreign-source.repo.reports" in refusal.message
+    # Only shaped contracts are named: a file's own contract (the per-file rule
+    # this older field holds) is never proposed, and the repair adds a shaped
+    # contract to the field's evidence (ruling 2026-11-16).
+    assert refusal.candidates == ()
+    assert "foreign-source" not in refusal.message + (refusal.repair or "")
     assert "playbill." not in refusal.message + (refusal.repair or "")
     assert "evidence_requirement 'captured'" in refusal.message
+    assert refusal.repair is not None
+    assert "add a shaped CaptureContract to measured's evidence" in refusal.repair
     captured = _write(
         instance,
         _set(WI1, "measured", 3, evidence={"kind": "capture", "capture": "sha256:" + "a" * 64}),
     )
     assert _refusal(captured).code != "cruxible.write.evidence_required"
+
+
+def test_a_file_quote_does_not_satisfy_a_shaped_only_captured_field() -> None:
+    """``captured`` means a shaped payload under a declared contract (2026-11-16)."""
+
+    from types import SimpleNamespace
+
+    from cruxible_client.contracts.policies import (
+        ClaimEvidenceAdmissionPolicy,
+        ClaimEvidenceAdmissionRule,
+    )
+
+    base = next(item for item in CLAIM_TYPES if item.predicate == f"{KIND}.measured")
+    shaped = base.model_copy(
+        update={
+            "evidence_requirement": "captured",
+            "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(
+                rules=(
+                    ClaimEvidenceAdmissionRule(
+                        rule_id="evidence",
+                        claim_roles=("observation",),
+                        capture_contracts=("acme.quotes",),
+                        admission="direct",
+                        subject_binding="exact_claim_subject",
+                    ),
+                )
+            ),
+        }
+    )
+    from cruxible_client.contracts.errors import WriteRefusalError
+
+    with pytest.raises(WriteRefusalError) as caught:
+        write_verbs._Planner._refuse_file_quote_for_captured(
+            None,  # type: ignore[arg-type]
+            SimpleNamespace(claim_type=shaped),  # type: ignore[arg-type]
+            "measured",
+            index=0,
+            path="changes[0].evidence",
+        )
+    refusal = caught.value
+    assert refusal.error_code == "cruxible.write.evidence_required"
+    assert "a file quote does not satisfy it" in refusal.detail
+    assert refusal.candidates == ("acme.quotes",)
+    # An older field that still admits a workspace file keeps taking its quote.
+    held = next(item for item in CLAIM_TYPES if item.predicate == f"{KIND}.measured")
+    write_verbs._Planner._refuse_file_quote_for_captured(
+        None,  # type: ignore[arg-type]
+        SimpleNamespace(claim_type=held.model_copy(update={"evidence_requirement": "captured"})),  # type: ignore[arg-type]
+        "measured",
+        index=0,
+        path="changes[0].evidence",
+    )
 
 
 def test_a_none_claim_type_is_supported_by_the_writers_words_without_a_warning(
@@ -1528,6 +1584,31 @@ def test_a_contender_after_admission_refuses_activation_and_readmission(
     assert ready in _live_status_claims(instance)
 
 
+def test_a_readmitted_write_keeps_its_because_in_history(instance: PlaybillInstance) -> None:
+    """A write landed at the head by readmission still shows its --because (coldps-14)."""
+
+    from cruxible_client.contracts.get_reads import GetRequest, GetSubjectHistory
+    from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
+    from cruxible_core.service.discovery.get import service_playbill_get
+    from cruxible_core.storage.cas import BodyAccessContext
+
+    pending = _write(instance, _set(WI1, "status", "ready"), because="Moved.", accept="never")
+    assert pending.proposal is not None
+    _write(instance, _set(WI2, "title", "Elsewhere"))
+    # Activation meets it behind the head and lands the same bytes there.
+    service_activate_playbill_proposal(
+        instance, proposal_id=pending.proposal.proposal_id, activated_by="owner"
+    )
+    history = service_playbill_get(
+        instance,
+        request=GetRequest(ref=WI1, detail="history", field="status"),
+        access=BodyAccessContext(principal_id="reader", can_read_body=True),
+    ).history
+    assert isinstance(history, GetSubjectHistory)
+    (event,) = history.events
+    assert event.reason is not None and event.reason.text == "Moved."  # type: ignore[union-attr]
+
+
 def test_resetting_at_the_new_head_replaces_the_value(instance: PlaybillInstance) -> None:
     first = _write(instance, _set(WI1, "status", "ready"))
     second = _write(instance, _set(WI1, "status", "blocked"))
@@ -1948,9 +2029,7 @@ def test_independent_approval_leaves_the_write_awaiting_the_named_approvers(
     assert approval.reason == "independent_approval_required"
     assert approval.eligible_approvers == ("reviewer",)
     pid = outcome.proposal.proposal_id
-    assert approval.approve == (
-        f"cruxible proposal approve {pid} --signer-id reviewer --key <reviewer.ed25519>"
-    )
+    assert approval.approve == f"cruxible proposal approve {pid} --signer-id reviewer"
     assert approval.activate == f"cruxible proposal activate {pid}"
     assert outcome.next == approval.approve
     assert _values(instance, WI1, "status") == []
@@ -1966,7 +2045,7 @@ def test_independent_approval_leaves_the_write_awaiting_the_named_approvers(
         ),
         (
             "sdk",
-            'cx.proposal("{pid}").approve(signer=<reviewer signer>, '
+            'cx.proposal("{pid}").approve(signer=cx.signer("reviewer"), '
             'reviewed=cx.proposal("{pid}").review())',
             'cx.proposal("{pid}").activate()',
         ),
@@ -1989,7 +2068,9 @@ def test_accept_never_and_a_tier_without_activation_stop_at_the_proposal(
     never = _write(instance, _set(WI1, "status", "ready"), accept="never")
     assert never.status == "awaiting_approval"
     assert never.approval is not None and never.approval.reason == "accept_never"
-    assert never.approval.approve is None and never.next == never.approval.activate
+    # Kept for review (coldcli-02): next is a reviewer's approval, not activation.
+    assert never.approval.approve is not None and never.next == never.approval.approve
+    assert "approve" in never.next and "activate" not in never.next
     tier = _write(instance, _set(WI2, "status", "ready"), who=caller(may_activate=False))
     assert tier.status == "awaiting_approval"
     assert tier.approval is not None and tier.approval.reason == "activation_not_permitted"
@@ -2022,11 +2103,8 @@ def test_a_low_tier_caller_gets_no_runnable_higher_tier_call_whatever_the_reason
         "independent_approval_required" if independent else "accept_never"
     )
     assert outcome.approval.activate.startswith("someone who can runs ")
-    if independent:
-        assert outcome.approval.approve is not None
-        assert outcome.approval.approve.startswith("someone who can runs ")
-    else:
-        assert outcome.approval.approve is None
+    assert outcome.approval.approve is not None
+    assert outcome.approval.approve.startswith("someone who can runs ")
     assert outcome.next is not None and outcome.next.startswith("someone who can runs ")
     # A caller whose tier admits both keeps the plain, runnable calls.
     allowed = _write(

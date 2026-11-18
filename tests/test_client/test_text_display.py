@@ -1,4 +1,4 @@
-"""``print()`` on an SDK result reads as the CLI prints it; ``repr()`` stays the model.
+"""``print()`` on an SDK result reads as the CLI prints it; ``repr()`` is its first line.
 
 Before, ``print(cx.orient())`` was one ~2,000-character line, ``print(cx.coordinate)``
 four digests, and ``print(intent)`` hid a refusal's diagnostics (findings F4, F5,
@@ -44,7 +44,7 @@ def test_an_orient_result_prints_the_cli_map() -> None:
             "instance": "inst_demo",
             "generation": 3,
             "coordinate": _COORDINATE.model_dump(mode="json"),
-            "accepted_at": "2026-11-14T00:00:00Z",
+            "proposed_at": "2026-11-14T00:00:00Z",
             "evaluation_time": "2026-11-14T00:00:00Z",
             "kinds": [{"kind": "shop.part", "subjects": 2, "fields": ["status"]}],
             "queries": [],
@@ -57,13 +57,14 @@ def test_an_orient_result_prints_the_cli_map() -> None:
     assert text == render_orient(result.model_dump(mode="json"))
     assert _render_orient is render_orient
     assert text.splitlines() == [
-        "Cruxible inst_demo generation=3 at 0123456789ab accepted 2026-11-14T00:00:00Z",
+        "Cruxible inst_demo generation=3 at 0123456789ab proposed 2026-11-14T00:00:00Z",
         "Kinds (1):",
         "  shop.part  subjects=2  fields=status",
         "Next:",
         '  cx.orient(kind="shop.part")',
     ]
-    assert repr(result).startswith("OrientResult(")
+    # S1: a REPL echo is the CLI's first line, never a model dump.
+    assert repr(result) == text.splitlines()[0]
 
 
 def test_an_authoring_landing_prints_status_and_next() -> None:
@@ -74,7 +75,9 @@ def test_an_authoring_landing_prints_status_and_next() -> None:
 
     assert str(landed) == "landed: accepted at 0123456789ab"
     assert str(proposed) == "kept as a proposal (accept=never)\nnext: activate it"
-    assert "accepted_coordinate" in repr(landed)
+    assert repr(landed) == "landed: accepted at 0123456789ab"
+    assert repr(proposed) == "kept as a proposal (accept=never)"
+    assert landed.model_dump()["accepted_coordinate"]["git_oid"] == _OID
 
 
 def test_a_write_outcome_prints_what_the_cli_prints() -> None:
@@ -91,6 +94,8 @@ def test_a_write_outcome_prints_what_the_cli_prints() -> None:
         'next: cx.get("shop.part/bp-1")',
     ]
     assert str(outcome) == "\n".join(text for text, _err in write_outcome_lines(outcome))
+    assert repr(outcome) == f"accepted (generation 4, {_OID[:12]})"
+    assert repr([outcome]) == f"[accepted (generation 4, {_OID[:12]})]"
 
 
 def test_a_refused_intent_prints_its_diagnostics(tmp_path: Path) -> None:
@@ -196,7 +201,7 @@ def test_vocabulary_results_print_what_the_cli_prints() -> None:
         "Wrote .cruxible/vocabulary.yaml (2 kind(s), 5 field(s)) at 0123456789ab"
     )
     for result in (plan, applied, exported):
-        assert repr(result).startswith(type(result).__name__ + "(")
+        assert repr(result) == str(result).splitlines()[0]
 
 
 def test_a_query_page_prints_the_cli_table() -> None:
@@ -300,7 +305,7 @@ def test_a_next_page_prints_what_cruxible_next_prints() -> None:
     assert str(page) == "\n".join(
         next_lines(status=status, items=page.items, unobserved=page.unobserved)
     )
-    assert repr(page).startswith("NextPage(")
+    assert repr(page) == "Status: floor stale  next=cruxible floor export"
 
 
 def test_a_get_card_prints_what_cruxible_get_prints() -> None:
@@ -341,7 +346,7 @@ def test_a_get_card_prints_what_cruxible_get_prints() -> None:
         "live_subjects: 1",
         "next: cruxible get SubjectKind:dev.item --detail history",
     ]
-    assert repr(card).startswith("KnowledgeCard(")
+    assert repr(card) == "subject_kind: SubjectKind:dev.item"
 
 
 def _review_summary(**updates: object) -> object:
@@ -799,3 +804,190 @@ def test_a_review_prints_a_multi_line_why_as_lines_not_escapes() -> None:
     cut = _review_summary(rationale={"value": "One.\nTwo", "truncated": True})
     assert "  Two..." in str(cut).splitlines()
     assert "Why: Seen in the notes." in str(_review_summary()).splitlines()
+
+
+def test_a_run_card_prints_counts_and_one_line_per_terminal_not_every_outcome() -> None:
+    """coldcli-06: `get RUN-...` printed 120-380 KB of outcomes; its proof keeps them."""
+
+    from cruxible_client.contracts.get_reads import GetResult
+    from cruxible_client.contracts.get_text import render_get
+
+    outcomes = [
+        {"sequence": index + 1, "event_kind": kind, "payload_digest": "sha256:" + "a" * 64}
+        for index, kind in enumerate(["claim_written"] * 180 + ["capture_landed"])
+    ]
+    result = GetResult.model_validate(
+        {
+            "ref": "ProcedureRun:RUN-1",
+            "kind": "procedure_run",
+            "detail": "summary",
+            "coordinate": {"git_oid": _OID[:12], "generation": 3},
+            "evaluation_time": "2026-11-15T00:00:00Z",
+            "card": {
+                "run": "RUN-1",
+                "procedure": "Procedure:security.osv-query",
+                "status": "succeeded",
+                "nodes_done": 2,
+                "nodes_total": 2,
+                "started_at": "2026-11-15T00:00:00Z",
+                "nodes": [
+                    {"node": "affected", "kind": "extract", "verdict": "succeeded", "sequence": 3}
+                ],
+                "result": {"rows": ["r" * 50] * 40},
+                "outcomes": outcomes,
+                "terminal_egress": [
+                    {
+                        "node_id": "write",
+                        "kind": "claims",
+                        "verdict": "delivered",
+                        "required_authority": "settle",
+                        "settle_outcome": "settled",
+                        "accepted_git_oid": "b" * 40,
+                        "proposal_id": "sha256:" + "c" * 64,
+                        "candidate_digest": "sha256:" + "d" * 64,
+                    }
+                ],
+                "next": ["cruxible get ProcedureRun:RUN-1 --detail proof"],
+            },
+        }
+    )
+    text = render_get(result)
+    assert text is not None
+    assert "outcomes: 181 (capture_landed 1, claim_written 180)" in text.splitlines()
+    assert "terminals:" in text and "  write  claims  delivered  settled bbbbbbbbbbbb" in text
+    assert "payload_digest" not in text and "sha256:" + "a" * 64 not in text
+    result_line = next(line for line in text.splitlines() if line.startswith("result: "))
+    assert len(result_line) < 260
+    assert text.splitlines()[-1] == "next: cruxible get ProcedureRun:RUN-1 --detail proof"
+
+
+def test_sdk_results_print_short_text_not_a_model_dump() -> None:
+    """coldsdk-03: whoami, kits, proposals and receipts printed a raw repr."""
+
+    from cruxible_client.contracts import ApprovalReceipt, ProposalList, WhoAmI
+    from cruxible_client.contracts.kits import InstalledKit, KitStatus
+
+    coordinate = _COORDINATE.model_dump(mode="json")
+    whoami = WhoAmI.model_validate(
+        {
+            "actor_id": "owner",
+            "credential_label": None,
+            "actor_id_source": "principal_claim",
+            "authenticated": False,
+            "credential_permission_mode": "admin",
+            "principal_registration_status": "active",
+            "active_principal_ids": ["owner", "reviewer"],
+            "coordinate": coordinate,
+            "can_author": True,
+            "authoring_refusal": None,
+        }
+    )
+    assert repr(whoami) == "actor: owner (principal setting; unauthenticated)"
+    assert str(whoami).splitlines()[1:] == [
+        "mode: admin; principal active; principals owner, reviewer",
+        "can author: yes",
+        "coordinate: 0123456789ab",
+    ]
+
+    kits = KitStatus(kits=(InstalledKit(kit_id="security", version="1.3.0", content_digest="d"),))
+    assert repr(kits) == "kits: security 1.3.0"
+    assert repr(KitStatus()) == "No kits installed."
+
+    page = ProposalList.model_validate({"coordinate": coordinate, "entries": []})
+    assert repr(page) == "0 proposals"
+    assert str(page).splitlines()[-1] == f"Coordinate: {_OID}"
+
+    # sec N5: the reviewer's key signed; the owner's connection sent it and activated.
+    receipt = ApprovalReceipt.model_validate(
+        {
+            "proposal_id": "sha256:" + "1" * 64,
+            "candidate_digest": "sha256:" + "2" * 64,
+            "signer_id": "reviewer",
+            "submitted_by": "owner",
+            "signing_semantic_root": "sha256:" + "3" * 64,
+            "attestation_digest": "sha256:" + "4" * 64,
+            "key_history_ref": "principals/reviewer.json@sha256:" + "3" * 64,
+            "activation": {
+                "proposal_id": "sha256:" + "1" * 64,
+                "activated_by": "owner",
+                "status": "accepted",
+                "accepted_coordinate": coordinate,
+                "workspace_advertisement": {"status": "not_attached", "workspace_path": None},
+            },
+        }
+    )
+    assert repr(receipt) == f"approved sha256:{'1' * 64} by reviewer (sent by owner)"
+    assert str(receipt).splitlines()[1] == (
+        f"activated sha256:{'1' * 64} by owner: accepted at 0123456789ab"
+    )
+    assert "tag=" not in str(receipt) + repr(receipt)
+
+
+def test_a_query_card_prints_its_clauses_by_their_authored_names() -> None:
+    """sec N11 / psw F8: the card was a cut repr (`from_=`, `params_contract=none`)."""
+
+    from cruxible_client.contracts.get_reads import GetResult
+    from cruxible_client.contracts.get_text import render_get
+
+    result = GetResult.model_validate(
+        {
+            "ref": "query:sec.old",
+            "kind": "query",
+            "detail": "summary",
+            "coordinate": {"git_oid": _OID[:12], "generation": 3},
+            "evaluation_time": "2026-11-15T00:00:00Z",
+            "card": {
+                "query": "sec.old",
+                "definition": {
+                    "query": "sec.old",
+                    "description": "Judgments older than three days.",
+                    "from": {"e": "security.app_exposure"},
+                    "where": "e.judged_at < now - 3d",
+                    "fields": ["e.verdict", {"name": "e.justification"}],
+                },
+                "description": "Judgments older than three days.",
+                "next": ["cruxible get query:sec.old --detail proof"],
+            },
+        }
+    )
+    text = render_get(result)
+    assert text is not None
+    assert text.splitlines() == [
+        "query: sec.old",
+        "from: e=security.app_exposure",
+        "where: e.judged_at < now - 3d",
+        'fields: e.verdict, {"name":"e.justification"}',
+        "description: Judgments older than three days.",
+        "next: cruxible get query:sec.old --detail proof",
+    ]
+
+
+def test_a_printed_proposal_page_names_its_next_page_on_each_client() -> None:
+    """Review F-002: print(cx.proposals(limit=1)) never said the page was partial."""
+
+    from cruxible_client.contracts import ProposalList
+    from cruxible_client.contracts.text_display import proposal_list_lines
+
+    page = ProposalList.model_validate(
+        {
+            "coordinate": _COORDINATE.model_dump(mode="json"),
+            "status_filter": "open",
+            "entries": [
+                {
+                    "proposal_id": "sha256:" + "1" * 64,
+                    "actor_id": "owner",
+                    "target_ref": None,
+                    "admitted_at": None,
+                    "verdict": "candidate",
+                    "status": "open",
+                }
+            ],
+            "truncated": True,
+            "next_cursor": "NEXT-PAGE",
+        }
+    )
+    printed = str(page).splitlines()
+    # The CLI prints the same rows, then its own `Truncated. Next: --cursor NEXT-PAGE`.
+    assert printed[:-1] == proposal_list_lines(page)
+    assert printed[-1] == "Truncated. Next: cx.proposals(status='open', cursor='NEXT-PAGE')"
+    assert repr(page) == "1 proposal (open 1); more: next_cursor"

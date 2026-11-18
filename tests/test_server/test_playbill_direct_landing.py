@@ -66,7 +66,8 @@ def test_accept_never_keeps_the_proposal(playbill_http: tuple[TestClient, str, P
     outcome = _propose(client, instance_id, accept="never")["proposal"]["outcome"]
 
     assert (outcome["status"], outcome["reason"]) == ("proposed", "accept_never")
-    assert outcome["next"].startswith("cruxible proposal activate ")
+    # Kept for review (coldcli-02): a reviewer's approval is next, not activation.
+    assert outcome["next"].startswith("cruxible proposal approve ")
 
 
 def test_a_preview_never_lands(playbill_http: tuple[TestClient, str, Path]) -> None:

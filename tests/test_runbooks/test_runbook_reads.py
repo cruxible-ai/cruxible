@@ -278,3 +278,116 @@ def test_a_get_costs_the_same_beside_10_100_and_1000_unrelated_runbooks_and_runs
     # VM steps: B-tree seeks are one step at any size; the few-step wobble is the
     # pages a seek lands on, never a walk (growth would be hundreds per 900 rows).
     assert max(steps.values()) - min(steps.values()) <= 10, measured
+
+
+def test_s3_a_runbook_trigger_card_and_the_lines_it_runs_name_each_other(tmp_path: Path) -> None:
+    """S3: the Trigger card names its Runbook; a Line card shows the Runbook's schedule."""
+
+    from cruxible_client.contracts.get_text import render_get
+
+    instance, _root = _start_world(tmp_path)
+
+    trigger = _get(instance, "Trigger:test.start-daily", surface="cli")
+    assert trigger.card.target == f"Runbook:{START}"
+    assert trigger.card.sched == "cron 0 6 * * *"
+    text = render_get(trigger)
+    assert text is not None
+    assert f"target: Runbook:{START}" in text and "sched: cron 0 6 * * *" in text
+    assert "None" not in text and "expression=" not in text
+
+    line = _get(instance, f"Line:{SETTLE}", surface="cli")
+    assert line.card.trigger == "runbook"
+    assert line.card.sched == f"cron 0 6 * * * (Trigger:test.start-daily via Runbook:{START})"
+    shown = render_get(line)
+    assert shown is not None
+    assert f"sched: cron 0 6 * * * (Trigger:test.start-daily via Runbook:{START})" in shown
+    assert "trigger: manual" not in shown
+
+
+def test_s3_card_cells_read_as_plain_values_never_python_reprs() -> None:
+    from cruxible_client.contracts.get_text import _card_cell
+
+    assert [_card_cell(v) for v in (True, False, None, 3, {"a": [1]})] == [
+        "true",
+        "false",
+        "none",
+        "3",
+        '{"a":[1]}',
+    ]
+
+
+def test_a_line_card_finds_its_runbook_past_ten_unrelated_triggered_ones(
+    tmp_path: Path,
+) -> None:
+    """Review r2: the Runbooks that run a Line are selected before the card bounds them."""
+
+    instance, _root = runbook_world(tmp_path)
+    for index in range(10):
+        # Alphabetically before the one that runs the Line, each with a Trigger.
+        author_runbook(instance, f"test.aaa-{index}", [{"action": "evidence.sweep"}])
+        author_runbook_trigger(
+            instance,
+            f"test.aaa-{index}-daily",
+            runbook=f"test.aaa-{index}",
+            schedule={"kind": "cron", "expression": "0 5 * * *"},
+        )
+    author_runbook(instance, "test.zzz", [{"line": SETTLE}])
+    author_runbook_trigger(
+        instance,
+        "test.zzz-daily",
+        runbook="test.zzz",
+        schedule={"kind": "cron", "expression": "0 6 * * *"},
+    )
+
+    card = _get(instance, f"Line:{SETTLE}").card
+
+    assert card.trigger == "runbook"
+    assert card.sched == "cron 0 6 * * * (Trigger:test.zzz-daily via Runbook:test.zzz)"
+
+
+def test_a_line_a_runbook_trigger_runs_names_that_trigger_in_orient_with_a_header(
+    tmp_path: Path,
+) -> None:
+    """coldcli-12/coldmcp-07: orient said `manual` in unlabelled columns; the card no fire time."""
+
+    from cruxible_client.contracts.text_display import render_orient
+
+    instance, _root = _start_world(tmp_path)
+    when = datetime(2030, 1, 1, 12, tzinfo=UTC)
+    page = service_playbill_orient(instance, section="lines", evaluation_time=when)
+    by_line = {row.line: row.trigger for row in page.lines}
+    assert by_line[f"Line:{SETTLE}"] == "runbook Trigger:test.start-daily"
+    text = render_orient(page.model_dump(mode="json"))
+    rows = text.splitlines()
+    header = rows.index("LINE  LIFECYCLE  PROCEDURE  AUTHORITY  TRIGGER  ENABLEMENT  DUE  WAITING")
+    settle = next(row for row in rows[header:] if row.startswith(f"Line:{SETTLE}  "))
+    assert "  runbook Trigger:test.start-daily  -  0  0" in settle
+
+    card = _get(instance, "Trigger:test.start-daily", evaluation_time=when).card
+    assert card.next_fire == datetime(2030, 1, 2, 6, tzinfo=UTC)
+
+
+@pytest.mark.parametrize(
+    "schedule,sched",
+    [
+        ({"kind": "cron", "expression": "0 6 * * *"}, "cron 0 6 * * *"),
+        ({"kind": "cadence", "interval_seconds": 3600}, "every 3600s"),
+    ],
+)
+def test_manual_runbooks_sorting_first_never_hide_a_scheduled_one(
+    tmp_path: Path, schedule: dict[str, Any], sched: str
+) -> None:
+    """Review F-001: two untriggered Runbooks used up the limit, so the Line read manual."""
+
+    instance, _root = runbook_world(tmp_path)
+    for name in ("test.a-manual", "test.b-manual", "test.z-scheduled"):
+        author_runbook(instance, name, [{"line": SETTLE}])
+    author_runbook_trigger(instance, "test.z-daily", runbook="test.z-scheduled", schedule=schedule)
+    when = datetime(2030, 1, 1, 12, tzinfo=UTC)
+
+    page = service_playbill_orient(instance, section="lines", evaluation_time=when)
+    by_line = {row.line: row.trigger for row in page.lines}
+    assert by_line[f"Line:{SETTLE}"] == "runbook Trigger:test.z-daily"
+    card = _get(instance, f"Line:{SETTLE}").card
+    assert card.trigger == "runbook"
+    assert card.sched == f"{sched} (Trigger:test.z-daily via Runbook:test.z-scheduled)"

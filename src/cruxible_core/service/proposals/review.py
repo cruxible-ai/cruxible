@@ -38,6 +38,7 @@ from cruxible_client.contracts.errors import (
     ApprovalSignerAfterBase,
     ProposalIntegrityError,
     ProposalReviewOptionsInvalid,
+    ReviewedCandidateChanged,
 )
 from cruxible_client.contracts.proposal_models import (
     OriginatingLine,
@@ -59,7 +60,6 @@ from cruxible_core.ledger.git import NOTE_REFS
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import service_inspect_playbill_proposal
 from cruxible_core.service.discovery.backlinks import (
-    REVIEW_GUIDANCE_MAX_DEFINITIONS,
     claim_type_identity,
     review_guidance,
 )
@@ -659,7 +659,7 @@ def service_review_playbill_proposal(
             instance,
             (
                 definition
-                for member in reviewed_members[: 4 * REVIEW_GUIDANCE_MAX_DEFINITIONS]
+                for member in reviewed_members
                 for definition in (
                     claim_type_identity(
                         member.candidate_semantic_artifact or member.base_semantic_artifact,
@@ -705,7 +705,8 @@ def service_prepare_playbill_approval(
     proposal_id: str,
     signer_id: str,
     access: BodyAccessContext,
-    land: Callable[[], None] | None = None,
+    land: Callable[[], str] | None = None,
+    reviewed_candidate_digest: str | None = None,
 ) -> ApprovalChallenge:
     """Return the exact public statement a client signer may choose to approve.
 
@@ -717,6 +718,13 @@ def service_prepare_playbill_approval(
     moved proposal lands it, and the challenge is for the landed candidate,
     whose parent registry holds the signer. ``challenge.proposal_id`` then
     names the landed proposal; sign and submit that one.
+
+    ``reviewed_candidate_digest`` binds the challenge to the candidate the
+    signer reviewed: a challenge for any other candidate, the landed one
+    included, is refused, naming the proposal and candidate there is now.
+    Unbound, the landed challenge is returned only when its members are
+    identical to the named proposal's; a landing that changed them refuses the
+    same way, so no client signs changed members it was never shown.
     """
 
     from cruxible_core.service.authoring.documents import (
@@ -747,11 +755,35 @@ def service_prepare_playbill_approval(
                 raise ApprovalSignerAfterBase(
                     review.proposal_id, signer_id=signer_id, author=author
                 )
-            land()
-            landed = land_for_signer(instance, review.proposal_id)
+            landed = land_for_signer(instance, review.proposal_id, triggered_by=land())
+            assert landed.proposal_id is not None and landed.candidate_digest is not None
+            if reviewed_candidate_digest is not None or not landed.members_identical:
+                # Landed, then refused: the reviewer's next review is of the
+                # successor this names, and nothing was signed for it. Bound to
+                # a reviewed candidate, always; unbound, whenever the landed
+                # members differ from those of the proposal the signer named,
+                # because a challenge returned here is signed without a review.
+                raise ReviewedCandidateChanged(
+                    review.proposal_id,
+                    reviewed_candidate_digest=(
+                        reviewed_candidate_digest or str(review.candidate_digest)
+                    ),
+                    current_proposal_id=landed.proposal_id,
+                    current_candidate_digest=landed.candidate_digest,
+                    members_identical=landed.members_identical,
+                )
             return service_prepare_playbill_approval(
-                instance, proposal_id=landed, signer_id=signer_id, access=access
+                instance, proposal_id=landed.proposal_id, signer_id=signer_id, access=access
             )
+    if reviewed_candidate_digest is not None and (
+        review.candidate_digest != reviewed_candidate_digest
+    ):
+        raise ReviewedCandidateChanged(
+            review.proposal_id,
+            reviewed_candidate_digest=reviewed_candidate_digest,
+            current_proposal_id=review.proposal_id,
+            current_candidate_digest=str(review.candidate_digest),
+        )
     principal = generation.principals.require_active(signer_id)
     _refuse_ineligible_signer(principal, review)
     return ApprovalChallenge(
@@ -913,10 +945,12 @@ def _claim_change_line(member: ReviewedMember) -> str | None:
         "object"
     ):
         # Same value on new evidence (a re-read file is new content): say so,
-        # rather than print `true -> true` as if the value moved.
-        line = (
-            f"refresh evidence {subject} {field}: {_claim_object_text(statement)} (value unchanged)"
-        )
+        # rather than print `true -> true` as if the value moved; the word is
+        # history's (a re-bind leaves a held citation out, a re-observation adds).
+        from cruxible_core.service.proposals.review_view import drops_citation
+
+        verb = "rebind" if drops_citation(base, candidate) else "reobserve"
+        line = f"{verb} {subject} {field}: {_claim_object_text(statement)} (value unchanged)"
     elif isinstance(base_statement, Mapping):
         line = (
             f"set {subject} {field}: {_claim_object_text(base_statement)} -> "

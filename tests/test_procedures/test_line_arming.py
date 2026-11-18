@@ -195,6 +195,107 @@ def test_a_restart_keeps_the_arm_forward_only_and_leaves_earlier_work_explicit(t
     assert _status(instance, line, restarted + timedelta(seconds=3)).pending_explicit == 1
 
 
+def _coverage_records(instance) -> int:  # type: ignore[no-untyped-def]
+    """The coverage transitions the dispatch journal retains."""
+
+    from cruxible_core.exhaust.line_dispatch import LineDispatchStore
+    from cruxible_core.exhaust.payloads import read_payload
+    from cruxible_core.storage.cas import BodyAccessContext
+
+    store = LineDispatchStore(instance)
+    assert store.journal is not None
+    access = BodyAccessContext(principal_id="test", can_read_body=True)
+    return sum(
+        read_payload(instance.body_store(), stored.record.payload_digest, access=access)["kind"]
+        == "coverage"
+        for stored in store.journal.select_records(store.stream, partition_id="dispatch")
+    )
+
+
+def _session(instance):  # type: ignore[no-untyped-def]
+    import json
+
+    from cruxible_core.exhaust.line_dispatch import LineDispatchStore
+
+    with LineDispatchStore(instance).locked() as conn:
+        (payload,) = conn.execute("SELECT payload FROM sessions WHERE active=1").fetchone()
+    return json.loads(payload)
+
+
+_UNMATCHED = "sha256:" + "0" * 64  # A Capture landing under a contract no Trigger selects.
+
+
+def test_run_journal_moves_that_match_nothing_journal_no_coverage(tmp_path):
+    from cruxible_core.exhaust.line_dispatch import dispatch_root
+    from cruxible_core.service.procedures.line_dispatch import _positions
+
+    instance, line, procedure, start = _armed_world(tmp_path)
+    _match(instance, start + timedelta(seconds=1))
+    before = _coverage_records(instance)
+
+    # Ticks while the run journal moves and nothing matches: positions advance
+    # in the projection only, so the next scan starts at the head.
+    for tick in range(5):
+        capture(
+            instance,
+            procedure,
+            at=start + timedelta(seconds=2 + tick),
+            partition=f"run:other-{tick}",
+            digest=_UNMATCHED,
+        )
+        _match(instance, start + timedelta(seconds=2.5 + tick))
+        assert _session(instance)["positions"] == _positions(instance)
+    assert _coverage_records(instance) == before
+    assert _status(instance, line, start + timedelta(seconds=8)).pending_automatic == 0
+
+    # A match still journals its coverage.
+    capture(instance, procedure, at=start + timedelta(seconds=8), partition="run:first")
+    _match(instance, start + timedelta(seconds=9))
+    assert _coverage_records(instance) == before + 1
+    assert _status(instance, line, start + timedelta(seconds=9)).pending_automatic == 1
+
+    # Unjournaled advances, then a match the daemon has not scanned yet, then the
+    # projection is rebuilt from the journal: the segment resumes from its last
+    # journaled positions, finds the new match once and re-enqueues nothing.
+    capture(
+        instance,
+        procedure,
+        at=start + timedelta(seconds=10),
+        partition="run:other-late",
+        digest=_UNMATCHED,
+    )
+    _match(instance, start + timedelta(seconds=10.5))
+    assert _coverage_records(instance) == before + 1
+    capture(instance, procedure, at=start + timedelta(seconds=11), partition="run:second")
+    (dispatch_root(instance) / "dispatch.sqlite3").unlink()
+    assert _session(instance)["positions"] != _positions(instance)
+    _match(instance, start + timedelta(seconds=12))
+    assert _session(instance)["positions"] == _positions(instance)
+    status = _status(instance, line, start + timedelta(seconds=12))
+    assert (status.pending_automatic, status.pending_explicit) == (2, 0)
+    assert _coverage_records(instance) == before + 2
+
+    # A restart after unjournaled advances rolls over from the head; the gap
+    # starts where the projection's coverage reached, not further back.
+    capture(
+        instance,
+        procedure,
+        at=start + timedelta(seconds=13),
+        partition="run:other-restart",
+        digest=_UNMATCHED,
+    )
+    _match(instance, start + timedelta(seconds=13.5))
+    reached = _session(instance)["evaluated_until"]
+    restarted = start + timedelta(seconds=30)
+    _match(instance, restarted, daemon_id="restarted")
+    session = _session(instance)
+    assert session["positions"] == _positions(instance)
+    assert session["starts_at"] > reached
+    status = _status(instance, line, restarted)
+    assert status.state == "running"
+    assert (status.pending_automatic, status.pending_explicit) == (0, 2)
+
+
 def test_arming_never_drains_a_backlog_that_explicit_evaluation_left(tmp_path):
     instance, line, procedure = line_world(tmp_path, CaptureLandingSchedule(event=SELECTOR))
     capture(instance, procedure)

@@ -1301,8 +1301,11 @@ def _acquisition_decisions(instance: PlaybillInstance) -> list[tuple[str, str]]:
                 bodies.read(stored.record.payload_digest, access=access)
             )
             assert isinstance(payload, dict)
-            decision = cast(dict[str, Any], payload["decision"])
-            applied.append((str(payload["input_name"]), str(decision["disposition"])))
+            from tests.test_procedures.test_capture_outputs import _acquisition_members
+
+            for member in _acquisition_members(instance, payload):
+                decision = cast(dict[str, Any], member["decision"])
+                applied.append((str(member["input_name"]), str(decision["disposition"])))
     return applied
 
 

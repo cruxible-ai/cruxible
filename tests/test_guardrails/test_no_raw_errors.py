@@ -144,7 +144,6 @@ def mcp_tools(monkeypatch: pytest.MonkeyPatch) -> object:
     [
         ("cruxible_retire", {"instance_id": "inst_x", "target": 7, "because": 3}),
         ("cruxible_set", {"instance_id": "inst_x", "subject": [], "field": {}}),
-        ("cruxible_curation_suppress", {"instance_id": "inst_x", "item_id": 5}),
         ("cruxible_kit_remove", {"instance_id": "inst_x", "request": {"kit_id": 1}}),
         ("cruxible_proposal_withdraw", {"instance_id": "inst_x", "reason": "x" * 1001}),
     ],
@@ -196,7 +195,6 @@ def http(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient
         ("/api/v1/inst_x/set", {"subject": 1, "field": [], "value": {}}),
         ("/api/v1/inst_x/retire", {"target": "", "because": ""}),
         ("/api/v1/inst_x/kits/remove", {"kit_id": "Not A Kit"}),
-        ("/api/v1/inst_x/curation/suppress", {"item_id": "not-a-digest"}),
         ("/api/v1/inst_x/runtime/credentials", {"permission_mode": "root"}),
     ],
 )

@@ -602,6 +602,26 @@ def _refuse(
 _WORKING_SELECTION_REFUSALS = (CaptureFormatError, CanonicalEncodingError, ValidationError)
 
 
+def _refuse_unserved_action(action: str, offending_element: str) -> None:
+    """Refuse naming an internal action this release does not serve."""
+
+    from cruxible_client.contracts.triggers import (
+        SERVED_INTERNAL_ACTIONS,
+        UNSERVED_INTERNAL_ACTIONS,
+    )
+
+    why = UNSERVED_INTERNAL_ACTIONS.get(action)
+    if why is not None:
+        _refuse(
+            "cruxible.authoring.action_not_served",
+            offending_element,
+            f"Internal action {action!r} is not served: {why}, so nothing would run it. "
+            "Name one of: " + ", ".join(SERVED_INTERNAL_ACTIONS) + ".",
+            repair_kind="replace_input",
+            repair_description="Name a served internal action, or leave this one out.",
+        )
+
+
 def _refuse_retired_source(
     head: CaptureContractAny | None, *, source_id: str, offending_element: str
 ) -> None:
@@ -3410,6 +3430,7 @@ def _render_trigger_member(
         )
     else:
         assert payload.action is not None
+        _refuse_unserved_action(payload.action, "action")
         target = ActionTarget(action=payload.action)
     schedule = _resolve_trigger_authoring_schedule(payload.schedule, tree=tree)
     selector = schedule_capture_selector(schedule)
@@ -6809,6 +6830,72 @@ def _refuse_subject_collisions(
         )
 
 
+def _refuse_added_per_file_evidence_rules(payload: object, base_tree: Mapping[str, bytes]) -> None:
+    """A ClaimType member may not newly name one workspace file's own contract.
+
+    The rule the accepted ClaimType already holds stays (the field remains
+    editable); only a per-file contract it did not name refuses. Reads only the
+    predecessors of the ClaimType members this payload carries.
+    """
+
+    from cruxible_client.contracts.claim_type_inputs import (
+        ClaimTypeFamilyRuleNotAuthored,
+        refuse_added_family_rules,
+    )
+    from cruxible_client.contracts.policies import (
+        PER_FILE_EVIDENCE_RULE_REPAIR,
+        added_per_file_contracts,
+    )
+    from cruxible_client.contracts.public_names import public_name
+
+    members = payload.members if isinstance(payload, ChangeSetAuthoringPayload) else (payload,)
+    for index, member in enumerate(members):
+        if isinstance(member, ClaimTypeAuthoringPayload):
+            claim_type, field = member.claim_type, "claim_type"
+        elif isinstance(member, ClaimTypeSuccessionMember):
+            claim_type, field = member.successor, "successor"
+        else:
+            continue
+        path = claim_type_path(claim_type.predicate)
+        held = base_tree.get(path)
+        predecessor = None if held is None else parse_claim_type(held, path=path)
+        prior_policy = None if predecessor is None else predecessor.evidence_admission_policy
+        prefix = f"members[{index}]." if isinstance(payload, ChangeSetAuthoringPayload) else ""
+        try:
+            refuse_added_family_rules(
+                claim_type.predicate, claim_type.evidence_admission_policy, prior_policy
+            )
+        except ClaimTypeFamilyRuleNotAuthored as refused:
+            _refuse(
+                ClaimTypeFamilyRuleNotAuthored.error_code,
+                f"{prefix}{field}.evidence_admission_policy",
+                str(refused).removeprefix(f"{ClaimTypeFamilyRuleNotAuthored.error_code}: "),
+                repair_kind="drop_family_rule",
+                repair_description=(
+                    "Drop the family rule: workspace citations need no rule. For a "
+                    "particular kind of source, name a shaped CaptureContract in evidence"
+                ),
+            )
+        added = added_per_file_contracts(claim_type.evidence_admission_policy, prior_policy)
+        if not added:
+            continue
+        rule_index, name = added[0]
+        _refuse(
+            "cruxible.claim_type.per_file_evidence_rule",
+            f"{prefix}{field}.evidence_admission_policy.rules[{rule_index}].capture_contracts",
+            f"ClaimType:{claim_type.predicate} evidence rule "
+            f"{claim_type.evidence_admission_policy.rules[rule_index].rule_id!r} names "
+            f"CaptureContract:{public_name(name)}; {PER_FILE_EVIDENCE_RULE_REPAIR}",
+            repair_kind="drop_per_file_rule",
+            repair_description=(
+                "Drop the per-file contract: workspace citations need no rule. For a "
+                "particular kind of source, name a shaped CaptureContract in the field's "
+                "evidence"
+            ),
+            replacement={"drop_contract": public_name(name)},
+        )
+
+
 def _lower_authoring(
     instance: PlaybillInstance,
     *,
@@ -6834,6 +6921,7 @@ def _lower_authoring(
         generation_root=intent.base_coordinate.generation_root,
     )
     base_tree = instance.immutable_tree_at(base.git_oid)
+    _refuse_added_per_file_evidence_rules(intent.payload, base_tree)
     if captures is None:
         captures = instance.capture_verification_context()
     if isinstance(intent.payload, RunbookAuthoringPayload):

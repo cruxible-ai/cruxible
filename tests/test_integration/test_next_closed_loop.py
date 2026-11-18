@@ -189,6 +189,11 @@ EXPECTED_OPERATIONS = {
     "line_run_failed": "hand_edit",
     # A restart leaves the downtime unmatched: evaluating that exact range covers it.
     "line_coverage_gap": "cruxible.line.evaluate",
+    # A timer's instants fell due while no daemon ran: run its target (a Runbook,
+    # an action), or evaluate the range for a Line.
+    "trigger_instants_missed": frozenset(
+        {"cruxible.runbook.run", "cruxible.action.run", "cruxible.line.evaluate"}
+    ),
     # Work matched before a restart waits for an explicit dispatch.
     "line_work_pending": "cruxible.line.dispatch",
     # Demoting the Line is a Line successor the row carries in full, ready to submit.
@@ -259,6 +264,7 @@ SINCE_REASONS = frozenset(
         "line_not_enabled",
         "line_disabled_by_upgrade",
         "line_coverage_gap",
+        "trigger_instants_missed",
         "line_work_pending",
         "line_run_failed",
         "claim_conflicted",
@@ -2064,6 +2070,112 @@ def _line_coverage_gap(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
     _assert_gone(instance, "line_coverage_gap", request)
 
 
+def _trigger_instants_missed(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
+    """A cron Trigger on a Runbook and one on a Line, the daemon down across due
+    instants: after the restart each shows one row naming the range, the count and
+    its target's repair, and running that repair clears it (ruling 7)."""
+
+    from datetime import timedelta
+
+    from cruxible_client.contracts.line_dispatch import LineEvaluateRequest
+    from cruxible_client.contracts.triggers import CronSchedule
+    from cruxible_core.service.procedures.line_dispatch import service_evaluate_line
+    from cruxible_core.service.runbooks import service_run_runbook
+    from cruxible_core.triggers.journal import evaluate_triggers, internal_triggers
+    from tests.support.operation_world import actor
+    from tests.support.runbooks import (
+        author_runbook,
+        author_runbook_trigger,
+        readers,
+        runbook_world,
+    )
+    from tests.test_procedures import test_line_arming as arming
+    from tests.test_procedures.test_completeness_transfer import _Clock
+    from tests.test_procedures.test_line_triggers import line_world
+    from tests.test_procedures.test_procedure_run_surface import READ_TIME
+
+    # A Runbook every five minutes: one daemon fires it, then is down 40 minutes.
+    (root / "runbook").mkdir()
+    instance, workspace = runbook_world(root / "runbook")
+    author_runbook(instance, "test.rb", [{"action": "evidence.sweep"}])
+    author_runbook_trigger(
+        instance,
+        "test.rb-cron",
+        runbook="test.rb",
+        schedule={"kind": "cron", "expression": "*/5 * * * *"},
+    )
+    (item,) = (t for t in internal_triggers(instance) if t.trigger == "Trigger:test.rb-cron")
+    evaluate_triggers(
+        instance, now=item.accepted_at + timedelta(minutes=6), listening_since=item.accepted_at
+    )
+    restart = item.accepted_at + timedelta(minutes=46)
+    evaluate_triggers(instance, now=restart, listening_since=restart)
+    request = _request(instance, evaluation_time=restart)
+    row = _row(instance, "trigger_instants_missed", request)
+    assert row.subject_identity == "Trigger:test.rb-cron"
+    assert row.related_identities == ("Runbook:test.rb",)
+    first, last = (datetime.fromisoformat(row.detail[key]) for key in ("since", "until"))
+    # Every five-minute instant between the last fire's evaluation and the restart.
+    assert first - timedelta(minutes=5) <= item.accepted_at + timedelta(minutes=6) < first
+    assert last < restart <= last + timedelta(minutes=5)
+    assert row.detail["count"] == (last - first) // timedelta(minutes=5) + 1 >= 7
+    assert row.repair.operation == "cruxible.runbook.run"
+    assert row.repair.command == "cruxible runbook run test.rb"
+    # The named repair: run the Runbook now. Its run after the restart clears the row.
+    service_run_runbook(
+        instance,
+        name="test.rb",
+        actor_context=actor(),
+        caller_rung=3,
+        daemon_clock=_Clock(restart + timedelta(seconds=30)),
+        **readers(instance, workspace),
+    )
+    _assert_gone(instance, "trigger_instants_missed", request)
+
+    # A Line on a cron Trigger, enabled, matched, then its daemon down 30 minutes:
+    # the restart gap is this rule's row, with the Line's own evaluation as repair.
+    (root / "line").mkdir()
+    instance, line, _procedure = line_world(root / "line", CronSchedule(expression="*/10 * * * *"))
+    arming.service_enable_line(
+        instance,
+        line.identity.name,
+        principal=arming.LOCAL,
+        actor=arming._actor(instance),
+        now=READ_TIME + timedelta(seconds=10),
+        daemon_id="daemon",
+    )
+    arming._match(instance, READ_TIME + timedelta(minutes=1))
+    restarted = READ_TIME + timedelta(minutes=31)
+    arming._match(instance, restarted, daemon_id="restarted")
+    request = _request(instance, evaluation_time=restarted)
+    assert not [
+        item
+        for item in service_playbill_next(instance, request=request).items
+        if item.reason == "line_coverage_gap"
+    ]
+    row = _row(instance, "trigger_instants_missed", request)
+    assert row.subject_identity.startswith("Trigger:")
+    assert row.related_identities == (line.identity.qualified,)
+    assert row.detail["count"] == 3
+    assert [row.detail["since"], row.detail["until"]] == [
+        format_datetime(READ_TIME + timedelta(minutes=10)),
+        format_datetime(READ_TIME + timedelta(minutes=30)),
+    ]
+    assert row.repair.operation == "cruxible.line.evaluate"
+    since, until = row.repair.arguments["since"], row.repair.arguments["until"]
+    assert datetime.fromisoformat(until) == restarted
+    service_evaluate_line(
+        instance,
+        line.identity.name,
+        LineEvaluateRequest(
+            since=datetime.fromisoformat(since), until=datetime.fromisoformat(until)
+        ),
+        actor=arming._actor(instance),
+        now=restarted + timedelta(seconds=5),
+    )
+    _assert_gone(instance, "trigger_instants_missed", request)
+
+
 def _line_work_pending(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
     from datetime import timedelta
 
@@ -2448,9 +2560,9 @@ def _kit_resume_blocked(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
             instance, (f"providers/{release.manifest.providers[0].build}.json",)
         )
         # No approval round to run here: the resume's own commit lands at
-        # once, the same self-resolving activation ``_add`` gets directly.
-        (resumed,) = _resumes(consumer)
-        assert resumed.state == "proposed" and resumed.proposal_id is not None
+        # once, the same self-resolving activation ``_add`` gets directly. Its
+        # proposal is closed, so kit status lists no pending row for it.
+        assert _resumes(consumer) == ()
         assert f"procedures/{PROCEDURE}.json" in _tree(consumer)
 
         # A stale recorded resume for an older release: its head no longer
@@ -2534,6 +2646,7 @@ CLOSED_LOOP_CASES: dict[ClosedLoopKey, RepairCase] = {
     ("line_not_enabled", None): _line_not_enabled,
     ("line_run_failed", None): _line_run_failed,
     ("line_coverage_gap", None): _line_coverage_gap,
+    ("trigger_instants_missed", None): _trigger_instants_missed,
     ("line_work_pending", None): _line_work_pending,
     ("line_settled_prior_refusals", None): _line_settled_prior_refusals,
     ("line_inbox_unread", None): _line_inbox_unread,

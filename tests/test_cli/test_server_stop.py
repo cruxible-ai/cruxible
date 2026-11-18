@@ -189,3 +189,26 @@ def test_the_socket_shape_and_the_tcp_shape_report_the_same_keys(
     assert socket_payload["state_root_released"] is True
     assert tcp_payload["daemon_exited"] is True
     assert tcp_payload["state_root_released"] is None
+
+
+def test_server_stop_help_names_the_transport_form_that_parses(
+    monkeypatch, runner: CliRunner, tmp_path: Path
+) -> None:
+    """coldkit-18: the help names a transport spelling the CLI accepts."""
+
+    help_result = runner.invoke(cli, ["server", "stop", "--help"])
+    assert help_result.exit_code == 0, help_result.output
+    help_text = " ".join(help_result.output.split())
+    assert "cruxible --server-socket PATH server stop" in help_text
+
+    root = tmp_path / "state"
+    root.mkdir()
+    with StateRootLock(root, transport="unix socket /run/a.sock"):
+        pass
+    client = _StubClient(root)
+    _patch_client(monkeypatch, client)
+    monkeypatch.setattr("cruxible_core.cli.commands.server.time.sleep", lambda _s: None)
+
+    result = runner.invoke(cli, ["--server-socket", str(tmp_path / "d.sock"), "server", "stop"])
+    assert result.exit_code == 0, result.output
+    assert client.stop_calls == 1

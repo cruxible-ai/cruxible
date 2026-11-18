@@ -634,7 +634,7 @@ def test_an_unbound_credential_gets_the_typed_refusal_at_every_actor_door(
 def test_every_actor_boundary_refuses_an_unbound_credential_typed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The shared boundary every run, Line, prediction and curation door calls."""
+    """The shared boundary every run, Line, prediction and attributed door calls."""
 
     from cruxible_core.errors import PrincipalRefusedError
     from cruxible_core.runtime import playbill_api
@@ -656,7 +656,7 @@ def test_every_actor_boundary_refuses_an_unbound_credential_typed(
     )
     for boundary in (
         playbill_api._write_actor_context,
-        playbill_api._curation_actor,
+        playbill_api._attributed_actor,
         playbill_api._actor_id,
     ):
         with pytest.raises(PrincipalRefusedError) as refused:

@@ -334,6 +334,69 @@ def schedule_summary(schedule: TriggerSchedule) -> str:
     raise TriggerFormatError(f"unsupported Trigger schedule kind {schedule.kind!r}")
 
 
+def compact_schedule(schedule: TriggerSchedule) -> str:
+    """A Trigger schedule as text shows it: ``cron 0 14 * * *``, ``every 3600s``."""
+
+    if isinstance(schedule, CadenceSchedule):
+        return f"every {schedule.interval_seconds}s"
+    if isinstance(schedule, CronSchedule):
+        return f"cron {schedule.expression}"
+    return schedule_summary(schedule)
+
+
+def _triggered_runbooks(projection: Any, line: str, *, limit: int) -> list[str]:
+    """The first ``limit`` Runbooks that run ``line`` AND have a live Trigger aimed at them.
+
+    A Runbook with no Trigger never takes a place in the answer, so manual
+    Runbooks sorting first cannot hide a scheduled one. One seek of the
+    ``runbook_lines_by_line`` index for this Line, each row checked by one key
+    seek of the maintained ``trigger_aim_counts`` counters: the work is this
+    Line's own Runbook memberships, never the other Runbooks or the Trigger log.
+    """
+
+    return [
+        str(row[0])
+        for row in projection.typed.connection.execute(
+            "SELECT runbook.source_identity FROM runbook_lines AS runbook "
+            "WHERE runbook.line=? AND EXISTS (SELECT 1 FROM trigger_aim_counts AS aim "
+            "WHERE aim.target_kind='runbook' AND aim.target=runbook.source_identity) "
+            "ORDER BY runbook.source_identity LIMIT ?",
+            (line, limit),
+        )
+    ]
+
+
+def runbook_schedules(projection: Any, line: str, *, limit: int) -> tuple[str, ...]:
+    """Each Runbook Trigger that runs ``line`` through a Runbook step, compact.
+
+    The Runbooks are the first ``limit`` that run the Line and have a live
+    Trigger (``_triggered_runbooks``), each with up to ``limit`` of its
+    Triggers. It never reads a Runbook that does not run this Line.
+    """
+
+    found: list[str] = []
+    for name in _triggered_runbooks(projection, line, limit=limit):
+        aimed = aimed_trigger_page(projection, (name,), limit=limit, target_kind="runbook")[name]
+        for trigger in aimed.identities:
+            schedule = cast(Trigger, projection.typed.source(trigger)).schedule
+            found.append(f"{compact_schedule(schedule)} ({trigger} via {name})")
+    return tuple(found)
+
+
+def runbook_trigger_names(projection: Any, line: str, *, limit: int) -> tuple[str, ...]:
+    """The Triggers that run ``line`` through a Runbook step, by name, at most ``limit``.
+
+    The same seeks as ``runbook_schedules`` (triggered Runbooks by Line, then
+    each one's Triggers), reading no Trigger body.
+    """
+
+    names: list[str] = []
+    for runbook in _triggered_runbooks(projection, line, limit=limit):
+        aimed = aimed_trigger_page(projection, (runbook,), limit=limit, target_kind="runbook")
+        names.extend(name for name in aimed[runbook].identities if name not in names)
+    return tuple(names[:limit])
+
+
 def window_summary(window: object) -> str:
     if isinstance(window, FixedWindow):
         return (
@@ -539,8 +602,14 @@ def line_card(
             )
             for name in aimed.identities
         )
+        via_runbooks = runbook_schedules(
+            projection, line.identity.qualified, limit=OPERATIONAL_CARD_LIST_LIMIT
+        )
     digest = line_identity_digest(line.identity)
     trigger = trigger_kind(aimed.schedule_kinds)
+    if via_runbooks and trigger == "manual":
+        # S3: a Runbook's Trigger runs it, so it is not run only by hand.
+        trigger = "runbook"
     procedure = line.procedure.target.qualified
     next_steps = [render(procedure, None)]
     next_steps.extend(render(item.trigger, None) for item in triggers)
@@ -568,6 +637,7 @@ def line_card(
         procedure=procedure,
         authority=line_authority(line),
         trigger=trigger,
+        sched="; ".join(via_runbooks) or None,
         triggers=triggers,
         triggers_total=aimed.total,
         triggers_inactive=_triggers_inactive(line, aimed.total, operations.arm_state),
@@ -610,6 +680,15 @@ def line_rows(
         triggers = aimed_trigger_page(
             projection, tuple(line.identity.qualified for line in lines), limit=0
         )
+        # A Line no Trigger aims at may still be run by a Runbook's Trigger:
+        # name that Trigger rather than call the Line manual (coldcli-12).
+        via_runbooks = {
+            line.identity.qualified: runbook_trigger_names(
+                projection, line.identity.qualified, limit=2
+            )
+            for line in lines
+            if not triggers[line.identity.qualified].total
+        }
     operations_by_line: dict[str, LineOperations] = {}
     if lines and dispatch_root(instance).exists():
         # One store session for every Line, not one replay per row.
@@ -633,7 +712,11 @@ def line_rows(
                 lifecycle="retired" if line.lifecycle.state == "retired" else "live",
                 procedure=line.procedure.target.qualified,
                 authority=line_authority(line),
-                trigger=trigger_kind(triggers[line.identity.qualified].schedule_kinds),
+                trigger=(
+                    "runbook " + ", ".join(via_runbooks[line.identity.qualified])
+                    if via_runbooks.get(line.identity.qualified)
+                    else trigger_kind(triggers[line.identity.qualified].schedule_kinds)
+                ),
                 enablement=operations.arm_state,
                 triggers_inactive=_triggers_inactive(
                     line, triggers[line.identity.qualified].total, operations.arm_state
@@ -742,7 +825,7 @@ def _capture_derivation(
         return None
     return GetCaptureDerivation(
         sources=manifest.input_capture_digests,
-        reads=manifest.input_accepted_state_digests,
+        reads=manifest.accepted_reads,
         reducer=reducer,
     )
 

@@ -169,6 +169,66 @@ def test_document_links_index_about_and_guides_and_review_shows_guidance(
     ]
 
 
+def test_review_guidance_does_not_depend_on_member_order_or_unguided_fields(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """coldps-09: a 116-member change set touched some 35 ClaimTypes; the review
+    asked guidance for the first 20 it met in member order. Claim paths are
+    content ids, so a resubmission met them in another order and the
+    `ruling` guidance line was gone.
+
+    Every touched definition is asked, and the cap counts the ones that have
+    guidance: an unguided field met or sorted first takes no place.
+    """
+
+    from cruxible_core.service.discovery import backlinks
+    from cruxible_core.service.proposals.review import (
+        ProposalReview,
+        service_review_playbill_proposal,
+    )
+    from cruxible_core.storage.cas import BodyAccessContext
+    from tests.test_service.test_write_verbs import _set, _write
+
+    instance, _ = seed_write_surface(tmp_path)
+    title = f"{KIND}.title"
+    propose_document(
+        instance,
+        "title-review",
+        DocumentLink(relation="guides", target_identity=f"ClaimType:{title}"),
+    )
+    unguided = tuple(f"ClaimType:a.none-{index:02d}" for index in range(30))
+    shown = review_guidance(instance, (*unguided, f"ClaimType:{title}"))
+    assert [(item.definition, item.document) for item in shown] == [
+        (f"ClaimType:{title}", "document:title-review")
+    ]
+
+    # One guided definition shown at most: `status` sorts and may be met first,
+    # has no guidance, and so does not use the place.
+    monkeypatch.setattr(backlinks, "REVIEW_GUIDANCE_MAX_DEFINITIONS", 1)
+    outcome = _write(
+        instance,
+        *(
+            _set(f"{KIND}/wi-{index}", field, value)
+            for index in (1, 2, 3)
+            for field, value in (("status", "ready"), ("title", f"title {index}"))
+        ),
+        accept="never",
+    )
+    assert outcome.proposal is not None, outcome
+    access = BodyAccessContext(principal_id="reviewer", can_read_body=True)
+    detail = service_review_playbill_proposal(
+        instance, proposal_id=outcome.proposal.proposal_id, access=access, detail=True
+    )
+    assert isinstance(detail, ProposalReview)
+    summary = service_review_playbill_proposal(
+        instance, proposal_id=outcome.proposal.proposal_id, access=access
+    )
+    for review in (detail, summary):
+        assert [(item.definition, item.document) for item in review.guidance] == [
+            (f"ClaimType:{title}", "document:title-review")
+        ]
+
+
 def test_document_links_refuse_wrong_kinds_and_dead_targets(tmp_path: Path) -> None:
     instance, _ = seed_write_surface(tmp_path)
     body = service_store_playbill_body(instance, content=b"# Review\n").digest

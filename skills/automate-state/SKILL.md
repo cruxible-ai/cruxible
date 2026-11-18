@@ -35,8 +35,14 @@ a record set. Computation beyond read, call, extract, claims, filter, dedupe
 and inbox posts lives in a provider's derive operation behind a capability.
 
 A kit's manifest-named automation template is inert. Tailor sources, local
-names, timing and grants, submit it as authoring, and obtain review and
-approval from a separate agent session (its own principal). Once accepted,
+names, timing and grants and submit it as authoring; it lands like any
+proposal. Never approve it yourself: a second agent (normally a subagent)
+acting as its own principal (`reviewer`, from `init --reviewer-key-dir DIR
+--require-independent-approval` or `principal add`) reviews the exact
+candidate and approves, using the CLI with the reviewer's settings (`cruxible
+context use --principal reviewer` or `CRUXIBLE_PRINCIPAL_ID=reviewer`) since
+subagents share the parent's MCP servers. With no second principal, set one up
+rather than self-approve; the person approves only if they asked to. Once accepted,
 `cruxible runbook preview <start>` shows reads, writes, ordering problems and
 what would settle or go to review; `cruxible runbook run <start>` executes
 when authorized. A review stop leaves a proposal to resolve before an

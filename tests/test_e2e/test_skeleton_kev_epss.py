@@ -789,7 +789,9 @@ def test_kev_and_epss_flow_from_recorded_bytes_to_claims(tmp_path: Path) -> None
     assert second.terminal_egress[0].settle_outcome == "settled"
     (delisting,) = _summaries(second, "claims")
     assert (delisting.retired, delisting.inverse_written) == (1, 1)
-    assert delisting.re_observed >= 1  # the unchanged positives and the unlisted inverse
+    # The unlisted inverse is reconfirmed per Claim (the 0.5.0 absence fallback);
+    # the unchanged positives' rows are refreshed by the row observation.
+    assert delisting.re_observed >= 1
 
     # 3. EPSS: the API's JSON answer, verbatim, scores every watched CVE.
     replay = Replay(**{EPSS_URL: "epss-api"})
@@ -1232,7 +1234,8 @@ def test_a_derived_capture_records_its_inputs_and_is_each_claims_one_root(
     assert source["coordinate"] == catalog_envelope.source.coordinate
     (digested,) = committed
     assert digested == {**derive_input, "source": catalog}
-    assert manifest.input_receipt_digests and len(manifest.input_accepted_state_digests) == 1
+    assert manifest.input_receipt_digests and len(manifest.input_accepted_read_digests) == 1
+    assert manifest.tag == "playbill-input-receipt-set-manifest-v2"
     # The reducer: provider build, operation signature and implementation, and this
     # node's input template; never the Procedure digest.
     reducer = read_derive_reducer(instance.body_store(), view.reducer_digest)
@@ -1269,7 +1272,9 @@ def test_a_derived_capture_records_its_inputs_and_is_each_claims_one_root(
     second, _ = _derive_run(instance, line="test.kev-derive-line", minute=1)
     assert second.status == "succeeded", second.terminal
     (written,) = _summaries(second, "claims")
-    assert written.written == 0 and written.re_observed >= len(listed)
+    # The same bytes reuse the held Captures (ruling 1c): every item restates
+    # what is live, so the terminal is unchanged and writes nothing.
+    assert written.written == 0 and written.revised == 0 and written.delivery == "unchanged"
 
 
 def _get_card(instance: Any, ref: str) -> Any:
@@ -1290,7 +1295,7 @@ def test_get_on_a_derived_capture_serves_its_sources_reads_and_reducer(tmp_path:
     card = _get_card(instance, "Capture:" + root)
     assert card.derivation is not None
     assert card.derivation.sources == manifest.input_capture_digests
-    assert card.derivation.reads == manifest.input_accepted_state_digests
+    assert card.derivation.reads == manifest.input_accepted_read_digests
     assert card.derivation.reducer is not None
     assert card.derivation.reducer.digest == _envelope(instance, root).reducer_digest
     # Item 7: the reducer's build and operation are named beside their digests.

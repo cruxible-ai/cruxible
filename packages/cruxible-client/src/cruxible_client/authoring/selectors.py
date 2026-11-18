@@ -298,10 +298,33 @@ class WorkspaceFiles:
             raise SourceSelectionError(f"catalog entry {label!r} escapes the workspace")
         return resolved
 
+    def locate(self, requested: str | Path) -> Path:
+        """A workspace file named by its path or by its catalog name, resolved.
+
+        An existing path wins; otherwise a catalog name maps to its file;
+        otherwise ``requested`` is read as a path (which the caller then finds
+        missing or uncatalogued). The one rule every citation follows.
+        """
+
+        path = Path(requested).expanduser()
+        resolved = (path if path.is_absolute() else self.workspace / path).resolve()
+        if not resolved.exists() and str(requested) in self._by_name:
+            return self._resolved_path(self._by_name[str(requested)])
+        return resolved
+
     def select(self, requested: str | Path) -> FileSelector:
-        path = Path(requested)
-        resolved = (path if path.is_absolute() else self.workspace / path).expanduser().resolve()
+        """A catalogued file to cite, by its path or its catalog name."""
+
+        resolved = self.locate(requested)
         matches = self.entries_for_path(resolved)
+        if not matches:
+            # F8: a write citing the file catalogues it itself; a selection does not.
+            raise SourceSelectionError(
+                f"path {requested!s} is not in the workspace file catalog, and a selection "
+                "reads only catalogued files; cite it in a write instead "
+                '(evidence=FileEvidence(file="PATH#ANCHOR")), which catalogues it, or '
+                "catalogue it first: cruxible files add PATH"
+            )
         if len(matches) != 1:
             raise SourceSelectionError(
                 f"path {requested!s} maps to {len(matches)} catalogued files; exactly one required"
@@ -403,6 +426,34 @@ class WorkspaceFiles:
         return self._resolved_path(matches[0])
 
 
+def catalogued_path(workspace: Path, file: str) -> str:
+    """A workspace file named by its path or by its catalog name, as a path to read.
+
+    Every citation (``--evidence-file NAME#ANCHOR``, ``--section NAME#Heading``,
+    a write's evidence or doc op, an attestation, ``link``) resolves through
+    this one rule: an existing path wins; otherwise a catalog name maps to the
+    file the catalog locates (relative to the workspace when inside it);
+    otherwise ``file`` comes back unchanged, for the caller to refuse as a path.
+    """
+
+    path = Path(file).expanduser()
+    root = workspace.expanduser().resolve()
+    if path.is_absolute() or (root / path).exists():
+        return file
+    if not any(
+        item.is_file() for item in (workspace_path(root, "files.yaml"), root / "files.yaml")
+    ):
+        return file
+    try:
+        files = workspace_files(root)
+        if file not in files._by_name:
+            return file
+        located = files.path_for_file(file)
+    except (ValueError, OSError, CoreError):
+        return file
+    return located.relative_to(root).as_posix() if located.is_relative_to(root) else str(located)
+
+
 def catalog_file_paths(workspace: Path | None) -> Mapping[str, str]:
     """The workspace catalog's file names to their current paths, for text.
 
@@ -425,4 +476,5 @@ __all__ = [
     "FileSelector",
     "WorkspaceFiles",
     "catalog_file_paths",
+    "catalogued_path",
 ]

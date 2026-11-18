@@ -284,7 +284,8 @@ def test_settle_reads_one_reobservation_record_not_the_history(
     conn = reader._connection()
     assert conn is not None
     (plan,) = (
-        row[-1] for row in conn.execute(f"EXPLAIN QUERY PLAN {_VERSION_RECORD}", ("c", "v", 0, 0))
+        row[-1]
+        for row in conn.execute(f"EXPLAIN QUERY PLAN {_VERSION_RECORD}", ("c", "v", 0, 0, 0))
     )
     assert "USING INDEX reobservations_by_version" in plan
     assert "observed_us<?" in plan

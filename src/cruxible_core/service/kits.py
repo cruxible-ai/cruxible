@@ -14,9 +14,10 @@ from __future__ import annotations
 import dataclasses
 import functools
 import json
-from collections.abc import Callable, Iterable, Iterator, Mapping
-from typing import Any, Literal, Protocol, cast
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from typing import Any, Final, Literal, Protocol, cast
 
+from cruxible_client.contracts.approval_policy import APPROVAL_POLICY_PATH, parse_approval_policy
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import canonical_digest, pretty_canonical_bytes
 from cruxible_client.contracts.capabilities import (
@@ -24,6 +25,7 @@ from cruxible_client.contracts.capabilities import (
     Capability,
     capability_path,
 )
+from cruxible_client.contracts.captures import FOREIGN_SOURCE_CONTRACT_PREFIX
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.claim_types import parse_claim_type
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
@@ -107,6 +109,7 @@ from cruxible_client.contracts.providers import (
     provider_digest,
     provider_path,
 )
+from cruxible_client.contracts.public_names import public_name
 from cruxible_client.contracts.repairs import HandEditInstruction, HandEditRepair, RepairOperation
 from cruxible_client.contracts.shapes import (
     Contract,
@@ -299,9 +302,9 @@ def _render(path: str, payload: dict[str, Any]) -> tuple[bytes, str]:
         )
 
         content = render_procedure(ProcedureArtifact.model_validate(payload))
-    elif (
-        path.startswith("query-definitions/")
-        and payload.get("artifact_format") == "cruxible-query-definition-v3"
+    elif path.startswith("query-definitions/") and payload.get("artifact_format") in (
+        "cruxible-query-definition-v3",
+        "cruxible-query-definition-v4",
     ):
         from cruxible_client.contracts.query.definitions import (
             QueryDefinition,
@@ -425,8 +428,17 @@ def _dependency_order(
         yield from visit(path)
 
 
-def _require_staged(instance: PlaybillInstance, files: Mapping[str, str], operation: str) -> None:
-    """Refuse unless every named file (name -> sha256) is in the body store."""
+def _require_staged(
+    instance: PlaybillInstance,
+    files: Mapping[str, str],
+    operation: str,
+    *,
+    kit: str | None = None,
+) -> None:
+    """Refuse unless every named file (name -> sha256) is in the body store.
+
+    ``kit`` names the kit a ``kit add`` repair adds again (its own reference).
+    """
 
     missing = sorted(
         name
@@ -438,12 +450,20 @@ def _require_staged(instance: PlaybillInstance, files: Mapping[str, str], operat
             "cruxible.kit.provider_files_not_staged",
             f"{', '.join(missing)} not in this instance's body store; stage each file first "
             f"(the CLI and MCP {operation.rpartition('.')[2]} adapters stage what they send)",
-            repair=RepairOperation(operation=operation),
+            repair=RepairOperation(
+                operation=operation, arguments={} if kit is None else {"kit": kit}
+            ),
         )
 
 
-def _require_document_bodies(instance: PlaybillInstance, contents: Mapping[str, bytes]) -> None:
-    """Refuse unless every kit Document's body is in the body store (staged by the adapter)."""
+def _require_document_bodies(
+    instance: PlaybillInstance, contents: Mapping[str, bytes], *, kit: str | None
+) -> None:
+    """Refuse unless every kit Document's body is in the body store (staged by the adapter).
+
+    ``kit`` is the reference the repair adds again, when the instance vouches
+    for one (``bundled_base_reference``); a client's source label is not one.
+    """
 
     store = instance.body_store()
     missing = sorted(
@@ -456,7 +476,9 @@ def _require_document_bodies(instance: PlaybillInstance, contents: Mapping[str, 
             "cruxible.kit.document_bodies_not_staged",
             f"{', '.join(missing)}: the Document body is not in this instance's body store; "
             "stage each body first (the CLI and MCP kit add adapters stage what they send)",
-            repair=RepairOperation(operation="cruxible.kit.add"),
+            repair=RepairOperation(
+                operation="cruxible.kit.add", arguments={} if kit is None else {"kit": kit}
+            ),
         )
 
 
@@ -728,6 +750,37 @@ def _required_definitions(
     return found
 
 
+KIT_PER_FILE_EVIDENCE_RULE: Final = "cruxible.kit.per_file_evidence_rule"
+
+
+def _refuse_per_file_evidence_rules(path: str, payload: Mapping[str, Any]) -> None:
+    """A kit never carries a rule naming one workspace file's own CaptureContract.
+
+    That contract stands for a file of this workspace; a consumer whose file
+    lives elsewhere would get a rule naming a file they do not have.
+    """
+
+    if not path.startswith("claim-types/"):
+        return
+    policy = payload.get("evidence_admission_policy")
+    rules = policy.get("rules", ()) if isinstance(policy, Mapping) else ()
+    for rule in rules:
+        for entry in rule.get("capture_contracts", ()) if isinstance(rule, Mapping) else ():
+            target = entry.get("target") if isinstance(entry, Mapping) else None
+            name = target.get("name") if isinstance(target, Mapping) else None
+            if isinstance(name, str) and name.startswith(FOREIGN_SOURCE_CONTRACT_PREFIX):
+                raise RequestRefusedError(
+                    KIT_PER_FILE_EVIDENCE_RULE,
+                    f"ClaimType:{payload.get('predicate')} evidence rule "
+                    f"{rule.get('rule_id')!r} names CaptureContract:{public_name(name)}; "
+                    "this contract stands for one workspace file, so a kit cannot carry "
+                    "the rule. A workspace citation needs no rule; for a particular kind of "
+                    "source, list its shaped CaptureContract in the field's evidence: "
+                    "[<contract name>, ...] (a ClaimType edit), then build again",
+                    repair=RepairOperation(operation="cruxible.kit.build"),
+                )
+
+
 def build_kit(
     tree: Mapping[str, bytes],
     request: KitBuildRequest,
@@ -818,6 +871,7 @@ def build_kit(
             if states[dependency].lifecycle.state != "live":
                 raise DataValidationError(f"{path} pins retired {dependency}")
         _bundled_provider_pins(path, states[path], tree_providers, tree, bundled)
+        _refuse_per_file_evidence_rules(path, payloads[path])
         payload = _snapshot(path, _substitute(path, payloads[path], remap))
         content, digest = _render(path, payload)
         if digest != states[path].artifact_digest:
@@ -916,6 +970,19 @@ def _receipt_at(
     return shell, receipt
 
 
+def proposed_kit_receipt(
+    instance: PlaybillInstance, tree_oid: str, kit_id: str, *, proposal_id: str
+) -> KitReceipt | None:
+    """The receipt a kit proposal writes for ``kit_id``: one blob of its own tree."""
+
+    path = f"{_RECEIPT_PATH_PREFIX}{kit_id}.json"
+    raw = instance.proposal_blobs(tree_oid, [path], proposal_id=proposal_id).get(path)
+    if raw is None:
+        return None
+    held = _receipt_at(instance, path, raw, kit_id)
+    return None if held is None else held[1]
+
+
 def _read_receipt(
     instance: PlaybillInstance, tree: Mapping[str, bytes], kit_id: str
 ) -> tuple[DocumentShell, KitReceipt] | None:
@@ -979,9 +1046,108 @@ class _Diff:
         self.content: dict[str, str] = {}
         # Divergences kept on purpose, recorded in the receipt.
         self.kept: list[KitKeptDivergence] = []
+        # Paths the kit installed that this instance retired since (S7): kept
+        # retired, still the kit's (they stay in the receipt).
+        self.kept_retired: dict[str, str] = {}
+        # Live definitions the install retains without writing them (unchanged
+        # or kept), with the content this instance holds: the S7 dependency
+        # check reads their own pins.
+        self.retained_live: dict[str, tuple[ArtifactDependencyStateV1, dict[str, Any]]] = {}
         # Identity -> dependents counted beyond the pin closure (evidence-rule
         # consumers of a CaptureContract, with their closures).
         self.semantic_counts: dict[str, int] = {}
+
+
+def _refuse_retired_dependencies(
+    diff: _Diff,
+    pins_of: Mapping[str, tuple[str, ...]],
+    states: Mapping[str, ArtifactDependencyStateV1],
+    payloads: Mapping[str, dict[str, Any]],
+    held: Mapping[str, bytes] | None,
+) -> None:
+    """Refuse when a live definition the install leaves pins one kept retired (S7).
+
+    The written definitions are read from the release; the ones retained
+    without a write (unchanged or kept) from the content this instance holds,
+    so a local edit that dropped the dependency does not refuse.
+    """
+
+    if not diff.kept_retired:
+        return
+    needs: dict[str, tuple[str, ...]] = {path: pins_of.get(path, ()) for path in diff.writes}
+    for path, (held_state, held_payload) in diff.retained_live.items():
+        found = dict(
+            _dependency_order(
+                {**states, path: held_state},
+                {**payloads, path: held_payload},
+                within={path},
+                outside=held,
+            )
+        )
+        needs[path] = found.get(path, ())
+    for path in sorted(needs):
+        for pinned in needs[path]:
+            if pinned in diff.kept_retired:
+                dependent = states[path].identity.qualified
+                retired = diff.kept_retired[pinned]
+                raise RequestRefusedError(
+                    "cruxible.kit.retired_dependency",
+                    f"{dependent}, which stays live with this kit, depends on {retired}, which "
+                    "this instance retired; the kit keeps your retirement, so the dependent "
+                    "cannot stay live",
+                    repair=HandEditRepair(
+                        hand_edit=HandEditInstruction(
+                            target=retired,
+                            required_change=(
+                                f"Retire {dependent} too (it then stays retired as well), or "
+                                f"author a live successor of {retired} to use it again, then "
+                                "add the kit again"
+                            ),
+                        )
+                    ),
+                )
+
+
+def _refuse_retired_provider_dependents(
+    contents: Mapping[str, bytes], diff: _Diff, steps: Sequence[KitProviderStep]
+) -> None:
+    """Refuse when a definition the kit installs pins a build this instance retired (S7)."""
+
+    retired = {step.build: step.provider_id for step in steps if step.action == "kept_retired"}
+    if not retired:
+        return
+    # Written definitions by their release content; the ones retained without a
+    # write (unchanged or kept) by the content this instance holds.
+    candidates = {
+        path: _artifact_state(path, contents[path]) for path in diff.writes if path in contents
+    }
+    candidates.update({path: held for path, (held, _payload) in diff.retained_live.items()})
+    for path in sorted(candidates):
+        state = candidates[path]
+        for pin in state.pins:
+            if (
+                isinstance(pin, ArtifactPin)
+                and pin.target.kind == "Provider"
+                and pin.target.name in retired
+            ):
+                dependent = state.identity.qualified
+                build = f"Provider:{pin.target.name}"
+                raise RequestRefusedError(
+                    "cruxible.kit.retired_dependency",
+                    f"{dependent}, which stays live with this kit, depends on {build}, which "
+                    "this instance retired; the kit keeps your retirement, so the dependent "
+                    "cannot stay live",
+                    repair=HandEditRepair(
+                        hand_edit=HandEditInstruction(
+                            target=build,
+                            required_change=(
+                                f"Retire {dependent} too (it then stays retired as well), or "
+                                f"install {build} again (cruxible provider install), then add "
+                                "the kit again"
+                            ),
+                        )
+                    ),
+                )
 
 
 def kit_back_remap(
@@ -1076,7 +1242,9 @@ def _diff_release(
     # Digests the release pins outside itself, already moved to this instance's
     # (a bundled provider's Provider).
     diff.installed.update(preset or {})
-    for path, _pinned in _dependency_order(states, payloads, outside=held):
+    pins_of: dict[str, tuple[str, ...]] = {}
+    for path, pinned in _dependency_order(states, payloads, outside=held):
+        pins_of[path] = pinned
         release_digest = states[path].artifact_digest
         identity = states[path].identity.qualified
         payload = _substitute(path, payloads[path], diff.installed)
@@ -1097,13 +1265,32 @@ def _diff_release(
             raise immutable_capability_error(path)
         live = current_state.lifecycle.state == "live"
         if live and _without_lifecycle(current_payload) == _without_lifecycle(payload):
+            diff.retained_live[path] = (current_state, current_payload)
             diff.plan.append(KitPathPlan(path=path, action="unchanged", identity=identity))
             diff.installed[release_digest] = current_state.artifact_digest
             diff.content[path] = kit_content_digest(current_payload)
             continue
+        if not live and path in installed and not carried:
+            # S7: the kit installed it and this instance retired it since: the
+            # retirement is the consumer's word, so it stays retired, unasked.
+            diff.plan.append(
+                KitPathPlan(
+                    path=path,
+                    action="keep",
+                    identity=identity,
+                    consequence="consumer_retired",
+                    detail="kept retired",
+                )
+            )
+            diff.installed[release_digest] = current_state.artifact_digest
+            diff.content[path] = kit_content_digest(current_payload)
+            diff.kept_retired[path] = identity
+            continue
         previously = kept.get(path)
         if previously is not None and previously.release_digest == release_digest:
             # Kept on purpose against this same release version: not asked again.
+            if live:
+                diff.retained_live[path] = (current_state, current_payload)
             diff.plan.append(
                 KitPathPlan(
                     path=path,
@@ -1135,6 +1322,8 @@ def _diff_release(
         )
         if keeping:
             assert consequence is not None
+            if live:
+                diff.retained_live[path] = (current_state, current_payload)
             diff.plan.append(
                 KitPathPlan(
                     path=path,
@@ -1169,6 +1358,7 @@ def _diff_release(
         diff.writes[path] = content
         diff.installed[release_digest] = digest
         diff.content[path] = kit_content_digest(payload)
+    _refuse_retired_dependencies(diff, pins_of, states, payloads, held)
     return diff, owned
 
 
@@ -1738,16 +1928,56 @@ def _closure_summary(message: str, tree: Mapping[str, bytes], *, removal: bool) 
     )
 
 
+#: The repair a kit add refused for re-adding definitions retired here carries
+#: (morning-rulings-1116 (8): a retired definition is not revived in 0.5.0).
+KIT_RETIRED_REPAIR = (
+    ". Definitions retired here cannot be added back in this release: add the kit on a new instance"
+)
+
+
+#: The codes a definition law refuses a retired definition's revival with.
+_REVIVAL_REFUSALS = (".revival_refused", ".lifecycle_invalid")
+
+
+def _refused_revival(
+    diagnostics: Iterable[CompilerDiagnostic], plan: Sequence[KitPathPlan]
+) -> bool:
+    """Whether admission refused reviving a definition this change writes over a retired one.
+
+    Decided from the refusal's own code and the path it names, against the plan's
+    written re-adds (``replace`` of a retired definition); a kept retired path is
+    not written, so an unrelated refusal never earns the new-instance repair.
+    """
+
+    revived = {
+        item.path
+        for item in plan
+        if item.action == "replace" and item.consequence == "re_adds_retired"
+    }
+    return any(
+        item.code.endswith(_REVIVAL_REFUSALS)
+        and item.subject is not None
+        and item.subject.artifact_path in revived
+        for item in diagnostics
+    )
+
+
 def _kit_refusal_detail(
     diagnostics: Iterable[CompilerDiagnostic], tree: Mapping[str, bytes], *, removal: bool
 ) -> str:
-    """Each refusal by code and its message; an incomplete closure as a summary."""
+    """Each refusal by code and its message, once with a count when it repeats; an
+    incomplete closure as a summary."""
 
+    counted: dict[str, int] = {}
+    for item in diagnostics:
+        line = (
+            _closure_summary(item.message, tree, removal=removal)
+            if item.code == _INCOMPLETE_CLOSURE
+            else f"{item.code}: {item.message}"
+        )
+        counted[line] = counted.get(line, 0) + 1
     return "Refused: " + "; ".join(
-        _closure_summary(item.message, tree, removal=removal)
-        if item.code == _INCOMPLETE_CLOSURE
-        else f"{item.code}: {item.message}"
-        for item in diagnostics
+        line if count == 1 else f"{line} ({count:,} definitions)" for line, count in counted.items()
     )
 
 
@@ -1840,7 +2070,11 @@ def _submit(
     else:
         rationale = f"{transition.capitalize()} kit {kit_id} from {installed_version} to {version}."
     request = ProposalAdmissionRequest(
-        target_ref=target, proposed_base_oid=base.git_oid, rationale=rationale
+        target_ref=target,
+        proposed_base_oid=base.git_oid,
+        rationale=rationale,
+        # Typed, so a later reader (the late-signer refusal) never parses prose.
+        kit_transition="remove" if transition is None else "add",
     )
     binding: dict[str, Any] = {}
     if removal and not mode.previewing:
@@ -1939,6 +2173,7 @@ def _submit(
                 status="blocked",
                 plan=plan,
                 proposal_id=admitted.proposal_id,
+                proposal_open=True,
                 detail="Accepted state moved during kit add; preview the kit again.",
                 coordinate=mode.coordinate,
                 **described,  # type: ignore[arg-type]
@@ -1954,9 +2189,21 @@ def _submit(
         plan=plan,
         detail=None
         if admitted.admitted
-        else _kit_refusal_detail(admitted.diagnostics, candidate, removal=removal),
+        else _kit_refusal_detail(admitted.diagnostics, candidate, removal=removal)
+        + (KIT_RETIRED_REPAIR if _refused_revival(admitted.diagnostics, plan) else ""),
         coordinate=mode.coordinate,
         **described,  # type: ignore[arg-type]
+    )
+
+
+def _policy_requires_approval(tree: Mapping[str, bytes]) -> bool:
+    """Whether the accepted approval policy makes every proposal here wait for an approver."""
+
+    content = tree.get(APPROVAL_POLICY_PATH)
+    return (
+        content is not None
+        and parse_approval_policy(content, path=APPROVAL_POLICY_PATH).mode
+        == "independent_approval_required"
     )
 
 
@@ -2146,6 +2393,9 @@ def _provider_steps(
                     "is not installed",
                 )
             )
+        elif state == "retired":
+            # S7: the consumer retired this build; the kit keeps that retirement.
+            steps.append(KitProviderStep(**named, action="kept_retired", detail="kept retired"))
         elif state == "missing":
             missing.append(provider)
             steps.append(
@@ -2166,10 +2416,7 @@ def _provider_steps(
                 KitProviderStep(
                     **named,
                     action="blocked",
-                    detail=f"build {provider.build} is retired here; installing the kit "
-                    "would restore it"
-                    if state == "retired"
-                    else f"build {provider.build} is installed here with another dependency "
+                    detail=f"build {provider.build} is installed here with another dependency "
                     "closure than the kit bundles (cruxible.provider.build_rematerialized); "
                     "the same wheel and lock name one build",
                 )
@@ -2210,12 +2457,81 @@ def _holds_bundled_base(receipt: KitReceipt) -> bool:
     return any(bundled.get(entry.path) == entry.release_digest for entry in receipt.artifacts)
 
 
+def bundled_base_reference(kit_id: str, content_digest: str) -> str | None:
+    """``base`` when a kit is exactly the base kit this core bundles, else None.
+
+    Decided by the kit's id and content digest, which the daemon holds, never
+    by the free-form source label a client recorded: a folder named
+    ``bundled`` is not the bundled kit, and ``kit add base`` adds only this one.
+    """
+
+    from cruxible_core.kits.base_kit import BASE_KIT_REFERENCE, bundled_base_kit
+
+    bundled = bundled_base_kit().manifest
+    if (kit_id, content_digest) == (bundled.kit_id, bundled.content_digest):
+        return BASE_KIT_REFERENCE
+    return None
+
+
+def _required_kit_reference(requirement: KitRequirement) -> str | None:
+    """``base`` when the bundled base kit is the required kit and meets the requirement."""
+
+    from cruxible_core.kits.base_kit import BASE_KIT_REFERENCE, bundled_base_kit
+
+    bundled = bundled_base_kit().manifest
+    if requirement.kit_id == bundled.kit_id and requirement.met_by(bundled.version):
+        return BASE_KIT_REFERENCE
+    return None
+
+
+def _add_required_kit(requirement: KitRequirement) -> RepairOperation:
+    """``kit add`` of a required kit: named only when the instance vouches for a reference.
+
+    That is the bundled base kit, when it meets the requirement. For any other
+    kit the requirement names an id and a minimum version, which identify no
+    release a registry is known to hold, so its reference or build path stays
+    the caller's to name.
+    """
+
+    reference = _required_kit_reference(requirement)
+    return RepairOperation(
+        operation="cruxible.kit.add", arguments={} if reference is None else {"kit": reference}
+    )
+
+
+def _pending_kit_proposal(instance: PlaybillInstance, requirement: KitRequirement) -> str | None:
+    """The open proposal whose approval installs a required kit, when one is recorded.
+
+    Only a recorded add of a release that meets the requirement counts:
+    approving an older release would land it and leave the dependent blocked.
+    Read only on the refusal path: that kit's one resume row by key, then one
+    indexed proposal lookup. An ordinary `kit add` that stopped at its
+    proposal keeps no such row and no index names an open proposal by kit, so
+    it is not looked for (that would be a scan of open proposals): the
+    refusal then gives the ordinary repair, adding the required kit.
+    """
+
+    from cruxible_core.service.kit_resume import proposed_kit_proposal
+    from cruxible_core.service.proposals.proposals import proposal_is_open
+
+    recorded = proposed_kit_proposal(instance, requirement.kit_id)
+    if recorded is None:
+        return None
+    version, proposal_id = recorded
+    if not requirement.met_by(version) or not proposal_is_open(instance, proposal_id):
+        return None
+    return proposal_id
+
+
 def _required_receipts(
-    manifest: KitManifest, receipts: tuple[KitReceipt, ...]
+    instance: PlaybillInstance, manifest: KitManifest, receipts: tuple[KitReceipt, ...]
 ) -> dict[str, KitReceipt]:
     """Each kit the release requires, installed here at ``min_version`` or later.
 
-    Refuses ``cruxible.kit.requires_missing`` naming the first that is not.
+    Refuses ``cruxible.kit.requires_missing`` naming the first that is not, and
+    the repair that installs it: the approval of its own pending add (the base
+    kit of an instance under independent approval), else ``kit add`` of the
+    release that meets the requirement.
     """
 
     installed = {receipt.kit_id: receipt for receipt in receipts if receipt.artifacts}
@@ -2223,12 +2539,25 @@ def _required_receipts(
         receipt = installed.get(requirement.kit_id)
         version = None if receipt is None else receipt.version
         if not requirement.met_by(version):
+            pending = _pending_kit_proposal(instance, requirement)
             raise RequestRefusedError(
                 KIT_REQUIRES_MISSING,
-                requires_missing_message(manifest.kit_id, manifest.version, requirement, version),
-                # The kit id alone names no release a registry is known to hold;
-                # the reference or build path is the caller's to name (KIT).
-                repair=RepairOperation(operation="cruxible.kit.add"),
+                requires_missing_message(
+                    manifest.kit_id,
+                    manifest.version,
+                    requirement,
+                    version,
+                    pending_proposal=pending,
+                    reference=_required_kit_reference(requirement),
+                ),
+                repair=(
+                    RepairOperation(
+                        operation="cruxible.proposal.approve",
+                        arguments={"proposal_id": pending},
+                    )
+                    if pending is not None
+                    else _add_required_kit(requirement)
+                ),
             )
     return {item.kit_id: installed[item.kit_id] for item in manifest.requires}
 
@@ -2352,14 +2681,14 @@ def _early_refusals(
 
 
 def _inspect_staged(
-    instance: PlaybillInstance, manifest: KitManifest
+    instance: PlaybillInstance, manifest: KitManifest, *, kit: str | None
 ) -> dict[str, InspectedProviderPackage]:
     """Each bundled package read from the body store and resolved for this host.
 
     Metadata only, through the toolchain's readers: no provider code runs.
     """
 
-    _require_staged(instance, manifest.provider_files(), "cruxible.kit.add")
+    _require_staged(instance, manifest.provider_files(), "cruxible.kit.add", kit=kit)
 
     def read(name: str) -> bytes:
         return instance.body_store().read(
@@ -2563,7 +2892,11 @@ def _add_kit(
                     f"kit Document body {body.digest} differs from its digest"
                 )
     # Every governed Document's body is staged before anything is planned.
-    _require_document_bodies(instance, contents)
+    _require_document_bodies(
+        instance,
+        contents,
+        kit=bundled_base_reference(manifest.kit_id, manifest.content_digest),
+    )
     tree = instance.immutable_tree_at(mode.head.git_oid)
     found = _read_receipt(instance, tree, manifest.kit_id)
     shell, receipt = (None, None) if found is None else found
@@ -2603,7 +2936,7 @@ def _add_kit(
     receipts = tuple(_receipts(instance, tree))
     # The kits this release requires, then every pin it left out to their
     # definitions: both before anything is installed or proposed.
-    required = _required_receipts(manifest, receipts)
+    required = _required_receipts(instance, manifest, receipts)
     _refuse_lowering_below_dependents(
         manifest.kit_id, manifest.version, (receipt for receipt in receipts if receipt.artifacts)
     )
@@ -2631,7 +2964,13 @@ def _add_kit(
     # so a bundled build counts as installed only with its whole dependency
     # closure; a preview has no files and compares wheel and lock.
     inspected = (
-        None if mode.previewing or not manifest.providers else _inspect_staged(instance, manifest)
+        None
+        if mode.previewing or not manifest.providers
+        else _inspect_staged(
+            instance,
+            manifest,
+            kit=bundled_base_reference(manifest.kit_id, manifest.content_digest),
+        )
     )
     for provider in manifest.providers:
         # The staged bytes must reproduce what the manifest says they are.
@@ -2718,6 +3057,8 @@ def _add_kit(
                 status="blocked"
                 if any(step.action == "blocked" for step in pending)
                 else "awaiting_providers",
+                # The installs await an approver, and so will the definitions.
+                approval_required=any(step.action == "awaiting_approval" for step in pending),
                 detail="the kit's definitions are proposed once its bundled providers are "
                 "installed: "
                 + "; ".join(
@@ -2742,7 +3083,9 @@ def _add_kit(
         tree = instance.immutable_tree_at(mode.head.git_oid)
         awaiting_install = False
         assert inspected is not None
-        satisfied = {step.provider_id for step in steps if step.action == "satisfied"}
+        satisfied = {
+            step.provider_id for step in steps if step.action in {"satisfied", "kept_retired"}
+        }
         absent = [
             provider.provider_id
             for provider in manifest.providers
@@ -2781,6 +3124,7 @@ def _add_kit(
         preset={**left_out_moves, **_provider_remap(tree, contents, manifest, inspected)},
         held=held,
     )
+    _refuse_retired_provider_dependents(contents, diff, steps)
     retire_with = _settle_dropped(
         tree,
         installed,
@@ -2933,6 +3277,9 @@ def _add_kit(
             kit_id=manifest.kit_id,
             version=manifest.version,
             status="would_propose",
+            # Nothing is evaluated before the installs, so the instance's
+            # approval policy answers whether they and the definitions wait.
+            approval_required=_policy_requires_approval(tree),
             plan=plan,
             detail=KIT_PREVIEW_AWAITING_INSTALL,
             coordinate=mode.coordinate,
@@ -3101,7 +3448,7 @@ def _remove_kit(
             + ", ".join(edited),
             coordinate=mode.coordinate,
         )
-    return _submit(
+    result = _submit(
         instance,
         mode,
         kit_id=request.kit_id,
@@ -3117,6 +3464,23 @@ def _remove_kit(
         removal=True,
         may_activate=may_activate,
     )
+    if result.status == "would_propose" and result.detail is None:
+        retires = any(item.action == "retire" for item in plan)
+        result = result.model_copy(
+            update={"detail": KIT_REMOVAL_ONE_WAY if retires else KIT_REMOVAL_RETIRES_NOTHING}
+        )
+    return result
+
+
+#: What a removal preview says before it is committed (morning-rulings-1116 (8)):
+#: a retired definition is never revived in this release.
+KIT_REMOVAL_ONE_WAY = (
+    "one-way: the definitions this removal retires cannot be added back in this release"
+)
+#: A removal that retires nothing (every path kept, a Documents-only kit).
+#: A member retired earlier by ordinary authoring still blocks a re-add, so this
+#: promises nothing about adding the kit again.
+KIT_REMOVAL_RETIRES_NOTHING = "retires nothing"
 
 
 #: Why a kit removal keeps a pair kind's endpoint ClaimType (R13): a Subject-valued
@@ -3229,8 +3593,14 @@ def _refuse_unmet_requires(
             if not requirement.met_by(version):
                 raise RequestRefusedError(
                     KIT_REQUIRES_MISSING,
-                    requires_missing_message(kit_id, receipt.version, requirement, version),
-                    repair=RepairOperation(operation="cruxible.kit.add"),
+                    requires_missing_message(
+                        kit_id,
+                        receipt.version,
+                        requirement,
+                        version,
+                        reference=_required_kit_reference(requirement),
+                    ),
+                    repair=_add_required_kit(requirement),
                 )
 
 
@@ -3290,21 +3660,45 @@ def service_kit_status(instance: PlaybillInstance) -> KitStatus:
 def _pending_resumes(
     instance: PlaybillInstance, resumes: tuple[KitResumeStatus, ...]
 ) -> tuple[KitResumeStatus, ...]:
-    """Each resume row, a proposed one marked when its proposal is still open.
+    """Each resume row still pending: a proposed row only while its proposal is open
+    or awaits readmission.
 
-    One indexed proposal lookup per proposed row (at most one row per kit).
+    A proposed row whose proposal closed (accepted, rejected or withdrawn) has
+    nothing left to say: the kit is installed, removed or never landed, which the
+    installed kits answer. One whose proposal awaits readmission stays, marked, so
+    the add is re-run (morning-rulings-1116 (9)). One indexed proposal lookup per
+    proposed row (at most one row per kit).
     """
 
-    from cruxible_core.service.proposals.proposals import proposal_is_open
+    from cruxible_core.service.kit_resume import recorded_content_digest
+    from cruxible_core.service.proposals.proposals import proposal_inventory_status
 
-    return tuple(
-        resume.model_copy(update={"proposal_open": True})
-        if resume.state == "proposed"
-        and resume.proposal_id is not None
-        and proposal_is_open(instance, resume.proposal_id)
-        else resume
-        for resume in resumes
-    )
+    pending = []
+    for resume in resumes:
+        if resume.state != "proposed":
+            pending.append(resume)
+            continue
+        status = (
+            None
+            if resume.proposal_id is None
+            else proposal_inventory_status(instance, resume.proposal_id)
+        )
+        if status == "open":
+            pending.append(resume.model_copy(update={"proposal_open": True}))
+        elif status == "awaiting_readmit":
+            # Its repair names `base` only for the bundled base kit, told by its
+            # content digest: one body read, for the base kit's row only.
+            digest = (
+                recorded_content_digest(instance, resume.kit_id)
+                if resume.kit_id == BASE_KIT_ID
+                else None
+            )
+            pending.append(
+                resume.model_copy(
+                    update={"proposal_awaiting_readmit": True, "content_digest": digest}
+                )
+            )
+    return tuple(pending)
 
 
 def _bundled_comparison(kit: InstalledKit) -> InstalledKit:

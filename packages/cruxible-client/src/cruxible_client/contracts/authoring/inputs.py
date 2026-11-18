@@ -81,7 +81,7 @@ from cruxible_client.contracts.proposal_models import (
     validate_change_set_rationale,
 )
 from cruxible_client.contracts.provider_operations import OperationEffect
-from cruxible_client.contracts.query.authored import QuerySpecInput
+from cruxible_client.contracts.query.authored import AuthoredQueryDefinition
 from cruxible_client.contracts.query.definitions import (
     QueryDefinition,
     QueryDefinitionSpec,
@@ -323,7 +323,7 @@ class SubjectSuccessionInput(_StrictInputModel):
 
 class QueryDefinitionInput(_StrictInputModel):
     kind: Literal["query_definition"]
-    query_definition: QuerySpecInput | QueryDefinitionSpec | QueryDefinition
+    query_definition: AuthoredQueryDefinition
 
 
 class ApprovalPolicyInput(_StrictInputModel):

@@ -21,6 +21,7 @@ from cruxible_client.contracts.attestations import (
     approval_digest,
     approval_statement_bytes,
 )
+from cruxible_client.contracts.errors import ReviewedCandidateChanged, SigningKeyError
 from cruxible_core.ledger.signing import LocalEd25519ApprovalSigner as CoreSigner
 from tests.test_integration.test_approval_attestations import ROOT, _candidate
 
@@ -92,6 +93,8 @@ class Client:
         self.submitted = 0
         self.prepared = 0
         self.receipt_change = False
+        self.bound: list[str | None] = []
+        self.recompiled: api.ProposalRecompiled | None = None
 
     def review_proposal(
         self,
@@ -121,9 +124,16 @@ class Client:
         assert include_body
         return self.review
 
-    def prepare_approval(self, *_args: object, signer_id: str, include_body: bool):
+    def prepare_approval(
+        self,
+        *_args: object,
+        signer_id: str,
+        include_body: bool,
+        reviewed_candidate_digest: str | None = None,
+    ):
         assert include_body
         self.prepared += 1
+        self.bound.append(reviewed_candidate_digest)
         raw = dict(
             proposal_id=self.review.proposal_id,
             signer_principal=dict(
@@ -143,9 +153,18 @@ class Client:
         raw.update(self.changes)
         return api.ApprovalChallenge.model_validate(raw)
 
-    def submit_approval(self, *_args: object, attestation: dict[str, Any], hold: bool = False):
+    def submit_approval(
+        self,
+        *_args: object,
+        attestation: dict[str, Any],
+        hold: bool = False,
+        reviewed_candidate_digest: str | None = None,
+    ):
         self.submitted += 1
         self.held = hold
+        self.bound.append(reviewed_candidate_digest)
+        if self.recompiled is not None:
+            return self.recompiled
         signed = ApprovalAttestation.model_validate(attestation)
         return api.ApprovalReceipt(
             proposal_id="wrong" if self.receipt_change else self.review.proposal_id,
@@ -191,6 +210,69 @@ def test_exact_approval_detaches_nested_review(setup) -> None:
     assert signer.calls == client.submitted == 1
     assert client.held is False  # the daemon activates a candidate this completes
     assert CoreSigner is LocalEd25519ApprovalSigner
+
+
+def _recompiled(**changes: Any) -> api.ProposalRecompiled:
+    values: dict[str, Any] = dict(
+        status="pending_review",
+        source_proposal_id="proposal-one",
+        proposal_id="proposal-two",
+        candidate_digest="sha256:" + "4" * 64,
+        members_identical=True,
+        accepted_coordinate=api.AcceptedCoordinate(
+            git_oid="1" * 40,
+            semantic_root="sha256:" + "5" * 64,
+            generation_root="sha256:" + "6" * 64,
+            compiler_digest="sha256:" + "7" * 64,
+        ),
+    )
+    return api.ProposalRecompiled(**{**values, **changes})
+
+
+def test_approval_is_bound_to_the_reviewed_candidate(setup) -> None:
+    """coldmcp-10: the SDK passes the reviewed digest, and a successor is never
+    returned as if approved: it is the refusal the CLI and MCP give, with the
+    SDK's own review call as the repair."""
+
+    pb, client, signer = setup
+    proposal = pb.proposal("proposal-one")
+    reviewed = proposal.review()
+    proposal.approve(signer=signer, reviewed=reviewed)
+    assert client.bound == [reviewed.candidate_digest, reviewed.candidate_digest]
+
+    client.recompiled = _recompiled()
+    with pytest.raises(ReviewedCandidateChanged) as refused:
+        proposal.approve(signer=signer, reviewed=reviewed)
+    assert str(refused.value) == (
+        "cruxible.approval.reviewed_candidate_changed: proposal proposal-one was proposed "
+        f"again at the head as proposal-two (candidate {'sha256:' + '4' * 64}), not the "
+        f"reviewed {reviewed.candidate_digest}; members identical: true; nothing was signed. "
+        "Review proposal-two and approve it"
+    )
+    assert refused.value.__notes__ == ['Repair: cx.proposal("proposal-two").review()']
+
+    # Already live at the head: nothing is left to sign, and the receipt says so.
+    client.recompiled = _recompiled(
+        status="already_live", proposal_id=None, candidate_digest=None, members_identical=False
+    )
+    assert proposal.approve(signer=signer, reviewed=reviewed) == client.recompiled
+
+
+def test_challenge_for_a_landed_proposal_is_refused_by_name(setup) -> None:
+    """A signer registered after the base: the challenge names the landed proposal."""
+
+    pb, client, signer = setup
+    proposal = pb.proposal("proposal-one")
+    reviewed = proposal.review()
+    client.changes = {
+        "proposal_id": "proposal-two",
+        "statement": ApprovalStatement(
+            signer_id="reviewer", signing_semantic_root=ROOT, payload_digest="sha256:" + "4" * 64
+        ).model_dump(),
+    }
+    with pytest.raises(ReviewedCandidateChanged, match="as proposal-two"):
+        proposal.approve(signer=signer, reviewed=reviewed)
+    assert signer.calls == client.submitted == 0
 
 
 def test_held_approval_asks_the_daemon_to_sign_only(setup) -> None:
@@ -251,9 +333,15 @@ def test_changed_challenge_refuses_before_signing(setup, field) -> None:
         else:
             changed["parent_semantic_root"] = "sha256:" + "f" * 64
         client.changes["review"] = changed
-    with pytest.raises(ApprovalReviewMismatch):
+    # A key the instance does not hold for the signer is a key refusal with its own
+    # repair (a signer opened from its key file alone, cx.signer, is checked here).
+    expected = SigningKeyError if field == "key" else ApprovalReviewMismatch
+    with pytest.raises(expected) as refused:
         proposal.approve(signer=signer, reviewed=reviewed)
     assert signer.calls == client.submitted == 0
+    if field == "key":
+        assert "not the key this instance holds for principal reviewer" in str(refused.value)
+        assert "cx.signer('reviewer', key=FILE)" in str(refused.value)
 
 
 @pytest.mark.parametrize("mode", ["mutate", "invalid"])
@@ -308,3 +396,85 @@ def test_modified_token_digest_refuses_before_challenge(setup) -> None:
     with pytest.raises(ApprovalReviewMismatch):
         proposal.approve(signer=signer, reviewed=reviewed)
     assert client.prepared == signer.calls == client.submitted == 0
+
+
+def test_a_bound_approval_names_the_skew_when_an_older_daemon_rejects_the_field() -> None:
+    """Review F-004: a daemon from before bound approvals forbids unknown request
+    fields, so a request carrying ``reviewed_candidate_digest`` fails its
+    validation. The client says that is version skew, typed, on both calls; it
+    never drops the digest and retries unbound. An unbound request sends the
+    bytes the older daemon accepts."""
+
+    import json
+
+    import httpx
+    from pydantic import BaseModel, ConfigDict, ValidationError
+
+    from cruxible_client import CruxibleClient
+    from cruxible_client.contracts.errors import ReviewedBindingUnsupported
+
+    class _Strict(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+
+    class OlderChallengeRequest(_Strict):
+        signer_id: str
+        include_body: bool = False
+
+    class OlderApprovalRequest(_Strict):
+        attestation: dict[str, Any]
+        hold: bool = False
+
+    seen: list[tuple[str, dict[str, Any]]] = []
+
+    def older_daemon(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        seen.append((request.url.path.rsplit("/", 1)[-1], body))
+        model = (
+            OlderChallengeRequest
+            if request.url.path.endswith("approval-challenge")
+            else OlderApprovalRequest
+        )
+        try:
+            model.model_validate(body)
+        except ValidationError as exc:
+            return httpx.Response(
+                422,
+                json={
+                    "error_type": "RequestValidationError",
+                    "message": "Request validation failed",
+                    "error_code": "cruxible.request.invalid",
+                    "errors": [
+                        f"body.{'.'.join(str(part) for part in error['loc'])}: {error['msg']}"
+                        for error in exc.errors()
+                    ],
+                },
+            )
+        return httpx.Response(500, json={"error_type": "CoreError", "message": "accepted"})
+
+    client = CruxibleClient(base_url="http://cruxible")
+    client._client = httpx.Client(  # type: ignore[attr-defined]
+        base_url="http://cruxible", transport=httpx.MockTransport(older_daemon)
+    )
+    digest = "sha256:" + "3" * 64
+    attestation = {"signer_id": "reviewer", "sig": "0" * 128}
+    for call in (
+        lambda **bound: client.prepare_approval("inst_1", "PROP-1", signer_id="reviewer", **bound),
+        lambda **bound: client.submit_approval(
+            "inst_1", "PROP-1", attestation=attestation, **bound
+        ),
+    ):
+        with pytest.raises(ReviewedBindingUnsupported) as refused:
+            call(reviewed_candidate_digest=digest)
+        assert refused.value.error_code == "cruxible.approval.reviewed_binding_unsupported"
+        assert "the daemon is older than this client" in str(refused.value)
+        assert "nothing was signed" in str(refused.value)
+        assert "upgrade the daemon" in str(refused.value)
+        # Unbound: the older daemon's own request, which it validates and answers.
+        with pytest.raises(Exception, match="accepted"):
+            call()
+    assert [(name, "reviewed_candidate_digest" in body) for name, body in seen] == [
+        ("approval-challenge", True),
+        ("approval-challenge", False),
+        ("approvals", True),
+        ("approvals", False),
+    ]

@@ -492,8 +492,34 @@ def test_a_line_proposal_wholly_live_at_the_head_closes_as_answered(tmp_path: Pa
     from cruxible_client.contracts.projection import AcceptedCoordinate
 
     assert stale_unreadmitted_proposals(instance, AcceptedCoordinate.from_internal(head)) == ()
-    # The unchanged item's re-observation is recorded, as delivery records it.
-    assert len(ClaimReobservationStore(instance).history(live)) == 1
+    # The unchanged item restated the live Claim on a Capture of the content it
+    # cites: that fetch was its run's content observation (ruling 1a), so
+    # delivery records nothing for the Claim.
+    assert ClaimReobservationStore(instance).history(live) == ()
+
+
+def test_an_answered_proposal_names_the_principal_whose_act_closed_it(tmp_path: Path) -> None:
+    """Review F-003: when another principal's approval or activation finds every
+    change already live, the closing record names that principal, as a
+    superseded source's does, not the author who did nothing."""
+
+    from cruxible_core.service.proposals.recompile import ALREADY_LIVE_REASON
+    from tests.test_procedures.test_proposal_fan_out import _element, _write_feed
+
+    instance, owner, root, line, other = _two_line_world(tmp_path)
+    _write_feed(root, [_element(None)])
+    first = _delivered(run_line(instance, root, other))
+    stale = _delivered(run_line(instance, root, line, at=fixtures.NOW + timedelta(minutes=1)))
+    accept_proposal(instance, owner, service_inspect_playbill_proposal(instance, proposal_id=first))
+    source = _proposal_result(instance, stale)
+
+    answered = recompile_proposal(instance, source, triggered_by="reviewer")
+
+    assert answered is not None and answered.already_live and answered.proposal is None
+    closed = instance.proposal_evidence().read_withdrawal(stale)
+    assert closed is not None and closed.reason == ALREADY_LIVE_REASON
+    assert source.admission.actor_id != "reviewer"
+    assert (closed.actor_id, closed.kind, closed.superseded_by) == ("reviewer", "withdrawn", None)
 
 
 def test_a_refused_line_recompile_names_the_lines_next_run_not_readmit(

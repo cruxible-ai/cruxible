@@ -23,7 +23,7 @@ from cruxible_core.procedures.egress import (
     TerminalEgressRequestV1,
 )
 from cruxible_core.procedures.terminal_dependencies import (
-    TerminalItemDependencyManifestV1,
+    TerminalItemDependencyManifest,
     citable_captures,
 )
 
@@ -95,7 +95,7 @@ class InboxTerminalEgressSink:
         self,
         *,
         request: TerminalEgressRequestV1,
-        manifests: Mapping[str, TerminalItemDependencyManifestV1],
+        manifests: Mapping[str, TerminalItemDependencyManifest],
     ) -> TerminalEgressReceiptV1:
         from cruxible_core.exhaust.line_inbox import InboxPosting
 

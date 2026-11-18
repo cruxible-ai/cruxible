@@ -104,15 +104,29 @@ def test_the_refusal_codes_are_a_closed_vocabulary() -> None:
 def test_the_refusals_name_the_kit_and_the_repair() -> None:
     base = KitRequirement(kit_id="base", min_version="1.0.0")
 
-    assert requires_missing_message("security", "1.3.0", base, None) == (
+    # coldps-01: the base kit's repair printed a literal '<KIT>'. With the reference
+    # the daemon vouches for (the base kit it bundles) the message names it.
+    assert requires_missing_message("security", "1.3.0", base, None, reference="base") == (
         "Kit security 1.3.0 requires kit base 1.0.0 or later; this instance holds none. "
-        "Add it first, from a release or a local build of base 1.0.0 or later: kit add '<KIT>', "
-        "where <KIT> is that release's reference or the built kit's path."
+        "Add it first: kit add base (or the path of a local build of base 1.0.0 or later)."
     )
-    assert requires_missing_message("security", "1.3.0", base, "0.9.0") == (
+    assert requires_missing_message("security", "1.3.0", base, "0.9.0", reference="base") == (
         "Kit security 1.3.0 requires kit base 1.0.0 or later; this instance holds base 0.9.0. "
-        "Upgrade it first, from a release or a local build of base 1.0.0 or later: kit add "
-        "'<KIT>', where <KIT> is that release's reference or the built kit's path."
+        "Upgrade it first: kit add base (or the path of a local build of base 1.0.0 or later)."
+    )
+    # Review F-002: with no such reference (any other kit, or a base requirement the
+    # bundled kit does not meet) an id and a minimum version name no known release.
+    web = KitRequirement(kit_id="web", min_version="2.1.0")
+    assert requires_missing_message("acme", "1.0.0", web, None).endswith(
+        "Add it first: kit add with the registry reference of a release of web 2.1.0 or "
+        "later, or the path of a local build."
+    )
+    # The required kit's own add awaits approval: approving it is the repair.
+    assert requires_missing_message(
+        "security", "1.3.0", base, None, pending_proposal="sha256:ab"
+    ).endswith(
+        "this instance holds none. Kit base awaits approval as proposal sha256:ab: approve "
+        "it first, then add kit security again."
     )
     assert requires_unresolved_message(
         "security", "1.3.0", "base", "Capability:web.fetch/v1", exact=True

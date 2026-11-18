@@ -50,6 +50,7 @@ def test_get_publishes_its_protocol_enums_and_init_takes_only_a_principal() -> N
         "runs",
         "backlinks",
         "proof",
+        "proof_full",
         "body",
     ]
 
@@ -141,6 +142,7 @@ def test_authoring_tools_expose_payload_and_opaque_intent_not_plumbing() -> None
         "claim-adjudicate-contradicting-evidence",
         "claim-cite-supporting-evidence",
         "claim-adjudicate-unreviewed-evidence",
+        "query-definition",
         "query-claims-by-type",
         "query-ontology",
         "query-procedures",

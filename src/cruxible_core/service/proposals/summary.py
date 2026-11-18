@@ -40,7 +40,6 @@ from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.indexes.proposal_review import initialize_review_projection
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.backlinks import (
-    REVIEW_GUIDANCE_MAX_DEFINITIONS,
     claim_type_identity,
     review_guidance,
 )
@@ -213,9 +212,19 @@ def _build(
                 raise ProposalIntegrityError("Review member is missing from both exact trees")
             if member.artifact_kind == "claim" and new is not None:
                 cited.update(new.get("backing", {}).get("capture_digests", ()))
+            if member.artifact_kind == "note":
+                # A note shows its section's file and heading path (both versions
+                # of a revision): the section Capture decides who may see them (C14).
+                cited.update(
+                    str(side["capture_digest"])
+                    for side in (old, new)
+                    if side is not None and side.get("capture_digest")
+                )
             kind = _subject_kind(artifact, member.artifact_kind)
             definition = claim_type_identity(artifact, member.artifact_kind)
-            if definition is not None and len(definitions) < REVIEW_GUIDANCE_MAX_DEFINITIONS:
+            if definition is not None:
+                # Every definition touched: which of them have guidance is asked
+                # at read time, so none is dropped here by member order.
                 definitions.add(definition)
             receipt = artifact.get("backing", {}).get("procedure_evidence", {})
             template = (
@@ -770,17 +779,25 @@ def withhold_summary_values(
         notice = BodyRestricted(provenance_unavailable=True)
     if notice is None:
         return summary
+    # A note's accepted version names the same restricted section, so a note
+    # group keeps no field on either side.
     groups = tuple(
         group.model_copy(
             update={
                 "shared_fields": {
                     key: value
                     for key, value in group.shared_fields.items()
-                    if not key.startswith("after.")
+                    if not key.startswith("after.") and group.artifact_kind != "note"
                 },
                 "rows": tuple(
                     row.model_copy(
-                        update={"after": None if row.after is None else {}, "findings": ()}
+                        update={
+                            "before": None
+                            if row.before is None
+                            else ({} if group.artifact_kind == "note" else row.before),
+                            "after": None if row.after is None else {},
+                            "findings": (),
+                        }
                     )
                     for row in group.rows
                 ),

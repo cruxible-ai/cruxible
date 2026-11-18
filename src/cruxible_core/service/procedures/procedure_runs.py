@@ -269,7 +269,12 @@ from cruxible_core.procedures.reference_binding import (
 from cruxible_core.procedures.terminal_dependencies import (
     AcquisitionInputOutcomeV1,
     CaptureRootCache,
-    TerminalItemDependencyManifestV1,
+    TerminalItemDependencyManifest,
+)
+from cruxible_core.procedures.terminal_payloads import (
+    join_derived_source_request_read,
+    join_source_capture_associations,
+    join_terminal_egress_read,
 )
 from cruxible_core.providers.operation_index import (
     accepted_capability_side,
@@ -286,6 +291,7 @@ from cruxible_core.providers.provider_process_leases import (
 from cruxible_core.runtime.instance import PlaybillInstance, accepted_coordinate_at
 from cruxible_core.runtime.permissions import PermissionMode, get_capability_ceiling
 from cruxible_core.runtime.request_scope import projection_request
+from cruxible_core.service.procedures.capture_observations import InstanceCaptureObservations
 from cruxible_core.service.procedures.nested_runs import ServedNestedProcedureRunner
 from cruxible_core.service.procedures.procedures import (
     PlaybillProcedureStateTapReader,
@@ -2418,6 +2424,32 @@ _LATE_READ_REFUSAL_CODES = frozenset(
 )
 
 
+def _selected_captures(
+    bodies: Any, payload: Mapping[str, Any], *, access: BodyAccessContext
+) -> set[str]:
+    """The Captures one call's v2 acquisition record selected (each members chunk read once)."""
+
+    import json
+
+    from cruxible_core.procedures.execution import acquisition_member_chunks
+
+    selected: set[str] = set()
+    chunks = acquisition_member_chunks(payload, lambda digest: bodies.read(digest, access=access))
+    for digest in chunks or ():
+        try:
+            body = json.loads(bodies.read(str(digest), access=access))
+        except (CruxibleError, OSError, ValueError):
+            return set()
+        members = body.get("members") if isinstance(body, dict) else None
+        selected.update(
+            str(capture)
+            for member in (members if isinstance(members, list) else ())
+            if isinstance(member, dict) and isinstance(member.get("decision"), dict)
+            for capture in member["decision"].get("selected_capture_digests") or ()
+        )
+    return selected
+
+
 def _state_from_records(
     instance: PlaybillInstance,
     *,
@@ -2459,6 +2491,9 @@ def _state_from_records(
     #: Each completed invocation's input digest, by its receipt digest.
     completed_inputs: dict[str, str] = {}
     produced_source_associations: list[ProcedureSourceCaptureAssociation] = []
+    #: Captures a call selected, from its one v2 acquisition record: an
+    #: association naming one with no produced-Capture event is a reused Capture.
+    acquired_captures: set[str] = set()
     terminal_egress: dict[str, ProcedureTerminalEgress] = {}
     children: list[ProcedureChildInvocation] = []
     findings: list[ClaimsDiagnostic] = []
@@ -2466,6 +2501,10 @@ def _state_from_records(
     nodes: list[GetRunNode] = []
     for stored in records:
         payload = read_payload(bodies, stored.record.payload_digest, access=access)
+        if stored.record.event_kind == "terminal_egress":
+            payload = join_terminal_egress_read(payload, bodies, access=access)
+        elif stored.record.event_kind == "source_request_derived":
+            payload = join_derived_source_request_read(payload, bodies, access=access)
         if isinstance(payload, UnavailablePayload):
             return _unavailable_run_state(stored, admission=admission)
         if (
@@ -2650,6 +2689,12 @@ def _state_from_records(
             provider_invocations[completed.invocation_id] = "completed"
             invocation_receipt_digests.append(completed.receipt_digest)
             completed_inputs[completed.receipt_digest] = completed.receipt.input_digest
+        if (
+            stored.record.event_kind == "source_acquisition"
+            and isinstance(payload, dict)
+            and payload.get("tag") == "playbill-procedure-source-acquisition-v2"
+        ):
+            acquired_captures.update(_selected_captures(bodies, payload, access=access))
         if stored.record.event_kind == "produced_capture" and isinstance(payload, dict):
             occurrence_path = payload.get("occurrence_path")
             invocation_receipt_digest = payload.get("invocation_receipt_digest")
@@ -2714,13 +2759,13 @@ def _state_from_records(
     semantic_result_digest = None
     if isinstance(final, dict):
         try:
-            raw_associations = final.get("source_capture_associations", [])
-            if not isinstance(raw_associations, list):
-                raise TypeError("Source Capture associations are not a list")
+            raw_associations = join_source_capture_associations(
+                final, lambda digest: bytes(bodies.read(digest, access=access))
+            )
             source_capture_associations = tuple(
                 ProcedureSourceCaptureAssociation.model_validate(item) for item in raw_associations
             )
-        except (TypeError, ValueError, ValidationError) as exc:
+        except (TypeError, ValueError, ValidationError, KeyError, CruxibleError) as exc:
             raise ProcedureRunRecoveryRequired(
                 f"{ProcedureRunRecoveryRequired.code}: Source Capture associations are invalid"
             ) from exc
@@ -2748,7 +2793,18 @@ def _state_from_records(
                 ),
             )
         )
-        if source_capture_associations != expected_source_associations:
+        # Every produced Capture is associated; any other association names a
+        # held Capture a call reused (ruling 1c): selected by that run's own
+        # acquisition record, under a completed invocation of the run.
+        produced_keys = set(expected_source_associations)
+        if not produced_keys.issubset(source_capture_associations) or any(
+            item not in produced_keys
+            and (
+                item.capture_digest not in acquired_captures
+                or item.invocation_receipt_digest not in invocation_receipt_digests
+            )
+            for item in source_capture_associations
+        ):
             raise ProcedureRunRecoveryRequired(
                 f"{ProcedureRunRecoveryRequired.code}: final Source Capture associations do not "
                 "reproduce produced-Capture events"
@@ -3808,6 +3864,7 @@ def service_run_playbill_procedure(
             contract_resolver=accepted_contract_resolver(instance, coordinate),
             key_rules=accepted_key_rules(instance, coordinate),
             claims_context=AcceptedClaimsContext(instance, coordinate),
+            capture_observations=InstanceCaptureObservations(instance),
             state_reader=PlaybillProcedureStateTapReader(
                 instance=instance, evaluation_time=evaluation_time
             ),
@@ -3949,7 +4006,7 @@ class _LineTerminalEgressSink:
         self,
         *,
         request: TerminalEgressRequestV1,
-        manifests: Mapping[str, TerminalItemDependencyManifestV1],
+        manifests: Mapping[str, TerminalItemDependencyManifest],
     ) -> TerminalEgressReceiptV1:
         if self.inbox is None:
             raise TerminalEgressError("post_inbox is delivered only under a Line")
@@ -3981,7 +4038,7 @@ class _LineTerminalEgressSink:
         *,
         request: TerminalEgressRequestV1,
         admission: ProcedureRunAdmission,
-        manifests: Mapping[str, TerminalItemDependencyManifestV1] | None = None,
+        manifests: Mapping[str, TerminalItemDependencyManifest] | None = None,
         derivations: Mapping[str, Collection[str]] | None = None,
         capture_root_cache: CaptureRootCache | None = None,
     ) -> PreparedTerminalEgressV1:
@@ -4998,6 +5055,7 @@ def _run_playbill_line(
                 contract_resolver=accepted_contract_resolver(instance, coordinate),
                 key_rules=accepted_key_rules(instance, coordinate),
                 claims_context=AcceptedClaimsContext(instance, coordinate),
+                capture_observations=InstanceCaptureObservations(instance),
                 state_reader=PlaybillProcedureStateTapReader(
                     instance=instance, evaluation_time=evaluation_time
                 ),

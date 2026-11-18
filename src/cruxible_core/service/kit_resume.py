@@ -372,6 +372,25 @@ def resume_pending_kits(instance: PlaybillInstance) -> tuple[str, ...]:
     return tuple(resumed)
 
 
+def proposed_kit_proposal(instance: PlaybillInstance, kit_id: str) -> tuple[str, str] | None:
+    """The release and proposal one kit's recorded add stopped at: (version, proposal id).
+
+    One row by the table's key (``kit_id``): no other kit's resume and no wait
+    row is read. Only adds the instance recorded are here: creation's base kit
+    under independent approval, and a kit resumed after its providers landed.
+    """
+
+    with retained_records(instance, write=False) as connection:
+        rows = _rows(
+            connection,
+            "SELECT version,proposal_id FROM kit_resumes WHERE kit_id=? AND state='proposed'",
+            (kit_id,),
+        )
+    if not rows or rows[0][1] is None:
+        return None
+    return rows[0][0], rows[0][1]
+
+
 def kit_resume_statuses(instance: PlaybillInstance) -> tuple[KitResumeStatus, ...]:
     with retained_records(instance, write=False) as connection:
         rows = _rows(
@@ -397,6 +416,22 @@ def kit_resume_statuses(instance: PlaybillInstance) -> tuple[KitResumeStatus, ..
         )
         for kit_id, version, state, actor_id, recorded_at, proposal_id, detail, source in rows
     )
+
+
+def recorded_content_digest(instance: PlaybillInstance, kit_id: str) -> str | None:
+    """The recorded kit add's release content digest: one keyed row, one body read."""
+
+    with retained_records(instance, write=False) as connection:
+        found = _rows(
+            connection, "SELECT request_digest FROM kit_resumes WHERE kit_id=?", (kit_id,)
+        )
+    if not found:
+        return None
+    try:
+        raw = instance.body_store().read(found[0][0], access=_REQUEST_ACCESS)
+        return KitAddRequest.model_validate_json(raw).bundle.manifest.content_digest
+    except (CoreError, OSError, ValueError):
+        return None
 
 
 def blocked_kit_resumes(instance: PlaybillInstance) -> tuple[KitResumeStatus, ...]:
@@ -448,8 +483,10 @@ __all__ = [
     "blocked_kit_resumes",
     "forget_kit_resume",
     "kit_resume_statuses",
+    "proposed_kit_proposal",
     "record_kit_resume",
     "record_proposed_kit",
+    "recorded_content_digest",
     "resume_kits_after_activation",
     "resume_pending_kits",
 ]

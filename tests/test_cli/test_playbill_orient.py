@@ -115,14 +115,14 @@ def test_an_operations_page_prints_its_build_contracts_effect_and_refusals() -> 
             "instance": "inst",
             "generation": 3,
             "coordinate": {"git_oid": "a" * 64},
-            "accepted_at": "2026-09-29T00:00:00Z",
+            "proposed_at": "2026-09-29T00:00:00Z",
             "section": "operations",
             "operations": [operation.model_dump(mode="json")],
             "next": [],
         }
     )
     assert text.splitlines() == [
-        "Cruxible inst generation=3 at aaaaaaaaaaaa accepted 2026-09-29T00:00:00Z",
+        "Cruxible inst generation=3 at aaaaaaaaaaaa proposed 2026-09-29T00:00:00Z",
         "cruxible-builtin#workspace.file  workspace.file.request@1 -> "
         "workspace.file.result@1  (pure)",
         "  refuses invalid_parameter, mismatched_lengths, provider_declined",
@@ -136,7 +136,7 @@ def test_orient_prints_the_ledger_mirror_a_reviewer_clones() -> None:
         "instance": "inst",
         "generation": 3,
         "coordinate": {"git_oid": "a" * 64},
-        "accepted_at": "2026-09-29T00:00:00Z",
+        "proposed_at": "2026-09-29T00:00:00Z",
         "next": [],
     }
     bound = _render_orient({**header, "mirror_url": "https://forge.test/ledger.git"})
@@ -151,12 +151,12 @@ def test_orient_prints_setup_rows_apart_from_the_queues_problems() -> None:
         "instance": "inst",
         "generation": 3,
         "coordinate": {"git_oid": "a" * 64},
-        "accepted_at": "2026-09-29T00:00:00Z",
+        "proposed_at": "2026-09-29T00:00:00Z",
         "next": [],
     }
     attention = {"next_items": 0, "open_proposals": 0, "top": []}
     fresh = _render_orient({**header, "attention": {**attention, "setup_items": 14}})
-    assert "Attention: next=0 setup=14 open_proposals=0" in fresh
+    assert "Attention: next=0 setup=14 open_proposals=0 (workspace rows not counted: next)" in fresh
     # No setup rows: the line reads as it always did.
     assert "Attention: next=0 open_proposals=0" in _render_orient(
         {**header, "attention": attention}
@@ -197,7 +197,7 @@ def test_both_kind_views_print_shared_evidence_once_and_empty_exceptions() -> No
                 "instance": "inst",
                 "generation": 3,
                 "coordinate": {"git_oid": "a" * 64},
-                "accepted_at": "2026-09-29T00:00:00Z",
+                "proposed_at": "2026-09-29T00:00:00Z",
                 **view,
             }
         )
@@ -229,7 +229,7 @@ def test_orient_maps_stored_playbill_contract_names_to_cruxible_for_display() ->
             "instance": "inst",
             "generation": 3,
             "coordinate": {"git_oid": "a" * 64},
-            "accepted_at": "2026-09-29T00:00:00Z",
+            "proposed_at": "2026-09-29T00:00:00Z",
             "kind_detail": {**kind, "sample_subject_ids": []},
         }
     )
@@ -246,7 +246,7 @@ def test_orient_capture_sections_print_contracts_by_their_public_names() -> None
         "instance": "inst",
         "generation": 3,
         "coordinate": {"git_oid": "a" * 64},
-        "accepted_at": "2026-09-29T00:00:00Z",
+        "proposed_at": "2026-09-29T00:00:00Z",
     }
     text = _render_orient(
         {
@@ -292,7 +292,7 @@ def test_orient_sources_prints_one_line_per_logical_source() -> None:
             "instance": "inst",
             "generation": 3,
             "coordinate": {"git_oid": "a" * 64},
-            "accepted_at": "2026-09-29T00:00:00Z",
+            "proposed_at": "2026-09-29T00:00:00Z",
             "section": "sources",
             "sources": [
                 {
@@ -333,7 +333,7 @@ def test_a_stale_floor_prints_how_far_behind_it_is_and_how_to_refresh() -> None:
             "instance": "inst",
             "generation": 9,
             "coordinate": {"git_oid": "a" * 64},
-            "accepted_at": "2026-09-30T00:00:00Z",
+            "proposed_at": "2026-09-30T00:00:00Z",
             "floor": {"at": "b" * 64, "generations_behind": 2},
             "next": [],
         }
@@ -364,7 +364,7 @@ def test_the_default_map_prints_one_line_per_kind_and_flat_nonzero_counts() -> N
             "instance": "inst",
             "generation": 3,
             "coordinate": {"git_oid": "a" * 64},
-            "accepted_at": "2026-09-29T00:00:00Z",
+            "proposed_at": "2026-09-29T00:00:00Z",
             "kinds": [kind("a.asset", 4, 9), kind("a.empty", 0, 2), kind("a.idle", 0, 1)],
             "artifacts": {
                 "claim_types": 12,

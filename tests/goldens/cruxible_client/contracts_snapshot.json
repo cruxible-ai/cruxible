@@ -33,6 +33,7 @@
         "claim-adjudicate-contradicting-evidence",
         "claim-cite-supporting-evidence",
         "claim-adjudicate-unreviewed-evidence",
+        "query-definition",
         "query-claims-by-type",
         "query-ontology",
         "query-procedures",
@@ -161,6 +162,7 @@
         "mandate_expiring",
         "consumer_stalled",
         "line_coverage_gap",
+        "trigger_instants_missed",
         "line_work_pending",
         "line_disabled_by_upgrade",
         "line_not_enabled",
@@ -221,6 +223,8 @@
         "cruxible.line.enable",
         "cruxible.line.evaluate",
         "cruxible.line.dispatch",
+        "cruxible.runbook.run",
+        "cruxible.action.run",
         "cruxible.inbox.list",
         "cruxible.prediction.settle",
         "cruxible.kit.add",
@@ -493,12 +497,11 @@
           "json_name": "action",
           "required": true,
           "schema": {
-            "description": "A registered internal action: floor.refresh, evidence.sweep, prediction.anchor_retry, curation.detect.",
+            "description": "A registered internal action: floor.refresh, evidence.sweep, prediction.anchor_retry.",
             "examples": [
               "floor.refresh",
               "evidence.sweep",
-              "prediction.anchor_retry",
-              "curation.detect"
+              "prediction.anchor_retry"
             ],
             "maxLength": 128,
             "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
@@ -553,12 +556,11 @@
         "additionalProperties": false,
         "properties": {
           "action": {
-            "description": "A registered internal action: floor.refresh, evidence.sweep, prediction.anchor_retry, curation.detect.",
+            "description": "A registered internal action: floor.refresh, evidence.sweep, prediction.anchor_retry.",
             "examples": [
               "floor.refresh",
               "evidence.sweep",
-              "prediction.anchor_retry",
-              "curation.detect"
+              "prediction.anchor_retry"
             ],
             "maxLength": 128,
             "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
@@ -4796,6 +4798,7 @@
               "claim-adjudicate-contradicting-evidence",
               "claim-cite-supporting-evidence",
               "claim-adjudicate-unreviewed-evidence",
+              "query-definition",
               "query-claims-by-type",
               "query-ontology",
               "query-procedures",
@@ -11571,8 +11574,11 @@
             "description": "One governed, named, Claim-native canonical query declaration.",
             "properties": {
               "artifact_format": {
-                "const": "cruxible-query-definition-v3",
                 "default": "cruxible-query-definition-v3",
+                "enum": [
+                  "cruxible-query-definition-v3",
+                  "cruxible-query-definition-v4"
+                ],
                 "title": "Artifact Format",
                 "type": "string"
               },
@@ -11788,15 +11794,19 @@
                 "type": "string"
               },
               "query_definition": {
-                "anyOf": [
+                "oneOf": [
                   {
                     "$ref": "#/$defs/QuerySpecInput"
                   },
                   {
-                    "$ref": "#/$defs/QueryDefinitionSpec"
-                  },
-                  {
-                    "$ref": "#/$defs/QueryDefinition"
+                    "anyOf": [
+                      {
+                        "$ref": "#/$defs/QueryDefinitionSpec"
+                      },
+                      {
+                        "$ref": "#/$defs/QueryDefinition"
+                      }
+                    ]
                   }
                 ],
                 "title": "Query Definition"
@@ -11814,8 +11824,11 @@
             "description": "Authoring grammar with stated defaults and named dependencies.\n\nThe shape, cardinality, dedupe, evaluation policy and budgets may be left\nout (``query_spec_defaults``); the stored definition states them.",
             "properties": {
               "artifact_format": {
-                "const": "cruxible-query-definition-v3",
                 "default": "cruxible-query-definition-v3",
+                "enum": [
+                  "cruxible-query-definition-v3",
+                  "cruxible-query-definition-v4"
+                ],
                 "title": "Artifact Format",
                 "type": "string"
               },
@@ -12194,7 +12207,7 @@
           },
           "QueryEvaluationTimeRef": {
             "additionalProperties": false,
-            "description": "The run's explicit evaluation time; never an implicit wall clock.",
+            "description": "The run's explicit evaluation time, optionally shifted; never a wall clock.\n\n``offset_seconds`` is the fixed shift authored as ``now - 3d`` or\n``now + 12h``, held in whole seconds (UTC, no calendar units): ``now -\n72h`` and ``now - 3d`` are one offset, -259200. An unshifted ref is v1 and\nserializes exactly as before; a shifted one is v2, which only a\n``cruxible-query-definition-v4`` definition holds.",
             "properties": {
               "kind": {
                 "const": "evaluation_time",
@@ -12202,9 +12215,19 @@
                 "title": "Kind",
                 "type": "string"
               },
+              "offset_seconds": {
+                "default": 0,
+                "maximum": 3153600000,
+                "minimum": -3153600000,
+                "title": "Offset Seconds",
+                "type": "integer"
+              },
               "tag": {
-                "const": "playbill-query-evaluation-time-ref-v1",
                 "default": "playbill-query-evaluation-time-ref-v1",
+                "enum": [
+                  "playbill-query-evaluation-time-ref-v1",
+                  "playbill-query-evaluation-time-ref-v2"
+                ],
                 "title": "Tag",
                 "type": "string"
               }
@@ -13737,12 +13760,11 @@
               "action": {
                 "anyOf": [
                   {
-                    "description": "A registered internal action: floor.refresh, evidence.sweep, prediction.anchor_retry, curation.detect.",
+                    "description": "A registered internal action: floor.refresh, evidence.sweep, prediction.anchor_retry.",
                     "examples": [
                       "floor.refresh",
                       "evidence.sweep",
-                      "prediction.anchor_retry",
-                      "curation.detect"
+                      "prediction.anchor_retry"
                     ],
                     "maxLength": 128,
                     "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
@@ -14542,12 +14564,11 @@
               "action": {
                 "anyOf": [
                   {
-                    "description": "A registered internal action: floor.refresh, evidence.sweep, prediction.anchor_retry, curation.detect.",
+                    "description": "A registered internal action: floor.refresh, evidence.sweep, prediction.anchor_retry.",
                     "examples": [
                       "floor.refresh",
                       "evidence.sweep",
-                      "prediction.anchor_retry",
-                      "curation.detect"
+                      "prediction.anchor_retry"
                     ],
                     "maxLength": 128,
                     "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
@@ -14754,6 +14775,7 @@
               "claim-adjudicate-contradicting-evidence",
               "claim-cite-supporting-evidence",
               "claim-adjudicate-unreviewed-evidence",
+              "query-definition",
               "query-claims-by-type",
               "query-ontology",
               "query-procedures",
@@ -15022,6 +15044,19 @@
             "title": "Status",
             "type": "string"
           }
+        },
+        "unchanged": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "unchanged",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Unchanged",
+            "type": "boolean"
+          }
         }
       },
       "json_schema": {
@@ -15085,6 +15120,11 @@
             "default": "landed",
             "title": "Status",
             "type": "string"
+          },
+          "unchanged": {
+            "default": false,
+            "title": "Unchanged",
+            "type": "boolean"
           }
         },
         "required": [
@@ -15164,6 +15204,19 @@
             "default": "playbill-authoring-preflight-result-v1",
             "title": "Tag",
             "type": "string"
+          }
+        },
+        "unchanged": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "unchanged",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Unchanged",
+            "type": "boolean"
           }
         },
         "verdict": {
@@ -15849,6 +15902,11 @@
             "title": "Tag",
             "type": "string"
           },
+          "unchanged": {
+            "default": false,
+            "title": "Unchanged",
+            "type": "boolean"
+          },
           "verdict": {
             "enum": [
               "passed",
@@ -16509,6 +16567,22 @@
             "type": "string"
           }
         },
+        "warnings": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "warnings",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
         "workspace_advertisement": {
           "default_json_serializable": false,
           "has_default": true,
@@ -16707,6 +16781,11 @@
                 "default": "landed",
                 "title": "Status",
                 "type": "string"
+              },
+              "unchanged": {
+                "default": false,
+                "title": "Unchanged",
+                "type": "boolean"
               }
             },
             "required": [
@@ -16748,6 +16827,11 @@
                 "default": "playbill-authoring-preflight-result-v1",
                 "title": "Tag",
                 "type": "string"
+              },
+              "unchanged": {
+                "default": false,
+                "title": "Unchanged",
+                "type": "boolean"
               },
               "verdict": {
                 "enum": [
@@ -17611,6 +17695,14 @@
             "default": "playbill-authoring-submit-result-v1",
             "title": "Tag",
             "type": "string"
+          },
+          "warnings": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
           },
           "workspace_advertisement": {
             "$ref": "#/$defs/WorkspaceAdvertisement",
@@ -22802,6 +22894,11 @@
                 "default": "landed",
                 "title": "Status",
                 "type": "string"
+              },
+              "unchanged": {
+                "default": false,
+                "title": "Unchanged",
+                "type": "boolean"
               }
             },
             "required": [
@@ -23181,6 +23278,14 @@
                 "default": "playbill-proposal-inspection-v1",
                 "title": "Tag",
                 "type": "string"
+              },
+              "warnings": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Warnings",
+                "type": "array"
               },
               "workspace_advertisement": {
                 "$ref": "#/$defs/WorkspaceAdvertisement",
@@ -24072,6 +24177,11 @@
                 "default": "landed",
                 "title": "Status",
                 "type": "string"
+              },
+              "unchanged": {
+                "default": false,
+                "title": "Unchanged",
+                "type": "boolean"
               }
             },
             "required": [
@@ -24451,6 +24561,14 @@
                 "default": "playbill-proposal-inspection-v1",
                 "title": "Tag",
                 "type": "string"
+              },
+              "warnings": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Warnings",
+                "type": "array"
               },
               "workspace_advertisement": {
                 "$ref": "#/$defs/WorkspaceAdvertisement",
@@ -26788,746 +26906,6 @@
       },
       "required_fields": [
         "expression"
-      ]
-    },
-    "CurationActionResult": {
-      "fields": {
-        "coordinate": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "coordinate",
-          "required": true,
-          "schema": {
-            "$ref": "#/$defs/AcceptedCoordinate"
-          }
-        },
-        "generation": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "generation",
-          "required": true,
-          "schema": {
-            "minimum": 0,
-            "title": "Generation",
-            "type": "integer"
-          }
-        },
-        "item": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "item",
-          "required": true,
-          "schema": {
-            "additionalProperties": true,
-            "title": "Item",
-            "type": "object"
-          }
-        },
-        "operational_head_digest": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "operational_head_digest",
-          "required": true,
-          "schema": {
-            "pattern": "^sha256:[0-9a-f]{64}$",
-            "title": "Operational Head Digest",
-            "type": "string"
-          }
-        },
-        "status": {
-          "default": "recorded",
-          "default_json_serializable": true,
-          "has_default": true,
-          "has_default_factory": false,
-          "json_name": "status",
-          "required": false,
-          "schema": {
-            "default": "recorded",
-            "enum": [
-              "recorded",
-              "would_record"
-            ],
-            "title": "Status",
-            "type": "string"
-          }
-        },
-        "tag": {
-          "default": "playbill-curation-action-result-v1",
-          "default_json_serializable": true,
-          "has_default": true,
-          "has_default_factory": false,
-          "json_name": "tag",
-          "required": false,
-          "schema": {
-            "const": "playbill-curation-action-result-v1",
-            "default": "playbill-curation-action-result-v1",
-            "title": "Tag",
-            "type": "string"
-          }
-        }
-      },
-      "json_schema": {
-        "$defs": {
-          "AcceptedCoordinate": {
-            "additionalProperties": false,
-            "description": "Path-free public handle for one fully verified accepted generation.",
-            "properties": {
-              "compiler_digest": {
-                "title": "Compiler Digest",
-                "type": "string"
-              },
-              "generation_root": {
-                "title": "Generation Root",
-                "type": "string"
-              },
-              "git_oid": {
-                "title": "Git Oid",
-                "type": "string"
-              },
-              "semantic_root": {
-                "title": "Semantic Root",
-                "type": "string"
-              },
-              "tag": {
-                "const": "playbill-accepted-coordinate-v1",
-                "default": "playbill-accepted-coordinate-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "git_oid",
-              "semantic_root",
-              "generation_root",
-              "compiler_digest"
-            ],
-            "title": "AcceptedCoordinate",
-            "type": "object"
-          }
-        },
-        "additionalProperties": false,
-        "description": "One attributed append-only curation lifecycle transition.",
-        "properties": {
-          "coordinate": {
-            "$ref": "#/$defs/AcceptedCoordinate"
-          },
-          "generation": {
-            "minimum": 0,
-            "title": "Generation",
-            "type": "integer"
-          },
-          "item": {
-            "additionalProperties": true,
-            "title": "Item",
-            "type": "object"
-          },
-          "operational_head_digest": {
-            "pattern": "^sha256:[0-9a-f]{64}$",
-            "title": "Operational Head Digest",
-            "type": "string"
-          },
-          "status": {
-            "default": "recorded",
-            "enum": [
-              "recorded",
-              "would_record"
-            ],
-            "title": "Status",
-            "type": "string"
-          },
-          "tag": {
-            "const": "playbill-curation-action-result-v1",
-            "default": "playbill-curation-action-result-v1",
-            "title": "Tag",
-            "type": "string"
-          }
-        },
-        "required": [
-          "coordinate",
-          "generation",
-          "operational_head_digest",
-          "item"
-        ],
-        "title": "CurationActionResult",
-        "type": "object"
-      },
-      "required_fields": [
-        "coordinate",
-        "generation",
-        "item",
-        "operational_head_digest"
-      ]
-    },
-    "CurationDetection": {
-      "fields": {
-        "detected_at": {
-          "default": null,
-          "default_json_serializable": true,
-          "has_default": true,
-          "has_default_factory": false,
-          "json_name": "detected_at",
-          "required": false,
-          "schema": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Detected At"
-          }
-        },
-        "detected_through_generation": {
-          "default": null,
-          "default_json_serializable": true,
-          "has_default": true,
-          "has_default_factory": false,
-          "json_name": "detected_through_generation",
-          "required": false,
-          "schema": {
-            "anyOf": [
-              {
-                "minimum": 0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Detected Through Generation"
-          }
-        },
-        "state": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "state",
-          "required": true,
-          "schema": {
-            "enum": [
-              "current",
-              "behind",
-              "never_run"
-            ],
-            "title": "State",
-            "type": "string"
-          }
-        },
-        "trigger": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "trigger",
-          "required": true,
-          "schema": {
-            "enum": [
-              "live",
-              "missing"
-            ],
-            "title": "Trigger",
-            "type": "string"
-          }
-        }
-      },
-      "json_schema": {
-        "additionalProperties": false,
-        "description": "When curation detection last ran and whether it has caught up with the head.\n\nDetection runs as the ``curation.detect`` internal action on accepted\ngenerations; ``trigger`` says whether a live Trigger fires it.",
-        "properties": {
-          "detected_at": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Detected At"
-          },
-          "detected_through_generation": {
-            "anyOf": [
-              {
-                "minimum": 0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Detected Through Generation"
-          },
-          "state": {
-            "enum": [
-              "current",
-              "behind",
-              "never_run"
-            ],
-            "title": "State",
-            "type": "string"
-          },
-          "trigger": {
-            "enum": [
-              "live",
-              "missing"
-            ],
-            "title": "Trigger",
-            "type": "string"
-          }
-        },
-        "required": [
-          "state",
-          "trigger"
-        ],
-        "title": "CurationDetection",
-        "type": "object"
-      },
-      "required_fields": [
-        "state",
-        "trigger"
-      ]
-    },
-    "CurationInactiveDetector": {
-      "fields": {
-        "pattern_kind": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "pattern_kind",
-          "required": true,
-          "schema": {
-            "title": "Pattern Kind",
-            "type": "string"
-          }
-        },
-        "reason": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "reason",
-          "required": true,
-          "schema": {
-            "enum": [
-              "consumption_receipts_off",
-              "no_block_observations"
-            ],
-            "title": "Reason",
-            "type": "string"
-          }
-        }
-      },
-      "json_schema": {
-        "additionalProperties": false,
-        "description": "A detector that cannot find anything on this instance, and why.",
-        "properties": {
-          "pattern_kind": {
-            "title": "Pattern Kind",
-            "type": "string"
-          },
-          "reason": {
-            "enum": [
-              "consumption_receipts_off",
-              "no_block_observations"
-            ],
-            "title": "Reason",
-            "type": "string"
-          }
-        },
-        "required": [
-          "pattern_kind",
-          "reason"
-        ],
-        "title": "CurationInactiveDetector",
-        "type": "object"
-      },
-      "required_fields": [
-        "pattern_kind",
-        "reason"
-      ]
-    },
-    "CurationListResult": {
-      "fields": {
-        "coordinate": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "coordinate",
-          "required": true,
-          "schema": {
-            "$ref": "#/$defs/AcceptedCoordinate"
-          }
-        },
-        "detection": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "detection",
-          "required": true,
-          "schema": {
-            "$ref": "#/$defs/CurationDetection"
-          }
-        },
-        "detector_coverage": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "detector_coverage",
-          "required": true,
-          "schema": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "title": "Detector Coverage",
-            "type": "array"
-          }
-        },
-        "generation": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "generation",
-          "required": true,
-          "schema": {
-            "minimum": 0,
-            "title": "Generation",
-            "type": "integer"
-          }
-        },
-        "inactive_detectors": {
-          "has_default": false,
-          "has_default_factory": true,
-          "json_name": "inactive_detectors",
-          "required": false,
-          "schema": {
-            "items": {
-              "$ref": "#/$defs/CurationInactiveDetector"
-            },
-            "title": "Inactive Detectors",
-            "type": "array"
-          }
-        },
-        "items": {
-          "has_default": false,
-          "has_default_factory": true,
-          "json_name": "items",
-          "required": false,
-          "schema": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "title": "Items",
-            "type": "array"
-          }
-        },
-        "next_cursor": {
-          "default": null,
-          "default_json_serializable": true,
-          "has_default": true,
-          "has_default_factory": false,
-          "json_name": "next_cursor",
-          "required": false,
-          "schema": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Next Cursor"
-          }
-        },
-        "observation_coverage": {
-          "default": null,
-          "default_json_serializable": true,
-          "has_default": true,
-          "has_default_factory": false,
-          "json_name": "observation_coverage",
-          "required": false,
-          "schema": {
-            "anyOf": [
-              {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Observation Coverage"
-          }
-        },
-        "operational_head_digest": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "operational_head_digest",
-          "required": true,
-          "schema": {
-            "pattern": "^sha256:[0-9a-f]{64}$",
-            "title": "Operational Head Digest",
-            "type": "string"
-          }
-        },
-        "result_digest": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "result_digest",
-          "required": true,
-          "schema": {
-            "pattern": "^sha256:[0-9a-f]{64}$",
-            "title": "Result Digest",
-            "type": "string"
-          }
-        },
-        "tag": {
-          "default": "playbill-curation-list-result-v1",
-          "default_json_serializable": true,
-          "has_default": true,
-          "has_default_factory": false,
-          "json_name": "tag",
-          "required": false,
-          "schema": {
-            "const": "playbill-curation-list-result-v1",
-            "default": "playbill-curation-list-result-v1",
-            "title": "Tag",
-            "type": "string"
-          }
-        },
-        "truncated": {
-          "default": false,
-          "default_json_serializable": true,
-          "has_default": true,
-          "has_default_factory": false,
-          "json_name": "truncated",
-          "required": false,
-          "schema": {
-            "default": false,
-            "title": "Truncated",
-            "type": "boolean"
-          }
-        }
-      },
-      "json_schema": {
-        "$defs": {
-          "AcceptedCoordinate": {
-            "additionalProperties": false,
-            "description": "Path-free public handle for one fully verified accepted generation.",
-            "properties": {
-              "compiler_digest": {
-                "title": "Compiler Digest",
-                "type": "string"
-              },
-              "generation_root": {
-                "title": "Generation Root",
-                "type": "string"
-              },
-              "git_oid": {
-                "title": "Git Oid",
-                "type": "string"
-              },
-              "semantic_root": {
-                "title": "Semantic Root",
-                "type": "string"
-              },
-              "tag": {
-                "const": "playbill-accepted-coordinate-v1",
-                "default": "playbill-accepted-coordinate-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "git_oid",
-              "semantic_root",
-              "generation_root",
-              "compiler_digest"
-            ],
-            "title": "AcceptedCoordinate",
-            "type": "object"
-          },
-          "CurationDetection": {
-            "additionalProperties": false,
-            "description": "When curation detection last ran and whether it has caught up with the head.\n\nDetection runs as the ``curation.detect`` internal action on accepted\ngenerations; ``trigger`` says whether a live Trigger fires it.",
-            "properties": {
-              "detected_at": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Detected At"
-              },
-              "detected_through_generation": {
-                "anyOf": [
-                  {
-                    "minimum": 0,
-                    "type": "integer"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Detected Through Generation"
-              },
-              "state": {
-                "enum": [
-                  "current",
-                  "behind",
-                  "never_run"
-                ],
-                "title": "State",
-                "type": "string"
-              },
-              "trigger": {
-                "enum": [
-                  "live",
-                  "missing"
-                ],
-                "title": "Trigger",
-                "type": "string"
-              }
-            },
-            "required": [
-              "state",
-              "trigger"
-            ],
-            "title": "CurationDetection",
-            "type": "object"
-          },
-          "CurationInactiveDetector": {
-            "additionalProperties": false,
-            "description": "A detector that cannot find anything on this instance, and why.",
-            "properties": {
-              "pattern_kind": {
-                "title": "Pattern Kind",
-                "type": "string"
-              },
-              "reason": {
-                "enum": [
-                  "consumption_receipts_off",
-                  "no_block_observations"
-                ],
-                "title": "Reason",
-                "type": "string"
-              }
-            },
-            "required": [
-              "pattern_kind",
-              "reason"
-            ],
-            "title": "CurationInactiveDetector",
-            "type": "object"
-          }
-        },
-        "additionalProperties": false,
-        "description": "One page of the curation queue as detection last recorded it; a pure read.",
-        "properties": {
-          "coordinate": {
-            "$ref": "#/$defs/AcceptedCoordinate"
-          },
-          "detection": {
-            "$ref": "#/$defs/CurationDetection"
-          },
-          "detector_coverage": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "title": "Detector Coverage",
-            "type": "array"
-          },
-          "generation": {
-            "minimum": 0,
-            "title": "Generation",
-            "type": "integer"
-          },
-          "inactive_detectors": {
-            "items": {
-              "$ref": "#/$defs/CurationInactiveDetector"
-            },
-            "title": "Inactive Detectors",
-            "type": "array"
-          },
-          "items": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "title": "Items",
-            "type": "array"
-          },
-          "next_cursor": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Next Cursor"
-          },
-          "observation_coverage": {
-            "anyOf": [
-              {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Observation Coverage"
-          },
-          "operational_head_digest": {
-            "pattern": "^sha256:[0-9a-f]{64}$",
-            "title": "Operational Head Digest",
-            "type": "string"
-          },
-          "result_digest": {
-            "pattern": "^sha256:[0-9a-f]{64}$",
-            "title": "Result Digest",
-            "type": "string"
-          },
-          "tag": {
-            "const": "playbill-curation-list-result-v1",
-            "default": "playbill-curation-list-result-v1",
-            "title": "Tag",
-            "type": "string"
-          },
-          "truncated": {
-            "default": false,
-            "title": "Truncated",
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "coordinate",
-          "generation",
-          "operational_head_digest",
-          "detection",
-          "detector_coverage",
-          "result_digest"
-        ],
-        "title": "CurationListResult",
-        "type": "object"
-      },
-      "required_fields": [
-        "coordinate",
-        "detection",
-        "detector_coverage",
-        "generation",
-        "operational_head_digest",
-        "result_digest"
       ]
     },
     "DiagnosticFrontier": {
@@ -35219,6 +34597,394 @@
         "payload_preview"
       ]
     },
+    "InboxRow": {
+      "fields": {
+        "item_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "item_id",
+          "required": true,
+          "schema": {
+            "pattern": "^INB-[0-9a-f]{64}$",
+            "title": "Item Id",
+            "type": "string"
+          }
+        },
+        "kind": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "kind",
+          "required": true,
+          "schema": {
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "line": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "line",
+          "required": true,
+          "schema": {
+            "title": "Line",
+            "type": "string"
+          }
+        },
+        "seen": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "seen",
+          "required": true,
+          "schema": {
+            "minimum": 1,
+            "title": "Seen",
+            "type": "integer"
+          }
+        },
+        "status": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": true,
+          "schema": {
+            "enum": [
+              "unread",
+              "acknowledged",
+              "dismissed",
+              "linked"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "cruxible-inbox-row-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "cruxible-inbox-row-v1",
+            "default": "cruxible-inbox-row-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "title": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "title",
+          "required": true,
+          "schema": {
+            "title": "Title",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "One inbox item as a list shows it by default: what it is, and how often seen.\n\n``kind`` is the terminal (Procedure node) that posted it; ``title`` a\none-line reading of its payload (a ``title``, ``name``, ``summary``,\n``subject`` or ``id`` field, else its canonical JSON), cut to\n``INBOX_ROW_TITLE_MAX_CHARS``. ``inbox get`` returns every field.",
+        "properties": {
+          "item_id": {
+            "pattern": "^INB-[0-9a-f]{64}$",
+            "title": "Item Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "line": {
+            "title": "Line",
+            "type": "string"
+          },
+          "seen": {
+            "minimum": 1,
+            "title": "Seen",
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "unread",
+              "acknowledged",
+              "dismissed",
+              "linked"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "tag": {
+            "const": "cruxible-inbox-row-v1",
+            "default": "cruxible-inbox-row-v1",
+            "title": "Tag",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_id",
+          "line",
+          "kind",
+          "title",
+          "status",
+          "seen"
+        ],
+        "title": "InboxRow",
+        "type": "object"
+      },
+      "required_fields": [
+        "item_id",
+        "kind",
+        "line",
+        "seen",
+        "status",
+        "title"
+      ]
+    },
+    "InboxRows": {
+      "fields": {
+        "line_filter": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "line_filter",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Line Filter"
+          }
+        },
+        "next_cursor": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "next_cursor",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Next Cursor"
+          }
+        },
+        "rows": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "rows",
+          "required": true,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/InboxRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          }
+        },
+        "status_filter": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "status_filter",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "enum": [
+                  "unread",
+                  "acknowledged",
+                  "dismissed",
+                  "linked"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Status Filter"
+          }
+        },
+        "tag": {
+          "default": "cruxible-inbox-rows-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "cruxible-inbox-rows-v1",
+            "default": "cruxible-inbox-rows-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "truncated": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "truncated",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "InboxRow": {
+            "additionalProperties": false,
+            "description": "One inbox item as a list shows it by default: what it is, and how often seen.\n\n``kind`` is the terminal (Procedure node) that posted it; ``title`` a\none-line reading of its payload (a ``title``, ``name``, ``summary``,\n``subject`` or ``id`` field, else its canonical JSON), cut to\n``INBOX_ROW_TITLE_MAX_CHARS``. ``inbox get`` returns every field.",
+            "properties": {
+              "item_id": {
+                "pattern": "^INB-[0-9a-f]{64}$",
+                "title": "Item Id",
+                "type": "string"
+              },
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "line": {
+                "title": "Line",
+                "type": "string"
+              },
+              "seen": {
+                "minimum": 1,
+                "title": "Seen",
+                "type": "integer"
+              },
+              "status": {
+                "enum": [
+                  "unread",
+                  "acknowledged",
+                  "dismissed",
+                  "linked"
+                ],
+                "title": "Status",
+                "type": "string"
+              },
+              "tag": {
+                "const": "cruxible-inbox-row-v1",
+                "default": "cruxible-inbox-row-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "title": {
+                "title": "Title",
+                "type": "string"
+              }
+            },
+            "required": [
+              "item_id",
+              "line",
+              "kind",
+              "title",
+              "status",
+              "seen"
+            ],
+            "title": "InboxRow",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "One page of inbox items as compact rows, most recently posted first.",
+        "properties": {
+          "line_filter": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Line Filter"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Next Cursor"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/$defs/InboxRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "status_filter": {
+            "anyOf": [
+              {
+                "enum": [
+                  "unread",
+                  "acknowledged",
+                  "dismissed",
+                  "linked"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Status Filter"
+          },
+          "tag": {
+            "const": "cruxible-inbox-rows-v1",
+            "default": "cruxible-inbox-rows-v1",
+            "title": "Tag",
+            "type": "string"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "rows"
+        ],
+        "title": "InboxRows",
+        "type": "object"
+      },
+      "required_fields": [
+        "rows"
+      ]
+    },
     "InboxSighting": {
       "fields": {
         "posted_at": {
@@ -40391,6 +40157,7 @@
               "mandate_expiring",
               "consumer_stalled",
               "line_coverage_gap",
+              "trigger_instants_missed",
               "line_work_pending",
               "line_disabled_by_upgrade",
               "line_not_enabled",
@@ -40638,6 +40405,8 @@
                   "cruxible.line.enable",
                   "cruxible.line.evaluate",
                   "cruxible.line.dispatch",
+                  "cruxible.runbook.run",
+                  "cruxible.action.run",
                   "cruxible.inbox.list",
                   "cruxible.prediction.settle",
                   "cruxible.kit.add",
@@ -40715,6 +40484,8 @@
                   "cruxible.line.enable",
                   "cruxible.line.evaluate",
                   "cruxible.line.dispatch",
+                  "cruxible.runbook.run",
+                  "cruxible.action.run",
                   "cruxible.inbox.list",
                   "cruxible.prediction.settle",
                   "cruxible.kit.add",
@@ -40820,6 +40591,7 @@
               "mandate_expiring",
               "consumer_stalled",
               "line_coverage_gap",
+              "trigger_instants_missed",
               "line_work_pending",
               "line_disabled_by_upgrade",
               "line_not_enabled",
@@ -41129,6 +40901,8 @@
                   "cruxible.line.enable",
                   "cruxible.line.evaluate",
                   "cruxible.line.dispatch",
+                  "cruxible.runbook.run",
+                  "cruxible.action.run",
                   "cruxible.inbox.list",
                   "cruxible.prediction.settle",
                   "cruxible.kit.add",
@@ -41206,6 +40980,8 @@
                   "cruxible.line.enable",
                   "cruxible.line.evaluate",
                   "cruxible.line.dispatch",
+                  "cruxible.runbook.run",
+                  "cruxible.action.run",
                   "cruxible.inbox.list",
                   "cruxible.prediction.settle",
                   "cruxible.kit.add",
@@ -41398,6 +41174,7 @@
               "mandate_expiring",
               "consumer_stalled",
               "line_coverage_gap",
+              "trigger_instants_missed",
               "line_work_pending",
               "line_disabled_by_upgrade",
               "line_not_enabled",
@@ -41636,6 +41413,7 @@
                   "mandate_expiring",
                   "consumer_stalled",
                   "line_coverage_gap",
+                  "trigger_instants_missed",
                   "line_work_pending",
                   "line_disabled_by_upgrade",
                   "line_not_enabled",
@@ -41775,6 +41553,8 @@
                   "cruxible.line.enable",
                   "cruxible.line.evaluate",
                   "cruxible.line.dispatch",
+                  "cruxible.runbook.run",
+                  "cruxible.action.run",
                   "cruxible.inbox.list",
                   "cruxible.prediction.settle",
                   "cruxible.kit.add",
@@ -41852,6 +41632,8 @@
                   "cruxible.line.enable",
                   "cruxible.line.evaluate",
                   "cruxible.line.dispatch",
+                  "cruxible.runbook.run",
+                  "cruxible.action.run",
                   "cruxible.inbox.list",
                   "cruxible.prediction.settle",
                   "cruxible.kit.add",
@@ -41967,6 +41749,7 @@
               "mandate_expiring",
               "consumer_stalled",
               "line_coverage_gap",
+              "trigger_instants_missed",
               "line_work_pending",
               "line_disabled_by_upgrade",
               "line_not_enabled",
@@ -42355,6 +42138,8 @@
                   "cruxible.line.enable",
                   "cruxible.line.evaluate",
                   "cruxible.line.dispatch",
+                  "cruxible.runbook.run",
+                  "cruxible.action.run",
                   "cruxible.inbox.list",
                   "cruxible.prediction.settle",
                   "cruxible.kit.add",
@@ -42458,6 +42243,8 @@
               "cruxible.line.enable",
               "cruxible.line.evaluate",
               "cruxible.line.dispatch",
+              "cruxible.runbook.run",
+              "cruxible.action.run",
               "cruxible.inbox.list",
               "cruxible.prediction.settle",
               "cruxible.kit.add",
@@ -42677,6 +42464,8 @@
               "cruxible.line.enable",
               "cruxible.line.evaluate",
               "cruxible.line.dispatch",
+              "cruxible.runbook.run",
+              "cruxible.action.run",
               "cruxible.inbox.list",
               "cruxible.prediction.settle",
               "cruxible.kit.add",
@@ -43061,6 +42850,7 @@
                   "mandate_expiring",
                   "consumer_stalled",
                   "line_coverage_gap",
+                  "trigger_instants_missed",
                   "line_work_pending",
                   "line_disabled_by_upgrade",
                   "line_not_enabled",
@@ -43232,6 +43022,7 @@
                   "mandate_expiring",
                   "consumer_stalled",
                   "line_coverage_gap",
+                  "trigger_instants_missed",
                   "line_work_pending",
                   "line_disabled_by_upgrade",
                   "line_not_enabled",
@@ -43384,6 +43175,8 @@
                   "cruxible.line.enable",
                   "cruxible.line.evaluate",
                   "cruxible.line.dispatch",
+                  "cruxible.runbook.run",
+                  "cruxible.action.run",
                   "cruxible.inbox.list",
                   "cruxible.prediction.settle",
                   "cruxible.kit.add",
@@ -43461,6 +43254,8 @@
                   "cruxible.line.enable",
                   "cruxible.line.evaluate",
                   "cruxible.line.dispatch",
+                  "cruxible.runbook.run",
+                  "cruxible.action.run",
                   "cruxible.inbox.list",
                   "cruxible.prediction.settle",
                   "cruxible.kit.add",
@@ -44088,6 +43883,8 @@
                   "cruxible.line.enable",
                   "cruxible.line.evaluate",
                   "cruxible.line.dispatch",
+                  "cruxible.runbook.run",
+                  "cruxible.action.run",
                   "cruxible.inbox.list",
                   "cruxible.prediction.settle",
                   "cruxible.kit.add",
@@ -44165,6 +43962,8 @@
                   "cruxible.line.enable",
                   "cruxible.line.evaluate",
                   "cruxible.line.dispatch",
+                  "cruxible.runbook.run",
+                  "cruxible.action.run",
                   "cruxible.inbox.list",
                   "cruxible.prediction.settle",
                   "cruxible.kit.add",
@@ -44570,17 +44369,6 @@
     },
     "OrientResult": {
       "fields": {
-        "accepted_at": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "accepted_at",
-          "required": true,
-          "schema": {
-            "format": "date-time",
-            "title": "Accepted At",
-            "type": "string"
-          }
-        },
         "activity": {
           "default": null,
           "default_json_serializable": true,
@@ -44690,6 +44478,27 @@
               }
             ],
             "default": null
+          }
+        },
+        "attention_scope": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "attention_scope",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "const": "head_only",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Attention Scope"
           }
         },
         "capabilities": {
@@ -45231,6 +45040,17 @@
             ],
             "default": null,
             "title": "Procedures"
+          }
+        },
+        "proposed_at": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "proposed_at",
+          "required": true,
+          "schema": {
+            "format": "date-time",
+            "title": "Proposed At",
+            "type": "string"
           }
         },
         "queries": {
@@ -46849,7 +46669,7 @@
           },
           "OrientAttention": {
             "additionalProperties": false,
-            "description": "What the ``next`` queue holds, and anything else the instance needs.\n\n``next_items`` counts the queue's problems and ``top`` names the first of\nthem; ``setup_items`` counts its setup rows apart (choices the operator\nowns, such as a Line accepted but not yet enabled), absent when none.\nThese count accepted state only: rows about the caller's workspace (its\nfloor, sources, projection blocks, vocabulary file) need the workspace\nand appear in ``next``; orient reports the floor and the vocabulary file\nas status beside this (``floor``, ``vocabulary_file``), as it always has.",
+            "description": "What the ``next`` queue holds, and anything else the instance needs.\n\n``next_items`` counts the queue's problems and ``top`` names the first of\nthem; ``setup_items`` counts its setup rows apart (choices the operator\nowns, such as a Line accepted but not yet enabled), absent when none.\nThese count accepted state only: rows about the caller's workspace (its\nfloor, sources, projection blocks, vocabulary file) need the workspace\nand appear in ``next``; orient reports the floor and the vocabulary file\nas status beside this (``floor``, ``vocabulary_file``), as it always has.\n``next_scope`` says so on every answer: ``next_items: 0`` is not an empty\n``next`` queue.",
             "properties": {
               "enablements": {
                 "anyOf": [
@@ -46866,6 +46686,12 @@
                 "minimum": 0,
                 "title": "Next Items",
                 "type": "integer"
+              },
+              "next_scope": {
+                "const": "accepted_state",
+                "default": "accepted_state",
+                "title": "Next Scope",
+                "type": "string"
               },
               "notes": {
                 "default": [],
@@ -47204,13 +47030,8 @@
           },
           "OrientGeneration": {
             "additionalProperties": false,
-            "description": "One accepted generation, newest first: what accepted it and how much it changed.\n\n``changeset_digest`` names the change-set record; ``proposal`` is the\nproposal whose admission it accepted (``get <proposal>`` reads its card and\nchanges), ``proposer`` the actor bound to it, and ``approvals`` the\napproving signers in record order. ``because`` is that admission's\nrationale, cut at 500 characters (``because_truncated``). ``members``\ncounts the change set's members; ``since(generation=sequence-1,\nat=<this generation>)`` lists them. Genesis (sequence 0) carries only its\nsequence, git oid and acceptance time. Pass ``sequence`` or ``git_oid`` as\n``at`` to read state as this generation left it.",
+            "description": "One accepted generation, newest first: what accepted it and how much it changed.\n\n``changeset_digest`` names the change-set record; ``proposal`` is the\nproposal whose admission it accepted (``get <proposal>`` reads its card and\nchanges), ``proposer`` the actor bound to it, and ``approvals`` the\napproving signers in record order. ``because`` is that admission's\nrationale, cut at 500 characters (``because_truncated``). ``members``\ncounts the change set's members; ``since(generation=sequence-1,\nat=<this generation>)`` lists them. Genesis (sequence 0) carries only its\nsequence, git oid and time. ``proposed_at`` is when the change set was\nproposed (its candidate's timestamp); rows are ordered by ``sequence``, and\nthe instant of acceptance is not recorded. Pass ``sequence`` or ``git_oid``\nas ``at`` to read state as this generation left it.",
             "properties": {
-              "accepted_at": {
-                "format": "date-time",
-                "title": "Accepted At",
-                "type": "string"
-              },
               "approvals": {
                 "default": [],
                 "items": {
@@ -47270,6 +47091,11 @@
                 "default": null,
                 "title": "Proposal"
               },
+              "proposed_at": {
+                "format": "date-time",
+                "title": "Proposed At",
+                "type": "string"
+              },
               "proposer": {
                 "anyOf": [
                   {
@@ -47291,7 +47117,7 @@
             "required": [
               "sequence",
               "git_oid",
-              "accepted_at"
+              "proposed_at"
             ],
             "title": "OrientGeneration",
             "type": "object"
@@ -48911,11 +48737,6 @@
         "additionalProperties": false,
         "description": "One orient answer; which parts are present depends on the request.\n\n- no ``kind``/``section``: ``you``, ``kinds`` (paged by ``limit``/``cursor``),\n  ``artifacts``, ``queries`` and ``attention``;\n- ``kind``: ``kind_detail``;\n- ``section``: that section's rows (``documents``, ``procedures``,\n  ``claim_types``, ``subject_kinds``, ``queries``, ``operations``, or an\n  operational family:\n  ``runs``, ``running``, ``lines``, ``runbooks``, ``captures``,\n  ``capture_contracts``,\n  ``predictions``, ``mandates``), the logical sources runs landed\n  Captures from (``sources``), the principal registry (``principals``),\n  the governed policies in force (``policies``), the accepted generations\n  newest first (``generations``), the Subject graph (``graph``), the\n  pins between live definitions (``pins``) or what just happened, newest\n  first (``activity``), paged.\n  The default map counts the operational families under ``artifacts`` and\n  never inlines their rows.\n\n``next`` is rendered for the requesting surface.",
         "properties": {
-          "accepted_at": {
-            "format": "date-time",
-            "title": "Accepted At",
-            "type": "string"
-          },
           "activity": {
             "anyOf": [
               {
@@ -49002,6 +48823,19 @@
               }
             ],
             "default": null
+          },
+          "attention_scope": {
+            "anyOf": [
+              {
+                "const": "head_only",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Attention Scope"
           },
           "capabilities": {
             "anyOf": [
@@ -49336,6 +49170,11 @@
             "default": null,
             "title": "Procedures"
           },
+          "proposed_at": {
+            "format": "date-time",
+            "title": "Proposed At",
+            "type": "string"
+          },
           "queries": {
             "anyOf": [
               {
@@ -49517,18 +49356,18 @@
           "instance",
           "coordinate",
           "generation",
-          "accepted_at",
+          "proposed_at",
           "evaluation_time"
         ],
         "title": "OrientResult",
         "type": "object"
       },
       "required_fields": [
-        "accepted_at",
         "coordinate",
         "evaluation_time",
         "generation",
-        "instance"
+        "instance",
+        "proposed_at"
       ]
     },
     "OrientVocabularyFile": {
@@ -74392,6 +74231,22 @@
             "type": "string"
           }
         },
+        "warnings": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "warnings",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
         "workspace_advertisement": {
           "default_json_serializable": false,
           "has_default": true,
@@ -74472,6 +74327,11 @@
                 "default": "landed",
                 "title": "Status",
                 "type": "string"
+              },
+              "unchanged": {
+                "default": false,
+                "title": "Unchanged",
+                "type": "boolean"
               }
             },
             "required": [
@@ -74947,6 +74807,14 @@
             "title": "Tag",
             "type": "string"
           },
+          "warnings": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          },
           "workspace_advertisement": {
             "$ref": "#/$defs/WorkspaceAdvertisement",
             "default": {
@@ -75344,6 +75212,42 @@
                 "default": null,
                 "title": "Candidate Digest"
               },
+              "closed_at": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Closed At"
+              },
+              "closed_by": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Closed By"
+              },
+              "closed_reason": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Closed Reason"
+              },
               "incomplete_reasons": {
                 "default": [],
                 "items": {
@@ -75379,6 +75283,18 @@
                 "title": "Status",
                 "type": "string"
               },
+              "superseded_by": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Superseded By"
+              },
               "tag": {
                 "const": "playbill-proposal-list-entry-v1",
                 "default": "playbill-proposal-list-entry-v1",
@@ -75403,7 +75319,8 @@
                       "accepted",
                       "refused",
                       "withdrawn",
-                      "rejected"
+                      "rejected",
+                      "superseded"
                     ],
                     "type": "string"
                   },
@@ -75589,6 +75506,66 @@
             "title": "Candidate Digest"
           }
         },
+        "closed_at": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "closed_at",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Closed At"
+          }
+        },
+        "closed_by": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "closed_by",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Closed By"
+          }
+        },
+        "closed_reason": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "closed_reason",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Closed Reason"
+          }
+        },
         "incomplete_reasons": {
           "default": [],
           "default_json_serializable": true,
@@ -75652,6 +75629,26 @@
             "type": "string"
           }
         },
+        "superseded_by": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "superseded_by",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Superseded By"
+          }
+        },
         "tag": {
           "default": "playbill-proposal-list-entry-v1",
           "default_json_serializable": true,
@@ -75697,7 +75694,8 @@
                   "accepted",
                   "refused",
                   "withdrawn",
-                  "rejected"
+                  "rejected",
+                  "superseded"
                 ],
                 "type": "string"
               },
@@ -75793,6 +75791,42 @@
             "default": null,
             "title": "Candidate Digest"
           },
+          "closed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Closed At"
+          },
+          "closed_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Closed By"
+          },
+          "closed_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Closed Reason"
+          },
           "incomplete_reasons": {
             "default": [],
             "items": {
@@ -75828,6 +75862,18 @@
             "title": "Status",
             "type": "string"
           },
+          "superseded_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Superseded By"
+          },
           "tag": {
             "const": "playbill-proposal-list-entry-v1",
             "default": "playbill-proposal-list-entry-v1",
@@ -75852,7 +75898,8 @@
                   "accepted",
                   "refused",
                   "withdrawn",
-                  "rejected"
+                  "rejected",
+                  "superseded"
                 ],
                 "type": "string"
               },
@@ -76079,6 +76126,11 @@
                 "default": "landed",
                 "title": "Status",
                 "type": "string"
+              },
+              "unchanged": {
+                "default": false,
+                "title": "Unchanged",
+                "type": "boolean"
               }
             },
             "required": [
@@ -76458,6 +76510,14 @@
                 "default": "playbill-proposal-inspection-v1",
                 "title": "Tag",
                 "type": "string"
+              },
+              "warnings": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Warnings",
+                "type": "array"
               },
               "workspace_advertisement": {
                 "$ref": "#/$defs/WorkspaceAdvertisement",
@@ -79754,9 +79814,91 @@
             "title": "ReviewCitation",
             "type": "object"
           },
+          "ReviewClaimTypeDefinition": {
+            "additionalProperties": false,
+            "description": "A new field: what it holds and what may back it.",
+            "properties": {
+              "cardinality": {
+                "enum": [
+                  "one",
+                  "many"
+                ],
+                "title": "Cardinality",
+                "type": "string"
+              },
+              "default_role": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Default Role"
+              },
+              "description": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ReviewSummaryValue"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "evidence": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Evidence",
+                "type": "array"
+              },
+              "evidence_requirement": {
+                "title": "Evidence Requirement",
+                "type": "string"
+              },
+              "kind": {
+                "const": "claim-type",
+                "default": "claim-type",
+                "title": "Kind",
+                "type": "string"
+              },
+              "roles": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Roles",
+                "type": "array"
+              },
+              "subject_kinds": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Subject Kinds",
+                "type": "array"
+              },
+              "value": {
+                "title": "Value",
+                "type": "string"
+              }
+            },
+            "required": [
+              "value",
+              "cardinality",
+              "subject_kinds",
+              "roles",
+              "evidence_requirement"
+            ],
+            "title": "ReviewClaimTypeDefinition",
+            "type": "object"
+          },
           "ReviewDefinition": {
             "additionalProperties": false,
-            "description": "One proposed definition: its kind, name and action, and its typed fields.\n\n``detail`` is the definition as it would stand (Line, ProcedureMandate,\nRunbook, Trigger); other kinds, and retirements, carry none. ``changed``\nlists a revision's changed fields.",
+            "description": "One proposed definition: its kind, name and action, and its typed fields.\n\n``detail`` is the definition as it would stand (Line, ProcedureMandate,\nRunbook, Trigger, Document, note; a ClaimType when created); other kinds,\nand retirements, carry none. ``changed`` lists a revision's changed fields.",
             "properties": {
               "action": {
                 "enum": [
@@ -79780,7 +79922,10 @@
                   {
                     "discriminator": {
                       "mapping": {
+                        "claim-type": "#/$defs/ReviewClaimTypeDefinition",
+                        "document": "#/$defs/ReviewDocumentDefinition",
                         "line": "#/$defs/ReviewLineDefinition",
+                        "note": "#/$defs/ReviewNoteDefinition",
                         "procedure-mandate": "#/$defs/ReviewMandateDefinition",
                         "runbook": "#/$defs/ReviewRunbookDefinition",
                         "trigger": "#/$defs/ReviewTriggerDefinition"
@@ -79799,6 +79944,15 @@
                       },
                       {
                         "$ref": "#/$defs/ReviewTriggerDefinition"
+                      },
+                      {
+                        "$ref": "#/$defs/ReviewClaimTypeDefinition"
+                      },
+                      {
+                        "$ref": "#/$defs/ReviewDocumentDefinition"
+                      },
+                      {
+                        "$ref": "#/$defs/ReviewNoteDefinition"
                       }
                     ]
                   },
@@ -79824,6 +79978,40 @@
               "action"
             ],
             "title": "ReviewDefinition",
+            "type": "object"
+          },
+          "ReviewDocumentDefinition": {
+            "additionalProperties": false,
+            "description": "A Document as it would stand: its title and what it is linked to.",
+            "properties": {
+              "document_kind": {
+                "title": "Document Kind",
+                "type": "string"
+              },
+              "kind": {
+                "const": "document",
+                "default": "document",
+                "title": "Kind",
+                "type": "string"
+              },
+              "links": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/ReviewLink"
+                },
+                "title": "Links",
+                "type": "array"
+              },
+              "title": {
+                "title": "Title",
+                "type": "string"
+              }
+            },
+            "required": [
+              "title",
+              "document_kind"
+            ],
+            "title": "ReviewDocumentDefinition",
             "type": "object"
           },
           "ReviewFieldChange": {
@@ -79998,6 +80186,25 @@
             "title": "ReviewLineDefinition",
             "type": "object"
           },
+          "ReviewLink": {
+            "additionalProperties": false,
+            "properties": {
+              "relation": {
+                "title": "Relation",
+                "type": "string"
+              },
+              "target": {
+                "title": "Target",
+                "type": "string"
+              }
+            },
+            "required": [
+              "relation",
+              "target"
+            ],
+            "title": "ReviewLink",
+            "type": "object"
+          },
           "ReviewMandateDefinition": {
             "additionalProperties": false,
             "properties": {
@@ -80090,6 +80297,43 @@
               "expires_at"
             ],
             "title": "ReviewMandateDefinition",
+            "type": "object"
+          },
+          "ReviewNoteDefinition": {
+            "additionalProperties": false,
+            "description": "A note as it would stand: the section, and the Subjects it is about.",
+            "properties": {
+              "about": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "About",
+                "type": "array"
+              },
+              "file": {
+                "title": "File",
+                "type": "string"
+              },
+              "kind": {
+                "const": "note",
+                "default": "note",
+                "title": "Kind",
+                "type": "string"
+              },
+              "section": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Section",
+                "type": "array"
+              }
+            },
+            "required": [
+              "file",
+              "section",
+              "about"
+            ],
+            "title": "ReviewNoteDefinition",
             "type": "object"
           },
           "ReviewRunbookDefinition": {
@@ -84016,6 +84260,22 @@
             "title": "Tag",
             "type": "string"
           }
+        },
+        "warnings": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "warnings",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
         }
       },
       "json_schema": {
@@ -84128,6 +84388,14 @@
             "default": "cruxible-provider-retire-result-v1",
             "title": "Tag",
             "type": "string"
+          },
+          "warnings": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
           }
         },
         "required": [
@@ -92303,8 +92571,11 @@
             "description": "Authoring grammar with stated defaults and named dependencies.\n\nThe shape, cardinality, dedupe, evaluation policy and budgets may be left\nout (``query_spec_defaults``); the stored definition states them.",
             "properties": {
               "artifact_format": {
-                "const": "cruxible-query-definition-v3",
                 "default": "cruxible-query-definition-v3",
+                "enum": [
+                  "cruxible-query-definition-v3",
+                  "cruxible-query-definition-v4"
+                ],
                 "title": "Artifact Format",
                 "type": "string"
               },
@@ -92683,7 +92954,7 @@
           },
           "QueryEvaluationTimeRef": {
             "additionalProperties": false,
-            "description": "The run's explicit evaluation time; never an implicit wall clock.",
+            "description": "The run's explicit evaluation time, optionally shifted; never a wall clock.\n\n``offset_seconds`` is the fixed shift authored as ``now - 3d`` or\n``now + 12h``, held in whole seconds (UTC, no calendar units): ``now -\n72h`` and ``now - 3d`` are one offset, -259200. An unshifted ref is v1 and\nserializes exactly as before; a shifted one is v2, which only a\n``cruxible-query-definition-v4`` definition holds.",
             "properties": {
               "kind": {
                 "const": "evaluation_time",
@@ -92691,9 +92962,19 @@
                 "title": "Kind",
                 "type": "string"
               },
+              "offset_seconds": {
+                "default": 0,
+                "maximum": 3153600000,
+                "minimum": -3153600000,
+                "title": "Offset Seconds",
+                "type": "integer"
+              },
               "tag": {
-                "const": "playbill-query-evaluation-time-ref-v1",
                 "default": "playbill-query-evaluation-time-ref-v1",
+                "enum": [
+                  "playbill-query-evaluation-time-ref-v1",
+                  "playbill-query-evaluation-time-ref-v2"
+                ],
                 "title": "Tag",
                 "type": "string"
               }
@@ -108244,12 +108525,11 @@
             "description": "Fire one internal action; the worker that owns it follows its fires.",
             "properties": {
               "action": {
-                "description": "A registered internal action: floor.refresh, evidence.sweep, prediction.anchor_retry, curation.detect.",
+                "description": "A registered internal action: floor.refresh, evidence.sweep, prediction.anchor_retry.",
                 "examples": [
                   "floor.refresh",
                   "evidence.sweep",
-                  "prediction.anchor_retry",
-                  "curation.detect"
+                  "prediction.anchor_retry"
                 ],
                 "maxLength": 128,
                 "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",

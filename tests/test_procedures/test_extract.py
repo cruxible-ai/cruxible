@@ -750,3 +750,30 @@ def test_a_projection_requires_its_parse(project: str, parse: str) -> None:
     required = "date" if project == "utc_start_of_day" else "datetime"
     with pytest.raises(ValidationError, match=f"{project} requires parse: {required}"):
         ExtractField.model_validate({"at": "dateAdded", "parse": parse, "project": project})
+
+
+def test_a_changed_enum_membership_is_another_row_derivation() -> None:
+    """Review 2d #5: the rows derived from one Capture under one spec depend on
+    the typing the extractor read them under; a narrowed enum is new rows."""
+
+    from types import SimpleNamespace
+
+    from cruxible_core.procedures import execution
+
+    content = _catalog(_entry("CVE-2026-0001", vendorProject="7", dueDate=None))
+    fields = {
+        "vendor_project": {"at": "vendorProject", "presence": "required"},
+        "ransomware_use": {"at": "knownRansomwareCampaignUse", "presence": "optional"},
+    }
+    wide = _rerun_field(content, _row(), fields=fields)
+    narrow = _rerun_field(content, _row(), enums=lambda _name: ("Known",), fields=fields)
+    assert wide.typing_key != narrow.typing_key
+    state = SimpleNamespace(capture_contracts={}, capture_sources={})
+    capture = "sha256:" + __import__("hashlib").sha256(content).hexdigest()
+    rows = [
+        execution._row_map_of(
+            state, capture, "sha256:" + "5" * 64, f"*|{outcome.typing_key}", outcome
+        )[1]  # noqa: SLF001
+        for outcome in (wide, narrow)
+    ]
+    assert rows[0] != rows[1]

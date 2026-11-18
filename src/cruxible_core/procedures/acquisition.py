@@ -216,10 +216,17 @@ def capture_selection_failure(
     envelope: CaptureEnvelopeAny,
     *,
     evaluation_time: datetime,
+    observed_at: datetime | None = None,
 ) -> str | None:
-    """Eligibility shared by newly acquired and retained Capture inputs."""
+    """Eligibility shared by newly acquired and retained Capture inputs.
+
+    ``observed_at`` is when this acquisition observed the contents, when that
+    is not the envelope's own instant: a reused Capture's envelope says when
+    its contents were first observed (ruling 1c).
+    """
+    seen = envelope.observed_at if observed_at is None else observed_at
     if rule.max_age is not None and (
-        evaluation_time - envelope.observed_at > timedelta(microseconds=rule.max_age.microseconds)
+        evaluation_time - seen > timedelta(microseconds=rule.max_age.microseconds)
     ):
         return ACQUISITION_STALE
     if (
@@ -239,6 +246,7 @@ def apply_acquisition_result(
     *,
     default_authorized: bool = False,
     evaluation_time: datetime,
+    observed_at: datetime | None = None,
 ) -> AcquisitionInputDecision:
     """Apply the declared behaviour to a real typed acquisition result only.
 
@@ -258,7 +266,7 @@ def apply_acquisition_result(
             raise ValueError("acquired result lost its Capture")
         considered = (acquisition.capture_digest,)
         failure = capture_selection_failure(
-            rule, acquisition.envelope, evaluation_time=evaluation_time
+            rule, acquisition.envelope, evaluation_time=evaluation_time, observed_at=observed_at
         )
         # Producing bytes is not admission: apply the same eligibility rules as
         # accepted Capture selection before those bytes enter the run context.

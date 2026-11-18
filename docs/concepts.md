@@ -285,6 +285,14 @@ evidence is one or more of:
   example a supplier API response that a Procedure fetched (`--capture CAP-…`,
   or `--evidence-contract` for the newest one about the Subject).
 
+Which citation fits depends on what the judgment rests on. A quoted code line
+(`--evidence-file PATH#TEXT`) is a pointer for reviewers: it shows where to
+look, but it is not a witness that resurfaces the judgment when the code
+changes in a way that matters. A judgment that depends on code should cite a
+check result where one exists, such as a scanner's finding, so the evidence
+moves when the check's answer does. Prose keeps quote and `--section`
+citations.
+
 A Capture's bytes are the document its producer returned, verbatim: the body an
 origin sent, the file read, the document a conversion produced, in whatever
 format it is. How it was obtained (the URL and the URL a redirect settled on,
@@ -363,10 +371,10 @@ evidence, verdicts, freshness and attestations in full.
 
 The file catalog, `.cruxible/files.yaml`, gives each workspace file a stable
 name, a handle mapped to the file's current path so citations survive the file
-moving. You cite a file by its path; a write that cites a file the catalog
-does not name yet catalogues it under a name derived from the path, and
-`cruxible files add NAME PATH` chooses the name yourself. Two different things can rest on a
-catalogued file:
+moving. You cite a file by its path or by that name; a write that cites a
+file the catalog does not name yet catalogues it under a name derived from the
+path, and `cruxible files add NAME PATH` chooses the name yourself. Two
+different things can rest on a catalogued file:
 
 | | Citation | Document |
 |---|---|---|
@@ -377,7 +385,22 @@ catalogued file:
 
 Most usage is citations. A Document whose bytes are not a workspace file (for
 example bytes a remote agent supplies) goes through `body store` and
-`document propose` instead. `coverage resolve` answers which Claim citations
+`document propose` instead.
+
+### Notes and guidance
+
+Two kinds of link point prose at state, and `cruxible link` makes either:
+
+| | Note | Guidance |
+|---|---|---|
+| Links | a section of a page, `about` Subjects | a whole registered page, `guides` a ClaimType or Procedure |
+| Says | what that text is about | how to review values of that definition |
+| Lane | value: one write, same governance as `set` | definition: the page's Document revision |
+| Shown by | `backlinks` on the Subject | `proposal review` of changes touching it, and `backlinks ClaimType:NAME` |
+| Command | `cruxible link notes.md#Triage --about KIND/ID --because WHY` (or `note` to append the section too) | `cruxible link guide.md --guides ClaimType:NAME` |
+
+Guidance links are recorded on the page's catalog entry, so every later
+`files propose` carries them. `coverage resolve` answers which Claim citations
 occur in given file bytes: a whole file, a line range, or `grep -n` output on
 standard input.
 
@@ -428,9 +451,13 @@ observation. What a new observation does to accepted state depends on what it
 shows:
 
 - **The same value again** changes no Claim. Re-checking the supplier's
-  catalog and finding the same fitment is recorded beside the Claim, and keeps
-  it fresh: a ClaimType's evidence age counts from the latest re-observation,
-  not the first Capture.
+  catalog is recorded once per fetch, keyed by the content it observed (an
+  identical re-fetch reuses the Capture already held), and keeps every Claim
+  citing that content fresh: a ClaimType's evidence age counts from the latest
+  observation of the content, not the first Capture. Each extract step also
+  records the rows it read: when the catalog's bytes changed but the fitment's
+  row did not, that one row observation keeps the Claim fresh, with nothing
+  recorded per Claim.
 - **A different value** is a new statement, proposed as a revision like any
   other change. Claims that depend on the old value are not revised for you:
   `next` resurfaces them, and an agent decides what the change means for each.
@@ -676,22 +703,13 @@ through the queue, repairs, duplicates and `audit`.
 
 ### Work queues
 
-Three queues tell you what to do, each a read:
+Two queues tell you what to do, each a read:
 
 - **next** is what is wrong or waiting on you, each row with the exact
   operation that repairs it, and alternatives where there are several: stale or drifted evidence, stale proposals, stale
   blocks, Lines with gaps, available compiler upgrades, and more. It is one
   to-do list for people and agents alike.
 - **audit** ranks Claims worth verifying, by stake, weakness and recency.
-- **curation** (beta) lists ontology-maintenance patterns that detection found.
-  Detection runs only when a `curation-detect` Trigger aimed at the
-  `curation.detect` action is authored (none is seeded), never on `next`'s
-  path; `curation list` only reads. Each item takes one ruling: `overrule`
-  closes it as not applying, permanently (it previews first and commits only
-  with the preview's coordinate); `suppress` hides the item, or with
-  `--scope lineage` also every successor its pattern opens; `unsuppress` lifts
-  a suppression; and `accept-fixed` links it to the accepted proposal or
-  generation that fixed it.
 
 ### Projection blocks
 
@@ -758,10 +776,12 @@ accepted observation inside the window can settle it, and once the window has
 closed `next` lists the prediction as `prediction_settleable` with the settle
 command. An observation counts at the time its Claim version was accepted, or
 at the time a later Capture re-observed that same unchanged version: when a
-run observes a value its live Claim already states, the re-observation is
-recorded, and settle uses that version's latest re-observation made by the
-window's close if it lies inside the window (a later one past the close does
-not hide it). The Claim itself does not change; the settlement cites the
+run records a per-Claim re-observation of a value its live Claim already
+states (a record whose other fields changed), settle uses that version's
+latest such re-observation whose call had ended by the window's close if it
+lies inside the window (a later one past the close does not hide it). Shared
+content and row observations keep Claims fresh but do not settle predictions
+yet. The Claim itself does not change; the settlement cites the
 re-observing Capture and its record. Settle names the bound an observation
 misses: `prediction_observation_predates_contract` when it was made at or
 before the prediction was accepted (an unchanged value stated earlier needs a
@@ -872,9 +892,8 @@ armed:
   --dispatch` does both). `next` names the exact command for each gap, for
   example after the daemon was down.
 
-Internal actions (floor refresh, evidence sweeps, prediction retries, and
-curation detection once its Trigger is authored) also run on Triggers, and
-need no enablement.
+Internal actions (floor refresh, evidence sweeps, prediction retries) also
+run on Triggers, and need no enablement.
 
 "Arm" has one meaning: a labeled branch of a Procedure graph, such as a
 guard's true or false edge, which measurements can read at `arm` grain to

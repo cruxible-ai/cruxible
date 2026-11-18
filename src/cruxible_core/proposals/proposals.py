@@ -216,6 +216,7 @@ from cruxible_client.contracts.providers import (
     provider_path,
 )
 from cruxible_client.contracts.query.definitions import (
+    QUERY_DEFINITION_FORMATS,
     AcceptedQueryDefinition,
     QueryDefinition,
     QueryDefinitionFormatError,
@@ -1897,13 +1898,20 @@ class _MemberKind:
 
 def _installed(context: _MemberContext, artifact_tag: str) -> InstalledAcceptanceLaw:
     if context.historical_law_coordinate is None and not context.rechecking:
-        from cruxible_client.contracts.laws import NAMED_REFERENCE_FORMATS
+        from cruxible_client.contracts.laws import (
+            NAMED_REFERENCE_FORMATS,
+            NAMED_REFERENCE_SUCCESSOR_FORMATS,
+        )
 
         kind = _member_kind(context.path)
         if kind is not None and kind.name in NAMED_REFERENCE_FORMATS:
             named = NAMED_REFERENCE_FORMATS[kind.name]
-            if artifact_tag != named and not (
-                kind.name == "provider" and artifact_tag == "cruxible-provider-identity-v2"
+            if (
+                artifact_tag != named
+                and artifact_tag not in NAMED_REFERENCE_SUCCESSOR_FORMATS.get(kind.name, ())
+                and not (
+                    kind.name == "provider" and artifact_tag == "cruxible-provider-identity-v2"
+                )
             ):
                 raise FormatError(f"New {kind.name} artifacts require {named}.")
     if context.historical_law_coordinate is None:
@@ -2058,16 +2066,21 @@ def _procedure_member(context: _MemberContext) -> _MemberVerdict:
     from cruxible_core.procedures.claims_typing import tree_claims_lookup, validate_claims_templates
 
     if procedure.lifecycle.state == "live":
+        from cruxible_core.procedures.query_rows import validate_row_references
+
+        lookup = tree_claims_lookup(context.candidate_tree)
         try:
-            validate_claims_templates(
-                procedure.definition, tree_claims_lookup(context.candidate_tree)
-            )
+            # A newer check than any recorded acceptance law: it judges new
+            # proposals only, never a member replayed under its recorded law.
+            if context.historical_law_coordinate is None and not context.rechecking:
+                validate_row_references(procedure.definition, lookup)
+            validate_claims_templates(procedure.definition, lookup)
         except ValueError as exc:
             return _MemberVerdict(
                 diagnostics=(
                     _diagnostic(
                         getattr(exc, "code", "cruxible.procedure.claims_type_invalid"),
-                        str(exc),
+                        " ".join(filter(None, (str(exc), getattr(exc, "repair", None)))),
                         path=context.path,
                     ),
                 )
@@ -5164,7 +5177,7 @@ def _evaluate_scoped_members(
             )
 
             content = render_procedure(ProcedureArtifact.model_validate(payload))
-        elif state.artifact_tag == "cruxible-query-definition-v3":
+        elif state.artifact_tag in QUERY_DEFINITION_FORMATS:
             from cruxible_client.contracts.query.definitions import (
                 QueryDefinition,
                 render_query_definition,
@@ -6254,6 +6267,7 @@ class ProposalService:
                 readmits=readmits,
                 procedure_operation=procedure_operation,
                 originating_line=originating_line,
+                kit_transition=request.kit_transition,
             )
             candidate_value = outcome.candidate.candidate_digest if outcome.candidate else None
             try:

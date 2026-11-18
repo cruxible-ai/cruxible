@@ -15,11 +15,13 @@ from __future__ import annotations
 
 import os
 import shlex
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from pathlib import Path
 
 from cruxible_client.authoring.principal_settings import (
     PrincipalSettings,
+    default_key_dir,
     read_principal_settings,
 )
 from cruxible_client.contracts.principals import PRINCIPAL_KEY_ENV
@@ -34,23 +36,6 @@ PRINCIPAL_TOKEN_ENV = _TOKEN_ENV
 
 def principal_settings_path(key_dir: Path) -> Path:
     return key_dir.expanduser().resolve() / PRINCIPAL_SETTINGS_FILE
-
-
-def default_key_dir(
-    instance_id: str, principal_id: str, environ: Mapping[str, str] | None = None
-) -> Path:
-    """Where `cruxible init` keeps a principal's key when no --key-dir is given.
-
-    A per-user config path (``$XDG_CONFIG_HOME/cruxible``, else
-    ``~/.config/cruxible``), one directory per instance and principal: outside
-    every workspace and outside the daemon state root, so custody never lands
-    beside the bytes it signs for.
-    """
-
-    env = os.environ if environ is None else environ
-    raw = env.get("XDG_CONFIG_HOME")
-    base = Path(raw).expanduser() if raw else Path.home() / ".config"
-    return (base / "cruxible" / "keys" / instance_id / principal_id).resolve()
 
 
 def _transport_lines(obj: Mapping[str, object]) -> list[str]:
@@ -88,20 +73,52 @@ def write_principal_settings(
     return path
 
 
-def set_principal_settings_token(key_dir: Path, token: str) -> Path | None:
-    """Replace the bearer token in an existing settings file; None when there is none."""
+class SettingsTokenMismatch(ValueError):
+    """The settings file holds a token other than the one being replaced."""
+
+    def __init__(self, path: Path) -> None:
+        super().__init__(str(path))
+        self.path = path
+
+
+def set_principal_settings_token(
+    key_dir: Path, token: str, *, replaces: str | None = None
+) -> Path | None:
+    """Replace the bearer token in an existing settings file; None when there is none.
+
+    ``replaces`` (S5): compare-and-write. The file is rewritten only when the
+    token it holds is exactly ``replaces`` (the token this rotation replaces,
+    read before the request); otherwise ``SettingsTokenMismatch`` names the
+    file and nothing is written. The compare and the write hold an exclusive
+    lock beside the file, so a concurrent update is never lost.
+    """
 
     path = principal_settings_path(key_dir)
     if not path.is_file() or path.is_symlink():
         return None
-    kept = [
-        line
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if not line.startswith(f"export {_TOKEN_ENV}=")
-    ]
-    kept.append(f"export {_TOKEN_ENV}={shlex.quote(token)}")
-    _write_owner_only(path, "\n".join(kept) + "\n")
+    with _settings_lock(path):
+        lines = path.read_text(encoding="utf-8").splitlines()
+        if replaces is not None and read_principal_settings(path).token != replaces:
+            raise SettingsTokenMismatch(path)
+        kept = [line for line in lines if not line.startswith(f"export {_TOKEN_ENV}=")]
+        kept.append(f"export {_TOKEN_ENV}={shlex.quote(token)}")
+        _write_owner_only(path, "\n".join(kept) + "\n")
     return path
+
+
+@contextmanager
+def _settings_lock(path: Path) -> Iterator[None]:
+    """An exclusive advisory lock on ``.<name>.lock`` beside a settings file."""
+
+    import fcntl
+
+    lock = path.with_name(f".{path.name}.lock")
+    descriptor = os.open(lock, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(descriptor)
 
 
 def _write_owner_only(path: Path, content: str) -> None:
@@ -118,6 +135,7 @@ def _write_owner_only(path: Path, content: str) -> None:
 
 
 __all__ = [
+    "SettingsTokenMismatch",
     "PRINCIPAL_ID_ENV",
     "PRINCIPAL_KEY_ENV",
     "PRINCIPAL_SETTINGS_FILE",

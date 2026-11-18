@@ -16,13 +16,23 @@ class AuthoringLanded(BaseModel):
     status: Literal["landed"] = "landed"
     proposal_id: str | None = None
     accepted_coordinate: AcceptedCoordinate
+    #: Identical to accepted state: nothing was proposed and no generation made
+    #: (S2); ``accepted_coordinate`` is the head it matched.
+    unchanged: bool = Field(default=False, exclude_if=lambda value: value is False)
 
     def __str__(self) -> str:
-        """``landed: accepted at <short oid>``; ``repr()`` stays the full model."""
+        """``landed: accepted at <short oid>``; ``repr()`` is its first line."""
 
         from cruxible_client.contracts.text_display import landing_lines
 
         return "\n".join(landing_lines(self))
+
+    def __repr__(self) -> str:
+        """The first line of what the CLI prints (S1); ``model_dump()`` is the model."""
+
+        from cruxible_client.contracts.text_display import one_line_repr
+
+        return one_line_repr(self)
 
 
 class AuthoringProposed(BaseModel):
@@ -49,11 +59,18 @@ class AuthoringProposed(BaseModel):
     )
 
     def __str__(self) -> str:
-        """Why it stopped and what to run; ``repr()`` stays the full model."""
+        """Why it stopped and what to run; ``repr()`` is its first line."""
 
         from cruxible_client.contracts.text_display import landing_lines
 
         return "\n".join(landing_lines(self))
+
+    def __repr__(self) -> str:
+        """The first line of what the CLI prints (S1); ``model_dump()`` is the model."""
+
+        from cruxible_client.contracts.text_display import one_line_repr
+
+        return one_line_repr(self)
 
 
 class AuthoringRefused(BaseModel):
@@ -75,11 +92,18 @@ class AuthoringRefused(BaseModel):
     )
 
     def __str__(self) -> str:
-        """Why it refused and what to run; ``repr()`` stays the full model."""
+        """Why it refused and what to run; ``repr()`` is its first line."""
 
         from cruxible_client.contracts.text_display import landing_lines
 
         return "\n".join(landing_lines(self))
+
+    def __repr__(self) -> str:
+        """The first line of what the CLI prints (S1); ``model_dump()`` is the model."""
+
+        from cruxible_client.contracts.text_display import one_line_repr
+
+        return one_line_repr(self)
 
 
 AuthoringLanding: TypeAlias = Annotated[

@@ -39,6 +39,7 @@ from cruxible_client.contracts.query.grammar import (
     QueryArtifactsEntry,
     QueryBudgets,
     QueryEntry,
+    QueryEvaluationTimeRef,
     QueryFilter,
     QueryInclude,
     QueryOrdering,
@@ -70,6 +71,42 @@ QueryResultShape = Literal["subject", "relation_claim", "path", "artifact_defini
 QueryResultCardinality = Literal["one", "many"]
 QueryDedupe = Literal["subject", "path", "none", "artifact"]
 QueryConflictBehavior = Literal["surface_conflicts", "refuse_on_conflict"]
+
+#: v3 is every definition without a shifted ``now``; v4 is exactly the
+#: definitions that shift it (``now - 3d``). A definition is written in the one
+#: format its content needs, so one meaning has one wire form and one digest,
+#: and every v3 definition accepted before v4 existed keeps its bytes.
+QueryDefinitionFormat = Literal["cruxible-query-definition-v3", "cruxible-query-definition-v4"]
+QUERY_DEFINITION_FORMATS: tuple[QueryDefinitionFormat, ...] = (
+    "cruxible-query-definition-v3",
+    "cruxible-query-definition-v4",
+)
+
+
+def shifts_evaluation_time(value: object) -> bool:
+    """Whether any evaluation-time ref in ``value`` carries an offset. O(definition)."""
+
+    if isinstance(value, QueryEvaluationTimeRef):
+        return value.offset_seconds != 0
+    if isinstance(value, BaseModel):
+        return any(
+            shifts_evaluation_time(getattr(value, name)) for name in type(value).model_fields
+        )
+    if isinstance(value, tuple | list):
+        return any(shifts_evaluation_time(item) for item in value)
+    return False
+
+
+def _states_shifted_time(data: object) -> bool:
+    """Whether raw spec data holds an evaluation-time ref with an offset."""
+
+    if isinstance(data, Mapping):
+        if data.get("kind") == "evaluation_time" and data.get("offset_seconds"):
+            return True
+        return any(_states_shifted_time(item) for item in data.values())
+    if isinstance(data, list | tuple):
+        return any(_states_shifted_time(item) for item in data)
+    return shifts_evaluation_time(data)
 
 
 class QueryDefinitionFormatError(FormatError):
@@ -119,7 +156,7 @@ class QueryEvaluationPolicy(_StrictQueryDefinitionModel):
 class QueryDefinition(_StrictQueryDefinitionModel):
     """One governed, named, Claim-native canonical query declaration."""
 
-    artifact_format: Literal["cruxible-query-definition-v3"] = "cruxible-query-definition-v3"
+    artifact_format: QueryDefinitionFormat = "cruxible-query-definition-v3"
     identity: ArtifactIdentity
     description: str | None = None
     entry: QueryEntry | QueryArtifactsEntry
@@ -193,6 +230,13 @@ class QueryDefinition(_StrictQueryDefinitionModel):
         ):
             raise ValueError(
                 "QueryDefinition identity must be kind QueryDefinition and path-addressable"
+            )
+        if (self.artifact_format == "cruxible-query-definition-v4") != shifts_evaluation_time(
+            (self.entry, self.where, self.traversal, self.includes, self.orderings, self.projection)
+        ):
+            raise ValueError(
+                "a QueryDefinition that shifts now (now - 3d) is cruxible-query-definition-v4; "
+                "one that does not is cruxible-query-definition-v3"
             )
         if isinstance(self.entry, QueryArtifactsEntry):
             if (self.result_shape, self.result_cardinality, self.dedupe) != (
@@ -388,10 +432,7 @@ def _spec_schema(schema: dict[str, Any]) -> None:
 
 
 def _query_wire_defaults(data: Any) -> Any:
-    if (
-        not isinstance(data, Mapping)
-        or data.get("artifact_format") != "cruxible-query-definition-v3"
-    ):
+    if not isinstance(data, Mapping) or data.get("artifact_format") not in QUERY_DEFINITION_FORMATS:
         return data
     stated = dict(data)
     entry = stated.get("entry")
@@ -470,6 +511,9 @@ class QueryDefinitionSpec(QueryDefinition):
     @classmethod
     def _defaults(cls, data: Any) -> Any:
         if isinstance(data, Mapping):
+            if "artifact_format" not in data and _states_shifted_time(data):
+                # The spec leaves the format to its content, as a stored one states it.
+                data = {**data, "artifact_format": "cruxible-query-definition-v4"}
             data = _query_wire_defaults(data)
             return query_spec_defaults(data)
         return data
@@ -537,10 +581,7 @@ def render_query_definition(query: QueryDefinition) -> bytes:
 
 def validate_query_definition(payload: Any) -> QueryDefinition:
     """Strictly select the stored owner model without changing the payload."""
-    if (
-        type(payload) is QueryDefinition
-        and payload.artifact_format == "cruxible-query-definition-v3"
-    ):
+    if type(payload) is QueryDefinition and payload.artifact_format in QUERY_DEFINITION_FORMATS:
         return payload
     if isinstance(payload, QueryDefinition):
         payload = payload.model_dump(mode="json")
@@ -558,7 +599,7 @@ def parse_query_definition(
         raise QueryDefinitionFormatError("QueryDefinition is not strict JSON") from exc
     if (
         not isinstance(payload, dict)
-        or payload.get("artifact_format") != "cruxible-query-definition-v3"
+        or payload.get("artifact_format") not in QUERY_DEFINITION_FORMATS
     ):
         declared = payload.get("artifact_format") if isinstance(payload, dict) else None
         raise QueryDefinitionFormatError(
@@ -568,7 +609,7 @@ def parse_query_definition(
         query = validate_query_definition(payload)
     except (ValueError, CanonicalEncodingError) as exc:
         raise QueryDefinitionFormatError(
-            "QueryDefinition failed strict cruxible-query-definition-v3 validation"
+            f"QueryDefinition failed strict {payload['artifact_format']} validation"
         ) from exc
     validate_query_definition_path(query, path)
     if render_query_definition(query) != content:

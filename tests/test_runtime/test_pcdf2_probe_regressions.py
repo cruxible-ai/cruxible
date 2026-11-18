@@ -135,9 +135,7 @@ def test_probe_double_migration_rederives_an_existing_tombstone(tmp_path: Path) 
     values = current.model_dump(mode="json")
     for mechanical in ("artifact_format", "identity", "lifecycle", "subject_scope", "slot_policy"):
         values.pop(mechanical, None)
-    values["anticipated_source_ids"] = tuple(values.get("anticipated_source_ids") or ()) + (
-        "extra-source",
-    )
+    values["description"] = "The package a vulnerability affects, restated."
     second = service_migrate_claim_type(
         instance,
         request=ClaimTypeMigrationRequest(

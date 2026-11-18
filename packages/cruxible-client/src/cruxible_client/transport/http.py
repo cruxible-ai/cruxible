@@ -36,6 +36,7 @@ from cruxible_client.contracts.claim_reads import (
 from cruxible_client.contracts.declared_blocks import DeclaredBlockPageObservation
 from cruxible_client.contracts.duplicates import DuplicatesAuditRequest, DuplicatesAuditResult
 from cruxible_client.contracts.errors import (
+    ReviewedBindingUnsupported,
     SinceRequestInvalid,
 )
 from cruxible_client.contracts.floor import FloorDelta
@@ -189,6 +190,37 @@ def _change_control(dry_run: bool | None, at: str | None) -> dict[str, Any]:
     return body
 
 
+def _reviewed(candidate_digest: str | None) -> dict[str, str]:
+    """An approval's reviewed-candidate binding; nothing on the wire when unbound."""
+
+    return {} if candidate_digest is None else {"reviewed_candidate_digest": candidate_digest}
+
+
+def _refuse_unbindable(
+    response: httpx.Response, proposal_id: str, candidate_digest: str | None
+) -> None:
+    """Refuse, typed, when an older daemon rejected the reviewed-candidate field.
+
+    Such a daemon's request models forbid unknown fields, so a bound request
+    fails its validation naming ``reviewed_candidate_digest``. That is version
+    skew, not a fault in the request: the caller is told so. The field is never
+    dropped and the approval retried unbound.
+    """
+
+    if candidate_digest is None or response.status_code != 422:
+        return
+    try:
+        body = ErrorResponse.model_validate(response.json())
+    except Exception:
+        return
+    if body.error_type == "RequestValidationError" and any(
+        "reviewed_candidate_digest" in error for error in body.errors
+    ):
+        from cruxible_client import __version__
+
+        raise ReviewedBindingUnsupported(proposal_id, client_version=__version__)
+
+
 class CruxibleClient:
     """Synchronous client for daemon host, credential, and Cruxible operations."""
 
@@ -217,6 +249,7 @@ class CruxibleClient:
             headers[EFFECTIVE_PERMISSION_MODE_HEADER] = permission_ceiling
         self.principal_id = principal_id
         self.socket_path = socket_path
+        self.base_url = base_url
         if socket_path is not None:
             target = f"unix:{socket_path}"
             raw_client = httpx.Client(
@@ -1067,11 +1100,19 @@ class CruxibleClient:
         *,
         signer_id: str,
         include_body: bool = False,
+        reviewed_candidate_digest: str | None = None,
     ) -> contracts.ApprovalChallenge:
+        """The statement to sign. ``reviewed_candidate_digest`` binds it to the
+        candidate the signer reviewed: any other candidate is refused."""
         response = self._client.post(
             f"/api/v1/{instance_id}/proposals/{proposal_id}/approval-challenge",
-            json={"signer_id": signer_id, "include_body": include_body},
+            json={
+                "signer_id": signer_id,
+                "include_body": include_body,
+                **_reviewed(reviewed_candidate_digest),
+            },
         )
+        _refuse_unbindable(response, proposal_id, reviewed_candidate_digest)
         return self._parse_model(response, contracts.ApprovalChallenge)
 
     def submit_approval(
@@ -1081,15 +1122,26 @@ class CruxibleClient:
         *,
         attestation: Mapping[str, Any],
         hold: bool = False,
+        reviewed_candidate_digest: str | None = None,
     ) -> contracts.ProposalApprovalResult:
         """Submit one approval; the daemon activates a candidate it completes.
 
         ``hold=True`` signs only and leaves activation to someone else.
+        ``reviewed_candidate_digest`` binds the approval to the candidate the
+        signer reviewed: a proposal proposed again at the head since is refused
+        (``cruxible.approval.reviewed_candidate_changed``), naming its successor
+        and whether its members are identical. Without it the successor comes
+        back as a ``ProposalRecompiled``, which records no approval.
         """
         response = self._client.post(
             f"/api/v1/{instance_id}/proposals/{proposal_id}/approvals",
-            json={"attestation": dict(attestation), "hold": hold},
+            json={
+                "attestation": dict(attestation),
+                "hold": hold,
+                **_reviewed(reviewed_candidate_digest),
+            },
         )
+        _refuse_unbindable(response, proposal_id, reviewed_candidate_digest)
         if response.is_success and response.json().get("tag") == "cruxible-proposal-recompiled-v1":
             return self._parse_model(response, contracts.ProposalRecompiled)
         if response.is_success and response.json().get("tag") == "playbill-activation-receipt-v1":
@@ -1144,8 +1196,15 @@ class CruxibleClient:
         )
         return self._parse_model(response, CaptureEraseResult)
 
-    def file_context(self, instance_id: str) -> contracts.FileContext:
-        response = self._client.get(f"/api/v1/{instance_id}/files/context")
+    def file_context(
+        self, instance_id: str, *, documents: Sequence[str] | None = None
+    ) -> contracts.FileContext:
+        """Accepted Documents for compiling files: all, or only the ``documents`` named."""
+
+        response = self._client.get(
+            f"/api/v1/{instance_id}/files/context",
+            params=None if documents is None else {"document": list(documents)},
+        )
         return self._parse_model(response, contracts.FileContext)
 
     def check_file_bundle(
@@ -1935,30 +1994,7 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.SinceResult)
 
-    def list_curation(
-        self,
-        instance_id: str,
-        *,
-        access_profile: Mapping[str, Any],
-        limit: int | None = None,
-        cursor: str | None = None,
-    ) -> contracts.CurationListResult:
-        """One page of the curation queue; follow ``next_cursor`` while ``truncated``."""
-        body: dict[str, Any] = {
-            "tag": "playbill-curation-list-request-v1",
-            "access_profile": dict(access_profile),
-        }
-        if limit is not None:
-            body["limit"] = limit
-        if cursor is not None:
-            body["cursor"] = cursor
-        response = self._client.post(
-            f"/api/v1/{instance_id}/curation/list",
-            json=body,
-        )
-        return self._parse_model(response, contracts.CurationListResult)
-
-    def curation_duplicates(
+    def duplicates(
         self,
         instance_id: str,
         *,
@@ -1975,7 +2011,7 @@ class CruxibleClient:
             }
         )
         response = self._client.post(
-            f"/api/v1/{instance_id}/curation/duplicates",
+            f"/api/v1/{instance_id}/duplicates",
             json=request.model_dump(mode="json", exclude_none=True),
         )
         return self._parse_model(response, DuplicatesAuditResult)
@@ -2027,117 +2063,6 @@ class CruxibleClient:
             json={key: value for key, value in payload.items() if value is not None},
         )
         return self._parse_model(response, contracts.AuditResult)
-
-    def overrule_curation(
-        self,
-        instance_id: str,
-        *,
-        item_id: str,
-        expected_latest_event_digest: str,
-        reason: str,
-        attribution_refs: tuple[str, ...] = (),
-        dry_run: bool | None = None,
-        at: str | None = None,
-    ) -> contracts.CurationActionResult:
-        response = self._client.post(
-            f"/api/v1/{instance_id}/curation/overrule",
-            json={
-                "tag": "playbill-curation-overrule-request-v1",
-                "item_id": item_id,
-                "expected_latest_event_digest": expected_latest_event_digest,
-                "reason": reason,
-                "attribution_refs": list(attribution_refs),
-                **_change_control(dry_run, at),
-            },
-        )
-        return self._parse_model(response, contracts.CurationActionResult)
-
-    def accept_fixed_curation(
-        self,
-        instance_id: str,
-        *,
-        item_id: str,
-        expected_latest_event_digest: str,
-        reason: str,
-        accepted_proposal_id: str | None = None,
-        accepted_changeset_digest: str | None = None,
-        accepted_generation: int | None = None,
-        attribution_refs: tuple[str, ...] = (),
-        dry_run: bool | None = None,
-        at: str | None = None,
-    ) -> contracts.CurationActionResult:
-        """Link an item to its fixing change, by proposal (optionally pinned to its
-        ChangeSet) or by accepted generation."""
-        response = self._client.post(
-            f"/api/v1/{instance_id}/curation/accept-fixed",
-            json={
-                "tag": "playbill-curation-accept-fixed-request-v1",
-                "item_id": item_id,
-                "expected_latest_event_digest": expected_latest_event_digest,
-                "reason": reason,
-                "accepted_proposal_id": accepted_proposal_id,
-                "accepted_changeset_digest": accepted_changeset_digest,
-                "accepted_generation": accepted_generation,
-                "attribution_refs": list(attribution_refs),
-                **_change_control(dry_run, at),
-            },
-        )
-        return self._parse_model(response, contracts.CurationActionResult)
-
-    def suppress_curation(
-        self,
-        instance_id: str,
-        *,
-        item_id: str,
-        expected_latest_event_digest: str,
-        reason: str,
-        scope: Literal["item", "lineage"],
-        until_generation: int | None = None,
-        attribution_refs: tuple[str, ...] = (),
-        dry_run: bool | None = None,
-        at: str | None = None,
-    ) -> contracts.CurationActionResult:
-        response = self._client.post(
-            f"/api/v1/{instance_id}/curation/suppress",
-            json={
-                "tag": "playbill-curation-suppress-request-v1",
-                "item_id": item_id,
-                "expected_latest_event_digest": expected_latest_event_digest,
-                "reason": reason,
-                "scope": scope,
-                "until_generation": until_generation,
-                "attribution_refs": list(attribution_refs),
-                **_change_control(dry_run, at),
-            },
-        )
-        return self._parse_model(response, contracts.CurationActionResult)
-
-    def unsuppress_curation(
-        self,
-        instance_id: str,
-        *,
-        item_id: str,
-        expected_latest_event_digest: str,
-        reason: str,
-        suppression_event_id: str | None = None,
-        attribution_refs: tuple[str, ...] = (),
-        dry_run: bool | None = None,
-        at: str | None = None,
-    ) -> contracts.CurationActionResult:
-        """Lift one suppression on an item (the only one, unless named)."""
-        response = self._client.post(
-            f"/api/v1/{instance_id}/curation/unsuppress",
-            json={
-                "tag": "playbill-curation-unsuppress-request-v1",
-                "item_id": item_id,
-                "expected_latest_event_digest": expected_latest_event_digest,
-                "reason": reason,
-                "suppression_event_id": suppression_event_id,
-                "attribution_refs": list(attribution_refs),
-                **_change_control(dry_run, at),
-            },
-        )
-        return self._parse_model(response, contracts.CurationActionResult)
 
     def resolve_coverage(
         self,

@@ -12,11 +12,6 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client.contracts.captures import (
-    capture_contract_path,
-    foreign_source_capture_contract,
-    render_capture_contract,
-)
 from cruxible_client.contracts.claim_types import (
     ClaimType,
     claim_type_path,
@@ -62,11 +57,11 @@ def _with(instance: PlaybillInstance, *types: tuple[str, str, str | None]) -> di
     for predicate, subject_kind, object_kind in types:
         claim_type = _claim_type(tree, predicate, subject_kind, object_subject_kind=object_kind)
         tree[claim_type_path(predicate)] = render_claim_type(claim_type)
-        # Its rules name the foreign-source contracts by identity; the first
-        # binding installs them, so the fixture lands them alongside.
-        for source_id in defaulted_claim_type_input_example().anticipated_source_ids:
-            contract = foreign_source_capture_contract(source_id)
-            tree[capture_contract_path(contract.identity.name)] = render_capture_contract(contract)
+        # Its rule names the own-words contract by identity; authoring installs
+        # it beside the ClaimType, so the fixture lands it alongside.
+        from cruxible_core.claims.claim_type_inputs import install_builtin_capture_dependencies
+
+        install_builtin_capture_dependencies(claim_type, tree)
     return tree
 
 

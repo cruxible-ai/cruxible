@@ -422,6 +422,13 @@ class KitProvenance(_Strict):
     principal_id: str | None = None
 
 
+def registry_source(source: str | None) -> bool:
+    """Whether a recorded kit source is a registry reference (directory and layout
+    sources are a bare name)."""
+
+    return source is not None and "/" in source
+
+
 def kit_version_key(version: str) -> tuple[int, int, int]:
     """MAJOR.MINOR.PATCH as a sortable tuple."""
 
@@ -821,6 +828,9 @@ def kit_content_digest(payload: dict[str, object]) -> str:
 KitConsequence = Literal[
     "overwrites_your_edit",
     "re_adds_retired",
+    #: A definition the kit installed that this instance retired since (S7):
+    #: it stays retired, skipped without --keep.
+    "consumer_retired",
     "takes_over_outside_definition",
     "replaces_carried_definition",
     "release_dropped",
@@ -1046,7 +1056,14 @@ KitTransition = Literal["install", "upgrade", "downgrade", "reinstall"]
 #: install refused). Another installed build of the provider never blocks: the
 #: kit's build installs beside it.
 KitProviderAction = Literal[
-    "unchanged", "install", "would_install", "awaiting_approval", "satisfied", "blocked"
+    "unchanged",
+    "install",
+    "would_install",
+    "awaiting_approval",
+    "satisfied",
+    "blocked",
+    #: This build is retired here (S7): the consumer's retirement stands.
+    "kept_retired",
 ]
 
 
@@ -1133,6 +1150,10 @@ class KitChangeResult(_Strict):
         "would_block",
     ]
     proposal_id: str | None = None
+    #: A blocked change whose proposal was admitted and stays open (accepted state
+    #: moved before it could land): withdraw it, or preview the kit again. False
+    #: for a refusal, whose ``proposal_id`` (if any) names only the refused record.
+    proposal_open: bool = Field(default=False, exclude_if=lambda value: not value)
     approval_required: bool = False
     #: From the installed version to this release's (None for a removal).
     transition: KitTransition | None = None
@@ -1170,6 +1191,9 @@ class KitChangeResult(_Strict):
         max_length=KIT_AUTOMATION_TEMPLATE_MAX_BYTES,
         exclude_if=lambda value: value is None,
     )
+    #: How many ``unchanged`` plan entries a compact answer left out of ``plan``
+    #: (``compact_kit_change``); None when ``plan`` lists every path.
+    unchanged: int | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 #: Whether the adapter looked for a newer release of a registry-sourced kit:
@@ -1219,8 +1243,9 @@ class InstalledKit(_Strict):
 
 
 #: A recorded kit add waiting on its provider installs: ``waiting`` (an install
-#: has not activated yet), ``proposed`` (the definitions were proposed, or
-#: landed, once they did), ``blocked`` (proposing them refused; ``detail`` says why).
+#: has not activated yet), ``proposed`` (the definitions were proposed once they
+#: did; kit status lists it while that proposal is open or awaits readmission),
+#: ``blocked`` (proposing them refused; ``detail`` says why).
 KitResumeState = Literal["waiting", "proposed", "blocked"]
 
 
@@ -1240,9 +1265,16 @@ class KitResumeStatus(_Strict):
     proposal_id: str | None = None
     #: That proposal is still open (awaiting approval or activation).
     proposal_open: bool = Field(default=False, exclude_if=lambda value: not value)
+    #: That proposal awaits readmission: the head changed what it touches, so the
+    #: kit add is run again (kit add proposes it at the head).
+    proposal_awaiting_readmit: bool = Field(default=False, exclude_if=lambda value: not value)
     detail: str | None = None
     #: Where the bundle came from, as the kit add recorded it.
     source: str | None = None
+    #: The recorded release's content digest (what kit add pins), set for the base
+    #: kit's row awaiting readmit, so a client tells the bundled base kit from
+    #: another kit labelled the same way before naming ``kit add base``.
+    content_digest: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class KitStatus(_Strict):
@@ -1250,3 +1282,15 @@ class KitStatus(_Strict):
     kits: tuple[InstalledKit, ...] = ()
     #: Kit adds waiting on provider installs, or whose resume proposed or refused.
     resumes: tuple[KitResumeStatus, ...] = ()
+
+    def __str__(self) -> str:
+        """The installed kits, as text; ``repr()`` is its first line."""
+
+        from cruxible_client.contracts.text_display import kit_status_lines
+
+        return "\n".join(kit_status_lines(self))
+
+    def __repr__(self) -> str:
+        from cruxible_client.contracts.text_display import one_line_repr
+
+        return one_line_repr(self)

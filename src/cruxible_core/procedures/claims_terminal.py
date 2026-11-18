@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
@@ -22,7 +22,7 @@ from cruxible_client.contracts.claim_evidence import (
     FindingKind,
 )
 from cruxible_client.contracts.claim_types import effective_canonical_form
-from cruxible_client.contracts.claims import claim_artifact_digest
+from cruxible_client.contracts.claims import ClaimArtifact, claim_artifact_digest
 from cruxible_client.contracts.content_memo import sealed_memo
 from cruxible_client.contracts.procedures.claims import ClaimsNode, rationale_references
 from cruxible_client.contracts.procedures.extract import (
@@ -846,7 +846,16 @@ def expand_claims(
                 if len(matched) == 1:
                     diagnostics.same += 1
                     held_claim = matched[0]
-                    if receipt.value.capture_digest not in held_claim.backing.capture_digests:
+                    if (
+                        receipt.value.capture_digest not in held_claim.backing.capture_digests
+                        and not _observed_same_content(
+                            receipt.value.capture_digest, held_claim, state=state, context=context
+                        )
+                        and not _observed_same_row(
+                            receipt.value, held_claim, state=state, executor=executor
+                        )
+                        and not _already_rechecked(held_claim, receipt.value, executor=executor)
+                    ):
                         changes.append(
                             CoreReobservationChange(
                                 rationale="Re-observed the same declared value.",
@@ -1027,8 +1036,19 @@ def bind_claim_input(
         and provenance[name].whole.issubset(own_tokens)
     ]
     if not matches or not isinstance(supplied, dict):
+        unreferenced = sorted(
+            name for name in read_aliases if outputs.get(name) == supplied and name in provenance
+        )
+        if unreferenced and isinstance(supplied, dict):
+            raise ValueError(
+                f"claims_inputs_invalid: the read {unreferenced[0]} is not in this row's "
+                "closure: an input must be referenced by the Claim's value, key or "
+                f"rationale, e.g. {{$steps.{unreferenced[0]}.value}}"
+            )
         raise ValueError(
-            "claims_inputs_invalid: input is not an exact Claim read in this row's closure"
+            "claims_inputs_invalid: input is not an exact Claim read in this row's closure; "
+            "an input names a one-Claim read step that the Claim's value, key or rationale "
+            "references, e.g. {$steps.<read>.value}"
         )
     from cruxible_client.contracts.artifacts import ArtifactIdentity
     from cruxible_core.procedures.execution import run_value_digest
@@ -1052,3 +1072,93 @@ def bind_claim_input(
         target=ArtifactIdentity(kind="Claim", name=identity),
         artifact_digest=digest,
     ), tuple(captures)
+
+
+def _observed_same_row(value: Any, held_claim: ClaimArtifact, *, state: Any, executor: Any) -> bool:
+    """Whether this run's extract step observed the very row the live Claim depends on.
+
+    The step published its whole row set as one observation (2026-11-16 a),
+    which a Claim produced from a row reads as its freshness whatever bytes
+    carried it: restating the Claim on it records nothing more. The held
+    Claim's row is its cited record's, mapped when its Capture was observed.
+    False when this run did not observe the record's Capture or the held row
+    is unknown.
+    """
+
+    from cruxible_client.contracts.claim_evidence import ExtractedBasis
+
+    held = held_claim.backing.procedure_evidence
+    port = getattr(executor, "capture_observations", None)
+    rows: Mapping[tuple[str, str], Mapping[str, str]] = getattr(state, "row_maps", {})
+    if (
+        not isinstance(value, ExtractedBasis)
+        or held is None
+        or port is None
+        or not isinstance(held.value, ExtractedBasis)
+        or not _observed_now(state, value.capture_digest)
+    ):
+        return False
+    current = rows.get((value.capture_digest, value.extract_spec_digest), {}).get(
+        value.record_locator
+    )
+    cited = held.value
+    known = rows.get((cited.capture_digest, cited.extract_spec_digest), {}).get(
+        cited.record_locator
+    )
+    if known is None:
+        known = port.row_of(cited.capture_digest, cited.extract_spec_digest, cited.record_locator)
+    return current is not None and known == current
+
+
+def _already_rechecked(held_claim: ClaimArtifact, value: Any, *, executor: Any) -> bool:
+    """Whether this Claim version's latest per-Claim re-check is in this Capture.
+
+    Its row changed elsewhere, so the row observation does not cover it; once
+    a per-Claim record re-checked this exact version in this Capture, the
+    Capture's later identical fetches refresh it through the Capture's content
+    (``claim_keys_on``), so restating it again prepares nothing (review 2d
+    #7). Only the latest re-check is that association: a return to an earlier
+    re-checked Capture, or a successor version, is re-checked again (review
+    2e #1-#2).
+    """
+
+    from cruxible_client.contracts.claims import claim_artifact_digest
+
+    port = getattr(executor, "capture_observations", None)
+    capture = getattr(value, "capture_digest", None)
+    return (
+        port is not None
+        and isinstance(capture, str)
+        and port.rechecked(
+            held_claim.identity.name, claim_artifact_digest(held_claim).tagged, capture
+        )
+    )
+
+
+def _observed_now(state: Any, capture: str) -> bool:
+    """Whether this run fetched ``capture``, or derived it only from Captures it fetched."""
+
+    from cruxible_core.procedures.execution import _capture_span
+
+    return hasattr(state, "capture_spans") and _capture_span(state, capture) is not None
+
+
+def _observed_same_content(
+    capture: str, held_claim: ClaimArtifact, *, state: Any, context: Any
+) -> bool:
+    """Whether ``capture`` observed the very content the live Claim's evidence cites.
+
+    The run recorded its fetch of ``capture`` as a content observation (ruling
+    1a), which every Claim citing a Capture of that (contract, content) reads
+    as its freshness: restating the Claim on it records nothing more, exactly
+    as restating it on the Capture it cites. False when the run recorded no
+    observation of ``capture`` or the cited content is not indexed.
+    """
+
+    fetched = getattr(state, "observed_contents", {}).get(capture)
+    lookup = getattr(context, "capture_content", None)
+    evidence = held_claim.backing.procedure_evidence
+    if fetched is None or lookup is None or evidence is None:
+        return False
+    cited = getattr(evidence.value, "capture_digest", None)
+    return isinstance(cited, str) and lookup(cited) == fetched

@@ -10,18 +10,31 @@ import json
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Literal, NoReturn, Protocol, TypeVar, cast
+from typing import Annotated, Any, Literal, NoReturn, Protocol, TypeVar, cast, get_args
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Discriminator,
+    Field,
+    Tag,
+    field_validator,
+    model_validator,
+)
+from pydantic_core import PydanticCustomError
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.query.definitions import (
     QueryDefinition,
+    QueryDefinitionSpec,
     QueryEvaluationPolicy,
+    shifts_evaluation_time,
 )
 from cruxible_client.contracts.query.grammar import (
+    QUERY_TIME_OFFSET_MAX_SECONDS,
     QueryBudgets,
     QueryClaimFieldRef,
     QueryClaimPresenceFilter,
@@ -57,6 +70,29 @@ class _AuthoredModel(BaseModel):
     model_config = ConfigDict(
         extra="forbid", frozen=True, validate_by_name=True, serialize_by_alias=True
     )
+
+
+#: The type names a query parameter may declare, in the order a refusal lists them.
+QUERY_PARAM_TYPES: tuple[str, ...] = (*get_args(QueryValueType), "subject")
+
+#: Common type names from other languages, and the query type that holds them.
+_PARAM_TYPE_HINTS: dict[str, str] = {
+    "datetime": "timestamp",
+    "date": "timestamp",
+    "time": "timestamp",
+    "instant": "timestamp",
+    "str": "string",
+    "text": "string",
+    "enum": "string",
+    "int": "integer",
+    "number": "decimal",
+    "float": "decimal",
+    "double": "decimal",
+    "bool": "boolean",
+    "link": "subject_reference",
+    "reference": "subject_reference",
+    "relation": "subject_reference",
+}
 
 
 class QueryMaximumInput(_AuthoredModel):
@@ -100,6 +136,28 @@ class QuerySpecInput(_AuthoredModel):
         serialization_alias="max",
     )
 
+    @field_validator("params", mode="before")
+    @classmethod
+    def _known_param_types(cls, value: object) -> object:
+        if not isinstance(value, Mapping):
+            return value
+        for name, declared in value.items():
+            if isinstance(declared, str) and declared in QUERY_PARAM_TYPES:
+                continue
+            hint = _PARAM_TYPE_HINTS.get(declared.lower()) if isinstance(declared, str) else None
+            raise PydanticCustomError(
+                "query_param_type_unknown",
+                "parameter {name} declares type {declared}; a query parameter type is one "
+                "of {allowed}{hint}",
+                {
+                    "name": str(name),
+                    "declared": repr(declared),
+                    "allowed": ", ".join(QUERY_PARAM_TYPES),
+                    "hint": f" (use {hint})" if hint else "",
+                },
+            )
+        return value
+
     @model_validator(mode="after")
     def _single_bindings(self) -> QuerySpecInput:
         if len(self.from_) != 1:
@@ -115,6 +173,23 @@ class QuerySpecInput(_AuthoredModel):
         return ArtifactIdentity(kind="QueryDefinition", name=self.query)
 
 
+def _query_definition_form(value: Any) -> str:
+    if isinstance(value, QuerySpecInput):
+        return "authored"
+    if isinstance(value, Mapping) and "query" in value:
+        return "authored"
+    return "typed"
+
+
+#: A QueryDefinition as authored: the short declaration (it has ``query``) or the
+#: typed definition. Choosing the form first keeps a refusal to the form written.
+AuthoredQueryDefinition = Annotated[
+    Annotated[QuerySpecInput, Tag("authored")]
+    | Annotated[QueryDefinitionSpec | QueryDefinition, Tag("typed")],
+    Discriminator(_query_definition_form),
+]
+
+
 class QuerySpecError(FormatError):
     """A local authored refusal, retaining the source path and token column."""
 
@@ -125,10 +200,26 @@ class QuerySpecError(FormatError):
         super().__init__(f"{path}: " + (f"column {column}: " if column else "") + message)
 
 
+def _now_needs_datetime(value_type: str) -> str:
+    """Why ``now`` (or ``now - 3d``) cannot compare with a field read as ``value_type``."""
+
+    kind = {
+        "string": "a string, enum or date field",
+        "integer": "an integer field",
+        "subject_reference": "a link field",
+    }.get(value_type, f"a {value_type} field")
+    return (
+        f"now compares only with a datetime field, and this is {kind}; declare the field "
+        "datetime, or compare a date field with a date literal ('2026-11-14')"
+    )
+
+
 @dataclass(frozen=True)
 class FilterOperand:
     kind: Literal["reference", "parameter", "literal", "name", "decimal"]
     value: str | int | bool | None
+    #: ``now - 3d``: the shift in seconds; only a ``now`` reference carries one.
+    offset_seconds: int = 0
 
 
 @dataclass(frozen=True)
@@ -148,9 +239,33 @@ _PAIR_HOP = re.compile(
 
 
 _TOKEN = re.compile(
-    r'\s*(?:("(?:[^"\\]|\\.)*")|(-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?)|'
-    r"(\$?[a-zA-Z_][a-zA-Z0-9_.]*)|(==|!=|<=|>=|[=<>~(),]))"
+    r'\s*(?:("(?:[^"\\]|\\.)*")|(\'(?:[^\'\\]|\\.)*\')|([0-9]+[a-zA-Z_][a-zA-Z0-9_]*)|'
+    r"(-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?![a-zA-Z0-9_]))|"
+    r"(\$?[a-zA-Z_][a-zA-Z0-9_.]*)|(==|!=|<=|>=|[=<>~(),+-]))"
 )
+
+#: ``now`` offsets take fixed-length units only, Elasticsearch-style.
+TIME_OFFSET_UNITS = {"d": 86400, "h": 3600, "m": 60, "s": 1}
+_DURATION = re.compile(r"([0-9]+)([a-zA-Z_][a-zA-Z0-9_]*)")
+_CALENDAR_UNITS = frozenset(
+    {"M", "mo", "mon", "month", "months", "y", "Y", "yr", "yrs", "year", "years"}
+)
+
+
+def render_time_offset(offset_seconds: int) -> str:
+    """``now`` with its offset in the largest unit that divides it: -259200 is ``now - 3d``.
+
+    The stored offset is whole seconds, so ``now - 72h`` and ``now - 3d`` are one
+    definition; this is the one spelling it renders back as.
+    """
+
+    if offset_seconds == 0:
+        return "now"
+    magnitude = abs(offset_seconds)
+    unit, size = next((u, n) for u, n in TIME_OFFSET_UNITS.items() if magnitude % n == 0)
+    return f"now {'-' if offset_seconds < 0 else '+'} {magnitude // size}{unit}"
+
+
 _SYMBOLS = {
     "=": "eq",
     "==": "eq",
@@ -161,6 +276,28 @@ _SYMBOLS = {
     ">=": "gte",
     "~": "contains",
 }
+
+
+def _single_quoted_as_json(token: str) -> str:
+    """Respell a single-quoted text literal as the JSON string it denotes.
+
+    Both quote styles name the same value, so a filter lowers (and renders back)
+    the same whichever the author typed. Inside single quotes, a double quote
+    needs no escape and a single quote is written as a backslash and a quote.
+    """
+    out: list[str] = []
+    inner = token[1:-1]
+    index = 0
+    while index < len(inner):
+        char = inner[index]
+        if char == "\\" and index + 1 < len(inner):
+            following = inner[index + 1]
+            out.append("'" if following == "'" else char + following)
+            index += 2
+            continue
+        out.append('\\"' if char == '"' else char)
+        index += 1
+    return '"' + "".join(out) + '"'
 
 
 class _FilterParser:
@@ -249,12 +386,17 @@ class _FilterParser:
 
     def operand(self, reference: bool = False) -> FilterOperand:
         token = self.take()
-        if token in {"(", ")", ",", "and", "or", "not", "exists"} or token in _SYMBOLS:
+        if (
+            token in {"(", ")", ",", "and", "or", "not", "exists", "+", "-"}
+            or token in _SYMBOLS
+            # A duration (`3d`) is read only after `now +` / `now -`, never alone.
+            or _DURATION.fullmatch(token)
+        ):
             self.fail(
                 "expected a reference, $parameter, or literal", self.tokens[self.index - 1][1]
             )
         if reference and (
-            token.startswith(("$", '"'))
+            token.startswith(("$", '"', "'"))
             or token in {"true", "false", "null"}
             or re.fullmatch(r"-?\d+(?:\.\d+)?", token)
         ):
@@ -263,6 +405,8 @@ class _FilterParser:
             )
         if token.startswith("$"):
             return FilterOperand("parameter", token[1:])
+        if token.startswith("'"):
+            token = _single_quoted_as_json(token)
         if (
             token.startswith('"')
             or token in {"true", "false", "null"}
@@ -275,9 +419,45 @@ class _FilterParser:
             except ValueError:
                 self.fail("expected a valid JSON literal", self.tokens[self.index - 1][1])
             return FilterOperand("literal", value)
+        if token == "now" and self.peek() in {"+", "-"}:
+            return FilterOperand("reference", token, self.time_offset())
         return FilterOperand(
             "reference" if reference or "." in token or token == "now" else "name", token
         )
+
+    def time_offset(self) -> int:
+        """``+ 12h`` or ``- 3d`` after ``now``: whole seconds, fixed-length units only."""
+
+        sign = -1 if self.take() == "-" else 1
+        column = self.tokens[self.index][1] if self.index < len(self.tokens) else None
+        matched = _DURATION.fullmatch(self.peek())
+        if matched is None:
+            self.fail(
+                "expected a duration after now + or now -, such as now - 3d; "
+                "units are d, h, m, s (ISO durations such as P3D are not read)",
+                column,
+            )
+        self.take()
+        count, unit = matched.groups()
+        if unit not in TIME_OFFSET_UNITS:
+            calendar = unit in _CALENDAR_UNITS
+            raise QuerySpecError(
+                "cruxible.query.time_offset_unit_unsupported",
+                (
+                    f"{unit!r} is a calendar unit whose length varies; write the offset in days, "
+                    "such as now - 90d"
+                    if calendar
+                    else f"{unit!r} is not an offset unit; use d, h, m or s, such as now - 3d"
+                ),
+                path=self.path,
+                column=None if column is None else self.column_offset + column,
+            )
+        if len(count) > 1 and count.startswith("0"):
+            self.fail("write the duration count without leading zeros", column)
+        seconds = int(count) * TIME_OFFSET_UNITS[unit]
+        if seconds > QUERY_TIME_OFFSET_MAX_SECONDS:
+            self.fail("a now offset reaches at most 36500d", column)
+        return sign * seconds
 
 
 def parse_filter(
@@ -337,10 +517,10 @@ class _LowerQuery:
             )
 
     def ref(
-        self, text: str, path: str, *, scalar: bool = False
+        self, text: str, path: str, *, scalar: bool = False, offset_seconds: int = 0
     ) -> tuple[QueryValueRef, QueryValueType]:
         if text == "now":
-            return QueryEvaluationTimeRef(), "timestamp"
+            return QueryEvaluationTimeRef(offset_seconds=offset_seconds), "timestamp"
         for field in ("role", "verdict"):
             if text.startswith(field + "(") and text.endswith(")"):
                 ref, _ = self.ref(text[len(field) + 1 : -1], path)
@@ -383,11 +563,17 @@ class _LowerQuery:
         if operand.kind == "reference" or (
             operand.kind == "name" and operand.value in self.bindings
         ):
-            ref, actual = self.ref(str(operand.value), path, scalar=True)
+            ref, actual = self.ref(
+                str(operand.value), path, scalar=True, offset_seconds=operand.offset_seconds
+            )
             if actual != value_type:
                 raise QuerySpecError(
                     "cruxible.query.value_type_mismatch",
-                    f"cannot compare {value_type} with {actual}",
+                    _now_needs_datetime(actual)
+                    if isinstance(left, QueryEvaluationTimeRef)
+                    else _now_needs_datetime(value_type)
+                    if isinstance(ref, QueryEvaluationTimeRef)
+                    else f"cannot compare {value_type} with {actual}",
                     path=path,
                 )
             return ref
@@ -401,9 +587,13 @@ class _LowerQuery:
                 )
             declared = "subject_reference" if declared == "subject" else declared
             if declared != value_type:
+                link = ""
+                if value_type == "subject_reference":
+                    link = " (a link field holds a Subject)"
                 raise QuerySpecError(
                     "cruxible.query.value_type_mismatch",
-                    f"parameter is {declared}, predicate is {value_type}",
+                    f"parameter is {declared}, predicate is {value_type}{link}: "
+                    f"declare it in params as {operand.value}: {value_type}",
                     path=path,
                 )
             return QueryParameterRef(parameter=str(operand.value))
@@ -442,7 +632,10 @@ class _LowerQuery:
                     return child.model_copy(update={"negated": not child.negated})
                 return QueryNegationFilter(operand=child)
             left, value_type = self.ref(
-                str(expr.operands[0].value), path, scalar=expr.kind != "presence"
+                str(expr.operands[0].value),
+                path,
+                scalar=expr.kind != "presence",
+                offset_seconds=expr.operands[0].offset_seconds,
             )
             if expr.kind == "presence":
                 if not isinstance(left, QueryClaimValueRef):
@@ -452,6 +645,16 @@ class _LowerQuery:
                         path=path,
                     )
                 return QueryClaimPresenceFilter(binding=left.binding, predicate=left.predicate)
+            if value_type != "timestamp" and any(
+                item.kind == "reference" and item.value == "now" for item in expr.operands[1:]
+            ):
+                # Before the operator check, which would name the field's operators
+                # and never say that now reads only against a datetime field.
+                raise QuerySpecError(
+                    "cruxible.query.value_type_mismatch",
+                    _now_needs_datetime(value_type),
+                    path=path,
+                )
             if isinstance(left, QueryClaimValueRef):
                 self.resolver.operator(
                     left.predicate, "in" if expr.kind == "membership" else expr.operator, path=path
@@ -702,12 +905,17 @@ class _LowerQuery:
                 )
             )
         path_shape = bool(traversal)
+        where = self.filter(self.spec.where, "$.where") if self.spec.where is not None else None
         return QueryDefinition(
+            # The one format the content needs: v4 only when a filter shifts now.
+            artifact_format="cruxible-query-definition-v4"
+            if shifts_evaluation_time((where, tuple(traversal)))
+            else "cruxible-query-definition-v3",
             identity=self.spec.identity,
             description=self.spec.description,
             entry=entry,
             traversal=tuple(traversal),
-            where=self.filter(self.spec.where, "$.where") if self.spec.where is not None else None,
+            where=where,
             result_binding=binding,
             result_shape="path" if path_shape else "subject",
             result_cardinality="many",
@@ -766,7 +974,7 @@ def query_spec_from_definition(query: QueryDefinition) -> QuerySpecInput:
         if isinstance(value, QueryParameterRef):
             return "$" + value.parameter
         if isinstance(value, QueryEvaluationTimeRef):
-            return "now"
+            return render_time_offset(value.offset_seconds)
         if isinstance(value, QuerySubjectFieldRef):
             return (
                 value.binding if value.field == "subject_id" else f"{value.binding}.{value.field}"

@@ -96,6 +96,7 @@ def dependency_pins(
     if not by_name and getattr(artifact, "artifact_format", "") not in {
         "cruxible-procedure-v4",
         "cruxible-query-definition-v3",
+        "cruxible-query-definition-v4",
         "cruxible-trigger-v2",
         "cruxible-line-v8",
         "cruxible-provider-v6",

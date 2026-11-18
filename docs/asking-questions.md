@@ -146,15 +146,44 @@ catalog.part/bp-2210  Ceramic front brake pads  -
 ~~~
 
 `from` names the entry binding and its Subject kind. `where` filters values,
-`params` declares parameters, and `fields` selects columns. A field can be
+`params` declares parameters, and `fields` selects columns. A parameter's type
+is one of `string`, `integer`, `boolean`, `decimal`, `timestamp` (a date and
+time), `subject_reference` or `subject`; a parameter compared with a link field
+is a `subject_reference` (`params: {service: subject_reference}`). A field can be
 renamed, for example `{part_title: part.title}`; `role(part.category)` reads a
 Claim's role. Predicate names may be short within their binding's kind or
 written in full.
 
 Filters support `==`, `!=`, `<`, `<=`, `>`, `>=`, `in (value, value)`,
 `exists binding.predicate`, parentheses, and `not`, `and`, `or` in that order of
-precedence. Quote text literals; `$name` references a declared parameter and
+precedence. Quote text literals, in double or single quotes (`"open"` and
+`'open'` are the same value); `$name` references a declared parameter and
 `now` references the query's evaluation time.
+
+`now` takes a fixed offset, Elasticsearch style: `incident.opened_at < now - 3d`
+(opened more than three days ago), `remediation.due_at < now + 12h` (due within
+twelve hours, or overdue). Units are `d`, `h`, `m` and `s`, all fixed length and
+in UTC; months and years vary in length and refuse with
+`cruxible.query.time_offset_unit_unsupported` (write `now - 90d`), and ISO
+durations such as `P3D` are not read. `now`, shifted or not, compares only with
+a field of ClaimType type `datetime` (a query parameter spells it `timestamp`);
+on a `date`, string or enum field it refuses with
+`cruxible.query.value_type_mismatch`, saying so. The offset is stored in whole seconds:
+`now - 72h` and `now - 3d` are one definition, and `get` shows it in the largest
+unit that divides it (`now - 3d`). A query that shifts `now` is stored as
+`cruxible-query-definition-v4`; one that does not stays
+`cruxible-query-definition-v3`.
+
+`now` is always an explicit evaluation time, never a wall clock read inside the
+query: `query --name` takes `--evaluation-time` (default the current instant),
+and a Line's Procedure that reads a query gets `now` from its run's evaluation
+instant, so `opened_at < now - 3d` in a Line moves forward with each run.
+A Claim is visible from the moment it was written, so a named query evaluated
+at a time before its Claims were written sees none of them, whatever the
+filter says. To try `now - 3d` out, write the Claims first and evaluate at or
+after that moment (the default `--evaluation-time` is now), or let a Line run
+it at its own evaluation instant; do not pick a past evaluation time to
+simulate elapsed days.
 
 A relation hop adds a binding:
 

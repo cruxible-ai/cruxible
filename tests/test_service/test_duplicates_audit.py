@@ -298,3 +298,51 @@ def test_a_unique_kind_lists_no_key_group(instance: PlaybillInstance) -> None:
     result = audit(instance)
     assert not [item for item in result.groups if isinstance(item, DuplicateKeyGroup)]
     assert result.scanned.keys == 0
+
+
+def test_every_surface_serves_the_audit_as_top_level_duplicates(
+    instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The audit is Subject identity, not curation: `cruxible duplicates`, MCP
+    `cruxible_duplicates`, SDK `cx.duplicates` and HTTP `/duplicates` serve it."""
+
+    from types import SimpleNamespace
+
+    from click.testing import CliRunner
+
+    from cruxible_core.cli.main import cli
+    from cruxible_core.mcp import handlers
+    from cruxible_core.runtime import playbill_api
+
+    write(
+        instance,
+        {"op": "add", "subject": ALPHA, "field": "semantic.alias", "value": "Lodash.JS"},
+        {"op": "add", "subject": BETA, "field": "semantic.alias", "value": "lodash-js"},
+    )
+    monkeypatch.setattr(
+        playbill_api, "get_playbill_manager", lambda: SimpleNamespace(get=lambda _id: instance)
+    )
+    served = playbill_api.playbill_duplicates("inst", request={"kind": KIND})
+    assert [group.key for group in served.groups] == ["lodashjs"]
+
+    class Client:
+        def duplicates(self, instance_id: str, **kwargs: Any) -> Any:
+            return playbill_api.playbill_duplicates(instance_id, request=kwargs)
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: Client())
+    printed = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://dup.invalid",
+            "--instance-id",
+            "inst",
+            "duplicates",
+            "--kind",
+            KIND,
+        ],
+    )
+    assert printed.exit_code == 0, printed.output
+    assert "Possible duplicates of" in printed.output and "lodashjs" in printed.output
+    monkeypatch.setattr(handlers, "_get_client", lambda: Client())
+    assert handlers.handle_playbill_duplicates("inst", kind=KIND).groups == served.groups

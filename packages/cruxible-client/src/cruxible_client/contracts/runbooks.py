@@ -350,6 +350,18 @@ class RunbookRunResult(_StrictRunbookModel):
             raise ValueError("attention_steps names exactly the steps whose counts need attention")
         return self
 
+    def __str__(self) -> str:
+        """The run as ``cruxible runbook run`` prints it; ``repr()`` is its first line."""
+
+        from cruxible_client.contracts.text_display import runbook_run_lines
+
+        return "\n".join(runbook_run_lines(self))
+
+    def __repr__(self) -> str:
+        from cruxible_client.contracts.text_display import one_line_repr
+
+        return one_line_repr(self)
+
 
 class RunbookRunRequest(_StrictRunbookModel):
     """Run one accepted Runbook now, step by step, under the caller's authority."""
@@ -436,6 +448,9 @@ class RunbookPreviewInputLimits(_StrictRunbookModel):
     records: int | None = Field(default=None, exclude_if=lambda value: value is None)
     #: The most files a glob read takes.
     max_files: int | None = Field(default=None, exclude_if=lambda value: value is None)
+    #: A fetch request's own ``max_bytes`` (the Line's parameter), when it sets
+    #: one; the landed Capture is still held to ``max_bytes``.
+    request_max_bytes: int | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class RunbookPreviewInput(_StrictRunbookModel):
@@ -603,6 +618,18 @@ class RunbookPreview(_StrictRunbookModel):
     generation_root: str
     steps: tuple[RunbookPreviewStep, ...]
     order_problems: tuple[RunbookOrderProblem, ...] = ()
+
+    def __str__(self) -> str:
+        """The preview as ``cruxible runbook preview`` prints it; ``repr()`` is its first line."""
+
+        from cruxible_client.contracts.text_display import runbook_preview_lines
+
+        return "\n".join(runbook_preview_lines(self))
+
+    def __repr__(self) -> str:
+        from cruxible_client.contracts.text_display import one_line_repr
+
+        return one_line_repr(self)
 
 
 __all__ = [

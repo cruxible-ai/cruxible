@@ -17,6 +17,7 @@ from cruxible_core.procedures.terminal_dependencies import (
     accepted_state_token,
     admitted_capture_token,
     build_terminal_item_manifest,
+    build_terminal_item_manifest_v2,
     capture_root,
     derive_terminal_item_facts,
     policy_token,
@@ -39,9 +40,8 @@ def test_manifest_and_facts_fold_only_the_item_dependency_closure() -> None:
             accepted_state_token(accepted),
         }
     )
-    manifest = build_terminal_item_manifest(
+    manifest = build_terminal_item_manifest_v2(
         tokens,
-        run_id="run-1",
         terminal_node_id="egress",
         item_key="00000000.item",
     )
@@ -89,9 +89,8 @@ def test_unconsumed_evidence_cannot_taint_or_weaken_an_item() -> None:
     accepted = _digest("d")
     unconsumed = _digest("e")
     tokens = frozenset({accepted_state_token(accepted)})
-    manifest = build_terminal_item_manifest(
+    manifest = build_terminal_item_manifest_v2(
         tokens,
-        run_id="run-2",
         terminal_node_id="egress",
         item_key="00000000.item",
     )
@@ -355,8 +354,8 @@ def _closures(captures: int, items: int):  # type: ignore[no-untyped-def]
     )
     manifests, derived = [], []
     for index, closure in enumerate(tokens):
-        manifest = build_terminal_item_manifest(
-            closure, run_id="run-1", terminal_node_id="egress", item_key=f"{index:08d}.item"
+        manifest = build_terminal_item_manifest_v2(
+            closure, terminal_node_id="egress", item_key=f"{index:08d}.item"
         )
         manifests.append(manifest)
         derived.append(
@@ -367,59 +366,127 @@ def _closures(captures: int, items: int):  # type: ignore[no-untyped-def]
     return manifests, derived
 
 
-def test_an_item_record_cites_its_terminals_shared_set_and_restores_exactly() -> None:
+def _cas_digest(content: bytes) -> str:
+    import hashlib
+
+    return "sha256:" + hashlib.sha256(content).hexdigest()
+
+
+def test_a_terminal_journals_one_grouped_record_that_restores_every_item_exactly() -> None:
     from cruxible_client.contracts.canonical import canonical_bytes
     from cruxible_core.procedures.terminal_dependencies import (
-        TerminalItemDependencyRecordV2,
+        TERMINAL_ITEM_CHUNK_SIZE,
+        build_terminal_items,
+        resolve_terminal_items,
+        shared_terminal_dependencies,
+    )
+
+    items = TERMINAL_ITEM_CHUNK_SIZE + 3
+    manifests, derived = _closures(captures=5, items=items)
+    shared = shared_terminal_dependencies(manifests, derived)
+    assert len(shared.digests.produced_capture_digests) == 5  # the own Captures are not shared
+    assert shared.coverage[0].input_name == "doc.pages"
+    built = build_terminal_items(
+        manifests, derived, terminal_node_id="egress", shared=shared, digest=_cas_digest
+    )
+    store = {_cas_digest(body): body for body in built.bodies}
+    assert len(store) == len(built.bodies)  # each distinct body once
+    payload = built.payload
+    assert payload["count"] == items
+    assert len(payload["chunks"]) == 2  # type: ignore[arg-type]
+    restored = resolve_terminal_items(payload, store.__getitem__)
+    # The manifest digest is the v2 rule over the whole closure, run-free.
+    assert restored == tuple(zip(manifests, derived, strict=True))
+    for manifest, facts in restored:
+        assert terminal_item_manifest_digest(manifest) == facts.manifest_digest
+    # No body names a run, a time or a journal position: the same closures
+    # build the same bytes, so an unchanged terminal stores nothing new.
+    again = build_terminal_items(
+        manifests, derived, terminal_node_id="egress", shared=shared, digest=_cas_digest
+    )
+    assert again == built
+    for body in built.bodies:
+        assert b"run_id" not in body and b"recorded_at" not in body
+    # An item body the shared set does not reproduce is refused.
+    first_chunk = store[payload["chunks"][0]]  # type: ignore[index]
+    import json
+
+    entry = json.loads(first_chunk)["entries"][0]
+    body = json.loads(store[entry[1]])
+    tampered = canonical_bytes({**body, "own": {**body["own"], "produced_capture_digests": []}})
+    with pytest.raises(ValueError, match="manifest digest"):
+        resolve_terminal_items(payload, {**store, entry[1]: tampered}.__getitem__)
+    with pytest.raises(ValueError, match="canonical"):
+        resolve_terminal_items(
+            payload,
+            {**store, payload["shared_digest"]: store[payload["shared_digest"]] + b" "}.__getitem__,  # type: ignore[index]
+        )
+    with pytest.raises(ValueError, match="count"):
+        resolve_terminal_items({**payload, "count": items + 1}, store.__getitem__)
+
+
+def test_per_item_records_of_earlier_builds_still_resolve() -> None:
+    """v1 (inline) and v2 (shared-set) per-item records stay readable."""
+
+    from cruxible_client.contracts.canonical import canonical_bytes
+    from cruxible_core.procedures.terminal_dependencies import (
         render_shared_terminal_dependencies,
         resolve_item_dependencies,
         shared_terminal_dependencies,
-        split_item_dependency_payloads,
     )
 
-    manifests, derived = _closures(captures=5, items=3)
-    shared = shared_terminal_dependencies(manifests, derived)
-    content = render_shared_terminal_dependencies(shared)
-    assert len(shared.digests.produced_capture_digests) == 5  # the own Captures are not shared
-    assert shared.coverage[0].input_name == "doc.pages"
-    shared_digest = _digest("e")
-    payloads = split_item_dependency_payloads(
-        manifests,
-        derived,
-        shared=shared,
-        shared_digest=shared_digest,
-        deployment_digest=None,
-        recorded_at=["2026-11-15T00:00:00Z"] * len(manifests),
+    manifest = build_terminal_item_manifest(
+        frozenset({admitted_capture_token(_digest("a"))}),
+        run_id="run-1",
+        terminal_node_id="egress",
+        item_key="00000000.item",
     )
-    for manifest, facts, payload in zip(manifests, derived, payloads, strict=True):
-        # The payload is a record's exact JSON form, built without the model.
-        record = TerminalItemDependencyRecordV2.model_validate(payload)
-        assert canonical_bytes(record.model_dump(mode="json")) == canonical_bytes(payload)
-        assert len(record.own.produced_capture_digests) == 1 and not record.own.receipt_digests
-        assert len(record.derived.source_coverage[0].capture_digests) == 1
-        restored = resolve_item_dependencies(payload, {shared_digest: content}.__getitem__)
-        # The manifest digest is the one rule it always was, over the whole closure.
-        assert restored == (manifest, facts)
-        assert terminal_item_manifest_digest(restored[0]) == facts.manifest_digest
-        # A record the shared set does not reproduce is refused.
-        own = payload["own"]
-        assert isinstance(own, dict)
-        tampered = {**payload, "own": {**own, "produced_capture_digests": []}}
-        with pytest.raises(ValueError, match="manifest digest"):
-            resolve_item_dependencies(tampered, {shared_digest: content}.__getitem__)
-    # The inline shape written before the shared set still resolves.
+    facts = {
+        "tag": "playbill-terminal-item-derived-facts-v1",
+        "run_id": "run-1",
+        "terminal_node_id": "egress",
+        "item_key": "00000000.item",
+        "child_index": 0,
+        "manifest_digest": terminal_item_manifest_digest(manifest),
+        "epistemic_grade": "observed",
+        "provenance_grade": "witnessed",
+        "selector_privacy": "direct_allowed",
+        "taint_labels": [],
+        "source_coverage": [],
+    }
     v1 = {
         "tag": "playbill-procedure-item-dependencies-v1",
-        "manifest": manifests[0].model_dump(mode="json"),
-        "derived": derived[0].model_dump(mode="json"),
+        "manifest": manifest.model_dump(mode="json"),
+        "derived": facts,
         "audit": {"deployment_digest": None, "recorded_at": "2026-11-15T00:00:00Z"},
     }
-    assert resolve_item_dependencies(v1, {}.__getitem__) == (manifests[0], derived[0])
+    restored_manifest, restored_facts = resolve_item_dependencies(v1, {}.__getitem__)
+    assert (
+        restored_manifest == manifest and restored_facts.manifest_digest == facts["manifest_digest"]
+    )
+    from cruxible_core.procedures.terminal_dependencies import (
+        TerminalDependencyDigestsV1,
+        TerminalSharedDependenciesV1,
+    )
+
+    shared = TerminalSharedDependenciesV1(
+        digests=TerminalDependencyDigestsV1(admitted_capture_digests=(_digest("a"),))
+    )
+    content = render_shared_terminal_dependencies(shared)
+    v2 = {
+        "tag": "playbill-procedure-item-dependencies-v2",
+        "shared_digest": _digest("e"),
+        "own": {},
+        "derived": facts,
+        "audit": {"deployment_digest": None, "recorded_at": "2026-11-15T00:00:00Z"},
+    }
+    assert resolve_item_dependencies(v2, {_digest("e"): content}.__getitem__)[0] == manifest
     with pytest.raises(ValueError, match="canonical"):
         resolve_item_dependencies(
-            payload,
-            {shared_digest: canonical_bytes(shared.model_dump(mode="json")) + b" "}.__getitem__,
+            v2,
+            {_digest("e"): canonical_bytes(shared.model_dump(mode="json")) + b" "}.__getitem__,
         )
+    assert shared_terminal_dependencies  # still exported for the writer
 
 
 @contextmanager
@@ -454,17 +521,16 @@ def _model_builds() -> Iterator[Counter[str]]:
         sys.setprofile(previous)
 
 
-def test_splitting_item_records_builds_no_model_per_item() -> None:
-    """A settle journals one record per item: splitting them adds no model build per item.
+def test_grouping_item_records_builds_no_model_per_item() -> None:
+    """A settle groups every item's closure: building the group adds no model per item.
 
     The scale guard (tests/test_scale/test_settle_per_item.py) caps model builds
-    per settled item; the shared-set split once built a record, its digests, an
-    audit and a copy of the facts and of each coverage entry for every item.
+    per settled item; the group's bodies are built as JSON directly.
     """
 
     from cruxible_core.procedures.terminal_dependencies import (
+        build_terminal_items,
         shared_terminal_dependencies,
-        split_item_dependency_payloads,
     )
 
     builds = {}
@@ -472,14 +538,9 @@ def test_splitting_item_records_builds_no_model_per_item() -> None:
         manifests, derived = _closures(captures=8, items=items)
         shared = shared_terminal_dependencies(manifests, derived)
         with _model_builds() as counts:
-            payloads = split_item_dependency_payloads(
-                manifests,
-                derived,
-                shared=shared,
-                shared_digest=_digest("e"),
-                deployment_digest=_digest("d"),
-                recorded_at=["2026-11-15T00:00:00Z"] * items,
+            built = build_terminal_items(
+                manifests, derived, terminal_node_id="egress", shared=shared, digest=_cas_digest
             )
-        assert len(payloads) == items
+        assert built.payload["count"] == items
         builds[items] = dict(counts)
     assert builds == {3: {}, 30: {}}

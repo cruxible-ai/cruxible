@@ -116,6 +116,7 @@ from cruxible_core.authoring.lowering import (
 from cruxible_core.evidence.claim_reobservations import (
     ClaimReobservationRefused,
     ClaimReobservationStore,
+    ReobservationRequest,
 )
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.indexes.subject_identity import (
@@ -155,7 +156,7 @@ from cruxible_core.procedures.egress import (
 from cruxible_core.procedures.nested import ProcedureDelegation, authority_line
 from cruxible_core.procedures.terminal_dependencies import (
     CaptureRootCache,
-    TerminalItemDependencyManifestV1,
+    TerminalItemDependencyManifest,
     capture_root,
     citable_captures,
     witnessed_list_capture,
@@ -442,7 +443,7 @@ def proposal_items(request: TerminalEgressRequestV1) -> tuple[CoreClaimsChange, 
 
 def evidence_by_item(
     request: TerminalEgressRequestV1,
-    manifests: Mapping[str, TerminalItemDependencyManifestV1],
+    manifests: Mapping[str, TerminalItemDependencyManifest],
     *,
     derivations: Mapping[str, Collection[str]] | None = None,
     cache: CaptureRootCache | None = None,
@@ -1494,7 +1495,7 @@ class ProposalTerminalEgressSink:
         *,
         request: TerminalEgressRequestV1,
         admission: ProcedureRunAdmission,
-        manifests: Mapping[str, TerminalItemDependencyManifestV1] | None = None,
+        manifests: Mapping[str, TerminalItemDependencyManifest] | None = None,
         evidence: Mapping[str, str] | None = None,
         journaled: PreparedTerminalEgressV1 | None = None,
         recompiles: str | None = None,
@@ -1520,7 +1521,7 @@ class ProposalTerminalEgressSink:
         *,
         request: TerminalEgressRequestV1,
         admission: ProcedureRunAdmission,
-        manifests: Mapping[str, TerminalItemDependencyManifestV1] | None = None,
+        manifests: Mapping[str, TerminalItemDependencyManifest] | None = None,
         evidence: Mapping[str, str] | None = None,
         journaled: PreparedTerminalEgressV1 | None = None,
         derivations: Mapping[str, Collection[str]] | None = None,
@@ -2317,7 +2318,12 @@ class ProposalTerminalEgressSink:
         request: TerminalEgressRequestV1,
         unchanged: tuple[UnchangedChildReceiptAny, ...],
     ) -> dict[str, ReobservationRefusalReason]:
-        """Record each unchanged item's re-observation of content its Claim cites.
+        """Record each unchanged item's re-observation of a Claim whose row changed.
+
+        An item whose Claim's own row this run's extract step observed is never
+        here (the row observation is its freshness, 2026-11-16 c). One here
+        restated its Claim on a Capture whose row differs elsewhere but proves
+        the same value and key (D-R8): a per-Claim record, sized by the change.
 
         The store admits each one at the current head under its append lock
         (``ClaimReobservationStore.record``). One it refuses there -- the Claim
@@ -2332,6 +2338,38 @@ class ProposalTerminalEgressSink:
         refused: dict[str, ReobservationRefusalReason] = {}
         if not unchanged:
             return refused
+        keys: list[str] = []
+        requests: list[ReobservationRequest] = []
+        for child in unchanged:
+            if not isinstance(child, TerminalEgressChildReceiptV3):
+                continue  # a reused Subject observes nothing
+            change = request.claims_changes.get(child.item_key)
+            keys.append(child.item_key)
+            requests.append(
+                ReobservationRequest(
+                    claim_id=PurePosixPath(child.path).stem,
+                    capture_digest=child.reobserving_capture_digest,
+                    extraction=request.claims_evidence.get(child.item_key),
+                    extracted_value=(
+                        change.value if isinstance(change, CoreReobservationChange) else None
+                    ),
+                    call=request.observation_calls.get(child.reobserving_capture_digest),
+                )
+            )
+        # One journal record for the delivery (each Claim still its own
+        # re-observation when read back).
+        for index, exc in (
+            ClaimReobservationStore(self.instance)
+            .record_many(
+                requests,
+                actor_id=request.actor_context.actor_id,
+                cited_envelopes={},
+                verified_witnesses={},
+            )
+            .items()
+        ):
+            refused[keys[index]] = exc.reason
+        return refused
         store = ClaimReobservationStore(self.instance)
         cited_envelopes: dict[str, CaptureEnvelopeAny] = {}
         verified_witnesses: dict[object, None] = {}
@@ -2347,6 +2385,7 @@ class ProposalTerminalEgressSink:
                     extraction=request.claims_evidence.get(child.item_key),
                     cited_envelopes=cited_envelopes,
                     verified_witnesses=verified_witnesses,
+                    call=request.observation_calls.get(child.reobserving_capture_digest),
                     extracted_value=(
                         change.value
                         if isinstance(

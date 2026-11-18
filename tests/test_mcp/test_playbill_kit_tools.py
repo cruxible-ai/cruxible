@@ -285,3 +285,30 @@ def test_kit_add_returns_the_automation_template_from_a_directory_or_a_registry(
     # A kit with no template carries neither.
     plain = handlers.handle_playbill_kit_add("inst", bundle=_bundle())
     assert plain.automation_template is None and plain.automation_template_content is None
+
+
+def test_mcp_kit_build_carries_workspace_files(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """kit-build-files: MCP `cruxible_kit_build(files=[...])` reads them from this
+    adapter's workspace and lists them in the returned manifest with sha256."""
+
+    import hashlib
+
+    from cruxible_client.contracts.kits import KitBuildRequest, KitBuildResult
+    from cruxible_client.kits import KitFileRefused
+    from cruxible_core.mcp import handlers
+    from tests.test_client.test_artifacts import _bundle
+
+    (tmp_path / "README.md").write_text("# Acme kit\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(handlers, "mcp_workspace_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        handlers, "_daemon_call", lambda call, **_kwargs: KitBuildResult(bundle=_bundle())
+    )
+    request = KitBuildRequest(kit_id="acme", version="1.0.0", owns=("acme.",))
+
+    built = handlers.handle_playbill_kit_build("inst", request, files=("README.md",))
+
+    readme = next(item for item in built.bundle.manifest.files if item.path == "README.md")
+    assert readme.sha256 == "sha256:" + hashlib.sha256(b"# Acme kit\n").hexdigest()
+    with pytest.raises(KitFileRefused, match="is not a file"):
+        handlers.handle_playbill_kit_build("inst", request, files=("absent.md",))

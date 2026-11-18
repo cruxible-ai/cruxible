@@ -99,6 +99,7 @@ def test_cli_approval_signs_exact_challenge_without_transmitting_key(
             *,
             signer_id: str,
             include_body: bool,
+            reviewed_candidate_digest: str | None = None,
         ) -> contracts.ApprovalChallenge:
             assert instance_id == "inst_cli"
             challenge = service_prepare_playbill_approval(
@@ -119,6 +120,7 @@ def test_cli_approval_signs_exact_challenge_without_transmitting_key(
             *,
             attestation: dict[str, Any],
             hold: bool = False,
+            reviewed_candidate_digest: str | None = None,
         ) -> contracts.ApprovalReceipt | contracts.ProposalRecompiled:
             assert instance_id == "inst_cli"
             submitted.append(attestation)
@@ -183,7 +185,11 @@ def test_cli_approval_signs_exact_challenge_without_transmitting_key(
         assert counts.startswith(f"Signing {proposal.candidate.candidate_digest} ({proposal_id}): ")
         assert " change" in counts
         assert "Required approvals" not in result.stdout
-        assert "Approved " in result.stdout
+        # The proposal passed is named beside the candidate signed (coldcli-10).
+        assert (
+            f"Approved {proposal.candidate.candidate_digest} ({proposal_id}) as reviewer"
+            in result.stdout
+        )
         return
     receipt = json.loads(result.stdout)
     # The reviewer's signature completes the candidate: it activates unless held.
@@ -203,11 +209,73 @@ def test_cli_approval_signs_exact_challenge_without_transmitting_key(
     assert "private_key" not in serialized
 
 
-def test_cli_approval_signs_the_landed_candidate(tmp_path: Path, monkeypatch) -> None:
+def test_cli_approval_signs_nothing_when_the_challenge_refuses_changed_members(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Review F-001: landing a proposal for a late signer changed its members, so
+    the daemon refuses the challenge. With no digest passed the CLI still signs
+    and submits nothing, and prints the successor to review."""
+
+    from cruxible_client.contracts.errors import ReviewedCandidateChanged
+    from cruxible_core.governance.keys import generate_client_principal_key
+
+    key = generate_client_principal_key(
+        tmp_path / "keys", principal_id="late", kind="ordinary", forbidden_roots=()
+    )
+    submitted: list[object] = []
+
+    class StubClient:
+        def resolve_proposal_selector(self, instance_id: str, selector: str):  # type: ignore[no-untyped-def]
+            return contracts.ProposalSelectorResult(selector=selector, proposal_id=selector)
+
+        def prepare_approval(self, instance_id, selected, **options):  # type: ignore[no-untyped-def]
+            assert options["reviewed_candidate_digest"] is None
+            raise ReviewedCandidateChanged(
+                selected,
+                reviewed_candidate_digest="sha256:" + "3" * 64,
+                current_proposal_id="sha256:" + "8" * 64,
+                current_candidate_digest="sha256:" + "4" * 64,
+                members_identical=False,
+            )
+
+        def submit_approval(self, *args: Any, **kwargs: Any) -> Any:
+            submitted.append(kwargs)
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://playbill.invalid",
+            "--instance-id",
+            "inst_cli",
+            "proposal",
+            "approve",
+            "sha256:" + "7" * 64,
+            "--signer-id",
+            "late",
+            "--key",
+            str(key.private_key_path),
+            "--yes",
+        ],
+    )
+
+    assert result.exit_code != 0 and submitted == []
+    assert "members identical: false; nothing was signed" in result.output
+    assert f"cruxible proposal review sha256:{'8' * 64}" in result.output
+    assert "Approved" not in result.output
+
+
+@pytest.mark.parametrize("pinned", [False, True])
+def test_cli_approval_signs_the_landed_candidate(tmp_path: Path, monkeypatch, pinned: bool) -> None:
     """Nothing it touches changed since its base: one approve lands it and activates it.
 
     The daemon lands the same change set at the head as a new candidate; an
     approval signs exactly one candidate, so the CLI signs the landed one next.
+    With ``--candidate-digest`` (the reviewed candidate) it refuses instead,
+    naming the landed proposal and that its members are identical (coldmcp-10).
+    Either way the source closes as superseded under the reviewer, whose
+    approval landed it, not as withdrawn by its author (psw F5).
     """
 
     from cruxible_core.service.proposals.proposals import _proposal_result
@@ -242,16 +310,19 @@ def test_cli_approval_signs_the_landed_candidate(tmp_path: Path, monkeypatch) ->
         def resolve_proposal_selector(self, instance_id: str, selector: str):  # type: ignore[no-untyped-def]
             return contracts.ProposalSelectorResult(selector=selector, proposal_id=selector)
 
-        def prepare_approval(self, instance_id, selected, *, signer_id, include_body=False):  # type: ignore[no-untyped-def]
+        def prepare_approval(  # type: ignore[no-untyped-def]
+            self, instance_id, selected, *, signer_id, include_body=False, **bound
+        ):
             challenge = service_prepare_playbill_approval(
                 instance,
                 proposal_id=selected,
                 signer_id=signer_id,
                 access=BodyAccessContext(principal_id=signer_id, can_read_body=include_body),
+                **bound,
             )
             return contracts.ApprovalChallenge.model_validate(challenge.model_dump(mode="json"))
 
-        def submit_approval(self, instance_id, selected, *, attestation, hold=False):  # type: ignore[no-untyped-def]
+        def submit_approval(self, instance_id, selected, *, attestation, hold=False, **bound):  # type: ignore[no-untyped-def]
             submitted.append((selected, attestation))
             result = service_submit_playbill_approval(
                 instance,
@@ -260,6 +331,7 @@ def test_cli_approval_signs_the_landed_candidate(tmp_path: Path, monkeypatch) ->
                 authenticated_submitter="reviewer",
                 activate_when_complete=not hold,
                 may_activate=True,
+                **bound,
             )
             if isinstance(result, (contracts.ProposalRecompiled, contracts.ActivationReceipt)):
                 return result
@@ -282,19 +354,59 @@ def test_cli_approval_signs_the_landed_candidate(tmp_path: Path, monkeypatch) ->
             "--key",
             str(reviewer.private_key_path),
             "--yes",
+            *(("--candidate-digest", source.candidate.candidate_digest) if pinned else ()),
         ],
     )
 
+    from cruxible_core.service.proposals.proposals import service_playbill_proposal_status
+
+    source_id = source.admission.proposal_id
+    closed = service_playbill_proposal_status(instance, proposal_id=source_id)
+    record = instance.proposal_evidence().read_withdrawal(source_id)
+    assert record is not None
+    assert (record.kind, record.actor_id, record.tag) == (
+        "superseded",
+        "reviewer",
+        "playbill-proposal-withdrawal-v2",
+    )
+    assert (closed.status, closed.terminal_reason, closed.closed_by) == (
+        "settled",
+        "superseded",
+        "reviewer",
+    )
+    landed_proposal = _proposal_result(instance, str(closed.superseded_by))
+    assert landed_proposal.candidate is not None
+    if pinned:
+        assert result.exit_code != 0
+        # Only the reviewed candidate was signed for; the landed one was not.
+        ((first_id, first),) = submitted
+        assert first["payload_digest"] == source.candidate.candidate_digest
+        assert "cruxible.approval.reviewed_candidate_changed" in result.output
+        assert (
+            f"proposal {source_id} was proposed again at the head as "
+            f"{closed.superseded_by} (candidate {landed_proposal.candidate.candidate_digest}), "
+            f"not the reviewed {source.candidate.candidate_digest}; members identical: true; "
+            "nothing was signed"
+        ) in result.output
+        assert f"cruxible proposal review {closed.superseded_by}" in result.output
+        assert not instance.proposal_evidence().read_approvals(
+            landed_proposal.candidate.candidate_digest
+        )
+        return
     assert result.exit_code == 0, result.output
     ((first_id, first), (landed_id, landed)) = submitted
-    assert first_id == source.admission.proposal_id
+    assert first_id == source_id and landed_id == closed.superseded_by
     assert first["payload_digest"] == source.candidate.candidate_digest
     assert landed_id != first_id and landed["payload_digest"] != first["payload_digest"]
     # The landed candidate sits on the head the approval met.
     assert landed["signing_semantic_root"] == head_root
-    assert f"Landed at the head as {landed_id}" in result.stdout
-    # The receipt names the proposal it replaces, the one reviewed (gapa-03).
-    assert f"{landed_id} replaces {first_id} (readmitted at the head)" in result.stdout
+    # Said once: the landed proposal and the one passed (gapa-03, coldcli-10).
+    assert (
+        f"Landed at the head as {landed_id}: the same change set (proposed as {first_id})"
+        in result.stdout
+    )
+    assert f"Approved {landed['payload_digest']} ({landed_id}) as reviewer" in result.stdout
+    assert "replaces" not in result.stdout
     assert "Activated at" in result.stdout
 
 
@@ -340,6 +452,7 @@ def test_cli_missing_signer_never_falls_back_to_daemon(
             *,
             signer_id: str,
             include_body: bool,
+            reviewed_candidate_digest: str | None = None,
         ) -> contracts.ApprovalChallenge:
             challenge = service_prepare_playbill_approval(
                 instance,
@@ -460,7 +573,13 @@ def test_cli_approval_prompt_shows_the_reviewers_view_before_asking(
             )
 
         def prepare_approval(
-            self, instance_id: str, selected: str, *, signer_id: str, include_body: bool
+            self,
+            instance_id: str,
+            selected: str,
+            *,
+            signer_id: str,
+            include_body: bool,
+            reviewed_candidate_digest: str | None = None,
         ) -> contracts.ApprovalChallenge:
             challenge = service_prepare_playbill_approval(
                 instance, proposal_id=selected, signer_id=signer_id, access=access
@@ -547,12 +666,12 @@ def test_an_approval_awaiting_more_names_whose_and_the_approve_next() -> None:
         "completes it activates it"
     )
     assert lines[1:] == [
-        f"Next: cruxible proposal approve {proposal} --signer-id owner --key FILE",
-        f"Next: cruxible proposal approve {proposal} --signer-id ops2 --key FILE",
+        f"Next: cruxible proposal approve {proposal} --signer-id owner",
+        f"Next: cruxible proposal approve {proposal} --signer-id ops2",
     ]
     assert steps[:2] == [
-        f"cruxible proposal approve {proposal} --signer-id owner --key FILE",
-        f"cruxible proposal approve {proposal} --signer-id ops2 --key FILE",
+        f"cruxible proposal approve {proposal} --signer-id owner",
+        f"cruxible proposal approve {proposal} --signer-id ops2",
     ]
     assert not any("proposal activate" in step for step in steps)
 
@@ -583,7 +702,7 @@ def test_a_principal_change_proposal_names_its_proposers_approval_next(capsys) -
     ordinary = capsys.readouterr().out
 
     assert (
-        f"next: cruxible proposal approve {proposal_id} --signer-id ops2 --key FILE "
+        f"next: cruxible proposal approve {proposal_id} --signer-id ops2 "
         "(a principal change needs its proposer's own signature)"
     ) in principal
     assert f"next: cruxible get {proposal_id}" in ordinary

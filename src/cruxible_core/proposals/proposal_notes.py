@@ -64,6 +64,14 @@ def proposal_admission_id(
                 # every proposal admitted since.
                 "limits": limits.receive_bound_payload(),
                 "admitted_at": admitted_at,
+                # A kit proposal's transition is part of what was admitted;
+                # absent (every other proposal, and kit proposals admitted
+                # before it was recorded), so earlier identities reproduce.
+                **(
+                    {}
+                    if request.kit_transition is None
+                    else {"kit_transition": request.kit_transition}
+                ),
             },
         )
     ).tagged

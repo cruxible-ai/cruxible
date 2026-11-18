@@ -422,9 +422,13 @@ class OrientAttention(_StrictOrientModel):
     floor, sources, projection blocks, vocabulary file) need the workspace
     and appear in ``next``; orient reports the floor and the vocabulary file
     as status beside this (``floor``, ``vocabulary_file``), as it always has.
+    ``next_scope`` says so on every answer: ``next_items: 0`` is not an empty
+    ``next`` queue.
     """
 
     next_items: int = Field(ge=0)
+    #: What ``next_items`` counts: workspace rows are not in it; ``next`` lists them.
+    next_scope: Literal["accepted_state"] = "accepted_state"
     open_proposals: int = Field(ge=0)
     top: tuple[str, ...] = ()
     setup_items: int = Field(default=0, ge=0, exclude_if=lambda value: not value)
@@ -488,13 +492,15 @@ class OrientGeneration(_StrictOrientModel):
     rationale, cut at 500 characters (``because_truncated``). ``members``
     counts the change set's members; ``since(generation=sequence-1,
     at=<this generation>)`` lists them. Genesis (sequence 0) carries only its
-    sequence, git oid and acceptance time. Pass ``sequence`` or ``git_oid`` as
-    ``at`` to read state as this generation left it.
+    sequence, git oid and time. ``proposed_at`` is when the change set was
+    proposed (its candidate's timestamp); rows are ordered by ``sequence``, and
+    the instant of acceptance is not recorded. Pass ``sequence`` or ``git_oid``
+    as ``at`` to read state as this generation left it.
     """
 
     sequence: int = Field(ge=0)
     git_oid: str
-    accepted_at: datetime
+    proposed_at: datetime
     changeset_digest: str | None = Field(default=None, exclude_if=_is_none)
     proposal: str | None = Field(default=None, exclude_if=_is_none)
     proposer: str | None = Field(default=None, exclude_if=_is_none)
@@ -825,7 +831,9 @@ class OrientResult(_StrictOrientModel):
     instance: str
     coordinate: AcceptedCoordinate
     generation: int = Field(ge=0)
-    accepted_at: datetime
+    #: When this generation's change set was proposed (its candidate's
+    #: timestamp); the instant of acceptance is not recorded.
+    proposed_at: datetime
     evaluation_time: datetime
     mirror_url: str | None = Field(default=None, exclude_if=_is_none)
     #: How many accepted generations before the head keep a ready projection
@@ -837,6 +845,9 @@ class OrientResult(_StrictOrientModel):
     kinds: tuple[OrientKindSummary, ...] | None = Field(default=None, exclude_if=_is_none)
     artifacts: OrientArtifactCounts | None = Field(default=None, exclude_if=_is_none)
     attention: OrientAttention | None = Field(default=None, exclude_if=_is_none)
+    #: ``head_only`` on a read at an earlier generation (``at``): attention is
+    #: the live queue, so it is answered only at the head (S4).
+    attention_scope: Literal["head_only"] | None = Field(default=None, exclude_if=_is_none)
     kind_detail: OrientKindDetail | None = Field(default=None, exclude_if=_is_none)
     section: OrientSection | None = Field(default=None, exclude_if=_is_none)
     documents: tuple[OrientDocument, ...] | None = Field(default=None, exclude_if=_is_none)
@@ -900,11 +911,18 @@ class OrientResult(_StrictOrientModel):
     next: tuple[str, ...] = ()
 
     def __str__(self) -> str:
-        """The map as ``cruxible orient`` prints it; ``repr()`` stays the full model."""
+        """The map as ``cruxible orient`` prints it; ``repr()`` is its first line."""
 
         from cruxible_client.contracts.text_display import render_orient
 
         return render_orient(self.model_dump(mode="json"))
+
+    def __repr__(self) -> str:
+        """The first line of what the CLI prints (S1); ``model_dump()`` is the model."""
+
+        from cruxible_client.contracts.text_display import one_line_repr
+
+        return one_line_repr(self)
 
 
 __all__ = [

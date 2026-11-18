@@ -630,10 +630,15 @@ def _egress_records(instance, state):  # type: ignore[no-untyped-def]
 
     journal, _root = service._journal(instance)  # noqa: SLF001
     stream = service._stream(instance)  # noqa: SLF001
+    from cruxible_core.procedures.terminal_payloads import join_terminal_egress_payload
+
     access = BodyAccessContext(principal_id="test", can_read_body=True)
     return [
-        parse_journal_payload(
-            instance.body_store().read(stored.record.payload_digest, access=access)
+        join_terminal_egress_payload(
+            parse_journal_payload(
+                instance.body_store().read(stored.record.payload_digest, access=access)
+            ),
+            lambda digest: instance.body_store().read(digest, access=access),
         )
         for partition_id in journal.partition_ids(stream)
         for stored in journal.all_records(stream, partition_id)
@@ -2014,6 +2019,46 @@ def test_a_restart_or_a_discarded_index_loses_no_count(tmp_path: Path) -> None:
     assert row.detail["latest_run_id"] == second.run_id
 
 
+def test_a_settle_count_that_catches_up_leaves_no_write_ahead_log(tmp_path: Path) -> None:
+    """The refusal index's log is folded in once counting catches up, not left per run;
+    a backlog checkpoints once at its last page, not per page."""
+
+    from cruxible_core.service.procedures.settled_refusals import (
+        catch_up_settled_refusals,
+        count_settled_refusals_step,
+    )
+
+    instance, root, line = _retired_then_resettle(tmp_path)
+    index = instance.refusal_index()
+    index.catch_up(instance)
+    second = run_settle(instance, root, line, now=fixtures.NOW + timedelta(minutes=10))
+    assert _egress(second).settle_outcome == "settled", second.terminal
+    wal = Path(str(index.path) + "-wal")
+
+    before = (index.settled_counted, index.checkpoints)
+    catch_up_settled_refusals(instance, steps=8, wait=True)
+    assert index.settled_counted > before[0]
+    assert index.checkpoints == before[1] + 1
+    assert wal.stat().st_size == 0
+    (row,) = _next_rows(instance, "line_settled_prior_refusals")
+    assert row.detail["settled_items_matching_refusals"] == 1
+
+    # A backlog counted a page at a time checkpoints once, when it catches up.
+    index.close()
+    for suffix in ("", "-wal", "-shm"):
+        Path(str(index.path) + suffix).unlink(missing_ok=True)
+    index.catch_up(instance)
+    checkpoints, steps = index.checkpoints, 0
+    while True:
+        step = count_settled_refusals_step(instance, wait=True, limit=1)
+        steps += 1
+        if not step.more:
+            break
+    assert steps > 1
+    assert index.checkpoints == checkpoints + 1
+    assert wal.stat().st_size == 0
+
+
 def test_contention_only_delays_the_row(tmp_path: Path) -> None:
     """A busy index skips the post step at once; the next read counts what was left."""
 
@@ -2470,7 +2515,11 @@ def test_recovery_follows_a_recompiled_settle_accepted_before_its_receipt(
 def test_a_settle_rerun_whose_items_restate_accepted_state_changes_nothing(
     tmp_path: Path,
 ) -> None:
-    """All-unchanged settle: the second run proposes and accepts nothing (design row 22)."""
+    """All-unchanged settle: the second run proposes and accepts nothing (design row 22).
+
+    The same bytes reuse the held Capture (ruling 1c), so every item restates
+    exactly what is live and the terminal has no item at all (ruling 1e).
+    """
 
     instance, root, line = settle_world(tmp_path)
     first = _egress(run_settle(instance, root, line))
@@ -2480,5 +2529,5 @@ def test_a_settle_rerun_whose_items_restate_accepted_state_changes_nothing(
     again = run_settle(instance, root, line, now=fixtures.NOW + timedelta(minutes=5))
     egress = _egress(again)
     assert egress.proposal_id is None and egress.accepted_git_oid is None
-    assert egress.children and all(child.unchanged for child in egress.children)
+    assert egress.children == ()
     assert instance.accepted_coordinate() == head

@@ -255,8 +255,14 @@ def _execute(tmp_path: Path, relative_path: str):  # type: ignore[no-untyped-def
         prepared.admission.journal_partition_id,
     )
     access = BodyAccessContext(principal_id="unit-test", can_read_body=True)
+    from cruxible_core.procedures.terminal_payloads import join_derived_source_request
+
+    # A derived Source request's value is a run-free body its record cites.
     payloads = [
-        parse_journal_payload(fixture.bodies.read(item.record.payload_digest, access=access))
+        join_derived_source_request(
+            parse_journal_payload(fixture.bodies.read(item.record.payload_digest, access=access)),
+            lambda digest: fixture.bodies.read(digest, access=access),
+        )
         for item in records
     ]
     return result, invoker, records, payloads, root, fixture, contract, prepared, accepted

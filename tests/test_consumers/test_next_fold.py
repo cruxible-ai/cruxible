@@ -50,7 +50,6 @@ def test_one_kind_one_health_and_independent_part_cursors(tmp_path: Path) -> Non
         "facts",
         "evidence",
         "prediction",
-        "curation",
         "settled_refusals",
         "line_upgrades",
         "line_inputs",
@@ -226,10 +225,14 @@ def test_lost_part_state_lags_until_that_part_rebuilds(tmp_path: Path, part: str
 def test_every_registered_internal_action_names_the_part_that_performs_it(tmp_path: Path) -> None:
     import sys
 
-    from cruxible_client.contracts.triggers import INTERNAL_ACTIONS
+    from cruxible_client.contracts.triggers import INTERNAL_ACTIONS, UNSERVED_INTERNAL_ACTIONS
 
     kinds = {kind.name: kind for kind in consumer_kinds()}
     for spec in INTERNAL_ACTIONS.values():
+        if spec.name in UNSERVED_INTERNAL_ACTIONS:
+            # Registered for the Trigger law (history replays), followed by no part.
+            assert spec.part not in folded._PARTS
+            continue
         kind = kinds[spec.consumer]
         assert spec.effect == kind.effect_class
         if kind is NEXT_QUEUE:

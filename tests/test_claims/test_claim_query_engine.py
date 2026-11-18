@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 
@@ -67,6 +67,7 @@ from cruxible_core.query.engine import (
     CLAIM_CONFLICT,
     COORDINATE_MISMATCH,
     EVALUATION_TIME_NOT_ABSOLUTE,
+    EVALUATION_TIME_OUT_OF_RANGE,
     PARAMETER_MISSING,
     PARAMETER_TYPE_MISMATCH,
     PARAMETER_UNDECLARED,
@@ -290,10 +291,12 @@ def typed_item_query(
     object_kind: str = "literal",
     where: object = None,
     orderings: tuple[QueryOrdering, ...] = (),
+    artifact_format: str = "cruxible-query-definition-v3",
 ) -> QueryDefinition:
     """One single-predicate Subject read used to exercise the typed grammar."""
 
     return QueryDefinition(
+        artifact_format=artifact_format,  # type: ignore[arg-type]
         identity=ArtifactIdentity(kind="QueryDefinition", name=name),
         entry=QueryEntry(binding="item", subject_kinds=("project.work_item",)),
         where=where,  # type: ignore[arg-type]
@@ -1026,6 +1029,88 @@ def test_a_timestamp_filter_reads_the_explicit_evaluation_time_reference() -> No
         row.fields[0].value
         for row in run(query, fact_rows, evaluation_time=LATER + timedelta(days=1)).rows
     ] == ["wi-1", "wi-2"]
+
+
+def test_a_shifted_now_compares_against_the_evaluation_time_moved_by_its_offset() -> None:
+    """`due_at < now - 3d`: overdue by more than three days at the evaluation time (UTC)."""
+
+    def stale(offset_seconds: int) -> QueryDefinition:
+        return typed_item_query(
+            DUE_PREDICATE,
+            name="project.long_overdue_items",
+            artifact_format="cruxible-query-definition-v4",
+            where=QueryComparisonFilter(
+                left=QueryClaimValueRef(binding="item", predicate=DUE_PREDICATE),
+                operator="lt",
+                right=QueryEvaluationTimeRef(offset_seconds=offset_seconds),
+                value_type="timestamp",
+            ),
+        )
+
+    def due(index: int, item: str, moment: datetime) -> ClaimFactRowV1:
+        return claim_fact(
+            index,
+            subject_row=subject("project.work_item", item),
+            predicate=DUE_PREDICATE,
+            obj=LiteralClaimObject(value=moment.isoformat().replace("+00:00", "Z")),
+        )
+
+    fact_rows = facts(
+        (
+            due(1, "wi-1", NOW - timedelta(days=4)),
+            due(2, "wi-2", NOW - timedelta(days=2)),
+            due(3, "wi-3", NOW + timedelta(hours=6)),
+        )
+    )
+    three_days = stale(-3 * 86400)
+
+    assert [row.fields[0].value for row in run(three_days, fact_rows).rows] == ["wi-1"]
+    # The offset moves with the evaluation time, never a wall clock.
+    assert [
+        row.fields[0].value
+        for row in run(three_days, fact_rows, evaluation_time=NOW + timedelta(days=2)).rows
+    ] == ["wi-1", "wi-2"]
+    # A forward shift: due within the next twelve hours or earlier.
+    assert [row.fields[0].value for row in run(stale(12 * 3600), fact_rows).rows] == [
+        "wi-1",
+        "wi-2",
+        "wi-3",
+    ]
+    # An evaluation time given in another zone is the same instant.
+    eastern = NOW.astimezone(timezone(timedelta(hours=-5)))
+    assert [
+        row.fields[0].value for row in run(three_days, fact_rows, evaluation_time=eastern).rows
+    ] == ["wi-1"]
+
+
+def test_a_shifted_now_past_the_representable_range_refuses() -> None:
+    query = typed_item_query(
+        DUE_PREDICATE,
+        name="project.long_overdue_items",
+        artifact_format="cruxible-query-definition-v4",
+        where=QueryComparisonFilter(
+            left=QueryClaimValueRef(binding="item", predicate=DUE_PREDICATE),
+            operator="lt",
+            right=QueryEvaluationTimeRef(offset_seconds=-86400),
+            value_type="timestamp",
+        ),
+    )
+    fact_rows = facts(
+        (
+            claim_fact(
+                1,
+                subject_row=subject("project.work_item", "wi-1"),
+                predicate=DUE_PREDICATE,
+                obj=LiteralClaimObject(value="2026-08-01T00:00:00Z"),
+            ),
+        )
+    )
+
+    result = run(query, fact_rows, evaluation_time=datetime(1, 1, 1, tzinfo=UTC))
+
+    assert result.verdict == "refused"
+    assert result.refusal is not None
+    assert result.refusal.code == EVALUATION_TIME_OUT_OF_RANGE
 
 
 def test_membership_negation_and_disjunction_narrow_without_widening() -> None:

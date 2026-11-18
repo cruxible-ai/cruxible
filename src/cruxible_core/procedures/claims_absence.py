@@ -659,18 +659,20 @@ def append_absence(
                     seen_changes.add(unit)
                     if claim is not None and isinstance(claim.statement.object, NoneClaimObject):
                         diagnostics.same += 1
-                        if capture not in claim.backing.capture_digests:
-                            append(
-                                CoreReobservationChange(
-                                    rationale="Re-confirmed complete source absence.",
-                                    claim_id=claim.identity.name,
-                                    artifact_digest=claim_artifact_digest(claim).tagged,
-                                    value=inverse,
-                                ),
-                                receipt,
-                                {"absence": path, "template": index, "unit": inverse},
-                                held_identity(subject, ct, claim),
-                            )
+                        # Every complete run reconfirms a held absence: one small
+                        # per-Claim record, at this run's call (the 0.5.0
+                        # fallback, maintainer ruling 2026-11-16).
+                        append(
+                            CoreReobservationChange(
+                                rationale="Re-confirmed complete source absence.",
+                                claim_id=claim.identity.name,
+                                artifact_digest=claim_artifact_digest(claim).tagged,
+                                value=inverse,
+                            ),
+                            receipt,
+                            {"absence": path, "template": index, "unit": inverse},
+                            held_identity(subject, ct, claim),
+                        )
                         continue
                     if created_target is not None:
                         if create_target is None:

@@ -15,7 +15,11 @@ from cruxible_client.authoring.signing import sign_runtime_credential_mint
 from cruxible_client.contracts.runtime_credentials import RuntimeCredentialPrincipalProof
 from cruxible_core.cli.commands import _common
 from cruxible_core.cli.main import handle_errors
-from cruxible_core.cli.principal_settings import set_principal_settings_token
+from cruxible_core.cli.principal_settings import (
+    SettingsTokenMismatch,
+    principal_settings_path,
+    set_principal_settings_token,
+)
 from cruxible_core.server.config import get_server_state_root
 from cruxible_core.server.credentials import (
     RuntimeCredentialRecord,
@@ -23,6 +27,7 @@ from cruxible_core.server.credentials import (
     RuntimeCredentialRecoveryError,
     RuntimeCredentialStore,
     list_runtime_credential_instance_ids,
+    token_names_credential,
 )
 
 _PERMISSION_MODES: tuple[contracts.RuntimeCredentialPermissionMode, ...] = (
@@ -527,6 +532,30 @@ def revoke_cmd(credential_id: str, dry_run: bool | None, at: str | None, output_
     _echo_credential_metadata(result.credential)
 
 
+def _check_settings_token(key_dir: Path, credential_id: str) -> str | None:
+    """Refuse before rotating when --key-dir's settings file holds another token (S5).
+
+    The file's token is replaced only when it is the one being rotated; a file
+    holding another credential's token (or none) refuses, naming the file.
+    Returns the exact token held, which the write after the rotation compares.
+    """
+
+    from cruxible_client.authoring.principal_settings import read_principal_settings
+
+    path = principal_settings_path(key_dir)
+    if not path.is_file():
+        return None
+    held = read_principal_settings(path).token
+    if held is None or not token_names_credential(held, credential_id):
+        raise click.UsageError(
+            f"{path} holds {'no' if held is None else 'another credential’s'} bearer token, "
+            f"not {credential_id}'s, so rotate would not replace it; rotate without --key-dir "
+            "and write the printed token where it belongs, or name the key directory whose "
+            "settings file holds this credential"
+        )
+    return held
+
+
 @credential_group.command("rotate")
 @click.argument("credential_id")
 @click.option(
@@ -571,14 +600,32 @@ def rotate_cmd(
             label=target.label,
             key_dir=Path(key_dir),
         )
+    observed: str | None = None
+    if key_dir is not None:
+        observed = _check_settings_token(Path(key_dir), credential_id)
     result = client.rotate_runtime_credential(
         instance_id, credential_id, principal_proof=proof, dry_run=dry_run, at=at
     )
-    settings = (
-        None
-        if key_dir is None or not result.token
-        else set_principal_settings_token(Path(key_dir), result.token)
-    )
+    try:
+        settings = (
+            None
+            if key_dir is None or not result.token or observed is None
+            else set_principal_settings_token(
+                Path(key_dir),
+                result.token,
+                # The exact token read before this rotation: a newer token another
+                # rotation wrote meanwhile is never overwritten with this one.
+                replaces=observed,
+            )
+        )
+    except SettingsTokenMismatch as mismatch:
+        # Changed between the check and the write: print the token once instead.
+        click.echo(
+            f"{mismatch.path} no longer holds the token this rotation replaced; it was "
+            "left as it was",
+            err=True,
+        )
+        settings = None
     if output_json:
         payload = result.model_dump(mode="json")
         if settings is not None:

@@ -301,6 +301,35 @@ def test_a_derive_manifest_records_state_reads_and_keeps_older_bytes() -> None:
         InputReceiptSetManifest()
 
 
+def test_a_v2_manifest_names_reads_by_identity_and_v1_bytes_keep_their_digest() -> None:
+    """Round 6 item 2: v2 names each read by its run-free identity; a stored v1
+    manifest parses, renders and digests exactly as before."""
+
+    from cruxible_client.contracts.captures import (
+        INPUT_MANIFEST_V2,
+        input_receipt_set_manifest_digest,
+        render_input_receipt_set_manifest,
+    )
+
+    v1 = InputReceiptSetManifest(input_accepted_state_digests=(digest("read", "run"),))
+    stored = render_input_receipt_set_manifest(v1)
+    reread = InputReceiptSetManifest.model_validate_json(stored)
+    assert render_input_receipt_set_manifest(reread) == stored
+    assert input_receipt_set_manifest_digest(reread) == input_receipt_set_manifest_digest(v1)
+    assert reread.accepted_reads == (digest("read", "run"),)
+    v2 = InputReceiptSetManifest(
+        tag=INPUT_MANIFEST_V2, input_accepted_read_digests=(digest("read", "identity"),)
+    )
+    assert v2.accepted_reads == (digest("read", "identity"),)
+    assert b"input_accepted_state_digests" not in render_input_receipt_set_manifest(v2)
+    with pytest.raises(ValueError, match="v1 input receipt-set"):
+        InputReceiptSetManifest(input_accepted_read_digests=(digest("read", "identity"),))
+    with pytest.raises(ValueError, match="v2 input receipt-set"):
+        InputReceiptSetManifest(
+            tag=INPUT_MANIFEST_V2, input_accepted_state_digests=(digest("read", "run"),)
+        )
+
+
 def test_a_derive_reducer_is_content_addressed_and_read_back_exactly(tmp_path: Path) -> None:
     from cruxible_client.contracts.captures import (
         CaptureFormatError,

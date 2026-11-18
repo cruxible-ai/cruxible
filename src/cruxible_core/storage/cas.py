@@ -400,7 +400,7 @@ class ContentAddressedBodyStore:
             except FileNotFoundError:
                 existing = None
             if existing is not None:
-                self._verified_bytes(digest.tagged)
+                self._held(digest.tagged, existing)
                 if durable:
                     self.flush_cited((digest.tagged,), filesystem=False)
                 if not journal_payload:
@@ -507,11 +507,11 @@ class ContentAddressedBodyStore:
                     if content.startswith(ENVELOPE_HEAD):
                         self.capture_envelopes.note(digest, content)
                     try:
-                        os.stat(name, dir_fd=directory, follow_symlinks=False)
+                        existing = os.stat(name, dir_fd=directory, follow_symlinks=False)
                     except FileNotFoundError:
                         self._publish(directory, name, content, digest)
                     else:
-                        self._verified_bytes(digest)
+                        self._held(digest, existing)
                     result[index] = CasObjectMetadata(
                         digest=digest,
                         present=True,
@@ -543,6 +543,7 @@ class ContentAddressedBodyStore:
         """
 
         temporary = f".{name}.{uuid4().hex}.tmp"
+        published: os.stat_result | None = None
         descriptor: int | None = None
         landed: tuple[os.stat_result, bytes, os.stat_result] | None = None
         try:
@@ -585,13 +586,17 @@ class ContentAddressedBodyStore:
                 except OSError as exc:
                     raise CasError("CAS body could not be stored durably") from exc
                 self._durable.discard(digest)
-                self._remember_landed(directory, name, digest, landed[2])
+            published = landed[2]
             return True
         finally:
             try:
                 os.unlink(temporary, dir_fd=directory)
             except OSError:
                 pass
+            if published is not None:
+                # After the temporary name is gone: dropping that link moves the
+                # inode's change time, which the remembered identity includes.
+                self._remember_landed(directory, name, digest, published)
 
     def _remember_landed(
         self, directory: int, name: str, digest: str, landed: os.stat_result
@@ -622,6 +627,28 @@ class ContentAddressedBodyStore:
 
     def _memo_key(self, digest: str) -> tuple[str, str]:
         return (str(self._path(digest)), digest)
+
+    def _held(self, digest: str, existing: os.stat_result) -> None:
+        """Confirm a body already stored under ``digest``, hashing it at most once.
+
+        A repeat store (an unchanged run storing the same run-free body) names
+        an object this process already verified or published: its file identity
+        is the remembered one, so the stat the caller made is the check and no
+        byte is read or hashed again (immutable artifacts are hashed once). Only
+        an object this process never verified, or one changed since, is read
+        and hashed (``_verified_bytes``), which also records damage it finds.
+        """
+
+        with _VERIFIED_LOCK:
+            known = _VERIFIED.get(self._memo_key(digest))
+        if (
+            known is not None
+            and stat.S_ISREG(existing.st_mode)
+            and known == _file_identity(existing)
+        ):
+            self._whole(digest)
+            return
+        self._verified_bytes(digest)
 
     def _known(self, digest: str) -> bool:
         """Whether this exact file was already verified and has not changed since."""

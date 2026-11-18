@@ -453,8 +453,10 @@ def test_osv_single_procedure_creates_vulnerabilities_and_mirrors_by_queried(
     second_source = Osv({X: [A], Y: [A], W: [A]}, unmatched=(DISTRO,))
     second = run(instance, second_source, line=LINE, minute=1)
     assert second.status == "succeeded", json.dumps(second.terminal.model_dump(mode="json"))
-    # W created with its Claim; B's Y retired; A's X and Y re-observed; DISTRO untouched.
-    assert _changes(second) == ["claim", "reobservation", "reobservation", "retirement", "subject"]
+    # W created with its Claim; B's Y retired; DISTRO untouched. A's X and Y hold
+    # the same rows, which the extract step's row observation refreshes with no
+    # item (ruling 2026-11-16 c).
+    assert _changes(second) == ["claim", "retirement", "subject"]
     activate(instance, second)
     assert affected(instance) == {A: {X, Y, W}, B: set(), DISTRO: {Z}}
 

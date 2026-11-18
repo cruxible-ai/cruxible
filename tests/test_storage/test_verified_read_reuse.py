@@ -605,3 +605,33 @@ def test_a_retained_landing_log_follows_the_held_directory_through_a_swap(tmp_pa
     assert [row.kind for row in log.after(head.sequence)] == ["erase", "stored"]
     assert log.reconcile() == 0 and not log.unfinished()
     assert list(stand_in.rglob("*")) == []
+
+
+@pytest.mark.parametrize("journal_payload", [True, False])
+def test_a_repeat_store_of_a_held_body_reads_and_hashes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, journal_payload: bool
+) -> None:
+    """An unchanged run stores the same run-free bodies: the stat is the check."""
+
+    root = tmp_path / "managed" / "cas"
+    root.mkdir(parents=True)
+    store = ContentAddressedBodyStore(root)
+    first = store.store(b"run-free body", journal_payload=journal_payload).digest
+    store.store_many([b"another body"], journal_payload=True)
+    reads: list[object] = []
+    original_read = cas._read_descriptor
+
+    def counted_read(*args: object, **kwargs: object) -> object:
+        reads.append(args)
+        return original_read(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(cas, "_read_descriptor", counted_read)
+    assert store.store(b"run-free body", journal_payload=journal_payload).digest == first
+    store.store_many([b"another body", b"run-free body"], journal_payload=True)
+    assert reads == []
+    # A body changed on disk since this process verified it is read again.
+    path = store._path(first)
+    path.chmod(0o600)
+    path.write_bytes(b"run-free body")  # same bytes, new file identity
+    store.store(b"run-free body", journal_payload=journal_payload)
+    assert len(reads) == 1

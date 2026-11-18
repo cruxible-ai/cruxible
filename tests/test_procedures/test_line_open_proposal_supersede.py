@@ -22,6 +22,7 @@ from cruxible_client.contracts.procedures.line_specs import line_identity_digest
 from cruxible_core.exhaust.line_dispatch import LineDispatchStore, dispatch_root
 from cruxible_core.exhaust.records import parse_journal_payload
 from cruxible_core.procedures.proposal_delivery import ProposalTerminalEgressSink
+from cruxible_core.procedures.terminal_payloads import join_terminal_egress_payload
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import service_inspect_playbill_proposal
 from cruxible_core.service.procedures.procedure_runs import (
@@ -68,8 +69,11 @@ def _prepared_payloads(instance: PlaybillInstance, run_id: str) -> list[dict[str
         for stored in _records_for_run(instance, run_id)
         if stored.record.event_kind == "terminal_egress"
         for payload in (
-            parse_journal_payload(
-                instance.body_store().read(stored.record.payload_digest, access=_ACCESS)
+            join_terminal_egress_payload(
+                parse_journal_payload(
+                    instance.body_store().read(stored.record.payload_digest, access=_ACCESS)
+                ),
+                lambda digest: instance.body_store().read(digest, access=_ACCESS),
             ),
         )
         if isinstance(payload, dict) and payload.get("verdict") == "prepared"

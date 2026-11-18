@@ -35,7 +35,12 @@ from cruxible_client.authoring.context import (
     resolve_context,
 )
 from cruxible_client.authoring.doc_writes import write_workspace
-from cruxible_client.authoring.principal_settings import remembered_principal_settings
+from cruxible_client.authoring.principal_settings import (
+    principal_key,
+    principal_key_missing,
+    remembered_context,
+    remembered_principal_settings,
+)
 from cruxible_client.authoring.procedures import Sequence as ProcedureSequence
 from cruxible_client.authoring.procedures import procedure_record_constructor
 from cruxible_client.authoring.sdk_types import (
@@ -77,7 +82,7 @@ from cruxible_client.authoring.selectors import (
     FileSelector,
     WorkspaceFiles,
 )
-from cruxible_client.authoring.signing import ApprovalSigner
+from cruxible_client.authoring.signing import ApprovalSigner, LocalEd25519ApprovalSigner
 from cruxible_client.authoring.source_map import (
     DiagnosticSourceMap,
     capture_keyword_sites,
@@ -151,7 +156,6 @@ from cruxible_client.contracts.capture_reads import CaptureReadRequest
 from cruxible_client.contracts.captures import (
     CaptureContract,
     capture_contract_path,
-    foreign_source_capture_contract,
 )
 from cruxible_client.contracts.claim_attestations import (
     ClaimAttestation,
@@ -207,9 +211,8 @@ from cruxible_client.contracts.get_reads import (
     GetSubjectHistory,
 )
 from cruxible_client.contracts.identity_normalizers import KeyNormalizer
+from cruxible_client.contracts.kits import KitStatus
 from cruxible_client.contracts.policies import (
-    CAPTURE_CONTRACT_REF_ROLE,
-    CaptureContractAdmission,
     ClaimAdmissionPolicy,
     ClaimEvidenceAdmissionPolicy,
     ClaimEvidenceAdmissionRule,
@@ -242,6 +245,7 @@ from cruxible_client.contracts.resolution_contracts import (
     ResolutionContract,
     ResolutionContractReference,
 )
+from cruxible_client.contracts.runbooks import RunbookPreview, RunbookRunResult
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.shapes import (
     Contract,
@@ -290,6 +294,7 @@ from cruxible_client.transport.http import CruxibleClient, configured_principal_
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from cruxible_client.authoring.files import WorkspaceCatalog
+    from cruxible_client.authoring.links import GuidanceLinkOutcome
     from cruxible_client.authoring.vocabulary_file import Vocabulary
     from cruxible_client.authoring.world import World
 
@@ -485,6 +490,7 @@ _GET_REF_KINDS: Mapping[str, RefKind] = {
     "contract": RefKind.CONTRACT,
     "capability": RefKind.CAPABILITY,
     "runbook": RefKind.RUNBOOK,
+    "note": RefKind.NOTE,
 }
 
 _REFERENCE_KINDS: Mapping[RefKind, str] = {
@@ -629,11 +635,11 @@ class KnowledgeCard:
     _file_paths: Mapping[str, str] | None = field(default=None, repr=False, compare=False)
 
     def __str__(self) -> str:
-        """The answer as ``cruxible get`` prints it; ``repr()`` stays the model.
+        """The answer as ``cruxible get`` prints it; ``repr()`` is its first line.
 
         A Claim summary is the typed view the SDK reads from the Claim's proof,
-        so it prints that view's own lines; a proof prints as its repr, as the
-        CLI prints it as JSON. Reads nothing.
+        so it prints that view's own lines; a proof prints as its JSON, as the
+        CLI prints it. Reads nothing.
         """
 
         from cruxible_client.contracts.get_text import claim_view_lines, render_get
@@ -643,7 +649,26 @@ class KnowledgeCard:
         text = (
             None if self._result is None else render_get(self._result, file_paths=self._file_paths)
         )
-        return repr(self) if text is None else text
+        if text is not None:
+            return text
+        import json
+
+        return json.dumps(self.value, indent=2, default=str)
+
+    def __repr__(self) -> str:
+        """The first line of what the CLI prints (S1); the fields hold the whole answer.
+
+        When that line does not name the thing (a proof, which prints as JSON, or
+        a detail that opens with a section), it is ``kind: identity (detail)``.
+        """
+
+        from cruxible_client.contracts.text_display import one_line_repr
+
+        first = one_line_repr(self)
+        if self.identity in first:
+            return first
+        detail = "summary" if self._result is None else self._result.detail
+        return f"{self.kind.value}: {self.identity} ({detail})"
 
     @property
     def ref(self) -> TypedRef:
@@ -694,13 +719,20 @@ class NextPage:
         return iter(self.items)
 
     def __str__(self) -> str:
-        """The queue as ``cruxible next`` prints it; ``repr()`` stays the model. Reads nothing."""
+        """The queue as ``cruxible next`` prints it; ``repr()`` is its first line. Reads nothing."""
 
         from cruxible_client.contracts.text_display import next_lines
 
         return "\n".join(
             next_lines(status=self.status, items=self.items, unobserved=self.unobserved)
         )
+
+    def __repr__(self) -> str:
+        """The first line of what the CLI prints (S1); the fields hold the whole page."""
+
+        from cruxible_client.contracts.text_display import one_line_repr
+
+        return one_line_repr(self)
 
 
 @dataclass(frozen=True)
@@ -834,6 +866,7 @@ class _IntentDraft:
             preflight=result.preflight,
             candidate_status=result.status,
             outcome=result.outcome,
+            warnings=result.warnings,
         )
 
 
@@ -1466,15 +1499,18 @@ class ChangeSetDraft:
         members: Mapping[str | int | bool, str] | None = None,
         key: bool = False,
         default_role: ClaimRole | str | None = None,
-        sources: Sequence[str] = (),
+        evidence: Sequence[str] | None = None,
         canonical_form: Sequence[str] | None = None,
+        sources: Sequence[str] = (),
     ) -> PendingClaimTypeRef:
         """Define (or edit) one field of a kind, with the short form's defaults.
 
         The field is the ClaimType ``<kind>.<name>``. Everything not given takes
         the default ``cruxible claim-type propose`` gives a field, lowered by the
-        same function: roles ``[default_role]`` (else ``[normative]``), the
-        own-words evidence rule plus one rule per ``sources`` entry, supported
+        same function: roles ``[default_role]`` (else ``[normative]``), one rule
+        admitting own words and workspace file and section citations (unless the
+        field requires captured evidence), one rule admitting the shaped
+        CaptureContracts named in ``evidence`` for the field's roles, supported
         and current resolution, and ``[nfc, trim]`` for a string or enum value.
         ``members`` maps each enum member to what it means; ``many`` makes the
         field hold several values (left out: one, or an edit's accepted
@@ -1486,8 +1522,8 @@ class ChangeSetDraft:
         restated, what is left out (``many``, ``description``, ``members``,
         ``default_role``, ``canonical_form``) keeps its accepted value, and its
         live Claims are carried to the new version, as ``claim-type propose``
-        does; ``sources`` shapes a new field's rules only. Retire one with
-        ``.retire_claim_type``.
+        does; ``evidence`` replaces a field's rules when given. ``sources`` is
+        retired and refuses. Retire one with ``.retire_claim_type``.
 
         Next: more fields, ``.subject_kind(name=kind, description=...)``, then
         ``.prepare()`` for the lint, and ``.submit()``.
@@ -1524,7 +1560,11 @@ class ChangeSetDraft:
                 default_role, ClaimRole, label="field default role"
             ).value
         if sources:
-            stated["anticipated_source_ids"] = sorted(set(sources), key=lambda s: s.encode())
+            from cruxible_client.contracts.claim_type_inputs import ClaimTypeSourcesRetired
+
+            raise ClaimTypeSourcesRetired(f"{kind}.{name}: sources=")
+        if evidence is not None:
+            stated["evidence"] = tuple(evidence)
         if canonical_form is not None:
             stated["canonical_form"] = tuple(canonical_form)
         record = ClaimTypeInputRecord.model_validate(stated)
@@ -1782,8 +1822,11 @@ class ChangeSetDraft:
         )
 
 
-def _short_form_rules(roles: Sequence[str]) -> tuple[ClaimEvidenceAdmissionRule, ...]:
-    """The evidence rules the short form gives a new field with no source."""
+def _short_form_rules(
+    roles: Sequence[str], evidence: Sequence[str] = ()
+) -> tuple[ClaimEvidenceAdmissionRule, ...]:
+    """The evidence rules the short form gives a field: own words and workspace
+    citations, plus the shaped contracts in ``evidence``."""
 
     from cruxible_client.contracts.claim_type_inputs import (
         default_evidence_policy,
@@ -1791,7 +1834,7 @@ def _short_form_rules(roles: Sequence[str]) -> tuple[ClaimEvidenceAdmissionRule,
     )
 
     policy = identity_evidence_policy(
-        default_evidence_policy(tuple(roles), "self", ()), identities={}
+        default_evidence_policy(tuple(roles), "self", tuple(evidence)), identities={}
     )
     return ClaimEvidenceAdmissionPolicy.model_validate(policy).rules
 
@@ -2333,6 +2376,7 @@ class Intent:
         preflight: api.AuthoringPreflightResult | None = None,
         candidate_status: api.CandidateStatusRecord | None = None,
         outcome: api.AuthoringLanding | None = None,
+        warnings: tuple[str, ...] = (),
     ) -> None:
         self._playbill = cx
         self._draft = draft
@@ -2341,6 +2385,8 @@ class Intent:
         self._candidate_status = candidate_status
         # The daemon spells ``outcome.next`` for the CLI; an Intent shows the SDK call.
         self.outcome = landing_for_surface(outcome, "sdk")
+        #: Each kit-bundled definition the submitted change retires (S7).
+        self.kit_warnings = warnings
 
     @classmethod
     def from_preflight(
@@ -2562,6 +2608,7 @@ class Intent:
         self._raw = result.intent
         self._candidate_status = result.status
         self.outcome = landing_for_surface(result.outcome, "sdk")
+        self.kit_warnings = result.warnings
         return self
 
     def status(self) -> api.CandidateStatusRecord:
@@ -2599,7 +2646,7 @@ class Proposal:
 
     Read it with ``cx.get(proposal_id)``: status, verdict, changes, and for a refused
     proposal every refusal with its repair. Next: ``proposal.review()``, then
-    ``proposal.approve(signer=..., reviewed=...)`` and ``proposal.activate()``.
+    ``proposal.approve(signer=cx.signer(), reviewed=...)`` and ``proposal.activate()``.
     """
 
     def __init__(self, cx: Cruxible, proposal_id: str) -> None:
@@ -2612,7 +2659,7 @@ class Proposal:
         ``print(review)`` shows what ``cruxible proposal review`` prints: the value
         changes with what each cites, and the definitions; ``review.details`` is
         the full candidate review.
-        Next: ``proposal.approve(signer=..., reviewed=review)``.
+        Next: ``proposal.approve(signer=cx.signer(), reviewed=review)``.
         """
         return review_proposal(self._playbill, self.proposal_id)
 
@@ -2624,12 +2671,16 @@ class Proposal:
         The approval that completes the candidate activates it in the same call
         (``receipt.activation``) when the caller may activate; ``hold=True``
         signs only. ``receipt.not_activated`` says why nothing activated.
-        A stale candidate is recompiled: it returns an ``ActivationReceipt``
-        directly when no approval is needed and the caller may activate, or a
-        ``ProposalRecompiled`` naming the replacement proposal.
 
-        Next: read at the returned activation's ``accepted_coordinate``, or
-        follow the replacement proposal; ``proposal.activate()`` for a held approval.
+        The approval is bound to the reviewed candidate. If accepted state moved
+        since the review, the daemon proposes the change again at the head and
+        this raises ``cruxible.approval.reviewed_candidate_changed``, naming the
+        new proposal and whether its members are identical; nothing is signed.
+        Review that proposal and approve it. A ``ProposalRecompiled`` is
+        returned only when every change is already live (nothing to sign).
+
+        Next: read at the returned activation's ``accepted_coordinate``;
+        ``proposal.activate()`` for a held approval.
         """
         receipt = approve_reviewed(
             self._playbill, self.proposal_id, signer=signer, reviewed=reviewed, hold=hold
@@ -2658,6 +2709,39 @@ class Proposal:
         """
         return self._playbill._client.readmit_proposal(
             self._playbill._instance_id, self.proposal_id, dry_run=dry_run, at=at
+        )
+
+    def reject(
+        self, reason: str, *, dry_run: bool | None = None, at: str | None = None
+    ) -> api.ProposalRejectResult:
+        """Reject another actor's open or stale proposal, with the reason its author reads.
+
+        A reviewer's terminal statement: the proposal leaves the open inventory
+        and every settlement door refuses it. Your own proposal you withdraw
+        instead (the refusal says so). Needs graph write. ``dry_run=True``
+        checks it and records nothing.
+
+        Next: ``cx.get(proposal.proposal_id)`` shows who rejected it and why.
+        """
+        cx = self._playbill
+        return cx._client.reject_proposal(
+            cx._instance_id, self.proposal_id, reason=reason, dry_run=dry_run, at=at
+        )
+
+    def withdraw(
+        self, reason: str, *, dry_run: bool | None = None, at: str | None = None
+    ) -> api.ProposalWithdrawResult:
+        """Withdraw your own open or stale proposal: it will never be activated.
+
+        Only its author withdraws it; anyone else is refused
+        ``cruxible.proposal.withdraw_not_author``, whose repair is to reject it.
+        ``dry_run=True`` checks it and records nothing.
+
+        Next: author the change again for a new proposal, if it is still wanted.
+        """
+        cx = self._playbill
+        return cx._client.withdraw_proposal(
+            cx._instance_id, self.proposal_id, reason=reason, dry_run=dry_run, at=at
         )
 
     def __repr__(self) -> str:
@@ -2725,6 +2809,8 @@ class Cruxible:
         self._coordinate: AcceptedCoordinate | None = None
         self._pinned = False
         self._owns_client = True
+        # The context file ``connect`` was opened with; None reads the default.
+        self._context_path: Path | None = None
         # An accepted ClaimType at an exact coordinate never changes, so one read
         # answers every Claim this connection drafts under that predicate there.
         self._claim_type_envelopes: dict[tuple[str, str], Mapping[str, object]] = {}
@@ -2842,6 +2928,7 @@ class Cruxible:
             # A session needs only the current head, not an orientation of the
             # whole accepted world: one identity read names it. Orient
             # explicitly (``orient()`` / ``refresh()``) when the overview is wanted.
+            result._context_path = context_path
             if at is None:
                 result._coordinate = AcceptedCoordinate.model_validate(
                     client.whoami(resolved.instance_id).coordinate.model_dump(mode="json")
@@ -2962,6 +3049,8 @@ class Cruxible:
         result._coordinate = AcceptedCoordinate.model_validate(coordinate.model_dump(mode="json"))
         result._pinned = True
         result._owns_client = False
+        # The pinned context is the same connection: the same remembered context.
+        result._context_path = self._context_path
         return result
 
     def _read_at(
@@ -3295,7 +3384,7 @@ class Cruxible:
         limit: int | None = None,
         cursor: str | None = None,
     ) -> api.ProposalList:
-        """One page of proposals, newest first; follow ``next_cursor`` while truncated.
+        """One page of proposals, oldest admission first; follow ``next_cursor`` while truncated.
 
         Next: ``cx.get(entry.proposal_id)`` to read one, or ``cx.proposal(id).review()``.
         """
@@ -3331,6 +3420,8 @@ class Cruxible:
     def file(self, path: str | Path) -> FileSelector:
         """Select text from a catalogued workspace file, to cite as evidence.
 
+        Only catalogued files are selected (an uncatalogued path refuses). A write
+        citing a file as ``FileEvidence(file="PATH#ANCHOR")`` catalogues it itself.
         Next: ``cx.file(path).section("Heading", "Child")`` or ``.anchor("text found once")``;
         pass the selection as ``supported_by=``.
         """
@@ -3441,15 +3532,21 @@ class Cruxible:
         cardinality: Cardinality | str,
         permitted_roles: Sequence[ClaimRole | str],
         referent_sensitivity: ReferentSensitivity | str,
-        sources: Sequence[str | SourceRef],
         admission_policy: ClaimAdmissionPolicy,
         resolution_policy: ClaimResolutionPolicy,
         pins: Sequence[ArtifactPin],
         evidence_freshness: Duration | None,
         attestation_consequence_policy: ClaimAttestationConsequencePolicy | None = None,
         canonical_form: Sequence[str] | None = None,
+        evidence: Sequence[str] = (),
+        sources: Sequence[str | SourceRef] = (),
     ) -> ClaimTypeDraft:
         """Draft a ClaimType, reading its accepted definition through get.
+
+        Its rules are the short form's: one admitting own words and workspace
+        file and section citations, plus one admitting the shaped CaptureContracts
+        named in ``evidence`` (derivationally for ``derivation``). ``sources`` is
+        retired and refuses: a workspace citation needs no rule.
 
         ``canonical_form`` names the ordered transforms every literal value is
         stored and compared in; left out, a successor keeps its
@@ -3469,37 +3566,12 @@ class Cruxible:
         name = _address(predicate, RefKind.CLAIM_TYPE)
         if isinstance(predicate, ClaimTypeRef):
             self._assert_coordinate(predicate.coordinate)
-        for source in sources:
-            if isinstance(source, SourceRef):
-                self._assert_coordinate(source.coordinate)
-        source_ids = tuple(sorted({_address(item, RefKind.SOURCE) for item in sources}))
+        if sources:
+            from cruxible_client.contracts.claim_type_inputs import ClaimTypeSourcesRetired
+
+            raise ClaimTypeSourcesRetired(f"{name}: sources=")
         role_values: tuple[ClaimRoleValue, ...] = tuple(role.value for role in roles)
-        modes: tuple[tuple[Literal["derivational", "direct"], tuple[ClaimRoleValue, ...]], ...] = (
-            ("derivational", tuple(r for r in role_values if r == "derivation")),
-            ("direct", tuple(sorted({r for r in role_values if r != "derivation"}))),
-        )
-        rules = (
-            # No source: the short form's own-words rule (`claim-type propose`
-            # and `changes.field` lower through the same function), so a field
-            # drafted here admits what its writer says in its own words.
-            _short_form_rules(role_values) if not source_ids else ()
-        ) + tuple(
-            ClaimEvidenceAdmissionRule(
-                rule_id=f"source-{source_id}-{admission}",
-                claim_roles=rule_roles,
-                capture_contracts=(
-                    CaptureContractAdmission(
-                        role=CAPTURE_CONTRACT_REF_ROLE,
-                        target=foreign_source_capture_contract(source_id).identity,
-                    ),
-                ),
-                admission=admission,
-                subject_binding="exact_claim_subject",
-            )
-            for source_id in source_ids
-            for admission, rule_roles in modes
-            if rule_roles
-        )
+        rules = _short_form_rules(role_values, evidence)
         lifecycle = ArtifactLifecycle()
         # A new ClaimType replaces evidence on revision; a successor keeps what
         # its predecessor means, exactly as the daemon's lowering does.
@@ -3828,6 +3900,83 @@ class Cruxible:
                 full_coordinate=True,
             )
         )
+
+    def link(
+        self,
+        source: str,
+        *,
+        about: Sequence[str | SubjectRef] = (),
+        guides: Sequence[str | ClaimTypeRef] = (),
+        unlink: bool = False,
+        because: str | None = None,
+        proposal_name: str | None = None,
+        dry_run: bool = False,
+        accept: WriteAccept = "if_allowed",
+        at: WriteAt | _Unset = _UNSET,
+    ) -> WriteOutcome | GuidanceLinkOutcome:
+        """Link a section ``about`` Subjects (a note), or a registered page as guidance.
+
+        ``link("notes.md#Triage", about=[subject], because=...)`` links that
+        existing section about Subjects: a write (value lane), shown by
+        ``cx.backlinks(subject)``. ``link("guide.md", guides=["ClaimType:p"])``
+        links the whole registered page to a ClaimType or Procedure as its
+        review guidance (definition lane): recorded on the file's catalog entry
+        and proposed as the Document's next revision, shown by proposal review.
+        ``source`` names the file by path or catalog name. ``unlink=True``
+        removes the named links. Mismatched arguments raise
+        ``WriteRefusalError`` (``cruxible.link.*``) saying which link is which.
+        Next: ``cx.backlinks(...)``.
+        """
+
+        from cruxible_client.authoring.links import LINK_ONE_LANE, about_link_request, link_guides
+
+        if bool(about) == bool(guides):
+            raise WriteRefusalError(
+                LINK_ONE_LANE,
+                "link takes about= (a section's note) or guides= (a page's guidance), "
+                + ("not both" if about else "and got neither"),
+                repair_line='cx.link("FILE#Heading", about=[...], because=...) or '
+                'cx.link("FILE", guides=["ClaimType:NAME"])',
+            )
+        if about:
+            if because is None:
+                raise TypeError("an about= link records a note: give it because=")
+            return self._write(
+                about_link_request(
+                    source,
+                    subjects=tuple(_write_subject(item) for item in about),
+                    unlink=unlink,
+                    because=because,
+                    dry_run=dry_run,
+                    accept=write_accept(accept),
+                    at=self._write_at(at),
+                    surface="sdk",
+                ).model_copy(update={"full_coordinate": True})
+            )
+        if because is not None:
+            raise TypeError("because= goes with about=; a guides= link is a Document proposal")
+        # The context's coordinate by default, as every write; at=None opts out.
+        pinned = self._write_at(at)
+        guided = link_guides(
+            self._client,
+            self._instance_id,
+            workspace=self._workspace_root,
+            source=source,
+            guides=tuple(
+                f"ClaimType:{item.address}" if isinstance(item, ClaimTypeRef) else item
+                for item in guides
+            ),
+            unlink=unlink,
+            proposal_name=proposal_name,
+            dry_run=dry_run,
+            accept=write_accept(accept),
+            at=pinned.git_oid if isinstance(pinned, api.AcceptedCoordinate) else pinned,
+            surface="sdk",
+        )
+        landed = guided.proposal.outcome
+        if isinstance(landed, api.AuthoringLanded):
+            self._observe_read(_coordinate(landed.accepted_coordinate), expected=None)
+        return guided
 
     def backlinks(
         self,
@@ -4810,6 +4959,82 @@ class Cruxible:
 
         return Line(self, name.removeprefix("Line:"))
 
+    def runbook(self, name: str) -> Runbook:
+        """A handle on one accepted Runbook by name: preview it, or run it now.
+
+        Next: ``cx.runbook(name).preview()`` for what each step reads and writes,
+        then ``.run()``.
+        """
+
+        return Runbook(self, name.removeprefix("Runbook:"))
+
+    def whoami(self) -> api.WhoAmI:
+        """Who this connection acts as, whether it can author here, and why not.
+
+        ``can_author`` and ``authoring_refusal`` carry the code, detail and repair
+        authoring would return. Next: the refusal's repair, when there is one.
+        """
+
+        return self._client.whoami(self._instance_id)
+
+    def signer(
+        self, principal_id: str | None = None, *, key: str | Path | None = None
+    ) -> LocalEd25519ApprovalSigner:
+        """The local approval signer of one principal (default: who this connection acts as).
+
+        The key is found as the CLI and the MCP server find it: ``key``, else
+        ``CRUXIBLE_PRINCIPAL_KEY`` unless ``CRUXIBLE_PRINCIPAL_ID`` names another
+        principal, else the settings `cruxible init` or `cruxible principal add`
+        remembered for that principal on this instance, else the folder's
+        identity record when it names it. It must sit outside the workspace.
+        Nothing is read from the daemon to open it: ``approve`` checks the key
+        against the signer's registered principal in its challenge and refuses
+        one the instance does not hold, or an unknown principal, signing
+        nothing. With no key found it raises ``SigningKeyError`` naming the repair.
+
+        Next: ``cx.proposal(ID).approve(signer=cx.signer("reviewer"), reviewed=review)``.
+        """
+
+        from cruxible_client.contracts.errors import SigningKeyError
+
+        who = principal_id if principal_id is not None else self.whoami().actor_id
+        if who is None:
+            raise SigningKeyError(
+                "this connection acts as no principal, so it has no signer of its own; "
+                "repair: pass the principal, as cx.signer('reviewer')"
+            )
+        who = who.removeprefix("Principal:")
+        found = principal_key(
+            who,
+            instance_id=self._instance_id,
+            server_url=self._client.base_url,
+            server_socket=self._client.socket_path,
+            explicit=key,
+            # The context this connection was opened with, as it reads now.
+            remembered=remembered_context(path=self._context_path),
+            folder=self._workspace,
+        )
+        if found is None:
+            raise SigningKeyError(principal_key_missing(who, client="sdk"))
+        # No registry read: the key file is opened and its custody checked here,
+        # and the approval checks it against the principal record in the
+        # daemon's challenge (an unknown principal refuses there).
+        return LocalEd25519ApprovalSigner.from_key(
+            signer_id=who,
+            private_key_path=found.private_key_path,
+            forbidden_roots=() if self._workspace is None else (self._workspace,),
+        )
+
+    def kits(self) -> KitStatus:
+        """The kits installed here, their versions, providers and pending adds.
+
+        Adding or removing a kit stays a CLI step: ``cruxible kit add`` reads the
+        kit directory or registry, and ``cruxible kit status`` also checks for a
+        newer release. Next: ``cx.next()`` names a kit add that waits on review.
+        """
+
+        return self._client.kit_status(self._instance_id)
+
     def inbox(self) -> Inbox:
         """The Line inbox: what Lines sent to intelligence, and your dispositions of it.
 
@@ -5212,12 +5437,20 @@ class Cruxible:
                 )
                 assert page.backlinks is not None
                 links.extend(page.backlinks.links)
-            result = result.model_copy(
-                update={
-                    "backlinks": result.backlinks.model_copy(update={"links": tuple(links)}),
-                    "truncated": False,
-                    "next_cursor": None,
-                }
+            from cruxible_client.authoring.backlink_sections import observe_get_drift
+
+            # Every assembled section row checked against the workspace, as
+            # backlinks() checks its page.
+            result = observe_get_drift(
+                result.model_copy(
+                    update={
+                        "backlinks": result.backlinks.model_copy(update={"links": tuple(links)}),
+                        "truncated": False,
+                        "next_cursor": None,
+                    }
+                ),
+                # None (a connection without a workspace) leaves the daemon's answer.
+                self._workspace,
             )
         return result
 
@@ -5452,27 +5685,7 @@ class Cruxible:
         self._observe_read(_coordinate(result.coordinate), expected=self._read_at())
         return result
 
-    def curation_list(
-        self, *, limit: int | None = None, cursor: str | None = None
-    ) -> api.CurationListResult:
-        """Read one page of the curation queue: a pure read of what detection recorded.
-
-        Detection runs on its own on accepted generations; ``result.detection`` says
-        when it last ran and ``inactive_detectors`` which detectors cannot run here.
-        A truncated page carries ``next_cursor``; pass it back as ``cursor``.
-
-        Next: ``cx.curation_overrule(...)``, ``cx.curation_accept_fixed(...)`` or
-        ``cx.curation_suppress(...)`` on an item.
-        """
-
-        return self._client.list_curation(
-            self._instance_id,
-            access_profile=self._access_profile.model_dump(),
-            limit=limit,
-            cursor=cursor,
-        )
-
-    def curation_duplicates(
+    def duplicates(
         self, kind: str, *, limit: int | None = None, cursor: str | None = None
     ) -> DuplicatesAuditResult:
         """List possible duplicates of one kind for you to resolve; a pure, bounded read.
@@ -5488,9 +5701,7 @@ class Cruxible:
         ``canonical_form``.
         """
 
-        return self._client.curation_duplicates(
-            self._instance_id, kind=kind, limit=limit, cursor=cursor
-        )
+        return self._client.duplicates(self._instance_id, kind=kind, limit=limit, cursor=cursor)
 
     def audit(
         self,
@@ -5520,127 +5731,6 @@ class Cruxible:
         )
         self._observe_read(_coordinate(result.coordinate), expected=self._read_at())
         return result
-
-    def curation_overrule(
-        self,
-        *,
-        item_id: str,
-        expected_latest_event_digest: str,
-        reason: str,
-        attribution_refs: tuple[str, ...] = (),
-        dry_run: bool | None = None,
-        at: str | None = None,
-    ) -> api.CurationActionResult:
-        """Record, permanently, that a detector pattern does not apply here.
-
-        It cannot be undone, so it previews by default (``dry_run`` unset or
-        true appends nothing); commit with ``dry_run=False`` and ``at`` set to
-        the preview's ``coordinate.git_oid``.
-
-        Next: ``cx.curation_list()``; the pattern is never raised again.
-        """
-
-        return self._client.overrule_curation(
-            self._instance_id,
-            item_id=item_id,
-            expected_latest_event_digest=expected_latest_event_digest,
-            reason=reason,
-            attribution_refs=attribution_refs,
-            dry_run=dry_run,
-            at=at,
-        )
-
-    def curation_accept_fixed(
-        self,
-        *,
-        item_id: str,
-        expected_latest_event_digest: str,
-        reason: str,
-        accepted_proposal_id: str | None = None,
-        accepted_changeset_digest: str | None = None,
-        accepted_generation: int | None = None,
-        attribution_refs: tuple[str, ...] = (),
-        dry_run: bool | None = None,
-        at: str | None = None,
-    ) -> api.CurationActionResult:
-        """Link an item to the accepted change that fixed it.
-
-        Name the change by ``accepted_proposal_id`` (``accepted_changeset_digest``
-        pins it exactly) or by ``accepted_generation``; the daemon resolves the rest.
-
-        Next: ``cx.curation_list()``; the item is resolved.
-        """
-
-        return self._client.accept_fixed_curation(
-            self._instance_id,
-            item_id=item_id,
-            expected_latest_event_digest=expected_latest_event_digest,
-            reason=reason,
-            accepted_proposal_id=accepted_proposal_id,
-            accepted_changeset_digest=accepted_changeset_digest,
-            accepted_generation=accepted_generation,
-            attribution_refs=attribution_refs,
-            dry_run=dry_run,
-            at=at,
-        )
-
-    def curation_suppress(
-        self,
-        *,
-        item_id: str,
-        expected_latest_event_digest: str,
-        reason: str,
-        scope: Literal["item", "lineage"],
-        until_generation: int | None = None,
-        attribution_refs: tuple[str, ...] = (),
-        dry_run: bool | None = None,
-        at: str | None = None,
-    ) -> api.CurationActionResult:
-        """Hide an item (``item``) or its whole lineage (``lineage``) without resolving it.
-
-        Detection keeps running; ``until_generation`` lets the suppression lapse.
-
-        Next: ``cx.curation_unsuppress(...)`` to lift it.
-        """
-
-        return self._client.suppress_curation(
-            self._instance_id,
-            item_id=item_id,
-            expected_latest_event_digest=expected_latest_event_digest,
-            reason=reason,
-            scope=scope,
-            until_generation=until_generation,
-            attribution_refs=attribution_refs,
-            dry_run=dry_run,
-            at=at,
-        )
-
-    def curation_unsuppress(
-        self,
-        *,
-        item_id: str,
-        expected_latest_event_digest: str,
-        reason: str,
-        suppression_event_id: str | None = None,
-        attribution_refs: tuple[str, ...] = (),
-        dry_run: bool | None = None,
-        at: str | None = None,
-    ) -> api.CurationActionResult:
-        """Lift a suppression on an item; name it when the item carries more than one.
-
-        Next: ``cx.curation_list()``; what it hid is listed again.
-        """
-
-        return self._client.unsuppress_curation(
-            self._instance_id,
-            item_id=item_id,
-            expected_latest_event_digest=expected_latest_event_digest,
-            reason=reason,
-            suppression_event_id=suppression_event_id,
-            attribution_refs=attribution_refs,
-            dry_run=dry_run,
-            at=at,
-        )
 
     def _assert_coordinate(self, coordinate: AcceptedCoordinate) -> None:
         if coordinate != self.coordinate:
@@ -5987,6 +6077,49 @@ class Line:
         return ProcedureRun(cx, result)
 
 
+class Runbook:
+    """A handle on one accepted Runbook by name. Each call reaches the daemon.
+
+    ``run`` runs its steps now, in order, each Line as your manual run and
+    each action fired as ``action run`` fires it; it stops at the first step
+    that fails or sends writes to review.
+
+    Next: ``runbook.preview()``, then ``runbook.run()``.
+    """
+
+    def __init__(self, cx: Cruxible, name: str) -> None:
+        self._playbill = cx
+        self.name = name
+
+    @property
+    def ref(self) -> str:
+        """The ``get`` reference for this Runbook's card. Next: ``cx.get(runbook.ref)``."""
+
+        return f"Runbook:{self.name}"
+
+    def preview(self) -> RunbookPreview:
+        """What each step can read, write, call, settle and set off; nothing runs.
+
+        Next: ``runbook.run()``.
+        """
+        cx = self._playbill
+        return cx._client.preview_runbook(cx._instance_id, self.name)
+
+    def run(self) -> RunbookRunResult:
+        """Run the Runbook now under your authority; the result lists every step.
+
+        Needs governed write. A step that fails stops the run (later steps are
+        ``not_run``); a stop for review is not a failure.
+
+        Next: ``cx.get(runbook.ref)`` for its latest runs, or the stopped step's run.
+        """
+        cx = self._playbill
+        return cx._client.run_runbook(cx._instance_id, self.name)
+
+    def __repr__(self) -> str:
+        return f"Runbook({self.name!r})"
+
+
 class Inbox:
     """The Line inbox. A Line's post_inbox terminal posts items it could not decide.
 
@@ -6009,14 +6142,19 @@ class Inbox:
         status: api.InboxItemStatus | None = None,
         limit: int | None = None,
         cursor: str | None = None,
-    ) -> api.InboxList:
-        """One page of items, most recently posted first; follow ``next_cursor``.
+    ) -> api.InboxRows:
+        """One page of items as compact rows (id, Line, kind, title, status, seen
+        count), most recently posted first; follow ``next_cursor``.
 
-        Next: ``inbox.get(entry.item.item_id)`` to read one whole.
+        Next: ``inbox.get(row.item_id)`` to read one whole.
         """
+        from cruxible_client.contracts.line_inbox import compact_inbox_list
+
         cx = self._playbill
-        return cx._client.list_inbox(
-            cx._instance_id, line=line, status=status, limit=limit, cursor=cursor
+        return compact_inbox_list(
+            cx._client.list_inbox(
+                cx._instance_id, line=line, status=status, limit=limit, cursor=cursor
+            )
         )
 
     def get(self, item_id: str) -> api.InboxItem:

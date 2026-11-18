@@ -49,7 +49,7 @@ def generation_row(
         return OrientGeneration(
             sequence=0,
             git_oid=location.git_oid,
-            accepted_at=generation_accepted_at(instance, history, records, location),
+            proposed_at=generation_accepted_at(instance, history, records, location),
         )
     facts = history.read_generation_facts(location.sequence, records)
     accepted_at = _timestamp(facts.timestamp)
@@ -59,7 +59,7 @@ def generation_row(
     return OrientGeneration(
         sequence=location.sequence,
         git_oid=location.git_oid,
-        accepted_at=accepted_at,
+        proposed_at=accepted_at,
         changeset_digest=location.source_record_digest,
         proposal=None if admission is None else admission.proposal_id,
         proposer=location.actor_id,

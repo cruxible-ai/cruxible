@@ -1,9 +1,16 @@
 # Governance and review
 
-A separate agent session (its own principal) reviews the exact candidate; never self-approve, including
-when daemon auth is off or the local policy allows self-approval. This is an
-instruction to agents, not an auth-off isolation boundary. User authorization
-still defines what work may be proposed or executed.
+Never approve your own proposal, including when daemon auth is off or the local
+policy allows self-approval. A second agent (normally a subagent) acting as its
+own principal reviews the exact candidate and approves: `reviewer`, set up by
+`cruxible init --reviewer-key-dir DIR --require-independent-approval` or by
+`cruxible principal add`. With no second principal, set one up rather than
+self-approve. The person approves only if they asked to. A reviewer subagent
+uses the CLI with the reviewer's settings (`cruxible context use --principal
+reviewer`, or `CRUXIBLE_PRINCIPAL_ID=reviewer`), because subagents share the
+parent's MCP servers, which act as the author. This is an instruction to agents,
+not an auth-off isolation boundary. User authorization still defines what work
+may be proposed or executed.
 
 A proposal is not accepted state. Read its value changes, what each cites,
 its definitions, diagnostics and `candidate_digest` with `proposal review`; an
@@ -31,6 +38,6 @@ For teams, use authenticated credentials and separate principals: author
 governed_write, reviewer graph_write, operator admin. The reviewer owns its
 signing key. Configure the adapter's credential/tier/key directory outside the
 plugin; never ship keys or tokens. `cruxible_proposal_approve` signs with
-`CRUXIBLE_MCP_KEY_DIR` and the reviewed digest. Host initialization, credential
+the reviewer's local key (`CRUXIBLE_PRINCIPAL_KEY` or `CRUXIBLE_MCP_KEY_DIR`) and the reviewed digest. Host initialization, credential
 provisioning and changing approval policy are separately authorized operator
 work, not consequences of installing this plugin.

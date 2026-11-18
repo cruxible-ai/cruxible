@@ -90,17 +90,43 @@ KitRequires: TypeAlias = Annotated[
 
 
 def requires_missing_message(
-    kit_id: str, version: str, requirement: KitRequirement, installed: str | None
+    kit_id: str,
+    version: str,
+    requirement: KitRequirement,
+    installed: str | None,
+    *,
+    pending_proposal: str | None = None,
+    reference: str | None = None,
 ) -> str:
-    """``cruxible.kit.requires_missing``: a required kit is absent or older than required."""
+    """``cruxible.kit.requires_missing``: a required kit is absent or older than required.
+
+    ``pending_proposal``: the required kit's own add is proposed and awaits
+    approval, so approving that proposal is what installs it. ``reference``:
+    the ``kit add`` reference the instance itself vouches for (the base kit
+    this core bundles, when it meets the requirement); with none, the message
+    asks for a release's registry reference or a local build's path, since a
+    kit id and a minimum version name no release a registry is known to hold.
+    """
 
     held = "none" if installed is None else f"{requirement.kit_id} {installed}"
-    verb = "Add" if installed is None else "Upgrade"
-    return (
+    lead = (
         f"Kit {kit_id} {version} requires kit {requirement.kit_id} {requirement.min_version} "
-        f"or later; this instance holds {held}. {verb} it first, from a release or a local "
-        f"build of {requirement.kit_id} {requirement.min_version} or later: kit add '<KIT>', "
-        "where <KIT> is that release's reference or the built kit's path."
+        f"or later; this instance holds {held}."
+    )
+    if pending_proposal is not None:
+        return (
+            f"{lead} Kit {requirement.kit_id} awaits approval as proposal {pending_proposal}: "
+            f"approve it first, then add kit {kit_id} again."
+        )
+    verb = "Add" if installed is None else "Upgrade"
+    wanted = f"{requirement.kit_id} {requirement.min_version} or later"
+    if reference is None:
+        return (
+            f"{lead} {verb} it first: kit add with the registry reference of a release of "
+            f"{wanted}, or the path of a local build."
+        )
+    return (
+        f"{lead} {verb} it first: kit add {reference} (or the path of a local build of {wanted})."
     )
 
 

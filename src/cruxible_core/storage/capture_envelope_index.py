@@ -41,6 +41,9 @@ CREATE TABLE IF NOT EXISTS derivations (capture_digest TEXT PRIMARY KEY) WITHOUT
 CREATE TABLE IF NOT EXISTS derivation_inputs (
  capture_digest TEXT NOT NULL, input_digest TEXT NOT NULL,
  PRIMARY KEY(capture_digest, input_digest)) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS content_reuse (
+ content_key TEXT PRIMARY KEY, capture_digest TEXT NOT NULL, proof_digest TEXT NOT NULL
+) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS backfilled (shard TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS backfill_complete (singleton INTEGER PRIMARY KEY);
 """
@@ -57,6 +60,45 @@ def _after_fork_in_child() -> None:
 
 if hasattr(os, "register_at_fork"):
     os.register_at_fork(after_in_child=_after_fork_in_child)
+
+
+#: An envelope's fields that say where and when THIS fetch ran, never what was
+#: fetched: an identical re-fetch differs from the held Capture in these alone.
+_RUN_BOUND_FIELDS = frozenset(
+    {"run_coordinate", "producer_receipt_digest", "observed_at", "production_evidence"}
+)
+_REUSABLE_TAG = "playbill-capture-envelope-v2"
+
+
+def capture_content_key(envelope: object, *, request: str) -> str | None:
+    """What an identical re-fetch reproduces: the envelope less its run-bound fields.
+
+    The same contract, source (identity, coordinate, selector, replayability),
+    exact bytes, producer and producer binding, derivation inputs and source
+    effective time, and the exact resolved request the call executed
+    (``request``, a run-free digest of it: no envelope field carries it, and a
+    singleton output's coordinate need not name it) (ruling 1c). None for
+    anything but a v2 envelope. A digest over the remaining canonical fields:
+    the stored envelope bytes are never changed, so a key is a lookup, never a
+    new format.
+    """
+
+    from cruxible_client.contracts.canonical import Sha256Value, typed_digest
+
+    if not isinstance(envelope, dict) or envelope.get("tag") != _REUSABLE_TAG:
+        return None
+    return typed_digest(
+        Sha256Value,
+        "playbill-capture-content-key-v2",
+        {
+            "envelope": {
+                key: value
+                for key, value in envelope.items()
+                if key not in _RUN_BOUND_FIELDS and key != "tag"
+            },
+            "request": request,
+        },
+    ).tagged
 
 
 def envelope_contract(head: bytes) -> str | None:
@@ -115,6 +157,37 @@ class CaptureEnvelopeIndex:
                     [(digest, item) for item in inputs],
                 )
                 connection.execute("INSERT OR IGNORE INTO derivations VALUES (?)", (digest,))
+
+    def remember_content_key(
+        self, content_key: str, capture_digest: str, *, proofs: tuple[str, ...]
+    ) -> None:
+        """Name the Capture an identical re-fetch reuses (``capture_content_key``).
+
+        The executor names each Capture it stores new once the run journaled
+        producing it; ``proofs`` are the journal payloads its production is
+        verified from (admission, invocation completion and source records,
+        production), held space-separated. The key covers the executed
+        request, which the envelope bytes do not carry. The latest one stored
+        wins. Not rebuilt from the store's bytes: a lost row costs one new
+        Capture, never a wrong reuse.
+        """
+
+        with self._connection() as connection:
+            connection.execute(
+                "INSERT OR REPLACE INTO content_reuse VALUES (?,?,?)",
+                (content_key, capture_digest, " ".join(proofs)),
+            )
+
+    def capture_for_content_key(self, content_key: str) -> tuple[str, tuple[str, ...]] | None:
+        """The held Capture an identical re-fetch reproduces and the journal
+        payloads its production is proven from, if one was named (a candidate)."""
+
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT capture_digest, proof_digest FROM content_reuse WHERE content_key=?",
+                (content_key,),
+            ).fetchone()
+        return None if row is None else (str(row[0]), tuple(str(row[1]).split()))
 
     def _derivation_inputs(self, content: bytes) -> tuple[str, ...] | None:
         """A derived envelope's input Captures, from its manifest (stored before it).

@@ -1,4 +1,4 @@
-"""One findings kind maintains next's Claim facts and rows, evidence, predictions and curation.
+"""One findings kind maintains next's Claim facts and rows, evidence and predictions.
 
 Parts retain independent cursors and bounded work keys under one disposable
 state namespace. The daemon gives this kind one pool; distinct part keys allow
@@ -12,7 +12,6 @@ from datetime import datetime
 from typing import Any
 
 from cruxible_core.consumers.next import (
-    curation,
     evidence,
     facts,
     line_inputs,
@@ -36,7 +35,6 @@ _PARTS: dict[
     facts.ClaimFactsPart
     | evidence.EvidencePart
     | predictions.PredictionPart
-    | curation.CurationPart
     | settled_refusals.SettledRefusalsPart
     | line_upgrades.LineUpgradesPart
     | line_inputs.LineInputsPart
@@ -47,7 +45,6 @@ _PARTS: dict[
     "line_inputs": line_inputs._PART,
     "evidence": evidence._PART,
     "prediction": predictions._PART,
-    "curation": curation._PART,
     "settled_refusals": settled_refusals._PART,
     "run_failures": run_failures._PART,
 }

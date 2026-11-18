@@ -69,9 +69,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "like approve, it activates a candidate it completes unless hold is set."
     ),
     "cruxible_proposal_approve": (
-        "Use after review to approve a proposal with a local key (CRUXIBLE_MCP_KEY_DIR, with "
-        "CRUXIBLE_PRINCIPAL_ID naming who acts; else the folder owner's); it challenges, "
-        "signs and submits in one call. The approval "
+        "Use after review to approve a proposal with a local key (CRUXIBLE_PRINCIPAL_KEY or "
+        "CRUXIBLE_MCP_KEY_DIR, with CRUXIBLE_PRINCIPAL_ID naming who acts; else the folder "
+        "owner's); it challenges, signs and submits in one call. The approval "
         "that completes the candidate also activates it when your tier may; hold=true "
         "signs only. Pass the reviewed candidate_digest to bind it to what you read."
     ),
@@ -225,6 +225,12 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "(heading lists; [] preamble); cite it as kind=section evidence or by doc id. Docs "
         "are written after admission."
     ),
+    "cruxible_link": (
+        "Use to link an existing section about Subjects (source FILE#Heading, about, "
+        "because: a note, a write) or a whole registered page as a ClaimType's or "
+        "Procedure's review guidance (source FILE, guides: recorded in the file catalog "
+        "and proposed as the Document's next revision)."
+    ),
     "cruxible_backlinks": (
         "Use to find what points into one thing: ref a Subject (kind/id) for the notes "
         "about it and the workspace sections its Claims cite; a ClaimType or Procedure for "
@@ -341,14 +347,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use when a predicted Claim and its matching later observation are accepted: pass the "
         "prediction id and the observation's Claim ID."
     ),
-    "cruxible_curation_list": (
-        "Beta: detection runs only when a curation-detect Trigger is authored. "
-        "List the curation patterns detection recorded; a pure read. Each item carries the "
-        "latest_event_digest the rulings "
-        "need; detection says when it last ran, inactive_detectors which detectors cannot run. "
-        "Returns one page (default limit 25); when truncated, pass next_cursor back as cursor."
-    ),
-    "cruxible_curation_duplicates": (
+    "cruxible_duplicates": (
         "Use to find what may name one thing twice in one kind: Subjects whose ids or aliases, "
         "and values of one predicate, that meet under a broad comparison (casefold, no "
         "punctuation, the alias graph) but differ under the declared rules, and Subjects of a "
@@ -359,25 +358,6 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_audit": (
         "Rank visible Claim verification work by exact stake, weakness, and recency factors. "
         "This read records completed coverage but never recommends or executes a repair."
-    ),
-    "cruxible_curation_overrule": (
-        "Beta curation (detection only with an authored curation-detect Trigger). "
-        "Use when a detected pattern does not apply here: closes the item permanently, and the "
-        "pattern is never raised again. It cannot be undone: preview, then commit with "
-        "dry_run=false and at=<the preview's coordinate git_oid>."
-    ),
-    "cruxible_curation_accept_fixed": (
-        "Beta curation (detection only with an authored curation-detect Trigger). "
-        "Use after an accepted change fixed an item: name it by accepted_proposal_id or "
-        "accepted_generation; it must touch the item's subject or evidence."
-    ),
-    "cruxible_curation_suppress": (
-        "Beta curation (detection only with an authored curation-detect Trigger). "
-        "Hide an item (scope item) or its whole lineage (scope lineage) without resolving it."
-    ),
-    "cruxible_curation_unsuppress": (
-        "Beta curation (detection only with an authored curation-detect Trigger). "
-        "Lift a suppression on an item, so what it hid is listed again."
     ),
     "cruxible_since": ("The exact accepted ChangeSet members after a known generation."),
     "cruxible_floor_export": (

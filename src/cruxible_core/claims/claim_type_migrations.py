@@ -38,6 +38,7 @@ from cruxible_client.contracts.claims import (
 )
 from cruxible_client.contracts.codes import CurrentCode
 from cruxible_client.contracts.errors import CruxibleError, FormatError
+from cruxible_client.contracts.query.definitions import QUERY_DEFINITION_FORMATS
 from cruxible_client.contracts.semantic_delta import semantic_field_delta
 from cruxible_core.claims.artifact_references import (
     movable_references,
@@ -236,6 +237,17 @@ def resolve_claim_type_succession(
             f"{ClaimTypeMigrationError.code}: migration requires an accepted predecessor"
         )
     predecessor = parse_claim_type(predecessor_content, path=path)
+    from cruxible_client.contracts.claim_type_inputs import (
+        refuse_added_family_rules,
+        refuse_added_per_file_rules,
+    )
+
+    for refuse in (refuse_added_per_file_rules, refuse_added_family_rules):
+        refuse(
+            successor.predicate,
+            successor.evidence_admission_policy,
+            predecessor.evidence_admission_policy,
+        )
     if successor.identity != predecessor.identity:
         raise ClaimTypeMigrationError(
             f"{ClaimTypeMigrationError.code}: successor changes ClaimType identity"
@@ -466,7 +478,7 @@ def _canonical_successor_bytes(
     try:
         if supplied_content is not None:
             candidate = supplied_content
-        elif current.artifact_tag == "cruxible-query-definition-v3":
+        elif current.artifact_tag in QUERY_DEFINITION_FORMATS:
             from cruxible_client.contracts.query.definitions import (
                 QueryDefinition,
                 render_query_definition,

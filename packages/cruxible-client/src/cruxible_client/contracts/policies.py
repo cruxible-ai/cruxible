@@ -16,7 +16,7 @@ from cruxible_client.contracts.canonical import (
     canonical_bytes,
     normalize_canonical,
 )
-from cruxible_client.contracts.captures import CaptureShape
+from cruxible_client.contracts.captures import FOREIGN_SOURCE_CONTRACT_PREFIX, CaptureShape
 from cruxible_client.contracts.claim_type_structure import ClaimCardinality, ClaimRole
 from cruxible_client.contracts.content_memo import sealed_memo
 from cruxible_client.contracts.governance import governance_identifier
@@ -803,7 +803,45 @@ def resolve_claim_contenders(
     )
 
 
+#: The repair for an evidence rule that names one workspace file's own contract.
+PER_FILE_EVIDENCE_RULE_REPAIR = (
+    "this contract stands for one workspace file; a workspace file or section citation "
+    "needs no rule (it is admitted wherever own words are). For a particular kind of "
+    "source, list its shaped CaptureContract in the field's evidence: [<contract name>, ...]"
+)
+
+
+def per_file_contracts(policy: "ClaimEvidenceAdmissionPolicy") -> tuple[tuple[int, str], ...]:
+    """Each (rule index, contract name) naming one workspace file's own contract."""
+
+    return tuple(
+        (index, item.target.name)
+        for index, rule in enumerate(policy.rules)
+        for item in rule.capture_contracts
+        if item.target.name.startswith(FOREIGN_SOURCE_CONTRACT_PREFIX)
+    )
+
+
+def added_per_file_contracts(
+    policy: "ClaimEvidenceAdmissionPolicy",
+    predecessor: "ClaimEvidenceAdmissionPolicy | None",
+) -> tuple[tuple[int, str], ...]:
+    """The per-file contracts a rule names that the predecessor's rules did not.
+
+    A ClaimType that already holds such a rule stays editable without changing
+    it: only a newly named per-file contract counts.
+    """
+
+    held = (
+        set() if predecessor is None else {name for _index, name in per_file_contracts(predecessor)}
+    )
+    return tuple(item for item in per_file_contracts(policy) if item[1] not in held)
+
+
 __all__ = [
+    "PER_FILE_EVIDENCE_RULE_REPAIR",
+    "added_per_file_contracts",
+    "per_file_contracts",
     "AttestationRequirement",
     "ClaimAdmissionCandidateContext",
     "ClaimAdmissionCandidateResult",

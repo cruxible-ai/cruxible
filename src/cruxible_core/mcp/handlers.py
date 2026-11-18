@@ -35,6 +35,13 @@ from cruxible_client.authoring.folder_identity import (
     VerifiedFolderIdentity,
 )
 from cruxible_client.authoring.inputs import AuthoringInput, ClaimInput
+from cruxible_client.authoring.links import (
+    LINK_ONE_LANE,
+    GuidanceLinkOutcome,
+    about_link_request,
+    link_guides,
+)
+from cruxible_client.authoring.principal_settings import principal_key, principal_key_missing
 from cruxible_client.authoring.sdk_types import SourceSelectionError
 from cruxible_client.authoring.selectors import WorkspaceFiles
 from cruxible_client.authoring.signing import LocalEd25519ApprovalSigner
@@ -81,6 +88,7 @@ from cruxible_client.contracts.duplicates import (
     DUPLICATES_AUDIT_DEFAULT_LIMIT,
     DuplicatesAuditResult,
 )
+from cruxible_client.contracts.errors import ReviewedCandidateChanged, WriteRefusalError
 from cruxible_client.contracts.file_catalog import FileCompilationBundle
 from cruxible_client.contracts.get_reads import (
     ByteRange,
@@ -98,7 +106,11 @@ from cruxible_client.contracts.kits import (
     KitRemoveRequest,
     KitStatus,
 )
-from cruxible_client.contracts.principals import AuthoringRefusal
+from cruxible_client.contracts.principals import (
+    PRINCIPAL_ID_ENV,
+    PRINCIPAL_KEY_ENV,
+    AuthoringRefusal,
+)
 from cruxible_client.contracts.provider_installation import (
     ProviderCatalog,
     ProviderInstallRequest,
@@ -125,6 +137,7 @@ from cruxible_client.contracts.write import (
     RetireRequest,
     SectionEvidence,
     SetRequest,
+    WriteAccept,
     WriteOutcome,
     WriteRequest,
     as_write_request,
@@ -139,6 +152,7 @@ from cruxible_client.kits import (
     stage_kit_providers,
     with_automation_template,
 )
+from cruxible_client.transport.http import configured_principal_id
 from cruxible_core import __version__
 from cruxible_core.adapters.block_detach import detach_projection_pages
 from cruxible_core.claims.claim_type_inputs import (
@@ -182,6 +196,7 @@ from cruxible_core.mcp.results import (
 )
 from cruxible_core.mcp.target import configured_instance_id
 from cruxible_core.mcp.workspace import (
+    MCP_KEY_DIR_ENV,
     mcp_approval_key_dir,
     mcp_custody_forbidden_roots,
     mcp_floor_workspace_root,
@@ -413,10 +428,19 @@ def handle_playbill_provider_move(
     )
 
 
-def handle_playbill_kit_build(instance_id: str, request: KitBuildRequest) -> KitBuildResult:
-    return _daemon_call(
+def handle_playbill_kit_build(
+    instance_id: str, request: KitBuildRequest, *, files: Sequence[str] = ()
+) -> KitBuildResult:
+    """Build the release; ``files`` (paths in this adapter's workspace) are carried
+    as inert kit files, read here before the build so a bad path refuses first."""
+
+    from cruxible_client.kits import add_kit_files, read_kit_build_files
+
+    carried = read_kit_build_files(files, workspace=mcp_workspace_root()) if files else ()
+    built = _daemon_call(
         lambda client: client.build_kit(instance_id, request), operation_name="cruxible_kit_build"
     )
+    return built.model_copy(update={"bundle": add_kit_files(built.bundle, carried)})
 
 
 def handle_playbill_kit_status(instance_id: str, *, offline: bool = False) -> KitStatus:
@@ -574,6 +598,7 @@ def handle_playbill_prepare_approval(
     *,
     signer_id: str,
     include_body: bool,
+    reviewed_candidate_digest: str | None = None,
 ) -> contracts.ApprovalChallenge:
     return _daemon_call(
         lambda client: client.prepare_approval(
@@ -581,6 +606,7 @@ def handle_playbill_prepare_approval(
             proposal_id,
             signer_id=signer_id,
             include_body=include_body,
+            reviewed_candidate_digest=reviewed_candidate_digest,
         ),
         operation_name="cruxible_proposal_approve_prepare",
     )
@@ -592,6 +618,7 @@ def handle_playbill_submit_approval(
     attestation: dict[str, Any],
     *,
     hold: bool = False,
+    reviewed_candidate_digest: str | None = None,
 ) -> contracts.ProposalApprovalResult:
     public_attestation = ApprovalAttestation.model_validate(attestation)
     return _daemon_call(
@@ -600,6 +627,7 @@ def handle_playbill_submit_approval(
             proposal_id,
             attestation=public_attestation.model_dump(mode="json"),
             hold=hold,
+            reviewed_candidate_digest=reviewed_candidate_digest,
         ),
         operation_name="cruxible_proposal_approve_submit",
     )
@@ -617,33 +645,35 @@ def handle_playbill_approve(
 
     Only the public attestation leaves this process; the key's bytes and path
     never enter a result or a log line.
+
+    ``candidate_digest`` is the candidate the caller reviewed: the daemon then
+    settles that candidate or refuses, naming the proposal that took its place
+    at the head and whether its members are identical. Without it, a proposal
+    the daemon proposed again at the head with identical members is signed here.
     """
 
-    key_dir, default_signer = _approval_key_dir()
-    signer = (
-        signer_id
-        if signer_id is not None
-        else default_signer
-        if default_signer is not None
-        else _sole_approval_signer(key_dir)
-    )
-    try:
-        governance_identifier(signer, label="signer_id")
-    except ValueError as exc:
-        raise DataValidationError(f"cruxible_proposal_approve: {exc}") from exc
+    signer, private_key_path = _approval_signer_key(instance_id, signer_id)
     challenge = handle_playbill_prepare_approval(
-        instance_id, proposal_id, signer_id=signer, include_body=False
+        instance_id,
+        proposal_id,
+        signer_id=signer,
+        include_body=False,
+        reviewed_candidate_digest=candidate_digest,
     )
     statement = ApprovalStatement.model_validate(challenge.statement)
     if candidate_digest is not None and statement.payload_digest != candidate_digest:
-        raise DataValidationError(
-            f"cruxible_proposal_approve: proposal {proposal_id} now signs candidate "
-            f"{statement.payload_digest}, not the reviewed {candidate_digest}; review it again"
+        # The daemon refuses this itself; the key never signs past a challenge
+        # that is not for the reviewed candidate, whatever served it.
+        raise ReviewedCandidateChanged(
+            proposal_id,
+            reviewed_candidate_digest=candidate_digest,
+            current_proposal_id=challenge.proposal_id,
+            current_candidate_digest=statement.payload_digest,
         )
     principal = PrincipalRecord.model_validate(challenge.signer_principal)
     key_signer = LocalEd25519ApprovalSigner.open(
         signer_id=signer,
-        private_key_path=key_dir / f"{signer}.ed25519",
+        private_key_path=private_key_path,
         expected_public_key=principal.public_key,
         forbidden_roots=mcp_custody_forbidden_roots(),
     )
@@ -651,10 +681,15 @@ def handle_playbill_approve(
     # A signer registered after the proposal's base: the challenge landed it at
     # the head, and the landed proposal is the one this signature is for.
     result = handle_playbill_submit_approval(
-        instance_id, challenge.proposal_id, attestation.model_dump(mode="json"), hold=hold
+        instance_id,
+        challenge.proposal_id,
+        attestation.model_dump(mode="json"),
+        hold=hold,
+        reviewed_candidate_digest=candidate_digest,
     )
     if (
-        isinstance(result, contracts.ProposalRecompiled)
+        candidate_digest is None
+        and isinstance(result, contracts.ProposalRecompiled)
         and result.status == "pending_review"
         and result.members_identical
         and result.proposal_id is not None
@@ -675,17 +710,60 @@ def handle_playbill_approve(
     return result
 
 
-def _approval_key_dir() -> tuple[Path, str | None]:
-    """The local approval key directory and the signer it defaults to, if one.
+def _approval_signer_key(instance_id: str, signer_id: str | None) -> tuple[str, Path]:
+    """Who signs and with which local key, by the lookup the CLI and the SDK share.
 
-    ``CRUXIBLE_MCP_KEY_DIR`` when the environment names the identity; else the
-    folder record's key directory, signing as the folder's principal.
+    The signer is ``signer_id``, else the principal this server acts as on the
+    instance the call targets (the folder's when the folder is bound to that
+    instance, or ``CRUXIBLE_PRINCIPAL_ID``), else the one key in
+    ``CRUXIBLE_MCP_KEY_DIR``. Its key is ``<signer>.ed25519`` in
+    ``CRUXIBLE_MCP_KEY_DIR``, the operator's explicit directory; otherwise the
+    shared lookup decides, for the targeted instance: ``CRUXIBLE_PRINCIPAL_KEY``
+    (never when the environment names another principal), the signer's
+    remembered settings for that instance, then the folder record when it is
+    that instance's and names the signer. A folder bound to another instance
+    is no source: its same-named principal has another key.
     """
 
     folder = _folder_identity()
-    if folder is not None:
-        return folder.key_dir, folder.principal_id
-    return mcp_approval_key_dir(), None
+    key_dir = mcp_approval_key_dir() if os.environ.get(MCP_KEY_DIR_ENV) else None
+    if folder is not None and folder.identity.instance_id != instance_id:
+        folder = None
+    signer = signer_id
+    if signer is None and folder is not None:
+        signer = folder.principal_id
+    if signer is None:
+        signer = configured_principal_id()
+    if signer is None:
+        if key_dir is None:
+            raise ConfigError(
+                "cruxible_proposal_approve: this MCP server acts as no principal; pass "
+                "signer_id, or run `cruxible init` in this folder (an MCP server started "
+                f"there signs as its owner), or set {PRINCIPAL_ID_ENV} and "
+                f"{PRINCIPAL_KEY_ENV} in this server's environment (the env block of the "
+                "MCP client config), as a principal's cruxible.env sets them"
+            )
+        signer = _sole_approval_signer(key_dir)
+    try:
+        governance_identifier(signer, label="signer_id")
+    except ValueError as exc:
+        raise DataValidationError(f"cruxible_proposal_approve: {exc}") from exc
+    if key_dir is not None and (key_dir / f"{signer}.ed25519").is_file():
+        return signer, key_dir / f"{signer}.ed25519"
+    client = _get_client()
+    found = principal_key(
+        signer,
+        instance_id=instance_id,
+        server_url=client.base_url,
+        server_socket=client.socket_path,
+        # The bound folder's root (its record is .cruxible/identity.json).
+        folder=None if folder is None else folder.record_path.parent.parent,
+    )
+    if found is None:
+        raise ConfigError(
+            "cruxible_proposal_approve: " + principal_key_missing(signer, client="mcp")
+        )
+    return signer, found.private_key_path
 
 
 def _folder_identity() -> VerifiedFolderIdentity | None:
@@ -1593,11 +1671,12 @@ def handle_playbill_get(
     cursor: str | None = None,
     field: str | None = None,
 ) -> GetResult:
+    proof_full = detail == "proof_full"
     try:
         request = GetRequest.model_validate(
             {
                 "ref": ref,
-                "detail": detail,
+                "detail": "proof" if proof_full else detail,
                 "range": range,
                 "at": at,
                 "evaluation_time": evaluation_time,
@@ -1617,9 +1696,26 @@ def handle_playbill_get(
                 for error in exc.errors(include_url=False)
             ],
         ) from exc
-    return _daemon_call(
+    result = _daemon_call(
         lambda client: client.get(instance_id, request=request), operation_name="cruxible_get"
     )
+    if isinstance(result, GetResult) and result.backlinks is not None:
+        from cruxible_client.authoring.backlink_sections import observe_get_drift
+
+        # Section rows checked against the MCP workspace, as cruxible_backlinks does.
+        result = observe_get_drift(result, optional_mcp_workspace_root())
+    if (
+        isinstance(result, GetResult)
+        and result.kind == "claim"
+        and result.detail == "proof"
+        and not proof_full
+        and result.proof
+    ):
+        # S1: a Claim's proof is its verdict and cited Captures; proof_full is whole.
+        from cruxible_client.contracts.get_text import claim_proof_summary
+
+        return result.model_copy(update={"proof": claim_proof_summary(result.proof)})
+    return result
 
 
 def _playbill_query_request(
@@ -1743,6 +1839,78 @@ def handle_playbill_write(instance_id: str, **fields: Any) -> WriteOutcome:
             operation_name="cruxible_write",
         ),
     )
+
+
+def handle_playbill_link(
+    instance_id: str,
+    *,
+    source: str,
+    about: Sequence[str] = (),
+    guides: Sequence[str] = (),
+    unlink: bool = False,
+    because: str | None = None,
+    proposal_name: str | None = None,
+    dry_run: bool = False,
+    accept: WriteAccept = "if_allowed",
+    at: str | None = None,
+) -> WriteOutcome | GuidanceLinkOutcome:
+    """Link a section about Subjects (a note), or a registered page as guidance.
+
+    The same code as ``cruxible link``: the about lane is one workspace write;
+    the guides lane records the links in this workspace's catalog and proposes
+    the Document's next revision, read and compiled here.
+    """
+
+    if bool(about) == bool(guides):
+        raise WriteRefusalError(
+            LINK_ONE_LANE,
+            "link takes about (a section's note) or guides (a page's guidance), "
+            + ("not both" if about else "and got neither"),
+            repair_line="pass about with source FILE#Heading, or guides with source FILE",
+        )
+    if about:
+        if because is None:
+            raise DataValidationError("an about link records a note: give it because")
+        request = about_link_request(
+            source,
+            subjects=about,
+            unlink=unlink,
+            because=because,
+            dry_run=dry_run,
+            accept=accept,
+            at=at,
+            surface="mcp",
+        )
+        return write_workspace(
+            request,
+            workspace=mcp_workspace_root(),
+            submit=lambda observed: _daemon_call(
+                lambda client: client.write(instance_id, request=observed),
+                operation_name="cruxible_link",
+            ),
+        )
+    if because is not None:
+        raise DataValidationError(
+            "because goes with about; a guides link is a Document proposal (name it with "
+            "proposal_name)"
+        )
+    outcome = _daemon_call(
+        lambda client: link_guides(
+            client,
+            instance_id,
+            workspace=mcp_workspace_root(),
+            source=source,
+            guides=guides,
+            unlink=unlink,
+            proposal_name=proposal_name,
+            dry_run=dry_run,
+            accept=accept,
+            at=at,
+            surface="mcp",
+        ),
+        operation_name="cruxible_link",
+    )
+    return outcome.model_copy(update={"proposal": _mcp_landing(outcome.proposal)})
 
 
 def handle_playbill_query_spec(
@@ -2107,28 +2275,7 @@ def handle_playbill_next(
     return _daemon_call(remote, operation_name="cruxible_next")
 
 
-def handle_playbill_curation_list(
-    instance_id: str,
-    *,
-    access_profile: dict[str, Any] | None,
-    limit: int = contracts.CURATION_LIST_DEFAULT_LIMIT,
-    cursor: str | None = None,
-) -> contracts.CurationListResult:
-    profile = access_profile or {
-        "tag": "playbill-coverage-access-profile-v1",
-        "profile_id": "mcp-curation",
-        "permitted_access_classes": ["instance", "public"],
-        "disclose_restricted_existence": True,
-    }
-    return _daemon_call(
-        lambda client: client.list_curation(
-            instance_id, access_profile=profile, limit=limit, cursor=cursor
-        ),
-        operation_name="cruxible_curation_list",
-    )
-
-
-def handle_playbill_curation_duplicates(
+def handle_playbill_duplicates(
     instance_id: str,
     *,
     kind: str,
@@ -2136,10 +2283,8 @@ def handle_playbill_curation_duplicates(
     cursor: str | None = None,
 ) -> DuplicatesAuditResult:
     return _daemon_call(
-        lambda client: client.curation_duplicates(
-            instance_id, kind=kind, limit=limit, cursor=cursor
-        ),
-        operation_name="cruxible_curation_duplicates",
+        lambda client: client.duplicates(instance_id, kind=kind, limit=limit, cursor=cursor),
+        operation_name="cruxible_duplicates",
     )
 
 
@@ -2176,114 +2321,6 @@ def handle_playbill_audit(
             cursor=cursor,
         ),
         operation_name="cruxible_audit",
-    )
-
-
-def handle_playbill_curation_overrule(
-    instance_id: str,
-    *,
-    item_id: str,
-    expected_latest_event_digest: str,
-    reason: str,
-    attribution_refs: list[str],
-    dry_run: bool | None = None,
-    at: str | None = None,
-) -> contracts.CurationActionResult:
-    return _daemon_call(
-        lambda client: client.overrule_curation(
-            instance_id,
-            item_id=item_id,
-            expected_latest_event_digest=expected_latest_event_digest,
-            reason=reason,
-            attribution_refs=tuple(attribution_refs),
-            dry_run=dry_run,
-            at=at,
-        ),
-        operation_name="cruxible_curation_overrule",
-    )
-
-
-def handle_playbill_curation_accept_fixed(
-    instance_id: str,
-    *,
-    item_id: str,
-    expected_latest_event_digest: str,
-    reason: str,
-    accepted_proposal_id: str | None,
-    accepted_changeset_digest: str | None,
-    accepted_generation: int | None,
-    attribution_refs: list[str],
-    dry_run: bool | None = None,
-    at: str | None = None,
-) -> contracts.CurationActionResult:
-    return _daemon_call(
-        lambda client: client.accept_fixed_curation(
-            instance_id,
-            item_id=item_id,
-            expected_latest_event_digest=expected_latest_event_digest,
-            reason=reason,
-            accepted_proposal_id=accepted_proposal_id,
-            accepted_changeset_digest=accepted_changeset_digest,
-            accepted_generation=accepted_generation,
-            attribution_refs=tuple(attribution_refs),
-            dry_run=dry_run,
-            at=at,
-        ),
-        operation_name="cruxible_curation_accept_fixed",
-    )
-
-
-def handle_playbill_curation_suppress(
-    instance_id: str,
-    *,
-    item_id: str,
-    expected_latest_event_digest: str,
-    reason: str,
-    scope: Literal["item", "lineage"],
-    until_generation: int | None,
-    attribution_refs: list[str],
-    dry_run: bool | None = None,
-    at: str | None = None,
-) -> contracts.CurationActionResult:
-    return _daemon_call(
-        lambda client: client.suppress_curation(
-            instance_id,
-            item_id=item_id,
-            expected_latest_event_digest=expected_latest_event_digest,
-            reason=reason,
-            scope=scope,
-            until_generation=until_generation,
-            attribution_refs=tuple(attribution_refs),
-            dry_run=dry_run,
-            at=at,
-        ),
-        operation_name="cruxible_curation_suppress",
-    )
-
-
-def handle_playbill_curation_unsuppress(
-    instance_id: str,
-    *,
-    item_id: str,
-    expected_latest_event_digest: str,
-    reason: str,
-    suppression_event_id: str | None,
-    attribution_refs: list[str],
-    dry_run: bool | None = None,
-    at: str | None = None,
-) -> contracts.CurationActionResult:
-    return _daemon_call(
-        lambda client: client.unsuppress_curation(
-            instance_id,
-            item_id=item_id,
-            expected_latest_event_digest=expected_latest_event_digest,
-            reason=reason,
-            suppression_event_id=suppression_event_id,
-            attribution_refs=tuple(attribution_refs),
-            dry_run=dry_run,
-            at=at,
-        ),
-        operation_name="cruxible_curation_unsuppress",
     )
 
 

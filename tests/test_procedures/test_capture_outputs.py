@@ -55,6 +55,7 @@ def _paired_world(
     returned: tuple[str, ...] = ("left", "note"),
     halt_after_call: bool = False,
     note_type: str = "string",
+    query_parameter: bool = False,
 ) -> Any:
     from cruxible_client.authoring.inputs import LineInput
     from cruxible_client.contracts.captures import capture_contract_path, render_capture_contract
@@ -159,6 +160,7 @@ def _paired_world(
             reference_text=True,
             procedure="test.paired",
             input={},
+            **({"params": {"query": "string"}} if query_parameter else {}),
             output={name: result.fields[name].spelling for name in returned},
             slots={"pair": {"capability": "demo.pair@1"}},
             steps=[
@@ -166,7 +168,7 @@ def _paired_world(
                     call="doc",
                     captures={"left": "test.events-v1", "right": "test.other-v1"},
                     slot="pair",
-                    input={"query": "orders"},
+                    input={"query": "$params.query" if query_parameter else "orders"},
                 ),
                 *(
                     [
@@ -201,7 +203,7 @@ def _paired_world(
         "kind": "line",
         "name": LINE_NAME,
         "procedure_name": "test.paired",
-        "parameters": {},
+        "parameters": {"query": "orders"} if query_parameter else {},
     }
     if trigger_input is not None:
         line["trigger_input"] = trigger_input
@@ -233,10 +235,53 @@ def _journal(instance: Any, run_id: str, event_kind: str) -> list[dict[str, Any]
 
     journal, stream = journal_of(instance)
     access = BodyAccessContext(principal_id="test", can_read_body=True)
-    return [
+    payloads = [
         read_payload(instance.body_store(), stored.record.payload_digest, access=access)
         for stored in journal.select_records(stream, run_id=run_id, event_kind=event_kind)
     ]
+    if event_kind != "source_acquisition":
+        return payloads
+    return [member for payload in payloads for member in _acquisition_members(instance, payload)]
+
+
+def _consumed(instance: Any, final: Any) -> list[str]:
+    """A final record's consumed Captures: one run-free body its consumption cites."""
+
+    from cruxible_core.procedures.execution import consumed_captures
+    from cruxible_core.storage.cas import BodyAccessContext
+
+    assert final["consumption"]["v"] == 2
+    access = BodyAccessContext(principal_id="test", can_read_body=True)
+    captures = consumed_captures(
+        final["consumption"], lambda digest: instance.body_store().read(digest, access=access)
+    )
+    assert captures is not None
+    return captures
+
+
+def _acquisition_members(instance: Any, payload: Any) -> list[dict[str, Any]]:
+    """A call's one ``source_acquisition`` record, as its members (each with its node)."""
+
+    import json
+
+    from cruxible_core.storage.cas import BodyAccessContext
+
+    assert payload["tag"] == "playbill-procedure-source-acquisition-v2"
+    access = BodyAccessContext(principal_id="test", can_read_body=True)
+    members: list[dict[str, Any]] = []
+    from cruxible_core.procedures.execution import acquisition_member_chunks
+
+    chunks = acquisition_member_chunks(
+        payload, lambda digest: instance.body_store().read(digest, access=access)
+    )
+    assert chunks is not None
+    for digest in chunks:
+        body = json.loads(instance.body_store().read(digest, access=access))
+        assert body["tag"] == "playbill-acquired-members-v1"
+        assert 0 < len(body["members"]) <= 64
+        members.extend(body["members"])
+    assert len(members) == payload["count"]
+    return [{**member, "node_id": payload["node_id"]} for member in members]
 
 
 def _paired_output(*, right_observed_at: str = "2026-10-29T12:00:00Z"):  # type: ignore[no-untyped-def]
@@ -335,15 +380,20 @@ def test_a_stale_field_is_decided_by_its_own_rule_while_its_sibling_is_selected(
     assert produced["field"] == "left"
     (final,) = _journal(instance, state.run_id, "attempt_finalized")
     assert final["capture_bytes"] == len(b'{"side": "left"}')
-    assert [item.field for item in final_associations(final)] == ["left"]
+    assert [item.field for item in final_associations(instance, final)] == ["left"]
 
 
-def final_associations(final: dict[str, Any]) -> list[Any]:
+def final_associations(instance: Any, final: dict[str, Any]) -> list[Any]:
     from cruxible_client.contracts.procedures.results import ProcedureSourceCaptureAssociation
+    from cruxible_core.procedures.terminal_payloads import join_source_capture_associations
+    from cruxible_core.storage.cas import BodyAccessContext
 
+    access = BodyAccessContext(principal_id="test", can_read_body=True)
     return [
         ProcedureSourceCaptureAssociation.model_validate(item)
-        for item in final["source_capture_associations"]
+        for item in join_source_capture_associations(
+            final, lambda digest: instance.body_store().read(digest, access=access)
+        )
     ]
 
 
@@ -427,7 +477,7 @@ def test_a_call_whose_every_capture_is_omitted_still_binds_its_typed_fields(
     assert _journal(instance, state.run_id, "produced_capture") == []
     (final,) = _journal(instance, state.run_id, "attempt_finalized")
     assert final["capture_bytes"] == 0
-    assert final["source_capture_associations"] == []
+    assert final["source_capture_association_groups"] == []
 
 
 def _result_digests(tmp_path: Path, name: str, left: bytes) -> tuple[str, str, list[str]]:
@@ -452,7 +502,7 @@ def _result_digests(tmp_path: Path, name: str, left: bytes) -> tuple[str, str, l
     return (
         state.semantic_replay_key_digest,
         state.semantic_result_digest,
-        sorted(final["consumption"]["captures"]),
+        sorted(_consumed(instance, final)),
     )
 
 
@@ -539,7 +589,7 @@ def test_a_refused_runs_result_digest_commits_the_selected_siblings_fetched_byte
     assert state.terminal.code == "cruxible.acquisition.stale"
     assert _journal(instance, state.run_id, "produced_capture") == []
     (final,) = _journal(instance, state.run_id, "attempt_finalized")
-    assert final["consumption"]["captures"] == []
+    assert _consumed(instance, final) == []
     assert final["semantic_result_digest"] == state.semantic_result_digest
 
     (fetched,) = observed
@@ -599,7 +649,7 @@ def test_a_halted_runs_result_digest_commits_an_omitted_fields_fetched_bytes(
     produced = _journal(instance, state.run_id, "produced_capture")
     assert [item["field"] for item in produced] == ["left"]
     (final,) = _journal(instance, state.run_id, "attempt_finalized")
-    assert sorted(final["consumption"]["captures"]) == [produced[0]["capture_digest"]]
+    assert sorted(_consumed(instance, final)) == [produced[0]["capture_digest"]]
     assert final["semantic_result_digest"] == state.semantic_result_digest
 
     (fetched,) = observed
@@ -660,7 +710,7 @@ def test_an_out_contract_refusal_commits_the_captures_built_before_it(
         assert state.terminal.code == "contract_output_refused", state.terminal
         assert _journal(instance, state.run_id, "produced_capture") == []
         (final,) = _journal(instance, state.run_id, "attempt_finalized")
-        assert final["consumption"]["captures"] == []
+        assert _consumed(instance, final) == []
         assert final["semantic_result_digest"] == state.semantic_result_digest
         runs.append((state, final))
 
@@ -686,3 +736,218 @@ def test_an_out_contract_refusal_commits_the_captures_built_before_it(
     assert result([first[0], *changed[1:]]) != digest
     assert result([*changed[:1], first[1]]) != digest
     assert result(()) != digest
+
+
+def test_a_consumption_cites_one_run_free_body_and_v1_still_reads() -> None:
+    """Notes step 1 (J): a run's node and final records cite one consumed-Captures body."""
+
+    import hashlib
+
+    from cruxible_client.contracts.canonical import canonical_bytes
+    from cruxible_core.procedures.execution import CONSUMED_CAPTURES_BODY_V1, consumed_captures
+
+    captures = ["sha256:" + "a" * 64, "sha256:" + "b" * 64]
+    body = canonical_bytes({"tag": CONSUMED_CAPTURES_BODY_V1, "captures": captures})
+    digest = "sha256:" + hashlib.sha256(body).hexdigest()
+    store = {digest: body}
+    v2 = {"v": 2, "captures_digest": digest, "count": 2}
+    assert consumed_captures(v2, store.__getitem__) == captures
+    # A count, a tag or bytes the body does not reproduce read as unknown.
+    assert consumed_captures({**v2, "count": 3}, store.__getitem__) is None
+    assert consumed_captures(v2, {digest: body + b" "}.__getitem__) is None
+    # Records written before the body still read; an unversioned one is unknown.
+    assert consumed_captures({"v": 1, "captures": captures}, store.__getitem__) == captures
+    assert consumed_captures({"captures": captures}, store.__getitem__) is None
+
+
+def test_a_singleton_capture_is_reused_only_for_the_exact_request_it_answered(
+    tmp_path: Path,
+) -> None:
+    """F-006 (ruling 1c): the same bytes, coordinate and selector under another
+    resolved request are a new Capture; the same request again reuses it.
+
+    The fixture's coordinates name no request digest, so only the executed
+    request tells the two fetches apart.
+    """
+
+    from datetime import timedelta
+
+    from cruxible_core.service.procedures.procedure_runs import (
+        LineRunRequest,
+        service_run_playbill_line,
+    )
+    from tests.support.operation_world import NOW, Operator, actor
+    from tests.test_procedures.test_b2_operations import Clock
+
+    instance = _paired_world(tmp_path, returned=("left", "right"), query_parameter=True)
+
+    def fetch(query: str | None, minute: int) -> Any:
+        state = service_run_playbill_line(
+            instance,
+            path_identity_digest=LINE_NAME,
+            request=LineRunRequest(
+                line=LINE_NAME, parameters=None if query is None else {"query": query}
+            ),
+            actor_context=actor(),
+            caller_rung=2,
+            daemon_clock=Clock(NOW + timedelta(minutes=minute)),
+            provider_runtime_operator=Operator(Invoker(output=_paired_output())),  # type: ignore[arg-type]
+        )
+        assert state.status == "succeeded", state.terminal
+        return state.result["left"]
+
+    first = fetch(None, 0)
+    assert fetch("refunds", 1) != first
+    assert fetch(None, 2) == first
+
+
+def test_a_capture_never_recorded_produced_is_not_reused(tmp_path: Path) -> None:
+    """F-008: the first fetch built doc.right but omitted it as stale, so no run
+    recorded producing it; the next identical-byte fetch is fresh and records
+    producing its own Capture rather than reusing the unproven one."""
+
+    from datetime import timedelta
+
+    from cruxible_core.service.procedures.procedure_runs import (
+        LineRunRequest,
+        service_run_playbill_line,
+    )
+    from tests.support.operation_world import NOW, Operator, actor
+    from tests.test_procedures.test_b2_operations import Clock
+
+    instance = _paired_world(
+        tmp_path, acquisition={"doc.right": {"max_age": "PT1M", "on_stale": "omit"}}
+    )
+
+    def run(right_observed_at: str, minute: int) -> Any:
+        state = service_run_playbill_line(
+            instance,
+            path_identity_digest=LINE_NAME,
+            request=LineRunRequest(line=LINE_NAME),
+            actor_context=actor(),
+            caller_rung=2,
+            daemon_clock=Clock(NOW + timedelta(minutes=minute)),
+            provider_runtime_operator=Operator(  # type: ignore[arg-type]
+                Invoker(output=_paired_output(right_observed_at=right_observed_at))
+            ),
+        )
+        assert state.status == "succeeded", state.terminal
+        return state
+
+    first = run("2026-10-29T11:00:00Z", 0)
+    assert [item["field"] for item in _journal(instance, first.run_id, "produced_capture")] == [
+        "left"
+    ]
+    second = run("2026-10-29T12:01:00Z", 1)
+    produced = _journal(instance, second.run_id, "produced_capture")
+    assert [item["field"] for item in produced] == ["right"]  # left is reused
+
+
+def _envelope_commitment(instance: Any, capture: str) -> str:
+    from cruxible_client.contracts.captures import parse_capture_envelope
+    from cruxible_core.storage.cas import BodyAccessContext
+
+    access = BodyAccessContext(principal_id="test", can_read_body=True)
+    return parse_capture_envelope(
+        instance.body_store().read(capture, access=access)
+    ).commitment.digest
+
+
+@pytest.mark.parametrize(
+    "lost",
+    ["produced_capture", "provider_invocation_completed", "admission_bound", "request_body"],
+)
+def test_a_capture_whose_production_proof_is_lost_is_fetched_anew(
+    tmp_path: Path, lost: str
+) -> None:
+    """Review 2d #3 and 2e #5: a record the held Capture's production is
+    verified from is gone (unlogged, as a journal payload's loss can be): its
+    production, its invocation's completion (the producer receipt) or its
+    run's admission, or (review 2f #3) the run-free request body its derived
+    Source request record cites. The identical re-fetch never reuses it,
+    records producing a new Capture, and the next re-fetch reuses that."""
+
+    from datetime import timedelta
+
+    from cruxible_core.service.procedures.procedure_runs import (
+        LineRunRequest,
+        _records_for_run,
+        service_run_playbill_line,
+    )
+    from tests.support.operation_world import NOW, Operator, actor
+    from tests.test_procedures.test_b2_operations import Clock
+
+    instance = _paired_world(tmp_path)
+
+    def run(minute: int) -> Any:
+        state = service_run_playbill_line(
+            instance,
+            path_identity_digest=LINE_NAME,
+            request=LineRunRequest(line=LINE_NAME),
+            actor_context=actor(),
+            caller_rung=2,
+            daemon_clock=Clock(NOW + timedelta(minutes=minute)),
+            provider_runtime_operator=Operator(Invoker(output=_paired_output())),  # type: ignore[arg-type]
+        )
+        assert state.status == "succeeded", state.terminal
+        return state
+
+    first = run(0)
+    import json
+
+    from cruxible_core.storage.cas import BodyAccessContext
+
+    access = BodyAccessContext(principal_id="test", can_read_body=True)
+    kind = "source_request_derived" if lost == "request_body" else lost
+    proofs = [
+        stored.record.payload_digest
+        for stored in _records_for_run(instance, first.run_id)
+        if stored.record.event_kind == kind
+    ]
+    if lost == "request_body":
+        proofs = [
+            json.loads(instance.body_store().read(digest, access=access))["payload"][
+                "request_body_digest"
+            ]
+            for digest in proofs
+        ]
+    assert len(proofs) == (2 if lost == "produced_capture" else 1)
+    if lost == "request_body":
+        # An identical re-fetch stores the same run-free request body again
+        # before it looks for a held Capture, so the loss is seen at the port:
+        # every remembered Capture names the body among its proofs and, with
+        # it unreadable, is not reused.
+        from cruxible_core.service.procedures.capture_observations import (
+            InstanceCaptureObservations,
+        )
+
+        envelopes = instance.body_store().capture_envelopes
+        with envelopes._connection() as connection:  # noqa: SLF001
+            remembered = connection.execute(
+                "SELECT content_key, capture_digest, proof_digest FROM content_reuse"
+            ).fetchall()
+        assert len(remembered) == 2
+        assert all(proofs[0] in str(row[2]).split() for row in remembered)
+        port = InstanceCaptureObservations(instance)
+        commitments = {
+            str(row[1]): _envelope_commitment(instance, str(row[1])) for row in remembered
+        }
+        assert all(
+            port.held_capture(str(row[0]), commitment_digest=commitments[str(row[1])]) is not None
+            for row in remembered
+        )
+        instance.body_store()._path(proofs[0]).unlink()  # noqa: SLF001
+        from cruxible_core.service.procedures import capture_observations
+
+        capture_observations._SHOWN.clear()  # noqa: SLF001 - a fresh process
+        assert all(
+            port.held_capture(str(row[0]), commitment_digest=commitments[str(row[1])]) is None
+            for row in remembered
+        )
+        return
+    for digest in proofs:
+        instance.body_store()._path(digest).unlink()  # noqa: SLF001
+    second = run(1)
+    assert len(_journal(instance, second.run_id, "produced_capture")) == 2
+    third = run(2)
+    assert _journal(instance, third.run_id, "produced_capture") == []

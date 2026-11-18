@@ -470,3 +470,170 @@ def test_the_members_read_is_flat_in_other_runs(tmp_path: Path, traced: None) ->
     assert large["sql_statements"] == small["sql_statements"], (small, large)
     assert large["file_opens"] <= small["file_opens"], (small, large)
     assert large["sql_vm_steps"] <= small["sql_vm_steps"] * 1.10 + 200, (small, large)
+
+
+def _stored_call_acquisition(
+    instance: Any, *, node_id: str, field: str, members: int, sequence: int
+) -> _FakeStored:
+    """One call's v2 ``source_acquisition`` record: every member in one cited body."""
+
+    from cruxible_client.contracts.canonical import canonical_bytes
+
+    listed = [
+        {
+            "field": f"{field}/{index}",
+            "input_name": "doc.pages",
+            "decision": {"disposition": "selected", "selected_capture_digests": []},
+            "result": {"outcome": "acquired"},
+        }
+        for index in range(members)
+    ]
+    chunks = [
+        instance.body_store()
+        .store(
+            canonical_bytes(
+                {"tag": "playbill-acquired-members-v1", "members": listed[start : start + 64]}
+            ),
+            journal_payload=True,
+        )
+        .digest
+        for start in range(0, members, 64)
+    ]
+    root = None
+    for start in reversed(range(0, max(len(chunks), 1), 8)):
+        root = (
+            instance.body_store()
+            .store(
+                canonical_bytes(
+                    {
+                        "tag": "playbill-acquired-member-chunks-v1",
+                        "chunks": chunks[start : start + 8],
+                        **({} if root is None else {"next": root}),
+                    }
+                ),
+                journal_payload=True,
+            )
+            .digest
+        )
+    digest = _store_payload(
+        instance,
+        {
+            "tag": "playbill-procedure-source-acquisition-v2",
+            "node_id": node_id,
+            "members_digest": root,
+            "count": members,
+            "listed": members,
+            "observed": None,
+        },
+    )
+    return _FakeStored(record=_FakeRecord(sequence=sequence, payload_digest=digest))
+
+
+def test_a_calls_one_record_serves_its_members_and_flags_its_own_overflow(
+    tmp_path: Path,
+) -> None:
+    """One v2 record per call: its members body is read once and capped by the page."""
+
+    from cruxible_client.contracts.operational_reads import (
+        RUN_CARD_LIST_MEMBERS_MAX,
+        GetRunNode,
+    )
+    from cruxible_core.service.discovery.runs import _list_members
+    from tests.core_support._support import initialize_local
+
+    instance, _owner = initialize_local(tmp_path)
+    records = [
+        _stored_call_acquisition(instance, node_id="small", field="pages", members=3, sequence=1),
+        _stored_call_acquisition(
+            instance,
+            node_id="large",
+            field="pages",
+            members=RUN_CARD_LIST_MEMBERS_MAX,
+            sequence=3,
+        ),
+    ]
+    nodes = [
+        GetRunNode(node="small", kind="provider", sequence=2),
+        GetRunNode(node="large", kind="provider", sequence=4),
+    ]
+    journal = _FakeJournal(_FakeIndex(records))
+    found, truncated = _list_members(instance, journal, object(), "run-1", nodes)
+    assert [(member.field, member.index) for member in found["small"]] == [
+        ("pages", 0),
+        ("pages", 1),
+        ("pages", 2),
+    ]
+    assert len(found["large"]) == RUN_CARD_LIST_MEMBERS_MAX - 3
+    assert truncated == frozenset({"large"})
+    # One index range: the two records, no probe per member.
+    assert journal.index.calls == 1
+
+
+def test_a_card_opens_only_the_member_chunks_it_shows_however_many_were_fetched(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review P2: the card's member work is bounded by its limit, not by the run's fetches.
+
+    A call's members are stored in chunks; the card opens a chunk only when it
+    shows a member of it, and past its limit reads each later call's record
+    alone (it counts its list members) without opening a body.
+    """
+
+    from cruxible_client.contracts.operational_reads import (
+        RUN_CARD_LIST_MEMBERS_MAX,
+        GetRunNode,
+    )
+    from cruxible_core.service.discovery import runs
+    from tests.core_support._support import initialize_local
+
+    opened: list[int] = []
+    original = runs.read_payload_bytes
+
+    def counted(*args: Any, **kwargs: Any) -> Any:
+        opened.append(1)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(runs, "read_payload_bytes", counted)
+    from cruxible_core.storage.cas import ContentAddressedBodyStore
+
+    pages: list[int] = []
+    read = ContentAddressedBodyStore.read
+
+    def paged(self: Any, *args: Any, **kwargs: Any) -> Any:
+        content = read(self, *args, **kwargs)
+        pages.append(len(content))
+        return content
+
+    monkeypatch.setattr(ContentAddressedBodyStore, "read", paged)
+    reads = {}
+    roots = {}
+    for size in (RUN_CARD_LIST_MEMBERS_MAX, 50 * RUN_CARD_LIST_MEMBERS_MAX):
+        (tmp_path / str(size)).mkdir()
+        instance, _owner = initialize_local(tmp_path / str(size))
+        records = [
+            _stored_call_acquisition(
+                instance, node_id="big", field="pages", members=size, sequence=1
+            ),
+            _stored_call_acquisition(
+                instance, node_id="later", field="pages", members=size, sequence=3
+            ),
+        ]
+        nodes = [
+            GetRunNode(node="big", kind="provider", sequence=2),
+            GetRunNode(node="later", kind="provider", sequence=4),
+        ]
+        opened.clear()
+        pages.clear()
+        found, truncated = runs._list_members(  # noqa: SLF001
+            instance, _FakeJournal(_FakeIndex(records)), object(), "run-1", nodes
+        )
+        assert len(found["big"]) == RUN_CARD_LIST_MEMBERS_MAX and "later" not in found
+        assert "later" in truncated
+        reads[size] = len(opened)
+        roots[size] = sum(pages)
+    # The same chunks opened at either size: the first call's shown ones.
+    assert reads[RUN_CARD_LIST_MEMBERS_MAX] == reads[50 * RUN_CARD_LIST_MEMBERS_MAX] <= 2
+    # And the same bytes read (review 2b F-007): the chunk list is paged, so a
+    # card never parses a large call's whole list.
+    # (at most one fuller page: eight chunk digests and the next page's).
+    assert roots[50 * RUN_CARD_LIST_MEMBERS_MAX] <= roots[RUN_CARD_LIST_MEMBERS_MAX] + 1024, roots

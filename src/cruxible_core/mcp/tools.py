@@ -14,6 +14,7 @@ from typing_extensions import TypeAliasType
 
 from cruxible_client import contracts
 from cruxible_client.authoring.inputs import AuthoringInput, ClaimInput
+from cruxible_client.authoring.links import GuidanceLinkOutcome
 from cruxible_client.contracts.attestations import ApprovalAttestation
 from cruxible_client.contracts.authoring.models import (
     BlockDetachResult,
@@ -56,6 +57,7 @@ from cruxible_client.contracts.kits import (
     KitRemoveRequest,
     KitStatus,
 )
+from cruxible_client.contracts.line_inbox import compact_inbox_list
 from cruxible_client.contracts.procedures.bindings import ProcedureBindings
 from cruxible_client.contracts.provider_installation import (
     ProviderCatalog,
@@ -107,6 +109,7 @@ from cruxible_client.contracts.write import (
     WriteValue,
     _omit_empty,
 )
+from cruxible_client.kits import compact_kit_change
 from cruxible_core.claims.claim_type_inputs import ClaimTypeInputRecord
 from cruxible_core.claims.claim_type_migrations import ClaimTypeMigrationRequest
 from cruxible_core.coverage.adapter import WorkingSourceObservation
@@ -406,6 +409,13 @@ def register_tools(
 
             registered_fn = run_in_worker
         server.tool(description=tool_description(fn.__name__))(registered_fn)
+        # S6: a tool's arguments are exactly its parameters; an unknown one
+        # refuses instead of being dropped. The advertised schema is left as
+        # generated: the refusal names the real arguments, and a root
+        # ``additionalProperties`` on every tool would cost catalog tokens.
+        arg_model = getattr(server, "_tool_manager").get_tool(fn.__name__).fn_metadata.arg_model
+        arg_model.model_config["extra"] = "forbid"
+        arg_model.model_rebuild(force=True)
         registered.append(fn.__name__)
         return fn
 
@@ -453,9 +463,20 @@ def register_tools(
         instance_id: InstanceId = None,
         *,
         request: KitBuildRequest,
+        files: Annotated[
+            list[str] | None,
+            Field(
+                description=(
+                    "Plain files in this adapter's workspace (README.md, a reference page) "
+                    "the release carries for its reader, listed in the manifest with sha256."
+                )
+            ),
+        ] = None,
     ) -> KitBuildResult:
         """Export this instance's definitions under the owned prefixes as one kit release."""
-        return handlers.handle_playbill_kit_build(require_instance_id(instance_id), request)
+        return handlers.handle_playbill_kit_build(
+            require_instance_id(instance_id), request, files=tuple(files or ())
+        )
 
     @_tool
     def cruxible_kit_status(
@@ -504,11 +525,20 @@ def register_tools(
             Field(description="Lines (Line:NAME) to keep on their current provider builds."),
         ] = None,
         allow_downgrade: bool = False,
+        detail: Annotated[
+            bool,
+            Field(
+                description=(
+                    "true: list every path in plan, unchanged ones too (by default they "
+                    "are counted in unchanged)."
+                )
+            ),
+        ] = False,
         dry_run: DryRun = None,
         at: PreviewAt = None,
     ) -> KitChangeResult:
         """Install or upgrade a kit as one change set; it always proposes."""
-        return handlers.handle_playbill_kit_add(
+        result = handlers.handle_playbill_kit_add(
             require_instance_id(instance_id),
             reference=reference,
             bundle=bundle,
@@ -520,6 +550,7 @@ def register_tools(
             dry_run=dry_run,
             at=at,
         )
+        return result if detail else compact_kit_change(result)
 
     @_tool
     def cruxible_kit_remove(
@@ -643,9 +674,9 @@ def register_tools(
             str | None,
             Field(
                 description=(
-                    "Principal to sign as; its key is <signer_id>.ed25519 in the server's "
-                    "CRUXIBLE_MCP_KEY_DIR. Omit to sign as the folder's owner, or when "
-                    "that directory holds exactly one key."
+                    "Principal to sign as; its key comes from CRUXIBLE_MCP_KEY_DIR, "
+                    "CRUXIBLE_PRINCIPAL_KEY or its remembered settings. Omit to sign as "
+                    "the principal this server acts as."
                 )
             ),
         ] = None,
@@ -653,8 +684,8 @@ def register_tools(
             str | None,
             Field(
                 description=(
-                    "The candidate_digest you reviewed; the approval refuses if the "
-                    "proposal now signs a different candidate."
+                    "The candidate_digest you reviewed: sign it or refuse. Omitted: an "
+                    "identical replacement at the head is signed."
                 )
             ),
         ] = None,
@@ -1308,7 +1339,8 @@ def register_tools(
                     "CaptureContract:<name>, Contract:/Capability:<name>[@N], "
                     "an artifact path, a proposal id or prefix, or an operational reference: "
                     "Line:<name> (or the Line identity digest next names), CAP-<12+ hex> or "
-                    "Capture:<digest>, ResolutionContract:<name>, Mandate:<name>."
+                    "Capture:<digest>, ResolutionContract:<name>, Mandate:<name>, or a "
+                    "note's NOTE-<32 hex>."
                 )
             ),
         ],
@@ -1322,6 +1354,7 @@ def register_tools(
             "runs",
             "backlinks",
             "proof",
+            "proof_full",
             "body",
         ] = "summary",
         range: Annotated[
@@ -1538,6 +1571,61 @@ def register_tools(
         )
 
     @_tool
+    def cruxible_link(
+        instance_id: InstanceId = None,
+        *,
+        source: Annotated[
+            str,
+            Field(
+                description=(
+                    "FILE#Heading/Path with about (a section's note); FILE with guides "
+                    "(a registered page). FILE is a path or a catalog name."
+                )
+            ),
+        ],
+        about: Annotated[
+            list[str] | SkipJsonSchema[None],
+            Field(description="Subjects (kind/id) the section is about."),
+        ] = None,
+        guides: Annotated[
+            list[str] | SkipJsonSchema[None],
+            Field(description="ClaimType:NAME or Procedure:NAME the page is review guidance of."),
+        ] = None,
+        unlink: Annotated[bool, Field(description="Remove the named links.")] = False,
+        because: Annotated[
+            str | SkipJsonSchema[None], Field(description="With about: why the note is linked.")
+        ] = None,
+        proposal_name: Annotated[
+            str | SkipJsonSchema[None],
+            Field(description="With guides: the Document proposal's name."),
+        ] = None,
+        dry_run: Annotated[
+            bool, Field(description="Run every check up to the commit; write nothing.")
+        ] = False,
+        accept: Annotated[
+            WriteAccept,
+            Field(description="if_allowed: accept now when policy lets you; never: propose only."),
+        ] = "if_allowed",
+        at: Annotated[
+            str | SkipJsonSchema[None],
+            Field(description="The coordinate you read at; default: head."),
+        ] = None,
+    ) -> WriteOutcome | GuidanceLinkOutcome:
+        """Link a section about Subjects (a note), or a registered page as guidance."""
+        return handlers.handle_playbill_link(
+            require_instance_id(instance_id),
+            source=source,
+            about=about or (),
+            guides=guides or (),
+            unlink=unlink,
+            because=because,
+            proposal_name=proposal_name,
+            dry_run=dry_run,
+            accept=accept,
+            at=at,
+        )
+
+    @_tool
     def cruxible_query(
         instance_id: InstanceId = None,
         *,
@@ -1739,10 +1827,18 @@ def register_tools(
             int, Field(ge=1, le=contracts.INBOX_LIST_MAX_LIMIT)
         ] = contracts.INBOX_LIST_DEFAULT_LIMIT,
         cursor: str | None = None,
-    ) -> contracts.InboxList:
-        """List one page of Line inbox items; pass next_cursor back while truncated."""
-        return handlers.handle_playbill_inbox_list(
-            require_instance_id(instance_id), line=line, status=status, limit=limit, cursor=cursor
+    ) -> contracts.InboxRows:
+        """List one page of Line inbox items as compact rows (id, Line, kind, title,
+        status, seen count); cruxible_inbox_get reads one whole. Pass next_cursor
+        back while truncated."""
+        return compact_inbox_list(
+            handlers.handle_playbill_inbox_list(
+                require_instance_id(instance_id),
+                line=line,
+                status=status,
+                limit=limit,
+                cursor=cursor,
+            )
         )
 
     @_tool
@@ -1940,28 +2036,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_curation_list(
-        instance_id: InstanceId = None,
-        *,
-        access_profile: CoverageAccessProfile | None = None,
-        limit: Annotated[
-            int, Field(ge=1, le=contracts.CURATION_LIST_MAX_LIMIT)
-        ] = contracts.CURATION_LIST_DEFAULT_LIMIT,
-        cursor: str | None = None,
-    ) -> contracts.CurationListResult:
-        """List one page of the curation queue detection recorded; a pure read.
-
-        Pass next_cursor back while the result is truncated.
-        """
-        return handlers.handle_playbill_curation_list(
-            require_instance_id(instance_id),
-            access_profile=_dump(access_profile),
-            limit=limit,
-            cursor=cursor,
-        )
-
-    @_tool
-    def cruxible_curation_duplicates(
+    def cruxible_duplicates(
         instance_id: InstanceId = None,
         *,
         kind: str,
@@ -1974,7 +2049,7 @@ def register_tools(
 
         Pass next_cursor back while the result is truncated.
         """
-        return handlers.handle_playbill_curation_duplicates(
+        return handlers.handle_playbill_duplicates(
             require_instance_id(instance_id), kind=kind, limit=limit, cursor=cursor
         )
 
@@ -2006,117 +2081,6 @@ def register_tools(
             max_rows=max_rows,
             max_bytes=max_bytes,
             cursor=_dump(cursor),
-        )
-
-    @_tool
-    def cruxible_curation_overrule(
-        instance_id: InstanceId = None,
-        *,
-        item_id: str,
-        expected_latest_event_digest: str,
-        reason: str,
-        attribution_refs: list[str] | None = None,
-        dry_run: DryRun = None,
-        at: PreviewAt = None,
-    ) -> contracts.CurationActionResult:
-        """Resolve one detector-version item as mechanically inapplicable."""
-        return handlers.handle_playbill_curation_overrule(
-            require_instance_id(instance_id),
-            item_id=item_id,
-            expected_latest_event_digest=expected_latest_event_digest,
-            reason=reason,
-            attribution_refs=attribution_refs or [],
-            dry_run=dry_run,
-            at=at,
-        )
-
-    @_tool
-    def cruxible_curation_accept_fixed(
-        instance_id: InstanceId = None,
-        *,
-        item_id: str,
-        expected_latest_event_digest: str,
-        reason: str,
-        accepted_proposal_id: Annotated[
-            str | None, Field(description="The fixing proposal; or give accepted_generation.")
-        ] = None,
-        accepted_changeset_digest: Annotated[
-            str | None, Field(description="Pins accepted_proposal_id to its ChangeSet.")
-        ] = None,
-        accepted_generation: Annotated[
-            int | None, Field(ge=1, description="The fixing accepted generation.")
-        ] = None,
-        attribution_refs: list[str] | None = None,
-        dry_run: DryRun = None,
-        at: PreviewAt = None,
-    ) -> contracts.CurationActionResult:
-        """Link one curation item to the accepted change that fixed it."""
-        return handlers.handle_playbill_curation_accept_fixed(
-            require_instance_id(instance_id),
-            item_id=item_id,
-            expected_latest_event_digest=expected_latest_event_digest,
-            reason=reason,
-            accepted_proposal_id=accepted_proposal_id,
-            accepted_changeset_digest=accepted_changeset_digest,
-            accepted_generation=accepted_generation,
-            attribution_refs=attribution_refs or [],
-            dry_run=dry_run,
-            at=at,
-        )
-
-    @_tool
-    def cruxible_curation_suppress(
-        instance_id: InstanceId = None,
-        *,
-        item_id: str,
-        expected_latest_event_digest: str,
-        reason: str,
-        scope: Annotated[
-            Literal["item", "lineage"],
-            Field(description="item: this item; lineage: also its pattern's successors."),
-        ],
-        until_generation: int | None = None,
-        attribution_refs: list[str] | None = None,
-        dry_run: DryRun = None,
-        at: PreviewAt = None,
-    ) -> contracts.CurationActionResult:
-        """Hide an item or its lineage without resolving it."""
-        return handlers.handle_playbill_curation_suppress(
-            require_instance_id(instance_id),
-            item_id=item_id,
-            expected_latest_event_digest=expected_latest_event_digest,
-            reason=reason,
-            scope=scope,
-            until_generation=until_generation,
-            attribution_refs=attribution_refs or [],
-            dry_run=dry_run,
-            at=at,
-        )
-
-    @_tool
-    def cruxible_curation_unsuppress(
-        instance_id: InstanceId = None,
-        *,
-        item_id: str,
-        expected_latest_event_digest: str,
-        reason: str,
-        suppression_event_id: Annotated[
-            str | None, Field(description="Needed only when the item carries several.")
-        ] = None,
-        attribution_refs: list[str] | None = None,
-        dry_run: DryRun = None,
-        at: PreviewAt = None,
-    ) -> contracts.CurationActionResult:
-        """Lift a suppression on an item, so what it hid is listed again."""
-        return handlers.handle_playbill_curation_unsuppress(
-            require_instance_id(instance_id),
-            item_id=item_id,
-            expected_latest_event_digest=expected_latest_event_digest,
-            reason=reason,
-            suppression_event_id=suppression_event_id,
-            attribution_refs=attribution_refs or [],
-            dry_run=dry_run,
-            at=at,
         )
 
     @_tool

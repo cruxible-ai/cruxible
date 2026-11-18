@@ -292,7 +292,6 @@ def test_empty_evidence_policy_is_candidate_through_cli_and_sdk(
         cardinality=input_value.cardinality,
         permitted_roles=input_value.permitted_roles,
         referent_sensitivity=input_value.referent_sensitivity,
-        sources=(),
         admission_policy=ClaimAdmissionPolicy.model_validate(input_value.admission_policy),
         resolution_policy=ClaimResolutionPolicy.model_validate(input_value.resolution_policy),
         pins=(),
@@ -440,7 +439,7 @@ def _assess_procedure(query: str) -> ProcedureInput:
     )
 
 
-def test_sdk_cold_claim_delivers_source_lint_without_refusing_preflight(
+def test_sdk_cold_claim_citing_a_file_needs_no_source_rule_and_passes_preflight(
     playbill_http: tuple[TestClient, str, Path],
     tmp_path: Path,
 ) -> None:
@@ -464,7 +463,6 @@ def test_sdk_cold_claim_delivers_source_lint_without_refusing_preflight(
         cardinality=Cardinality.ONE,
         permitted_roles=(ClaimRole.NORMATIVE,),
         referent_sensitivity=ReferentSensitivity.IDENTITY,
-        sources=(),
         admission_policy=ClaimAdmissionPolicy(),
         resolution_policy=ClaimResolutionPolicy(
             cardinality="one",
@@ -493,10 +491,11 @@ def test_sdk_cold_claim_delivers_source_lint_without_refusing_preflight(
     ).prepare()
 
     assert not intent.refused
-    assert intent.lint is not None
-    assert intent.warnings == tuple(intent.lint.warnings)
-    assert intent.warnings[0].code == "cruxible.claim_type.anticipated_source_contract_omitted"
-    assert intent.warnings[0].source_id == "corpus.vuln-response-runbook"
+    # A file citation needs no rule (2026-11-16): the field's default rule admits
+    # workspace citations, so the lint proposes no per-source rule.
+    assert "cruxible.claim_type.anticipated_source_contract_omitted" not in {
+        warning.code for warning in intent.warnings
+    }
     assert intent._preflight is not None
     response = intent._preflight.model_dump(mode="json")
     response.pop("lint")
@@ -527,7 +526,6 @@ def test_sdk_revises_an_existing_claim_using_refs_without_dependency_drafts(
         cardinality=Cardinality.ONE,
         permitted_roles=(ClaimRole.NORMATIVE,),
         referent_sensitivity=ReferentSensitivity.IDENTITY,
-        sources=("corpus.vuln-response-runbook",),
         admission_policy=ClaimAdmissionPolicy(),
         resolution_policy=ClaimResolutionPolicy(
             cardinality="one",
@@ -872,11 +870,6 @@ def test_demo_world_beat_one_converts_corpus_through_one_sdk_program(
         cardinality=Cardinality.MANY,
         permitted_roles=(ClaimRole.NORMATIVE, ClaimRole.OBSERVATION),
         referent_sensitivity=ReferentSensitivity.IDENTITY,
-        sources=(
-            "corpus.escalation-policy",
-            "corpus.infra-inventory",
-            "corpus.vuln-response-runbook",
-        ),
         admission_policy=ClaimAdmissionPolicy(),
         resolution_policy=ClaimResolutionPolicy(
             cardinality="many",

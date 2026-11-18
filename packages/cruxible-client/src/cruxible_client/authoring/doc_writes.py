@@ -24,6 +24,7 @@ from cruxible_client.authoring.sdk_types import SourceSelectionError
 from cruxible_client.authoring.selectors import (
     FileSelector,
     catalog_file_paths,
+    catalogued_path,
     source_content_for_observation,
     workspace_files,
 )
@@ -59,6 +60,7 @@ from cruxible_client.contracts.write import (
     DocOp,
     DocOutcome,
     FileEvidence,
+    RebindChange,
     ReplaceSection,
     SectionEvidence,
     SetChange,
@@ -345,7 +347,8 @@ def _write_workspace(
     def load(
         file: str, *, name: str | None = None, editing: bool = False, citing: bool = False
     ) -> _File:
-        path = _path(workspace, file)
+        # A path or a catalog name, as every citation names a file.
+        path = _path(workspace, catalogued_path(workspace, file))
         if path in files:
             return files[path]
         matches = () if catalog is None else catalog.entries_for_path(path)
@@ -358,8 +361,7 @@ def _write_workspace(
             raise DocSectionError(
                 "file_uncatalogued",
                 "Catalogue the file before linking its existing sections.",
-                repair="Cite it as evidence in a write first: a cited workspace file is "
-                "catalogued by the write",
+                repair=f"Catalogue it first: cruxible files add {shlex.quote(file)}",
             )
         source_id = entry.name if entry else name or default_catalog_name(workspace, path)
         if entry is None and catalog is not None:
@@ -446,9 +448,11 @@ def _write_workspace(
                 evidence = SectionEvidence(
                     file=target[0], section=target[1], own_words=evidence.own_words
                 )
-            if isinstance(change, SetChange | AddChange | CreateChange) and isinstance(
-                evidence, SectionEvidence | FileEvidence
-            ):
+            # A rebind's new text is read here too, so one write re-cites every
+            # Claim an edited section drifted (and sees this write's own edits).
+            if isinstance(
+                change, SetChange | AddChange | CreateChange | RebindChange
+            ) and isinstance(evidence, SectionEvidence | FileEvidence):
                 cited = evidence.file if isinstance(evidence, SectionEvidence) else evidence.path
                 state = load(cited, citing=True)
                 if state.current is None:

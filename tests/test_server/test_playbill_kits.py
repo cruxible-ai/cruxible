@@ -63,7 +63,7 @@ from cruxible_client.contracts.query.grammar import (
 from cruxible_client.kits import read_kit_directory, write_kit_directory
 from cruxible_client.transport.http import CruxibleClient
 from cruxible_core.claims.artifact_references import REFERENCE_FIELDS
-from cruxible_core.errors import DataValidationError
+from cruxible_core.errors import DataValidationError, RequestRefusedError
 from cruxible_core.governance.keys import generate_client_principal_key
 from cruxible_core.ledger.signing import LocalEd25519ApprovalSigner
 from cruxible_core.runtime import playbill_api
@@ -1133,6 +1133,12 @@ def test_removing_a_kit_retires_its_queries_with_the_kinds_they_walk(
     publisher, consumer = worlds
     _author_pair_kinds(publisher)
     consumer.add(publisher.build("1.0.0"))
+    pair_kinds = {"acme.inv", "acme.comp", "acme.occ"}
+
+    def listed() -> set[str]:
+        return {row.kind for row in playbill_api.playbill_orient(consumer.instance_id).kinds or ()}
+
+    assert pair_kinds <= listed()
 
     preview = playbill_api.playbill_kit_remove(
         consumer.instance_id, KitRemoveRequest(kit_id="acme")
@@ -1152,6 +1158,9 @@ def test_removing_a_kit_retires_its_queries_with_the_kinds_they_walk(
     assert _query_state(consumer, "acme.sbom") == "retired"
     assert consumer.claim_type("acme.occ.inventory").lifecycle.state == "live"
     assert _installed(playbill_api.playbill_kit_status(consumer.instance_id)) == ()
+    # Orient stops listing the retired kinds, though the kept endpoint
+    # ClaimTypes still name them.
+    assert not pair_kinds & listed()
 
 
 def _record_seats(world: _World, slug: str) -> None:
@@ -1768,6 +1777,10 @@ def test_a_kit_install_and_removal_preview_by_default_and_write_nothing(
     )
     assert removal.status == "would_propose" and removal.proposal_id is None
     assert {item.action for item in removal.plan} == {"retire"}
+    # Said before it is committed: a removed kit cannot come back in this release.
+    assert removal.detail == (
+        "one-way: the definitions this removal retires cannot be added back in this release"
+    )
     assert [
         kit.kit_id for kit in _installed(playbill_api.playbill_kit_status(consumer.instance_id))
     ] == ["acme"]
@@ -2790,6 +2803,13 @@ def test_a_late_signer_on_a_kit_change_is_told_the_kits_own_command(
             consumer.instance_id, KitAddRequest(bundle=release, source="test", dry_run=False)
         )
     assert proposed.status == "proposed" and proposed.proposal_id is not None, proposed
+    # The kit door records the transition as a typed field on the admission.
+    from cruxible_core.service.proposals.proposals import _proposal_result
+
+    admitted = _proposal_result(
+        get_playbill_manager().get(consumer.instance_id), proposed.proposal_id
+    ).admission
+    assert admitted.kit_transition == change
     late_key = register_late(
         consumer.http,
         consumer.instance_id,
@@ -2819,7 +2839,337 @@ def test_a_late_signer_on_a_kit_change_is_told_the_kits_own_command(
     else:
         assert wire["repair"]["operation"] == "cruxible.kit.add", wire
         assert "adds kit acme again at the current head (kit add)" in wire["message"]
-        assert "cruxible kit add" in cli_text
-        assert "cruxible_kit_add" in mcp_text
+        # Review F-002: this kit came from a local folder (source "test"). The daemon
+        # holds its bytes, not its path, and no registry reference is invented from
+        # its id: the message names the release and the recorded folder, and the
+        # path stays the author's operand.
+        assert wire["repair"]["arguments"] == {}, wire
+        assert (
+            "kit acme 1.0.0, from the kit directory, layout or registry reference it was "
+            "added from (recorded as test)" in wire["message"]
+        )
+        assert "acme:1.0.0" not in wire["message"] + cli_text + mcp_text
+        assert "cruxible kit add '<KIT>'" in cli_text
         for text in (wire["message"], cli_text, mcp_text):
             assert "kit remove" not in text and "cruxible_kit_remove" not in text
+
+
+def test_a_stale_kit_repair_names_only_the_bundled_base_kit_the_daemon_recognizes() -> None:
+    """coldps-01, review F-002 and F-015: `kit add base` is printed only for the base kit
+    this core bundles, recognized by id and content digest. A recorded source is a
+    free-form label and is never a command: not a folder named `bundled`, not a
+    slash-bearing `--source` value, not a registry reference the daemon never resolved."""
+
+    from cruxible_client.contracts.kit_requires import KitRequirement
+    from cruxible_client.contracts.kits import KitReceipt
+    from cruxible_core.kits.base_kit import bundled_base_kit
+    from cruxible_core.service.kits import _required_kit_reference, bundled_base_reference
+    from cruxible_core.service.proposals.proposals import _kit_reference
+
+    bundled = bundled_base_kit().manifest
+    other = "sha256:" + "a" * 64
+
+    def receipt(kit_id: str, digest: str, source: str | None) -> KitReceipt:
+        return KitReceipt.model_construct(
+            kit_id=kit_id, version="1.2.3", content_digest=digest, source=source
+        )
+
+    for label in ("bundled", "anything", None):
+        assert _kit_reference(receipt("base", bundled.content_digest, label), "base") == "base"
+    # A non-base kit from a directory named `bundled`, and a kit that is only named base.
+    assert _kit_reference(receipt("acme", other, "bundled"), "acme") is None
+    assert _kit_reference(receipt("base", other, "bundled"), "base") is None
+    for label in ("acme-build", "team/acme", "registry.example/kits/acme@sha256:" + "b" * 64):
+        assert _kit_reference(receipt("acme", other, label), "acme") is None
+    assert _kit_reference(None, "base") is None
+    # The same rule where a kit add repairs itself (staged bytes missing).
+    assert bundled_base_reference("base", bundled.content_digest) == "base"
+    assert bundled_base_reference("acme", bundled.content_digest) is None
+    # A required kit: `base` only when the bundled kit meets the requirement.
+    met = KitRequirement(kit_id="base", min_version=bundled.version)
+    assert _required_kit_reference(met) == "base"
+    assert _required_kit_reference(KitRequirement(kit_id="base", min_version="999.0.0")) is None
+    assert _required_kit_reference(KitRequirement(kit_id="web", min_version="1.0.0")) is None
+
+
+def _retire(world: _World, predicate: str) -> tuple[str, ...]:
+    """Retire one ClaimType by an authored succession; returns the submit's warnings."""
+
+    current = world.claim_type(predicate)
+    retired = current.model_copy(
+        update={
+            "lifecycle": ArtifactLifecycle(
+                state="retired", predecessor_digest=claim_type_digest(current).tagged
+            )
+        }
+    )
+    draft = world.pb.changes(rationale="We no longer track plans.")
+    draft.succeed_claim_type(retired)
+    submitted = draft.prepare().submit(accept="never")
+    assert submitted._candidate_status is not None
+    assert submitted._candidate_status.proposal_id is not None
+    world.approve(submitted._candidate_status.proposal_id)
+    world.pb.refresh()
+    return submitted.kit_warnings
+
+
+def test_s7_an_upgrade_keeps_a_definition_the_consumer_retired(
+    worlds: tuple[_World, _World],
+) -> None:
+    """S7: your retirement stands across an upgrade, unasked; a dependent on it refuses."""
+
+    publisher, consumer = worlds
+    publisher.author(_claim_type(SEATS, {"type": "integer"}), _claim_type(PLAN, {"type": "string"}))
+    consumer.add(publisher.build("1.0.0"))
+    # Retiring what a kit bundles says so, naming the kit (until revive lands).
+    assert _retire(consumer, PLAN) == (
+        f"ClaimType:{PLAN} is bundled by kit acme; once retired it stays retired across "
+        "acme's upgrades",
+    )
+    publisher.succeed(SEATS, {"type": "integer", "minimum": 0})
+
+    upgraded = consumer.add(publisher.build("1.1.0"))
+
+    assert upgraded.status == "accepted", upgraded.detail
+    assert {(item.path, item.action, item.consequence) for item in upgraded.plan} == {
+        (_path(PLAN), "keep", "consumer_retired"),
+        (_path(SEATS), "replace", None),
+    }
+    assert consumer.claim_type(PLAN).lifecycle.state == "retired"
+    # It stays the kit's: the next upgrade keeps it retired again, still unasked.
+    (installed,) = _installed(playbill_api.playbill_kit_status(consumer.instance_id))
+    assert installed.version == "1.1.0" and installed.kept == ()
+    assert any(
+        item.path == _path(PLAN) and item.consequence == "consumer_retired"
+        for item in consumer.add(publisher.build("1.1.0")).plan
+    )
+
+    # A release that adds a definition depending on it refuses, naming both.
+    _author_query(publisher, _query("acme.plans", (PLAN,)))
+    with pytest.raises(RequestRefusedError) as refused:
+        consumer.add(publisher.build("1.2.0"))
+    assert refused.value.error_code == "cruxible.kit.retired_dependency"
+    assert "acme.plans" in str(refused.value) and f"ClaimType:{PLAN}" in str(refused.value)
+
+
+@pytest.mark.parametrize(
+    ("recorded", "rationale", "removal"),
+    [
+        ("remove", "Install kit acme 1.0.0.", True),  # the typed field wins over prose
+        ("add", "Remove kit acme 1.0.0.", False),
+        (None, "Remove kit acme 1.0.0.", True),  # recorded before the field: the prose
+        (None, "Upgrade kit acme from 1.0.0 to 1.1.0.", False),
+    ],
+)
+def test_a_kit_removal_is_read_from_its_recorded_transition_then_its_rationale(
+    recorded: str | None, rationale: str, removal: bool
+) -> None:
+    from types import SimpleNamespace
+
+    from cruxible_core.service.proposals.proposals import _is_kit_removal, author_repair
+
+    source = SimpleNamespace(
+        admission=SimpleNamespace(
+            actor_id="owner",
+            target_ref="refs/proposals/owner/kit-acme-0123456789abcdef",
+            rationale=rationale,
+            kit_transition=recorded,
+        )
+    )
+
+    assert _is_kit_removal(source) is removal  # type: ignore[arg-type]
+    assert author_repair(source).operation == (  # type: ignore[arg-type]
+        "cruxible.kit.remove" if removal else "cruxible.kit.add"
+    )
+
+
+def test_kit_status_drops_a_kit_add_once_its_proposal_lands(
+    strict_worlds: tuple[_World, _World],
+) -> None:
+    """B2/coldcli-02: kit status kept saying "kit add proposed" after the proposal landed."""
+
+    _publisher, consumer = strict_worlds
+    # Under independent approval creation's base kit add stopped at its proposal.
+    (base,) = playbill_api.playbill_kit_status(consumer.instance_id).resumes
+    assert base.kit_id == "base" and base.state == "proposed" and base.proposal_open
+    assert base.proposal_id is not None
+
+    consumer.approve(base.proposal_id)
+
+    status = playbill_api.playbill_kit_status(consumer.instance_id)
+    assert status.resumes == ()
+    assert [kit.kit_id for kit in status.kits] == ["base"]
+
+
+def test_re_adding_retired_definitions_refuses_once_counted_with_its_repair(
+    worlds: tuple[_World, _World],
+) -> None:
+    """sec N1: the re-add repeated one revival refusal per definition, said "you
+    retired" and printed a Proposal line. The law still refuses (a retired definition
+    is not revived in 0.5.0); the answer says it once per kind, counted, with the
+    repair, and lands nothing."""
+
+    publisher, consumer = worlds
+    publisher.author(_claim_type(SEATS, {"type": "integer"}), _claim_type(PLAN, {"type": "string"}))
+    release = publisher.build("1.0.0")
+    consumer.add(release)
+    consumer.settle(
+        playbill_api.playbill_kit_remove(
+            consumer.instance_id, KitRemoveRequest(kit_id="acme", dry_run=False)
+        )
+    )
+    before = consumer.tree()
+    expected = (
+        "Refused: cruxible.claim_type.lifecycle_invalid: A retired ClaimType cannot be revived "
+        "or revised. (2 definitions). Definitions retired here cannot be added back in this "
+        "release: add the kit on a new instance"
+    )
+
+    preview = _kit_preview(consumer, KitAddRequest(bundle=release, source="test"))
+    assert preview.status == "would_block" and preview.detail == expected
+    assert {item.consequence for item in preview.plan} == {"re_adds_retired"}
+    committed = playbill_api.playbill_kit_add(
+        consumer.instance_id, KitAddRequest(bundle=release, source="test", dry_run=False)
+    )
+
+    assert committed.status == "blocked" and committed.detail == expected
+    assert not committed.proposal_open
+    assert consumer.tree() == before
+
+
+def test_a_repeated_kit_refusal_prints_once_with_its_count() -> None:
+    """sec N1: one revival refusal per retired definition ran together on one line."""
+
+    from cruxible_client.contracts.diagnostics import CompilerDiagnostic
+    from cruxible_core.service.kits import _kit_refusal_detail
+
+    def refusal(kind: str) -> CompilerDiagnostic:
+        return CompilerDiagnostic(
+            code=f"cruxible.{kind}.revival_refused",
+            severity="error",
+            message=f"A retired {kind} cannot be revived.",
+        )
+
+    detail = _kit_refusal_detail(
+        [refusal("subject_kind")] * 10 + [refusal("trigger")], {}, removal=False
+    )
+
+    assert detail == (
+        "Refused: cruxible.subject_kind.revival_refused: A retired subject_kind cannot be "
+        "revived. (10 definitions); cruxible.trigger.revival_refused: A retired trigger "
+        "cannot be revived."
+    )
+
+
+def test_kit_status_keeps_a_kit_add_whose_proposal_awaits_readmit(
+    strict_worlds: tuple[_World, _World], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review F-009: an overlapping head change leaves the add's proposal awaiting
+    readmit; status kept only exactly-open proposals and dropped it."""
+
+    from cruxible_core.service.proposals import proposals
+
+    _publisher, consumer = strict_worlds
+    monkeypatch.setattr(
+        proposals, "proposal_inventory_status", lambda _instance, _id: "awaiting_readmit"
+    )
+
+    (base,) = playbill_api.playbill_kit_status(consumer.instance_id).resumes
+
+    assert base.kit_id == "base" and base.state == "proposed"
+    assert base.proposal_awaiting_readmit and not base.proposal_open
+
+
+def test_kit_status_carries_the_base_kit_digest_only_where_its_repair_is_printed(
+    strict_worlds: tuple[_World, _World], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Round-two F-009: a client tells the bundled base kit by id and content digest;
+    the recorded body is read only for the base kit's row awaiting readmit."""
+
+    from cruxible_core.kits.base_kit_pin import BASE_KIT_PIN
+    from cruxible_core.service.proposals import proposals
+
+    _publisher, consumer = strict_worlds
+    (open_row,) = playbill_api.playbill_kit_status(consumer.instance_id).resumes
+    assert open_row.proposal_open and open_row.content_digest is None
+    monkeypatch.setattr(
+        proposals, "proposal_inventory_status", lambda _instance, _id: "awaiting_readmit"
+    )
+    (base,) = playbill_api.playbill_kit_status(consumer.instance_id).resumes
+    assert (base.kit_id, base.content_digest) == (BASE_KIT_PIN.kit_id, BASE_KIT_PIN.content_digest)
+
+
+def test_a_removal_that_retires_nothing_promises_no_re_add(
+    worlds: tuple[_World, _World],
+) -> None:
+    """Round-four finding 1: a member retired earlier by ordinary authoring is skipped
+    by removal yet still blocks a re-add, so the preview says only `retires nothing`."""
+
+    publisher, consumer = worlds
+    publisher.author(_claim_type(SEATS, {"type": "integer"}))
+    consumer.add(publisher.build("1.0.0"))
+    seats = consumer.claim_type(SEATS)
+    consumer.author(
+        successions=(
+            seats.model_copy(
+                update={
+                    "lifecycle": ArtifactLifecycle(
+                        predecessor_digest=claim_type_digest(seats).tagged, state="retired"
+                    )
+                }
+            ),
+        )
+    )
+
+    preview = playbill_api.playbill_kit_remove(
+        consumer.instance_id, KitRemoveRequest(kit_id="acme")
+    )
+
+    assert preview.status == "would_propose"
+    assert not any(item.action == "retire" for item in preview.plan)
+    assert preview.detail == "retires nothing"
+
+
+def test_the_new_instance_repair_follows_a_refused_revival_not_a_kept_path() -> None:
+    """Round-four finding 2: a kept retired path carries re_adds_retired without being
+    written, so an unrelated refusal (a dependent Claim's incomplete closure on the
+    replaced path) must not tell the operator to use a new instance."""
+
+    from cruxible_client.contracts.diagnostics import CompilerDiagnostic
+    from cruxible_client.contracts.kits import KitPathPlan
+    from cruxible_client.contracts.semantic import SemanticAddress
+    from cruxible_core.service.kits import _refused_revival
+
+    seats, plan_path = _path(SEATS), _path(PLAN)
+
+    def refusal(code: str, path: str) -> CompilerDiagnostic:
+        return CompilerDiagnostic(
+            code=code,
+            severity="error",
+            message="refused",
+            subject=SemanticAddress.whole_artifact(path),
+        )
+
+    mixed = (
+        KitPathPlan(
+            path=seats,
+            action="keep",
+            identity=f"ClaimType:{SEATS}",
+            consequence="re_adds_retired",
+        ),
+        KitPathPlan(path=plan_path, action="replace", identity=f"ClaimType:{PLAN}"),
+    )
+    closure = refusal("cruxible.change_set.incomplete_closure", plan_path)
+    assert not _refused_revival([closure], mixed)
+    assert not _refused_revival([refusal("cruxible.claim_type.lifecycle_invalid", seats)], mixed)
+
+    revived = (
+        KitPathPlan(
+            path=seats,
+            action="replace",
+            identity=f"ClaimType:{SEATS}",
+            consequence="re_adds_retired",
+        ),
+    )
+    assert _refused_revival([refusal("cruxible.claim_type.lifecycle_invalid", seats)], revived)
+    assert not _refused_revival([closure], revived)

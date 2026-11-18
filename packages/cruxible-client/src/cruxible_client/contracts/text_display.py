@@ -54,6 +54,17 @@ def short_oid(git_oid: str) -> str:
     return git_oid[:SHORT_OID]
 
 
+def one_line_repr(result: object) -> str:
+    """An SDK result's ``repr()``: the first line of the text the CLI prints for it.
+
+    Ruling S1: a REPL echo is one short line, never a model dump; ``print()``
+    shows the whole text and ``model_dump()`` (or the result's fields) the model.
+    """
+
+    first = str(result).split("\n", 1)[0].strip()
+    return first or type(result).__name__
+
+
 def short_provider_build(name: str) -> str:
     """A provider build as text shows it: ``NAME/<64 hex>`` (or ``Provider:NAME/...``)
     as ``NAME/<12 hex>``, as coordinates show a Git OID."""
@@ -127,7 +138,7 @@ def render_orient(result: Mapping[str, Any]) -> str:
 
     lines = [
         f"Cruxible {result['instance']} generation={result['generation']} "
-        f"at {result['coordinate']['git_oid'][:12]} accepted {result['accepted_at']}"
+        f"at {result['coordinate']['git_oid'][:12]} proposed {result['proposed_at']}"
     ]
     if result.get("mirror_url"):
         lines.append(f"Ledger mirror: {result['mirror_url']}")
@@ -218,11 +229,21 @@ def render_orient(result: Mapping[str, Any]) -> str:
             )
     elif section is not None and not result[section]:
         lines.append(f"(no {section.replace('_', ' ')})")
+    if section == "lines" and result["lines"]:
+        # Fixed columns under a header: optional fields read "-", never shift cells.
+        lines.append("LINE  LIFECYCLE  PROCEDURE  AUTHORITY  TRIGGER  ENABLEMENT  DUE  WAITING")
+        for row in result["lines"]:
+            enablement = row.get("enablement") or (
+                "not enabled" if row.get("triggers_inactive") else "-"
+            )
+            lines.append(
+                f"{row['line']}  {row['lifecycle']}  {row['procedure']}  {row['authority']}  "
+                f"{row['trigger']}  {enablement}  {row.get('due', 0)}  {row.get('waiting', 0)}"
+            )
     if section in {
         "documents",
         "procedures",
         "runs",
-        "lines",
         "captures",
         "capture_contracts",
         "predictions",
@@ -295,7 +316,7 @@ def render_orient(result: Mapping[str, Any]) -> str:
         for row in result["generations"]:
             approvals = ",".join(row.get("approvals", ())) or "-"
             lines.append(
-                f"seq {row['sequence']} at {row['git_oid'][:12]}  {row['accepted_at']}  "
+                f"seq {row['sequence']} at {row['git_oid'][:12]}  proposed {row['proposed_at']}  "
                 f"by {row.get('proposer') or '-'}  approved {approvals}  "
                 f"members={row['members']}"
                 + (f"  {row['proposal']}" if row.get("proposal") else "")
@@ -358,12 +379,16 @@ def render_orient(result: Mapping[str, Any]) -> str:
                 f"  {query['name']}({params})" + (f"  {description}" if description else "")
             )
     attention = result.get("attention")
+    if result.get("attention_scope") == "head_only":
+        lines.append("attention: head only")
     if attention is not None:
         setup = attention.get("setup_items")
         lines.append(
             f"Attention: next={attention['next_items']} "
             + (f"setup={setup} " if setup else "")
             + f"open_proposals={attention['open_proposals']}"
+            # psw F4: next=0 read as an empty queue over 18 drift rows.
+            + " (workspace rows not counted: next)"
         )
         lines.extend(f"  {line}" for line in attention["top"])
         lines.extend(f"  note: {line}" for line in attention.get("notes", ()))
@@ -442,6 +467,9 @@ def change_outcome_line(
         line = f"note {where} about {about}  [{change.note}]"
     elif change.before is None:
         line = f"set {target}: {_value_text(change.after)}"
+    elif change.before == change.after and not change.already_live:
+        # The same value on new evidence: history calls this revision reobserved.
+        line = f"reobserve {target}: {_value_text(change.after)} (value unchanged)"
     else:
         line = f"set {target}: {_value_text(change.before)} -> {_value_text(change.after)}"
     details = [item for item in (change.claim,) if item]
@@ -605,13 +633,21 @@ def review_change_lines(
     return lines
 
 
-def review_definition_lines(item: ReviewDefinition) -> list[str]:
-    """One proposed definition: a heading, then its typed fields as terse rows."""
+def review_definition_lines(
+    item: ReviewDefinition, *, file_paths: Mapping[str, str] | None = None
+) -> list[str]:
+    """One proposed definition: a heading, then its typed fields as terse rows.
+
+    ``file_paths`` (the caller's workspace catalog) names a note's file by its path.
+    """
 
     from cruxible_client.contracts.mandate_scope import MANDATE_CHANGE_KIND_ORDER
     from cruxible_client.contracts.proposal_summary import (
+        ReviewClaimTypeDefinition,
+        ReviewDocumentDefinition,
         ReviewLineDefinition,
         ReviewMandateDefinition,
+        ReviewNoteDefinition,
         ReviewRunbookDefinition,
         ReviewTriggerDefinition,
     )
@@ -666,6 +702,25 @@ def review_definition_lines(item: ReviewDefinition) -> list[str]:
     elif isinstance(detail, ReviewTriggerDefinition):
         rows.append(("schedule", detail.schedule))
         rows.append(("target", _public_name(detail.target)))
+    elif isinstance(detail, ReviewClaimTypeDefinition):
+        rows.append(("value", detail.value))
+        rows.append(("cardinality", detail.cardinality))
+        rows.append(("kinds", ", ".join(detail.subject_kinds)))
+        rows.append(("roles", ", ".join(detail.roles)))
+        rows.append(("evidence", detail.evidence_requirement))
+        if detail.evidence:
+            rows.append(("admits", ", ".join(detail.evidence)))
+        if detail.description is not None:
+            rows.append(("description", _summary_value_text(detail.description)))
+    elif isinstance(detail, ReviewDocumentDefinition):
+        rows.append(("title", detail.title))
+        rows.extend((link.relation, _public_name(link.target)) for link in detail.links)
+        if not detail.links:
+            rows.append(("links", "none"))
+    elif isinstance(detail, ReviewNoteDefinition):
+        section = "/".join(detail.section)
+        rows.append(("section", f"{file_shown(detail.file, file_paths)}#{section}"))
+        rows.extend(("about", subject) for subject in detail.about)
     if rows:
         lines.extend(_table([(label, printable(value)) for label, value in rows], "    "))
     if isinstance(detail, ReviewMandateDefinition) and detail.scope:
@@ -840,7 +895,7 @@ def render_review_summary(
             else f"Definitions ({review.definition_count}; showing {shown}):"
         )
         for definition in review.definitions:
-            lines.extend(review_definition_lines(definition))
+            lines.extend(review_definition_lines(definition, file_paths=file_paths))
         if review.definitions_next is not None:
             lines.append(f"More definitions: {run}--definitions-from {review.definitions_next}")
     if review.item_reason_count:
@@ -872,7 +927,10 @@ def landing_lines(outcome: AuthoringLanded | AuthoringProposed | AuthoringRefuse
     """Whether an authored change landed, or why it stopped and what to run."""
 
     if outcome.status == "landed":
-        return [f"landed: accepted at {short_oid(outcome.accepted_coordinate.git_oid)}"]
+        at = short_oid(outcome.accepted_coordinate.git_oid)
+        if outcome.unchanged:
+            return [f"unchanged: identical to accepted state at {at}; nothing proposed"]
+        return [f"landed: accepted at {at}"]
     lines = [outcome.message]
     if outcome.next:
         lines.append(f"next: {outcome.next}")
@@ -1210,4 +1268,432 @@ def next_lines(
         lines.append("Unobserved: " + "; ".join(unobserved))
     if next_cursor is not None:
         lines.append(f"Showing {len(items)} of {total_items} rows. Next: --cursor {next_cursor}")
+    return lines
+
+
+# -- identity, kits, proposals, Lines, the inbox and Runbooks ------------------
+#
+# The CLI prints the inbox, Line enablement, Runbook and proposal-list lines
+# below; the SDK's ``print()`` of the same result shows them, and its
+# ``repr()`` is their first line. Whoami, kit status and approval receipts get
+# a short text here for the SDK (S1: never a model dump).
+
+
+def whoami_lines(result: Any) -> list[str]:
+    """Who a connection acts as, its tier, its principal and whether it can author."""
+
+    source = {
+        "runtime_credential": f"credential {result.credential_label}",
+        "unbound_credential": f"credential {result.credential_label}, bound to no principal",
+        "principal_claim": "principal setting",
+        "local_operator": "local operator",
+    }[result.actor_id_source]
+    trust = "" if result.authenticated else "; unauthenticated"
+    lines = [
+        f"actor: {result.actor_id or 'none'} ({source}{trust})",
+        f"mode: {result.credential_permission_mode}; principal "
+        f"{result.principal_registration_status or 'none'}; principals "
+        f"{', '.join(result.active_principal_ids) or 'none'}",
+    ]
+    refusal = result.authoring_refusal
+    if refusal is None:
+        lines.append("can author: yes")
+    else:
+        lines.extend((f"can author: no ({refusal.code})", f"  why: {printable(refusal.detail)}"))
+    lines.append(f"coordinate: {short_oid(result.coordinate.git_oid)}")
+    return lines
+
+
+def kit_status_lines(result: Any) -> list[str]:
+    """Installed kits with their providers, and kit adds still under way."""
+
+    if not result.kits and not result.resumes:
+        return ["No kits installed."]
+    lines = ["kits: " + (", ".join(f"{kit.kit_id} {kit.version}" for kit in result.kits) or "none")]
+    for resume in result.resumes:
+        line = f"{resume.kit_id} {resume.version}: kit add {resume.state}"
+        if resume.waiting_on:
+            line += f"; waiting on provider install {', '.join(resume.waiting_on)}"
+        if resume.proposal_id is not None:
+            line += f"; proposal {resume.proposal_id}"
+        lines.append(line)
+    for kit in result.kits:
+        lines.append(f"{kit.kit_id} {kit.version} content {kit.content_digest}")
+        for provider in kit.providers:
+            lines.append(
+                f"  provider {provider.provider_id} ({provider.package} {provider.version}): "
+                f"{provider.state}"
+            )
+        if kit.drifted:
+            lines.append(f"  edited locally: {len(kit.drifted)} paths")
+    return lines
+
+
+def _activation_line(receipt: Any) -> str:
+    where = (
+        "lost the race (accepted main moved)"
+        if receipt.status == "lost_cas"
+        else f"accepted at {short_oid(receipt.accepted_coordinate.git_oid)}"
+        if receipt.accepted_coordinate is not None
+        else receipt.status
+    )
+    return f"activated {receipt.proposal_id} by {receipt.activated_by}: {where}"
+
+
+def approval_result_lines(result: Any) -> list[str]:
+    """An approval, activation or recompilation receipt: what was signed and what landed.
+
+    ``by`` is the principal whose key signed; ``sent by`` the connection that
+    submitted it, which is also who activated in the same call.
+    """
+
+    tag = result.tag
+    if tag == "playbill-activation-receipt-v1":
+        lines = [_activation_line(result)]
+    elif tag == "cruxible-proposal-recompiled-v1":
+        if result.status == "already_live":
+            return [f"{result.source_proposal_id}: already live at the head; nothing to review"]
+        same = "same members" if result.members_identical else "members changed"
+        lines = [
+            f"{result.source_proposal_id} recompiled as {result.proposal_id} ({same}); "
+            f"not signed: {result.status.replace('_', ' ')}"
+        ]
+    else:
+        sent = (
+            "" if result.submitted_by == result.signer_id else f" (sent by {result.submitted_by})"
+        )
+        lines = [f"approved {result.proposal_id} by {result.signer_id}{sent}"]
+        if result.activation is not None:
+            lines.append(_activation_line(result.activation))
+        elif result.not_activated is not None:
+            waiting = ""
+            if result.not_activated == "approvals_remaining":
+                parts = [f"{result.approvals_remaining} remaining"]
+                for label, names in (
+                    ("required", result.required_signers),
+                    ("eligible", result.eligible_signers),
+                ):
+                    if names:
+                        parts.append(f"{label} {', '.join(names)}")
+                waiting = f" ({'; '.join(parts)})"
+            lines.append(f"not activated: {result.not_activated.replace('_', ' ')}{waiting}")
+    if getattr(result, "readmits", None):
+        lines.append(f"readmits {result.readmits}")
+    return lines
+
+
+def proposal_list_lines(result: Any) -> list[str]:
+    """One page of proposals, one row each, then the coordinate and the next page."""
+
+    lines = ["STATUS  TERMINAL_REASON  PROPOSAL_ID  TARGET_REF  COORDINATE_TIME"]
+    for entry in result.entries:
+        terminal = ",".join(entry.incomplete_reasons) or entry.terminal_reason or "-"
+        lines.append(
+            f"{entry.status}  {terminal}  {entry.proposal_id}  "
+            f"{entry.target_ref or '-'}  {entry.admitted_at or '-'}"
+        )
+        if entry.superseded_by is not None:
+            lines.append(f"  superseded_by: {entry.superseded_by}")
+        if entry.closed_reason is not None:
+            # Who closed it, when, and why; `get PROPOSAL_ID` has the reason whole.
+            reason = printable(entry.closed_reason)
+            cut = reason if len(reason) <= 200 else reason[:199] + "…"
+            lines.append(
+                f"  {entry.terminal_reason} by {entry.closed_by} at {entry.closed_at}: {cut}"
+            )
+        if entry.stale_paths:
+            from cruxible_client.contracts.get_text import definition_path_name
+
+            # Public kind-qualified names; --json keeps the exact paths.
+            shown = ", ".join(definition_path_name(path) for path in entry.stale_paths[:5])
+            more = len(entry.stale_paths) - 5
+            lines.append(
+                f"  changed since its base: {shown}" + (f" and {more} more" if more > 0 else "")
+            )
+    lines.append(f"Coordinate: {result.coordinate.git_oid}")
+    return lines
+
+
+def proposal_list_sdk_lines(result: Any) -> list[str]:
+    """The page as the SDK prints it: the CLI's rows, then the SDK call for the next page."""
+
+    lines = proposal_list_lines(result)
+    if result.next_cursor is not None:
+        status = "" if result.status_filter is None else f"status={result.status_filter!r}, "
+        lines.append(f"Truncated. Next: cx.proposals({status}cursor={result.next_cursor!r})")
+    return lines
+
+
+def proposal_list_summary(result: Any) -> str:
+    """A proposal page on one line: how many, by status, and whether more follow."""
+
+    counts: dict[str, int] = {}
+    for entry in result.entries:
+        counts[entry.status] = counts.get(entry.status, 0) + 1
+    by = ", ".join(f"{status} {count}" for status, count in sorted(counts.items()))
+    more = "; more: next_cursor" if result.next_cursor else ""
+    count = len(result.entries)
+    return f"{count} proposal{'' if count == 1 else 's'}" + (f" ({by})" if by else "") + more
+
+
+def line_enablement_lines(result: Any) -> list[str]:
+    """A Line's enablement after enable or disable: state, who, through when, pending."""
+
+    state = "enabled" if result.state == "enabled" else f"stopped ({result.stop_reason})"
+    unchanged = {
+        "already_enabled": "already enabled",
+        "already_disabled": "already disabled",
+        "would_enable": "preview: would enable",
+        "would_reenable": "preview: would re-enable",
+        "would_disable": "preview: would disable",
+    }
+    note = unchanged.get(result.outcome or "")
+    lines = [
+        f"{result.line}: {state}" + (f" ({note}; nothing changed)" if note else ""),
+        f"Enabled by: {result.enabled_by.label} at {result.enabled_at.isoformat()}",
+        f"Matched through: {result.evaluated_until.isoformat()}",
+        f"Pending: {result.pending_automatic} automatic, "
+        f"{result.pending_explicit} awaiting explicit dispatch",
+    ]
+    if result.detail:
+        lines.append(result.detail)
+    return lines
+
+
+def inbox_row(envelope: Any) -> str:
+    """One inbox item: status, short id, Line, how often seen, when last posted."""
+
+    from cruxible_client.contracts.temporal import format_datetime
+
+    seen = f"x{envelope.occurrences}" if envelope.occurrences > 1 else "-"
+    # A decided item that recurred keeps its decision; say how often it was seen since.
+    prior = (
+        f" (+{envelope.recurred_since_disposition} since)"
+        if envelope.status != "unread" and envelope.recurred_since_disposition
+        else ""
+    )
+    return (
+        f"{envelope.status}{prior}  {envelope.item_id[:16]}  {envelope.line}  {seen}  "
+        f"{format_datetime(envelope.last_sighting.posted_at)}"
+    )
+
+
+def inbox_disposition_line(result: Any) -> str:
+    """An ack, dismiss or link: the item's row, and whether this call changed it."""
+
+    return inbox_row(result.item) + ("" if result.recorded else "  (unchanged)")
+
+
+def inbox_item_lines(result: Any) -> list[str]:
+    """One inbox item whole: envelope, sightings, latest dispositions, then the payload."""
+
+    import json
+
+    from cruxible_client.contracts.temporal import format_datetime
+
+    envelope = result.item
+    lines = [
+        inbox_row(envelope),
+        f"Item: {envelope.item_id}",
+        f"Procedure: {envelope.procedure} node {envelope.node_id}",
+        f"Seen {envelope.occurrences} time(s)",
+    ]
+    for label, sighting in (
+        ("First", envelope.first_sighting),
+        *(("Recent", item) for item in envelope.recent_sightings),
+    ):
+        lines.append(
+            f"{label}: {sighting.run_id} at {format_datetime(sighting.posted_at)} captures "
+            f"{', '.join(sighting.source_capture_digests) or '-'}"
+        )
+    if envelope.disposition_count > len(result.recent_dispositions):
+        lines.append(
+            f"Dispositions: latest {len(result.recent_dispositions)} of "
+            f"{envelope.disposition_count}"
+        )
+    for disposition in result.recent_dispositions:
+        detail = getattr(disposition, "reason", None) or (
+            disposition.target.model_dump(mode="json") if hasattr(disposition, "target") else ""
+        )
+        lines.append(
+            f"Disposition: {disposition.disposition} by {disposition.actor_id} at "
+            f"{format_datetime(disposition.decided_at)} {detail}".rstrip()
+        )
+    lines.extend(json.dumps(result.payload, indent=2, sort_keys=True).splitlines())
+    return lines
+
+
+def runbook_target_text(target: Any) -> str:
+    """A Runbook step's target: ``Line:NAME`` or ``action:NAME``."""
+
+    return f"Line:{target.line.target.name}" if target.kind == "line" else f"action:{target.action}"
+
+
+def inbox_counts_text(counts: Any) -> str:
+    """``inbox 0 new, 100 seen again``: new items apart from re-sightings, when known."""
+
+    new, again = counts.inbox_new, counts.inbox_seen_again
+    if counts.inbox is None:
+        text = "inbox ?"
+    elif counts.inbox == 0 or new is None or again is None:
+        text = f"inbox {counts.inbox}"
+    else:
+        text = f"inbox {new} new" + (f", {again} seen again" if again else "")
+    return text + (f", {counts.inbox_unposted} over the cap" if counts.inbox_unposted else "")
+
+
+def run_counts_text(counts: Any) -> str:
+    """A run's counts on one line; incompleteness and refusals named."""
+
+    parts = [
+        f"written {counts.written} (settled {counts.settled}, proposed {counts.proposed})",
+        f"unchanged {counts.unchanged}",
+    ]
+    if counts.retired:
+        parts.append(f"retired {counts.retired}")
+    refused = f"refused {counts.refused}"
+    if counts.top_refusals:
+        refused += " (" + ", ".join(f"{i.code} {i.count}" for i in counts.top_refusals) + ")"
+    parts.append(refused)
+    parts.append(inbox_counts_text(counts))
+    if not counts.complete:
+        reasons = ", ".join(f"{r.node} {r.kind}" for r in counts.incomplete_reasons)
+        parts.append("INCOMPLETE" + (f" ({reasons})" if reasons else ""))
+    return "; ".join(parts)
+
+
+def runbook_run_lines(result: Any) -> list[str]:
+    """A Runbook run: how it ended, then each step's status, handles and counts."""
+
+    stopped = (
+        f"stopped at step {result.stopped_at_step} ({result.stop_reason})"
+        if result.status == "stopped"
+        else "completed"
+    )
+    if result.attention_steps:
+        listed = ", ".join(str(item) for item in result.attention_steps)
+        stopped += (
+            f"; needs attention: step{'s' if len(result.attention_steps) > 1 else ''} {listed}"
+        )
+    lines = [f"Runbook {result.runbook}: {stopped}  [{result.run_id}]"]
+    for step in result.steps:
+        extra = [
+            *([step.run_id] if step.run_id else []),
+            *(f"proposal {item}" for item in step.proposal_ids),
+            *([f"event {step.event_id}"] if step.event_id is not None else []),
+            *([step.code] if step.code else []),
+        ]
+        lines.append(
+            f"  {step.step:>2}  {step.status:<11} {runbook_target_text(step.target)}"
+            + (f"  ({', '.join(extra)})" if extra else "")
+        )
+        if step.counts is not None:
+            mark = "!" if step.counts.needs_attention else " "
+            lines.append(f"    {mark} {run_counts_text(step.counts)}")
+    return lines
+
+
+def _byte_size_text(size: int) -> str:
+    """``1 MiB``, ``64 KiB``, ``300 bytes``: a byte count in the largest exact unit."""
+
+    for unit, scale in (("GiB", 1 << 30), ("MiB", 1 << 20), ("KiB", 1 << 10)):
+        if size >= scale and size % scale == 0:
+            return f"{size // scale} {unit}"
+    return f"{size} bytes"
+
+
+_RUNBOOK_INPUT_NOUNS = {
+    "workspace_file": "file",
+    "workspace_glob": "files",
+    "fetch": "fetch",
+    "trigger_capture": "capture",
+}
+
+
+def _runbook_input_lines(item: Any) -> list[str]:
+    """One step input: what, where, its format and limits, presence; its description as written."""
+
+    where = item.location
+    if item.kind == "trigger_capture":
+        where = f"{item.capture_contract} (handed over by its Trigger)"
+    elif where is None:
+        where = "(set by the run)"
+    facts = [item.format] if item.format else []
+    limits = item.limits
+    if limits.max_files is not None:
+        facts.append(f"at most {limits.max_files} files")
+    if limits.max_bytes is not None:
+        each = " each" if limits.max_files is not None else ""
+        # coldcli-15: the budget is the CaptureContract's; a fetch's own
+        # max_bytes (the Line parameter) is a separate, request-side limit.
+        facts.append(f"at most {_byte_size_text(limits.max_bytes)}{each} per its CaptureContract")
+    if limits.request_max_bytes is not None and limits.request_max_bytes != limits.max_bytes:
+        facts.append(f"request max_bytes {_byte_size_text(limits.request_max_bytes)}")
+    if item.parameter is not None:
+        facts.append(f"parameter {item.parameter}")
+    text = f"needs  {_RUNBOOK_INPUT_NOUNS[item.kind]} {where}"
+    if facts:
+        text += f" ({', '.join(facts)})"
+    if item.state is not None:
+        text += f": {item.state}" + (f" ({item.refused})" if item.refused else "")
+    lines = [text]
+    if item.origins is not None:
+        lines.append(f"  origins {', '.join(item.origins)}")
+    if item.description is not None:
+        lines.append(f"  {item.description}")
+    return lines
+
+
+def runbook_preview_lines(preview: Any) -> list[str]:
+    """A Runbook's static preview: what each step reads, writes, calls, needs and settles."""
+
+    lines = [
+        f"Runbook {preview.runbook} "
+        "(preview: definitions, and whether each workspace file is there; nothing ran)"
+    ]
+    for step in preview.steps:
+        head = f"  {step.step:>2}  {runbook_target_text(step.target)}"
+        if step.unavailable:
+            lines.append(head + "  unavailable: the run would stop here")
+            continue
+        if step.action_effect is not None:
+            lines.append(head + f"  effect {step.action_effect}")
+            continue
+        lines.append(head + (f"  {step.procedure}" if step.procedure else ""))
+        for read in step.reads:
+            source = f"query {read.query}" if read.query else "claims"
+            late = " (late)" if read.late else ""
+            lines.append(f"      reads  {source}{late}: {', '.join(read.claim_types)}")
+        for write in step.writes:
+            lines.append(f"      writes {write.subject_kind}: {', '.join(write.claim_types)}")
+        for call in step.calls:
+            bound = (
+                f" -> Provider:{short_provider_build(call.build)} {call.operation}"
+                if call.build
+                else ""
+            )
+            capability = f"  (capability {call.capability})" if call.capability else ""
+            lines.append(f"      calls  {call.slot}{bound}{capability}")
+        for item in step.inputs:
+            for line in _runbook_input_lines(item):
+                lines.append(f"      {line}")
+        if step.authority is not None:
+            authority = step.authority
+            settles = ", ".join(item.claim_type for item in authority.settles) or "nothing"
+            proposes = ", ".join((*authority.proposes, *authority.proposes_creation)) or "nothing"
+            lines.append(f"      settles {settles}; proposes {proposes}")
+            if authority.may_stop_run:
+                lines.append("      may stop the run: writes can go to review")
+        for cascade in step.cascades:
+            where = "in runbook" if cascade.in_runbook else "outside"
+            lines.append(
+                f"      fires  {cascade.trigger} ({cascade.schedule}) -> {cascade.target} [{where}]"
+            )
+    for problem in preview.order_problems:
+        detail = (
+            f"written only by later step(s) {', '.join(map(str, problem.written_by_steps))}"
+            if problem.kind == "reads_later_write"
+            else "written by no Line (direct entry only)"
+        )
+        lines.append(f"  order: step {problem.step} reads {problem.claim_type}: {detail}")
     return lines

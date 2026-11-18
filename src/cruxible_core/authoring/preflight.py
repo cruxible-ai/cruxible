@@ -553,12 +553,102 @@ def _diagnostic(
     )
 
 
+_INCOMPLETE_CLOSURE = "cruxible.change_set.incomplete_closure"
+#: How many dependents an incomplete-closure refusal names before it counts the rest.
+_CLOSURE_NAMED = 5
+
+
+def _closure_name(path: str, tree: Mapping[str, bytes] | None) -> str:
+    """``Kind name`` for one artifact path, read from its bytes when they are at hand."""
+
+    from cruxible_core.claims.closure import parse_dependency_artifact
+
+    content = None if tree is None else tree.get(path)
+    state = None
+    if content is not None:
+        try:
+            state = parse_dependency_artifact(path, content)
+        except ValueError:
+            state = None
+    if state is not None:
+        return f"{state.identity.kind} {state.identity.name}"
+    return path.removesuffix(".json")
+
+
+def _incomplete_closure_diagnostic(
+    item: CompilerDiagnostic, tree: Mapping[str, bytes] | None
+) -> AuthoringDiagnostic | None:
+    """An incomplete closure said in words: which live dependents, and how to bring them.
+
+    The compiler's message is the closure record as JSON, one row per dependency
+    edge; this reads only the rows (the size of the refusal) and the dependents'
+    own bytes, never the instance.
+    """
+
+    from cruxible_core.claims.closure import IncompleteClosureItemV1
+
+    try:
+        rows = [
+            IncompleteClosureItemV1.model_validate(raw)
+            for raw in json.loads(item.message)["missing"]
+        ]
+    except (ValueError, KeyError, TypeError):
+        return None
+    dependents: dict[str, IncompleteClosureItemV1] = {}
+    for row in rows:
+        dependents.setdefault(row.path, row)
+    if not dependents:
+        return None
+    named = [
+        f"{_closure_name(path, tree)} pins {_closure_name(row.triggering_dependency_path, tree)}"
+        for path, row in list(dependents.items())[:_CLOSURE_NAMED]
+    ]
+    more = len(dependents) - len(named)
+    listed = "; ".join(named) + (f"; and {more:,} more" if more > 0 else "")
+    successor_allowed = any(
+        "successor" in row.permitted_dispositions for row in dependents.values()
+    )
+    claims = any(path.startswith("claims/") for path in dependents)
+    steps: list[str] = []
+    if successor_allowed:
+        steps.append(
+            "include each dependent's successor in this same change set: author its "
+            "definition again as a member beside this change (unchanged is fine), and it "
+            "pins the new version"
+        )
+    steps.append('retire it in this change set ("retire": true on its member)')
+    if claims:
+        steps.append(
+            "for Claims under a changed ClaimType, list them as the claim_type_succession "
+            "member's dependents"
+        )
+    message = (
+        f"{len(dependents):,} live definition(s) outside this change set pin a definition "
+        f"it replaces or retires, and a pin does not follow on its own: {listed}."
+    )
+    description = "Repair: " + "; or ".join(steps) + ". Then preflight this intent again."
+    return _diagnostic(
+        code=item.code,
+        stage="proposal_evaluation",
+        offending_element="payload",
+        message=f"{message} {description}",
+        repairs=(
+            _repair(
+                "include_dependents",
+                description,
+                {"dependents": sorted(dependents)[: _CLOSURE_NAMED * 4]},
+            ),
+        ),
+    )
+
+
 def _compiler_diagnostic(
     item: CompilerDiagnostic,
     *,
     member_by_path: Mapping[str, int],
     claim_members: frozenset[int] = frozenset(),
     singular_claim_path: str | None = None,
+    tree: Mapping[str, bytes] | None = None,
 ) -> AuthoringDiagnostic:
     """Address one compiler refusal at the change-set member that authored it.
 
@@ -575,6 +665,10 @@ def _compiler_diagnostic(
     which set it, and the artifact path stays alongside in the repair.
     """
 
+    if item.code == _INCOMPLETE_CLOSURE:
+        closure = _incomplete_closure_diagnostic(item, tree)
+        if closure is not None:
+            return closure
     artifact_path = item.subject.artifact_path if item.subject is not None else None
     field = (
         item.subject.selector.value
@@ -620,6 +714,25 @@ def _ordered_diagnostics(
             key=lambda item: (item[0].encode(), item[1].encode(), item[2].encode()),
         )
     )
+
+
+def preflight_changes_nothing(result: PreflightResult) -> bool:
+    """Whether a passed preflight's candidate is its accepted tree unchanged (S2).
+
+    The certificate's candidate-tree digest covers the changed members; one
+    over no change is the digest of that coordinate with none. O(1).
+    """
+
+    certificate = result.certificate
+    empty = typed_digest(
+        Sha256Value,
+        AUTHORING_CANDIDATE_TREE_DIGEST_DOMAIN,
+        {
+            "accepted_coordinate": certificate.accepted_coordinate.model_dump(mode="json"),
+            "changed_members": [],
+        },
+    ).tagged
+    return result.verdict == "passed" and certificate.candidate_tree_digest == empty
 
 
 def _encoded_changes(
@@ -1084,6 +1197,7 @@ def compute_preflight(
                                 if isinstance(intent.payload, ClaimAuthoringPayload)
                                 else None
                             ),
+                            tree=evaluation.tree,
                         )
                         for item in evaluation.diagnostics
                     )

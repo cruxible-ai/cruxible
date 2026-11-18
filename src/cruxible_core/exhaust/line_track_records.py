@@ -19,7 +19,8 @@ from __future__ import annotations
 
 import re
 from collections import Counter
-from typing import Literal
+from collections.abc import Callable
+from typing import Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -30,7 +31,7 @@ from cruxible_client.contracts.canonical import (
     Sha256Value,
     typed_digest,
 )
-from cruxible_client.contracts.errors import FormatError
+from cruxible_client.contracts.errors import CruxibleError, FormatError
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
 )
@@ -47,6 +48,7 @@ from cruxible_core.procedures.egress import (
     EffectiveRungTermV1,
     TerminalEgressKindV1,
 )
+from cruxible_core.procedures.terminal_payloads import join_terminal_egress_payload
 
 LINE_TRACK_RECORD_TAG = "playbill-line-track-record-v1"
 
@@ -394,8 +396,25 @@ def _payload_mapping(record: VerifiedExhaustRecordV1) -> dict[str, object]:
     return dict(record.payload)
 
 
-def _egress_reading(record: VerifiedExhaustRecordV1) -> LineEgressReadingV1:
+def _egress_reading(
+    record: VerifiedExhaustRecordV1,
+    read_body: Callable[[str], bytes] | None = None,
+) -> LineEgressReadingV1:
     payload = _payload_mapping(record)
+    if "children_digest" in payload:
+        # A claims terminal's children are a run-free body the record cites.
+        if read_body is None:
+            raise LineTrackRecordError(
+                f"terminal egress record {record.sequence} cites its child closure by "
+                "digest; folding it needs the body store"
+            )
+        try:
+            joined = join_terminal_egress_payload(payload, read_body)
+        except (OSError, ValueError, CruxibleError) as exc:
+            raise LineTrackRecordError(
+                f"terminal egress record {record.sequence} cites a child closure it cannot restore"
+            ) from exc
+        payload = dict(cast(dict[str, object], joined))
     if record.run_id is None or record.occurrence_id is None or record.attempt is None:
         raise LineTrackRecordError(
             f"terminal egress record {record.sequence} names no Line run coordinate"
@@ -476,6 +495,7 @@ def build_line_track_record(
     *,
     accepted_line: AcceptedLineSpec,
     accepted_procedure: AcceptedProcedure,
+    read_body: Callable[[str], bytes] | None = None,
 ) -> LineTrackRecordV1:
     """Fold one verified exhaust range into one Line's track record.
 
@@ -483,6 +503,8 @@ def build_line_track_record(
     exact Procedure artifact digest. That is what stops a range that quietly
     spans two Procedures, or two Lines, from merging their credit. Provider
     invocation identity is folded separately from per-invocation receipts.
+    ``read_body`` returns the verified CAS bytes a claims terminal's record
+    cites for its child closure.
     """
 
     dimensions = line_track_record_dimensions(accepted_line, accepted_procedure)
@@ -513,7 +535,7 @@ def build_line_track_record(
             continue
         if record.event_kind == "terminal_egress":
             if record.run_id is None:
-                _egress_reading(record)  # refuses: a terminal names its run
+                _egress_reading(record, read_body)  # refuses: a terminal names its run
             # One terminal of one run can journal several records: a prepared
             # intent, a failed resolution, and recovery's delivered or refused
             # one. The latest is its outcome; the rest are intermediate states.
@@ -521,7 +543,7 @@ def build_line_track_record(
             held = finals.get(key)
             if held is None or record.sequence > held.sequence:
                 finals[key] = record
-    readings = [_egress_reading(record) for record in finals.values()]
+    readings = [_egress_reading(record, read_body) for record in finals.values()]
     ordered = tuple(sorted(readings, key=lambda item: item.sequence))
     return LineTrackRecordV1(
         line_id=accepted_line.line.identity.name,
@@ -562,9 +584,11 @@ class LineTrackRecordReducer:
         *,
         accepted_line: AcceptedLineSpec,
         accepted_procedure: AcceptedProcedure,
+        read_body: Callable[[str], bytes] | None = None,
     ) -> None:
         self._line = accepted_line
         self._procedure = accepted_procedure
+        self._read_body = read_body
         self._digest = line_track_record_reducer_digest(accepted_line, accepted_procedure)
 
     @property
@@ -576,6 +600,7 @@ class LineTrackRecordReducer:
             records,
             accepted_line=self._line,
             accepted_procedure=self._procedure,
+            read_body=self._read_body,
         ).model_dump(mode="json")
 
 

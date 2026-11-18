@@ -48,7 +48,7 @@ from collections import OrderedDict, defaultdict
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from contextlib import nullcontext
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import partial
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
@@ -92,13 +92,20 @@ from cruxible_core.triggers.journal import (
 )
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
     from cruxible_core.service.discovery.next import PlaybillNextItemV1, _Holds
     from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext
 
 #: The derivation format. Bump it whenever a row's derivation changes: the
 #: number is part of the schema text, so a new one rebuilds the state (R5).
-FORMAT = 16  # Rows' repairs name their because operand and quoted placeholders
+#: 17: a current Claim's facts end at its freshness expiry less next's lead, and
+#: a content observation derives only the Claims it changes (built at 16: rebuild).
+#: 20: a new row map of a Capture derives the Claims citing it again. A state built
+#: at 19 can hold a supported Claim with its cursor already past the conflicting map,
+#: which no later record names: it must rebuild once.
+FORMAT = 20
 #: (<TEXT>, <CLAIM_ID>), and a due dispatch names its Line. A state built at 15 stores
 #: rows with the old commands and ids, so it must rebuild once. (15: subject-end entries
 #: per (end, pair) key; live key-object index.)
@@ -374,6 +381,7 @@ def read_heads(
 
     from cruxible_core.evidence.claim_reobservations import (
         ClaimReobservationStore,
+        ReobservationReader,
         reobservation_journal_identity,
     )
 
@@ -382,6 +390,9 @@ def read_heads(
     with instance.accepted_history_reader(at=public) as history:
         generation = history.sequence
     door = instance.claim_attestation_evidence_store().head() if door_head is None else door_head
+    # The journal's name includes the projection's last recovery from a journal
+    # it had not applied: let that happen before the name is recorded.
+    ReobservationReader.of(instance).follow()
     journal = reobservation_journal_identity(
         instance.root,
         exhaust=instance.descriptor.storage.exhaust,
@@ -616,6 +627,36 @@ def _claim_facts(
     if strict and raised:
         raise raised[0]
     reads.update(_read_key(read) for read in recording.keys())
+    if verdict is not None and verdict.freshness_expirations:
+        # A current Claim is not derived again on each observation of its
+        # content: its facts hold until its expiry nears next's lead, when it
+        # is derived again and reads every observation recorded by then.
+        from cruxible_core.service.discovery.next import DEFAULT_EXPIRING_WITHIN_MICROSECONDS
+
+        lead = timedelta(microseconds=DEFAULT_EXPIRING_WITHIN_MICROSECONDS)
+        boundaries.update(
+            item.expires_at - lead
+            for item in verdict.freshness_expirations
+            if item.expires_at - lead > at
+        )
+        # A verdict that read freshness reads every observation of the keys
+        # it depends on (its contents, its row, its enumeration). Only a Claim
+        # whose stored verdict an observation can change keeps the edge: one
+        # not supported-and-current (a current one is re-derived at its lead
+        # boundary). So an observation reaches exactly the stale readers, by
+        # index, never filtering the current population (review 2b F-007).
+        if verdict.verdict != "supported" or verdict.currency != "current":
+            reads.update(
+                f"observed:{key.contract_digest}|{key.observed_content_digest}"
+                for key in recording.reobservation_keys.get(claim.identity.name, ())
+                if key.observed_content_digest  # a row its maps now disagree on reads none
+            )
+            # A repeated observation of a set holding them reaches this Claim
+            # by the set alone (review 2c #6): no expansion of its members.
+            reads.update(
+                f"observedset:{digest}"
+                for digest in recording.reobservation_sets.get(claim.identity.name, ())
+            )
     lower, upper = (
         invariance_interval(boundaries, evaluation_time=at) if verdict is not None else (None, None)
     )
@@ -1259,10 +1300,39 @@ def _touched(
         landed |= consulting
     reobs = heads.reobs
     if heads.reobs != cursors.reobs:
-        for _sequence, claim_id in ClaimReobservationStore(instance).records_after(
-            cursors.reobs, through=heads.reobs
-        ):
-            claims.add(f"Claim:{claim_id}")
+        store = ClaimReobservationStore(instance)
+        lineages, observed, observed_sets = store.observed_after(cursors.reobs, through=heads.reobs)
+        claims.update(f"Claim:{claim_id}" for claim_id in lineages)
+        # A new row map of a Capture changes which row its extracted records
+        # are (none, when its maps disagree): it can withdraw the row evidence
+        # of a supported, current Claim, which keeps no ``observed:`` edge. An
+        # extracted record's Capture is a backing Capture of its Claim, so the
+        # Claims citing that Capture are derived again: bounded by them, and
+        # only when a map not recorded before lands.
+        keys.update(
+            f"backing:{capture}" for capture in store.maps_after(cursors.reobs, through=heads.reobs)
+        )
+        # Keyed by what the Claims depend on (content, row or enumeration),
+        # and only where the observation changes a stored fact: the facts
+        # writer keeps an ``observed:`` edge only for a Claim whose stored
+        # verdict is not supported-and-current, so this is one index range
+        # over those readers alone. A current Claim's stored facts still hold
+        # (its verdict only lasts longer); it is derived again when its stored
+        # expiry nears (its facts' upper bound includes the expiry less next's
+        # lead), reading the observation then. One write per stale period.
+        claims.update(
+            str(row[0])
+            for row in _rows(
+                connection,
+                "SELECT claim_id FROM fact_reads WHERE read_key IN ({marks})",
+                tuple(
+                    sorted(
+                        {f"observed:{contract}|{content}" for contract, content in observed}
+                        | {f"observedset:{digest}" for digest in observed_sets}
+                    )
+                ),
+            )
+        )
     fired_at: datetime | None = None
     if heads.expire != cursors.expire:
         after = cursors.expire
@@ -3010,6 +3080,10 @@ def rebuilt_tables(instance: Any, *, at: datetime) -> dict[str, list[tuple[Any, 
 # -- the part ----------------------------------------------------------------------
 
 
+#: The states whose failed target this process has already tried again (``match``).
+_RETRIED: set[Path] = set()
+
+
 class ClaimFactsPart:
     name = "next"
 
@@ -3020,6 +3094,13 @@ class ClaimFactsPart:
         target = read_heads(instance).key()
         with _STATE.open(instance) as connection:
             assert connection is not None
+            path = _STATE.path(instance)
+            if path not in _RETRIED:
+                # A target that failed under an earlier process (an earlier
+                # build, for one) is tried once more by this one: what failed
+                # it may be repaired, and no head has to move for that.
+                _RETRIED.add(path)
+                connection.execute("UPDATE progress SET failed=NULL WHERE failed IS NOT NULL")
             row = connection.execute("SELECT target FROM progress").fetchone()
             if row is not None and row[0] == target:
                 return

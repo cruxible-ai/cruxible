@@ -104,8 +104,8 @@ def test_every_command_registered_on_a_group_is_in_the_lazy_cli_map() -> None:
     # subject, policy and query groups (query is one command), and the stub leaf
     # replaced the world group; the Claude Code hook group is cut. The Line inbox
     # group adds one. `action` (manual internal-action fire) adds one more, and
-    # `vocabulary` (the vocabulary file) one more.
-    assert len(groups) == 32, f"expected 32 Cruxible/host groups, found {len(groups)}"
+    # `vocabulary` (the vocabulary file) one more; `curation` left with 0.5.0.
+    assert len(groups) == 31, f"expected 31 Cruxible/host groups, found {len(groups)}"
 
     problems: list[str] = []
     for group, origin in groups:
@@ -141,9 +141,11 @@ def test_every_command_defined_in_the_commands_package_is_reachable() -> None:
     # `authoring rebase` and `claim recover-attestation` left.
     # Multi-build adds provider move and provider retire; measurement review adds procedure dispose.
     # First-run adds rebind; Capture erasure adds capture erase; `console` adds one;
-    # the vocabulary file adds `vocabulary export|plan|apply`.
-    assert len(leaf_claims) == 120, (
-        f"expected 120 Cruxible/host leaf commands, found {len(leaf_claims)}"
+    # the vocabulary file adds `vocabulary export|plan|apply`; the six `curation`
+    # verbs left with 0.5.0 and the duplicates audit came back as `duplicates`;
+    # `link` adds one.
+    assert len(leaf_claims) == 116, (
+        f"expected 116 Cruxible/host leaf commands, found {len(leaf_claims)}"
     )
 
     reachable = set(leaf_claims)

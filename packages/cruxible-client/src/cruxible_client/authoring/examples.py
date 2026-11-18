@@ -41,6 +41,7 @@ from cruxible_client.contracts.policies import (
     ClaimResolutionPolicy,
 )
 from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicy
+from cruxible_client.contracts.query.authored import QuerySpecInput
 from cruxible_client.contracts.query.definitions import (
     QueryDefinitionSpec,
     QueryEvaluationPolicy,
@@ -480,6 +481,29 @@ def procedure_example() -> ProcedureInput:
     )
 
 
+def query_definition_example() -> QueryDefinitionInput:
+    """A named query in the authored form: entry, parameter, filter and columns.
+
+    ``authoring submit`` lowers it against the instance's vocabulary; the
+    ``query-claims-by-type`` example is the same kind of query in the typed form.
+    """
+
+    return QueryDefinitionInput(
+        kind="query_definition",
+        query_definition=QuerySpecInput.model_validate(
+            {
+                "query": "project.work_items_in_status",
+                "description": "The work items in one status.",
+                "params": {"status": "string"},
+                "from": {"item": "project.work_item"},
+                "where": "item.status == $status",
+                "fields": ["item", "item.status"],
+                "limit": 100,
+            }
+        ),
+    )
+
+
 def query_claims_by_type_example() -> QueryDefinitionInput:
     """Return a governed query template for current supported work-item status."""
 
@@ -569,6 +593,7 @@ AUTHORING_EXAMPLE_FACTORIES: Final[dict[AuthoringExampleName, Callable[[], Autho
     "claim-subject-relation": claim_subject_relation_example,
     "claim-revision": claim_revision_example,
     "procedure": procedure_example,
+    "query-definition": query_definition_example,
     "query-claims-by-type": query_claims_by_type_example,
     "query-ontology": query_ontology_example,
     "query-procedures": query_procedures_example,
@@ -585,6 +610,11 @@ AUTHORING_EXAMPLE_FACTORIES: Final[dict[AuthoringExampleName, Callable[[], Autho
 
 #: One line shown beside an example's payload, where the payload alone could mislead.
 AUTHORING_EXAMPLE_NOTES: Final[dict[AuthoringExampleName, str]] = {
+    "query-definition": (
+        "A parameter type is string, integer, boolean, decimal, timestamp (a date and "
+        "time), subject_reference (compared with a link field) or subject; text "
+        "literals take double or single quotes; `now` is the evaluation time."
+    ),
     "query-claims-by-type": (
         "result_shape, result_cardinality, dedupe, evaluation_policy and both budgets "
         "here are the defaults (subject / many / subject / supported, current, conflicts "
@@ -617,6 +647,7 @@ AUTHORING_EXAMPLE_NAMES: Final[tuple[AuthoringExampleName, ...]] = (
     "claim-adjudicate-contradicting-evidence",
     "claim-cite-supporting-evidence",
     "claim-adjudicate-unreviewed-evidence",
+    "query-definition",
     "query-claims-by-type",
     "query-ontology",
     "query-procedures",
@@ -698,5 +729,6 @@ __all__ = [
     "procedure_example",
     "procedure_mandate_example",
     "query_claims_by_type_example",
+    "query_definition_example",
     "subject_example",
 ]

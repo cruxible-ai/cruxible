@@ -99,23 +99,24 @@ phone call:
 ~~~text
 $ cruxible set catalog.part/bp-2210 price 39 --because "Acme quoted 39 on the phone."
 refused (generation 30, d80df8c8c768)
-cruxible.write.evidence_required (change 0): price declares evidence_requirement 'captured' (cruxible.foreign-source.quotes); your own words cannot back it
-  nearest: cruxible.foreign-source.quotes
-  repair: Cite a Capture under cruxible.foreign-source.quotes: contract evidence naming it (--evidence-contract), a Capture handle (--capture), or file evidence (--evidence-file PATH#ANCHOR)
+cruxible.write.evidence_required (change 0): price declares evidence_requirement 'captured' (catalog.quotes); your own words cannot back it
+  nearest: catalog.quotes
+  repair: Cite a Capture under catalog.quotes: contract evidence naming it (--evidence-contract) or a Capture handle (--capture); or add a shaped CaptureContract to price's evidence (evidence: [<contract name>, ...] in the vocabulary file)
 
 $ cruxible set catalog.part/bp-1142 price 42 --because "Acme quote of 2026-10-21." \
     --evidence-file 'quotes/acme-2026-10-21.md#bp-1142 Front brake pads: 42 USD'
-accepted (generation 31, e005b0166fcf)
-  set catalog.part/bp-1142 price: 42  [CLM-6b8184a5…; verdict supported]
+refused (generation 30, d80df8c8c768)
+cruxible.write.evidence_required (change 0): price declares evidence_requirement 'captured' (catalog.quotes): a shaped payload under a declared contract; a file quote does not satisfy it
+  ...
 ~~~
 
-"Captured" rules out your own words, but a passage of a catalogued workspace
-file still counts, as the second command shows. Workspace files are files an
-agent can write, so they are the right evidence for documented reasoning, not
-for facts about the outside world. For a fact that must come from outside, a
-supplier's price or a recall notice, admit only contracts whose Captures are
-fetched by a run. A fetched Capture counts only when the daemon's journal
-records the run that produced it, so its bytes can't be passed off as
+"Captured" means a shaped payload under a declared contract: neither your own
+words nor a quote from a workspace file satisfies it. Workspace files are files
+an agent can write, so they are the right evidence for documented reasoning,
+not for facts about the outside world. A captured field lists the shaped
+CaptureContracts that back it in `evidence:` (here `catalog.quotes`, whose
+Captures a run fetches). A fetched Capture counts only when the daemon's
+journal records the run that produced it, so its bytes can't be passed off as
 something a run observed.
 
 ### Seeing a field's settings
@@ -135,10 +136,12 @@ catalog.part.title     observation  -            false
 
 ### Writing a field's rules
 
-A field's evidence rules are part of its definition. A field you define with
-no rules is normative and backed by its writer's own words. For anything
-else, name the role and the contracts that back it. A supplier's lead time,
-which must come from a quote and goes stale after 30 days:
+A field's evidence rules are part of its definition, and the short form says
+them in one line. Every field that does not require captured evidence admits
+the writer's own words and citations of catalogued workspace files and
+sections: no rule is needed for those. What a field lists is the shaped
+CaptureContracts whose Captures back it, in `evidence:`. A supplier's lead
+time, which must come from a fetched quote and goes stale after 30 days:
 
 ~~~yaml
 predicate: catalog.part.lead_time_days
@@ -149,13 +152,7 @@ cardinality: one
 permitted_roles: [observation]
 evidence_requirement: captured
 evidence_freshness: {stale_after: P30D}
-evidence_admission_policy:
-  rules:
-    - rule_id: supplier-quote
-      claim_roles: [observation]
-      capture_contracts: [CaptureContract:cruxible.foreign-source.quotes]
-      admission: direct
-      subject_binding: exact_claim_subject
+evidence: [catalog.quotes]
 ~~~
 
 ~~~text
@@ -164,11 +161,17 @@ admitted  sha256:5f33eb98…  verdict=candidate
 landed: accepted at f91d19c76229
 ~~~
 
-`cruxible.foreign-source.NAME` admits passages of the catalogued file named
-`NAME` (here, the quotes file), and `cruxible.coordinator-self-source-v1`
-admits the writer's own words. A file's contract exists once a write has
-cited the file; until then a rule naming it refuses
-`cruxible.change_set.unresolved_pin`, so cite the file once first. Durations are ISO 8601 (`P30D`, `PT12H`).
+Each contract in `evidence` is admitted for the field's permitted roles
+(derivationally for `derivation` Claims), directly, about the Claim's own
+Subject. The vocabulary file and the SDK's `field(..., evidence=[...])` take
+the same list. The full `evidence_admission_policy` rule form stays accepted
+for what the list cannot say. A rule never newly names one workspace file's
+own contract (`cruxible.foreign-source.NAME`, which stands for a single file of
+this workspace): authoring refuses `cruxible.claim_type.per_file_evidence_rule`,
+a rule naming only a capture-contract family refuses
+`cruxible.claim_type.family_rule_not_authored`, and `kit build` refuses to carry
+a per-file rule. A field that already holds such a rule keeps it and stays
+editable. Durations are ISO 8601 (`P30D`, `PT12H`).
 [Evolving your vocabulary](evolving-your-vocabulary.md#add-a-field) covers
 fields in general.
 

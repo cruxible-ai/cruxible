@@ -83,6 +83,7 @@ from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
     COORDINATOR_SELF_SOURCE_CONTRACT_ID,
     DIRECT_SELF_ASSERTED_CONTRACT_ID,
+    FOREIGN_SOURCE_CONTRACT_PREFIX,
     FOREIGN_SOURCE_COORDINATE_TYPE,
     classify_capture_reuse,
     foreign_source_capture_contract,
@@ -299,6 +300,21 @@ def _refuse(
     )
 
 
+def _captured_repair(field_name: str, shown: tuple[str, ...]) -> str:
+    """Cite a Capture under a shaped contract the field admits, or add one to its evidence."""
+
+    add = (
+        f"add a shaped CaptureContract to {field_name}'s evidence (evidence: [<contract "
+        "name>, ...] in the vocabulary file)"
+    )
+    if not shown:
+        return f"Cite a Capture under a shaped CaptureContract: {add}, then cite under it"
+    return (
+        f"Cite a Capture under {' or '.join(shown)}: contract evidence naming it "
+        f"(--evidence-contract) or a Capture handle (--capture); or {add}"
+    )
+
+
 def _bare(claim: str) -> str:
     return claim.removeprefix("Claim:")
 
@@ -324,16 +340,16 @@ def _render_proposal_call(
 ) -> str:
     if surface == "cli":
         if verb == "approve":
-            who = signer or "<approver>"
-            return (
-                f"cruxible proposal approve {proposal_id} --signer-id {who} --key <{who}.ed25519>"
-            )
+            # No key: the signer's client finds it (remembered settings) or
+            # refuses with the repair.
+            who = signer or "'<SIGNER_ID>'"
+            return f"cruxible proposal approve {proposal_id} --signer-id {who}"
         return f"cruxible proposal activate {proposal_id}"
     if surface == "sdk":
         handle = f"cx.proposal({json.dumps(proposal_id)})"
         if verb == "approve":
-            who = signer or "approver"
-            return f"{handle}.approve(signer=<{who} signer>, reviewed={handle}.review())"
+            who = "" if signer is None else json.dumps(signer)
+            return f"{handle}.approve(signer=cx.signer({who}), reviewed={handle}.review())"
         return f"{handle}.activate()"
     if verb == "approve":
         arguments = f"proposal_id={json.dumps(proposal_id)}"
@@ -2103,6 +2119,39 @@ class _Planner:
             repair="Use write through the CLI, MCP or SDK beside the workspace",
         )
 
+    def _refuse_file_quote_for_captured(
+        self, info: PredicateInfo, field_name: str, *, index: int, path: str
+    ) -> None:
+        """``captured`` means a shaped payload under a declared contract.
+
+        A file or section quote satisfies it only where an accepted rule still
+        admits workspace citations (a family or per-file rule a field already
+        holds); a field lowered under the shaped-only form admits none.
+        """
+
+        if not requires_captured_evidence(info.claim_type):
+            return
+        rules = info.claim_type.evidence_admission_policy.rules
+        if any(rule.capture_contract_families for rule in rules) or any(
+            item.target.name.startswith(FOREIGN_SOURCE_CONTRACT_PREFIX)
+            for rule in rules
+            for item in rule.capture_contracts
+        ):
+            return
+        shown = tuple(
+            public_name(item.target.name) for rule in rules for item in rule.capture_contracts
+        )
+        raise _refuse(
+            "cruxible.write.evidence_required",
+            f"{field_name} declares evidence_requirement 'captured' "
+            f"({', '.join(shown) or 'no shaped contract yet'}): a shaped payload under a "
+            "declared contract; a file quote does not satisfy it",
+            change=index,
+            candidates=shown,
+            repair=_captured_repair(field_name, shown),
+            field_path=path,
+        )
+
     def source(
         self,
         info: PredicateInfo,
@@ -2120,10 +2169,12 @@ class _Planner:
         if capture is not None:
             return ExistingCaptureCitationSource(capture_digest=capture), "evidence"
         if isinstance(evidence, FileEvidence):
+            self._refuse_file_quote_for_captured(info, field_name, index=index, path=path)
             return self._observed(evidence, index=index), "evidence"
         if isinstance(evidence, SectionEvidence):
             observation = self._observed(evidence, index=index)
             if not evidence.own_words:
+                self._refuse_file_quote_for_captured(info, field_name, index=index, path=path)
                 return observation, "evidence"
             if requires_captured_evidence(info.claim_type):
                 raise _refuse(
@@ -2145,19 +2196,21 @@ class _Planner:
                     ).admitted(info.claim_type)
                     if name not in _OWN_WORDS_CONTRACTS
                 )
-            shown = tuple(public_name(name) for name in admitted)
+            # Only shaped contracts are named: a file's own contract stands for one
+            # workspace file, and no repair proposes a rule derived from a file.
+            shown = tuple(
+                public_name(name)
+                for name in admitted
+                if not name.startswith(FOREIGN_SOURCE_CONTRACT_PREFIX)
+            )
             raise _refuse(
                 "cruxible.write.evidence_required",
                 f"{field_name} declares evidence_requirement 'captured' "
-                f"({', '.join(shown)}); your own words cannot back it",
+                f"({', '.join(shown) or 'no shaped contract yet'}); your own words cannot "
+                "back it",
                 change=index,
                 candidates=shown,
-                repair=(
-                    "Cite a Capture under "
-                    f"{' or '.join(shown) or 'an admitted CaptureContract'}: contract evidence "
-                    "naming it (--evidence-contract), a Capture handle (--capture), or file "
-                    "evidence (--evidence-file PATH#ANCHOR)"
-                ),
+                repair=_captured_repair(field_name, shown),
                 field_path=path,
             )
         return SelfSourceBody(content_base64=base64.b64encode(body).decode("ascii")), None
@@ -2614,6 +2667,25 @@ class _Planner:
                 if remaining:
                     revises = remaining[0].claim_id
                     before = remaining[0].value
+                    if remaining[0].value == shown_after and remaining[0].role == role:
+                        # S2: setting the value a slot already holds restates
+                        # its Claim; lowering's re-observation comparison
+                        # decides whether anything changed.
+                        unchanged = {
+                            "subject": subject,
+                            "field": name,
+                            "predicate": info.predicate,
+                            "before": summary_value(
+                                remaining[0].value,
+                                read_whole=whole_value_read(
+                                    remaining[0].claim_id, self.head.git_oid
+                                ),
+                            ),
+                            "after": summary_value(remaining[0].value),
+                            "claim": remaining[0].claim_id,
+                            "already_live": True,
+                        }
+                        unchanged_digest = remaining[0].digest
         else:
             # A Claim retired in this same write is not live after it, so the
             # value it holds is stated anew rather than reported as present.
@@ -4590,10 +4662,11 @@ def _approval(
     surface: ReadSurface,
     proposal_id: str,
 ) -> ApprovalNeeded:
+    # A write kept with accept="never" is kept for review: someone else
+    # approves it (which activates it), as an independent approval would.
+    reviewed = reason in {"independent_approval_required", "accept_never"}
     approvers = (
-        _eligible_approvers(instance, head, creator=caller.actor.actor_id)
-        if reason == "independent_approval_required"
-        else ()
+        _eligible_approvers(instance, head, creator=caller.actor.actor_id) if reviewed else ()
     )
     return ApprovalNeeded(
         reason=reason,
@@ -4609,7 +4682,7 @@ def _approval(
                 ),
                 permitted=caller.may_approve,
             )
-            if reason == "independent_approval_required"
+            if reviewed
             else None
         ),
         activate=_for_caller(
@@ -4849,6 +4922,12 @@ def _service_write(
     admitted: list[CandidateRecord] = []
     coordinator = _coordinator(instance, lowered.claim_ids, admitted=admitted)
     timestamp = canonical_candidate_timestamp(utc_now())
+    if _restates_only(plan, request) and _previews_unchanged(
+        coordinator, caller=caller, lowered=lowered, timestamp=timestamp
+    ):
+        # S2: every change restates a live value on the evidence it already
+        # cites: answer unchanged and write nothing (no intent, no proposal).
+        return _already_done(instance, head=head, plan=plan, request=request)
     if request.dry_run:
         # A minted id is assigned from the submitted operation, which a dry run
         # never makes: it reports the Subjects whose ids are known now.
@@ -5065,9 +5144,17 @@ def _already_done(
     plan: _Plan,
     request: WriteRequest,
 ) -> WriteOutcome:
-    """Every change is already live: accepted, with no change set submitted."""
+    """Every change is already live: unchanged, with nothing submitted (S2).
 
-    changes = tuple(ChangeOutcome(op=item.op, **item.outcome) for item in plan.changes)
+    A write that also carries doc edits, or any change but a set/add (a
+    create resolving to an existing Subject), answers accepted at the head, as
+    before: its doc writes and confirmations happen on the client.
+    """
+
+    changes = tuple(
+        ChangeOutcome(op=item.op, **(item.unchanged_outcome or item.outcome))
+        for item in plan.changes
+    )
     changes, warnings = _with_verdicts(
         instance,
         head=head,
@@ -5078,14 +5165,69 @@ def _already_done(
         because=request.because,
     )
     first = next((item.subject for item in changes if item.subject is not None), None)
+    if request.docs or any(item.op not in ("set", "add") for item in plan.changes):
+        # A write carrying doc edits is not unchanged: the client writes the
+        # files and confirms them against this answer (accepted, at the head).
+        # Nor is a create that resolved to the Subject holding its key: S2's
+        # unchanged answer is for set/add restating a live value.
+        return WriteOutcome(
+            status="would_accept" if request.dry_run else "accepted",
+            changes=changes,
+            coordinate=compact_coordinate(instance, head),
+            base=None if request.dry_run else compact_coordinate(instance, head),
+            warnings=warnings,
+            next=None if first is None else _render_get(request.surface, first),
+        )
     return WriteOutcome(
-        status="would_accept" if request.dry_run else "accepted",
+        status="unchanged",
         changes=changes,
         coordinate=compact_coordinate(instance, head),
-        base=None if request.dry_run else compact_coordinate(instance, head),
         warnings=warnings,
         next=None if first is None else _render_get(request.surface, first),
     )
+
+
+def _restates_only(plan: _Plan, request: WriteRequest) -> bool:
+    """Whether every change restates a live value in the writer's own words.
+
+    Such a write may change nothing. A change citing a Capture (file or
+    existing-Capture evidence) is left to submit: the same content under that
+    Capture is a re-observation, recorded as before.
+    """
+
+    return (
+        not request.docs
+        and not plan.pending
+        and bool(plan.changes)
+        and all(
+            item.member is None or (item.unchanged_outcome is not None and item.capture is None)
+            for item in plan.changes
+        )
+    )
+
+
+def _previews_unchanged(
+    coordinator: AuthoringIntentCoordinator,
+    *,
+    caller: WriteCaller,
+    lowered: _Lowered,
+    timestamp: str,
+) -> bool:
+    """Whether the write lowers to nothing: no member changes (S2).
+
+    Run only for a write of own-words restatements (``_restates_only``), so
+    the preflight is paid only where the write may change nothing.
+    """
+
+    _intent, computed = coordinator.preview(
+        actor=caller.actor,
+        payload=lowered.payload,
+        canonical_timestamp=timestamp,
+        reference_expectations=lowered.expectations or None,
+    )
+    if computed.result.verdict != "passed" or computed.lowered is None:
+        return False
+    return computed.lowered.idempotent
 
 
 def _slot_moved(

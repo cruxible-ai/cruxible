@@ -480,9 +480,14 @@ def _payloads(prepared, fixture):  # type: ignore[no-untyped-def]
         prepared.admission.journal_stream,
         prepared.admission.journal_partition_id,
     )
+    from cruxible_core.procedures.terminal_payloads import join_derived_source_request
+
     access = BodyAccessContext(principal_id="unit-test", can_read_body=True)
     return records, [
-        parse_journal_payload(fixture.bodies.read(item.record.payload_digest, access=access))
+        join_derived_source_request(
+            parse_journal_payload(fixture.bodies.read(item.record.payload_digest, access=access)),
+            lambda digest: fixture.bodies.read(digest, access=access),
+        )
         for item in records
     ]
 
@@ -1189,3 +1194,58 @@ def test_live_v5_capture_terminal_uses_the_v2_topological_receipt_chain(
         with pytest.raises(CaptureFormatError, match=completed_digest):
             damaged_resolver.producer_receipt(completed_digest, run_id=run_id)
     assert result.receipt.chain_head_digest == records[-1].record_digest
+
+
+def test_a_warm_production_proof_rests_on_its_split_source_request_body(
+    tmp_path: Path,
+) -> None:
+    """Review P1: the request body a derived Source request cites is part of the proof.
+
+    A resolved proof is reused only while every body it was derived from is
+    held: the enclosing journal payload and the run-free request body it
+    cites. Once that body is recorded lost, the warm proof no longer stands,
+    exactly as a cold resolution could not rebuild it.
+    """
+
+    from cruxible_core.exhaust.payloads import read_payload
+
+    accepted, prepared, fixture, policy, contract = _source_fixture(tmp_path)
+    result = ProcedureExecutor(
+        journal=fixture.journal,
+        bodies=fixture.bodies,
+        run_index=fixture.run_index,
+        fencing_token="writer",
+        activation_authority=_Authority(accepted.artifact_digest),
+        contract_validator=_Contracts(),
+        provider_runtime_invoker=_SourceInvoker(
+            observed_at=prepared.admission.occurrence_evaluation_time
+        ),
+        capture_contracts={capture_contract_digest(contract).tagged: contract},
+        acquisition_rules=_acquisition_rules(policy),
+    ).execute(prepared, accepted)
+    assert result.status == "succeeded"
+    records = fixture.journal.all_records(
+        prepared.admission.journal_stream, prepared.admission.journal_partition_id
+    )
+    access = BodyAccessContext(principal_id="unit-test", can_read_body=True)
+    (derived,) = [
+        read_payload(fixture.bodies, item.record.payload_digest, access=access)
+        for item in records
+        if item.record.event_kind == "source_request_derived"
+    ]
+    request_body = derived["request_body_digest"]  # type: ignore[index]
+    resolver = journal_producer_receipt_resolver(
+        journal=fixture.journal,
+        instance_id=prepared.admission.instance_id,
+        bodies=fixture.bodies,
+        full_journal=True,
+    )
+    run_id = prepared.admission.run_id
+    resolver.index_all()
+    assert request_body in resolver._run_bodies[run_id]  # noqa: SLF001
+    assert resolver._still_proven((run_id,))  # noqa: SLF001
+    path = fixture.bodies._path(request_body)  # noqa: SLF001
+    path.chmod(0o600)
+    path.unlink()
+    fixture.bodies._damaged(request_body, "missing")  # noqa: SLF001
+    assert not resolver._still_proven((run_id,))  # noqa: SLF001

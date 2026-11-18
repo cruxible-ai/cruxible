@@ -199,7 +199,7 @@ class InternalActionSpec:
     consumer: str
     part: str
     #: An opt-in action runs only once someone authors a Trigger aimed at it;
-    #: no Trigger is seeded for it and none is expected (curation is beta).
+    #: no Trigger is seeded for it and none is expected.
     opt_in: bool = False
 
 
@@ -240,6 +240,18 @@ INTERNAL_ACTIONS: Final[Mapping[str, InternalActionSpec]] = MappingProxyType(
     }
 )
 
+#: Registered internal actions this release does not serve: the Trigger law
+#: still accepts them (accepted history replays unchanged), but authoring a
+#: Trigger, a Runbook step or a manual run of one refuses with this reason,
+#: since nothing in the daemon would follow its fires.
+UNSERVED_INTERNAL_ACTIONS: Final[Mapping[str, str]] = MappingProxyType(
+    {"curation.detect": "curation is not served in this release"}
+)
+#: The internal actions a Trigger, Runbook step or ``action run`` may name now.
+SERVED_INTERNAL_ACTIONS: Final[tuple[str, ...]] = tuple(
+    name for name in INTERNAL_ACTIONS if name not in UNSERVED_INTERNAL_ACTIONS
+)
+
 #: An internal action named by a Trigger. Its shape is checked here; whether it
 #: is registered is the Trigger law's to judge, so an unknown name is a typed
 #: refusal at acceptance rather than an opaque format failure.
@@ -248,8 +260,8 @@ InternalActionName: TypeAlias = Annotated[
     Field(
         pattern=r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$",
         max_length=128,
-        description="A registered internal action: " + ", ".join(INTERNAL_ACTIONS) + ".",
-        examples=list(INTERNAL_ACTIONS),
+        description="A registered internal action: " + ", ".join(SERVED_INTERNAL_ACTIONS) + ".",
+        examples=list(SERVED_INTERNAL_ACTIONS),
     ),
 ]
 
@@ -577,6 +589,8 @@ def evaluate_trigger_law(
 
 __all__ = [
     "INTERNAL_ACTIONS",
+    "SERVED_INTERNAL_ACTIONS",
+    "UNSERVED_INTERNAL_ACTIONS",
     "TRIGGER_CAPTURE_CONTRACT_PIN_ROLE",
     "TRIGGER_LINE_REF_ROLE",
     "AcceptedTrigger",

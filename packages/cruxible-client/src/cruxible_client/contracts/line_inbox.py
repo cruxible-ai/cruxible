@@ -44,6 +44,7 @@ from cruxible_client.contracts.read_values import (
     GET_SUMMARY_TEXT_MAX_CHARS,
     ShownValue,
     TruncatedText,
+    shown_plain,
     summary_value,
 )
 from cruxible_client.contracts.temporal import ensure_utc
@@ -287,6 +288,18 @@ class InboxItem(_StrictInboxModel):
     def _payload(cls, value: object) -> CanonicalValue:
         return normalize_canonical(value)
 
+    def __str__(self) -> str:
+        """The item as ``cruxible inbox get`` prints it; ``repr()`` is its first line."""
+
+        from cruxible_client.contracts.text_display import inbox_item_lines
+
+        return "\n".join(inbox_item_lines(self))
+
+    def __repr__(self) -> str:
+        from cruxible_client.contracts.text_display import one_line_repr
+
+        return one_line_repr(self)
+
 
 class InboxDismissRequest(_StrictInboxModel):
     tag: Literal["cruxible-inbox-dismiss-request-v1"] = "cruxible-inbox-dismiss-request-v1"
@@ -304,6 +317,91 @@ class InboxDispositionResult(_StrictInboxModel):
     tag: Literal["cruxible-inbox-disposition-result-v1"] = "cruxible-inbox-disposition-result-v1"
     item: InboxItemEnvelope
     recorded: bool
+
+    def __str__(self) -> str:
+        """The item's row after the disposition, as the CLI prints it; ``repr()`` too."""
+
+        from cruxible_client.contracts.text_display import inbox_disposition_line
+
+        return inbox_disposition_line(self)
+
+    def __repr__(self) -> str:
+        return str(self)
+
+
+#: The most characters a compact inbox row's title takes.
+INBOX_ROW_TITLE_MAX_CHARS = 80
+#: Payload keys a compact row's title is read from, first present wins.
+_TITLE_KEYS = ("title", "name", "summary", "subject", "id")
+
+
+class InboxRow(_StrictInboxModel):
+    """One inbox item as a list shows it by default: what it is, and how often seen.
+
+    ``kind`` is the terminal (Procedure node) that posted it; ``title`` a
+    one-line reading of its payload (a ``title``, ``name``, ``summary``,
+    ``subject`` or ``id`` field, else its canonical JSON), cut to
+    ``INBOX_ROW_TITLE_MAX_CHARS``. ``inbox get`` returns every field.
+    """
+
+    tag: Literal["cruxible-inbox-row-v1"] = "cruxible-inbox-row-v1"
+    item_id: str = Field(pattern=INBOX_ITEM_ID_PATTERN)
+    line: str
+    kind: str
+    title: str
+    status: InboxItemStatus
+    seen: int = Field(ge=1)
+
+
+class InboxRows(_StrictInboxModel):
+    """One page of inbox items as compact rows, most recently posted first."""
+
+    tag: Literal["cruxible-inbox-rows-v1"] = "cruxible-inbox-rows-v1"
+    line_filter: str | None = None
+    status_filter: InboxItemStatus | None = None
+    rows: tuple[InboxRow, ...]
+    truncated: bool = False
+    next_cursor: str | None = None
+
+
+def _row_title(entry: InboxListEntry) -> str:
+    if entry.withheld is not None:
+        return "(withheld)"
+    preview: object = entry.payload_preview
+    if isinstance(preview, TruncatedText):
+        text = preview.preview
+    else:
+        plain = shown_plain(preview)
+        if isinstance(plain, dict):
+            chosen = next((plain[key] for key in _TITLE_KEYS if key in plain), None)
+            plain = plain if chosen is None else chosen
+        text = plain if isinstance(plain, str) else canonical_bytes(plain).decode("utf-8")
+    text = " ".join(text.split())
+    if len(text) > INBOX_ROW_TITLE_MAX_CHARS:
+        text = text[: INBOX_ROW_TITLE_MAX_CHARS - 1] + "…"
+    return text
+
+
+def compact_inbox_list(page: InboxList) -> InboxRows:
+    """A listing as compact rows: id, Line, kind, title, status and seen count."""
+
+    return InboxRows(
+        line_filter=page.line_filter,
+        status_filter=page.status_filter,
+        rows=tuple(
+            InboxRow(
+                item_id=entry.item.item_id,
+                line=entry.item.line,
+                kind=entry.item.node_id,
+                title=_row_title(entry),
+                status=entry.item.status,
+                seen=entry.item.occurrences,
+            )
+            for entry in page.entries
+        ),
+        truncated=page.truncated,
+        next_cursor=page.next_cursor,
+    )
 
 
 def inbox_payload_preview(payload: CanonicalValue) -> ShownValue:
@@ -324,6 +422,10 @@ def inbox_payload_preview(payload: CanonicalValue) -> ShownValue:
 
 __all__ = [
     "INBOX_ITEM_ID_PATTERN",
+    "INBOX_ROW_TITLE_MAX_CHARS",
+    "InboxRow",
+    "InboxRows",
+    "compact_inbox_list",
     "INBOX_ITEM_MAX_BYTES",
     "INBOX_RUN_MAX_BYTES",
     "INBOX_ITEM_SELECTOR_PATTERN",

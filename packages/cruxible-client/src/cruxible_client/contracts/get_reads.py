@@ -83,6 +83,7 @@ GetRefKind = Literal[
     "contract",
     "capability",
     "runbook",
+    "note",
 ]
 # Verdict problems a row or card carries; derived from the verdict machinery,
 # never re-adjudicated here.
@@ -137,6 +138,7 @@ GET_DETAILS_BY_KIND: dict[str, tuple[str, ...]] = {
     "contract": ("summary", "history", "proof"),
     "capability": ("summary", "history", "proof"),
     "runbook": ("summary", "history", "proof"),
+    "note": ("summary", "history", "proof"),
 }
 
 
@@ -257,7 +259,8 @@ class GetClaimCard(_StrictGetModel):
     verdict: str
     status: str
     revision: int
-    accepted: str | None = Field(default=None, exclude_if=_omit_none)
+    #: When the change set holding this revision was proposed (not accepted).
+    proposed_at: str | None = Field(default=None, exclude_if=_omit_none)
     contenders: tuple[GetContender, ...] = ()
     flags: tuple[ReadFlag, ...] = ()
     next: tuple[str, ...] = ()
@@ -566,7 +569,12 @@ class GetTriggerCard(_StrictGetModel):
     trigger: str
     lifecycle: str
     schedule: dict[str, Any]
-    #: ``Line:<name>`` or the internal action it fires.
+    #: The schedule, compact: ``cron 0 14 * * *``, ``every 3600s``, ``when ... lands``.
+    sched: str | None = Field(default=None, exclude_if=_omit_none)
+    #: A live timer's (cadence or cron) next instant after the read's evaluation
+    #: time, counted from this version's acceptance; absent for other schedules.
+    next_fire: datetime | None = Field(default=None, exclude_if=_omit_none)
+    #: ``Line:<name>``, ``Runbook:<name>`` or the internal action it fires.
     target: str
     next: tuple[str, ...] = ()
 
@@ -656,6 +664,26 @@ class GetCapabilityCard(_StrictGetModel):
     next: tuple[str, ...] = ()
 
 
+class GetNoteCard(_StrictGetModel):
+    """One note: a workspace section linked ``about`` Subjects (never a Claim)."""
+
+    #: ``Note:NOTE-<32 hex>``
+    note: str
+    #: The catalogued workspace source (files.yaml name); absent when withheld.
+    file: str | None = Field(default=None, exclude_if=_omit_none)
+    #: The heading path; empty when withheld.
+    section: tuple[str, ...] = ()
+    #: ``kind/id`` of each Subject the section is about.
+    about: tuple[str, ...]
+    #: The section's bytes when linked: a Capture handle get and read_capture accept.
+    capture: str
+    lifecycle: str
+    #: C14: the section's Capture is withheld from this reader, so its file and
+    #: heading path are left out (the note, its Subjects and Capture handle stay).
+    withheld: BodyRestricted | None = Field(default=None, exclude_if=_omit_none)
+    next: tuple[str, ...] = ()
+
+
 class GetProposalChange(_StrictGetModel):
     path: str
     change: str
@@ -677,6 +705,17 @@ class GetProposalCard(_StrictGetModel):
     incomplete: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
     verdict: str | None = Field(default=None, exclude_if=_omit_none)
     reason: str | None = Field(default=None, exclude_if=_omit_none)
+    #: A superseded proposal (``reason``): the proposal that took its place.
+    superseded_by: str | None = Field(default=None, exclude_if=_omit_none)
+    #: A superseded, rejected or withdrawn proposal: the principal whose act
+    #: closed this one (the approval, activation, readmit or Line run that
+    #: superseded it, absent on records that predate it; the reviewer who
+    #: rejected it; whoever withdrew it). ``actor`` is its author.
+    closed_by: str | None = Field(default=None, exclude_if=_omit_none)
+    #: A rejected or withdrawn proposal: when it closed, and the reason given
+    #: (the reviewer's ``proposal reject --reason`` text, whole).
+    closed_at: str | None = Field(default=None, exclude_if=_omit_none)
+    closed_reason: str | None = Field(default=None, exclude_if=_omit_none)
     actor: str | None = Field(default=None, exclude_if=_omit_none)
     admitted_at: str | None = Field(default=None, exclude_if=_omit_none)
     rationale: str | None = Field(default=None, exclude_if=_omit_none)
@@ -755,6 +794,7 @@ GetCard = (
     | GetContractCard
     | GetCapabilityCard
     | GetRunbookCard
+    | GetNoteCard
 )
 
 
@@ -900,7 +940,10 @@ class GetRevision(_StrictGetModel):
     # The accepted generation's git oid (12-hex prefix): pass it, or the
     # sequence, back as ``at`` to read at that revision.
     git_oid: str = Field(pattern=r"^[0-9a-f]{12}$")
-    accepted: str
+    #: When the change set was proposed (its candidate's timestamp). Revisions
+    #: are ordered by generation (``sequence``), not by this time; the instant
+    #: of acceptance itself is not recorded.
+    proposed_at: str
     actor: str | None = Field(default=None, exclude_if=_omit_none)
     approved_by: tuple[str, ...] = ()
     lifecycle: str | None = Field(default=None, exclude_if=_omit_none)
@@ -943,7 +986,8 @@ class _GetFieldEvent(_StrictGetModel):
     # The accepted generation's git oid (12-hex prefix): pass it, or the
     # sequence, back as ``at`` to read the Subject as this event left it.
     git_oid: str = Field(pattern=r"^[0-9a-f]{12}$")
-    accepted: str
+    #: When the change set was proposed; events are ordered by ``sequence``.
+    proposed_at: str
     actor: str | None = Field(default=None, exclude_if=_omit_none)
     approved_by: tuple[str, ...] = ()
     reason: GetRevisionReason | None = Field(default=None, exclude_if=_omit_none)
@@ -1003,9 +1047,10 @@ class GetSubjectHistory(_StrictGetModel):
     """A Subject's history: its shell's revisions, and one page of its field events.
 
     ``revisions`` are the Subject shell's own (created, pins, retired), all of
-    them. ``events`` are its fields' changes, newest first, one page: each
-    revision of each Claim about the Subject, with what it did and why. Group
-    them by ``field`` for each field's value timeline.
+    them, or none when the read names a ``field``. ``events`` are its fields'
+    changes, newest first, one page: each revision of each Claim about the
+    Subject, with what it did and why. Group them by ``field`` for each field's
+    value timeline.
     """
 
     kind: Literal["subject"] = "subject"
@@ -1148,6 +1193,7 @@ __all__ = [
     "GET_DETAILS_BY_KIND",
     "GetCapabilityCard",
     "GetContractCard",
+    "GetNoteCard",
     "GetContractField",
     "GET_HISTORY_DEFAULT_LIMIT",
     "GET_HISTORY_MAX_LIMIT",

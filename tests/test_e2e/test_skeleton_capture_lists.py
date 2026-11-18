@@ -61,11 +61,11 @@ PAGES_PROVIDER = "test-pages"
 ORIGIN = "https://pages.test"
 LOGICAL_SOURCE = "cisa.kev.catalog"
 PAGES_REQUEST = boundary_contract("test.pages.request", {"feed": "string"})
-PAGES_RESULT = boundary_contract("test.pages.result", {"pages": "list<capture<*>>{max_items: 3}"})
+PAGES_RESULT = boundary_contract("test.pages.result", {"pages": "list<capture<*>>{max_items: 32}"})
 PAGES_DERIVE = boundary_contract(
     "test.pages-derive.request",
     {
-        "sources": "list<capture<*>>{max_items: 3}",
+        "sources": "list<capture<*>>{max_items: 32}",
         "watched": "list<test.watched-row@1>{max_items: 100}",
     },
     WATCH_ROW,
@@ -164,7 +164,9 @@ def split(entries: list[dict[str, Any]]) -> list[bytes]:
     ]
 
 
-def _wire(content: bytes, url: str, *, source: str = LOGICAL_SOURCE) -> dict[str, Any]:
+def _wire(
+    content: bytes, url: str, *, source: str = LOGICAL_SOURCE, observed: Any = None
+) -> dict[str, Any]:
     return {
         "source_identity": source,
         "coordinate_type": "http-response-v1",
@@ -183,7 +185,7 @@ def _wire(content: bytes, url: str, *, source: str = LOGICAL_SOURCE) -> dict[str
         "content_encoding": "base64",
         "byte_length": len(content),
         "bytes_digest": "sha256:" + hashlib.sha256(content).hexdigest(),
-        "observed_at": NOW.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "observed_at": (NOW if observed is None else observed).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
 
 
@@ -211,8 +213,10 @@ class Pages:
         urls: list[str] | None = None,
         sources: list[str] | None = None,
         incomplete_captures: list[str] | None = None,
+        observed: Any = None,
     ) -> None:
         self.pages = pages
+        self.observed = observed
         self.incomplete_captures = incomplete_captures or []
         self.urls = urls or [f"{ORIGIN}/kev/{index}" for index in range(len(pages))]
         self.sources = sources or [LOGICAL_SOURCE] * len(pages)
@@ -223,7 +227,7 @@ class Pages:
             if "feed" in context.input:
                 return {
                     "pages": [
-                        _wire(body, url, source=source)
+                        _wire(body, url, source=source, observed=self.observed)
                         for body, url, source in zip(
                             self.pages, self.urls, self.sources, strict=True
                         )
@@ -758,19 +762,15 @@ def test_acceptance_refuses_a_witness_whose_later_member_names_another_source(
     }, refused
 
 
-@pytest.mark.parametrize("defect", [None, "unavailable", "invalid", "other_source"])
-def test_an_absence_reobservation_verifies_every_member_of_its_witness(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, defect: str | None
-) -> None:
-    """A held inverse re-observed on a complete list records only when every page stands.
+def test_an_absence_is_reconfirmed_per_claim_by_every_complete_run(tmp_path: Path) -> None:
+    """The 0.5.0 absence fallback (maintainer ruling 2026-11-16): every complete
+    run reconfirms each held absence with one small per-Claim record at that
+    run's call, which its live freshness reads (review 2d #8), whether the
+    pages' bytes changed or are the held Captures again."""
 
-    Only the LAST page is defective: unavailable, failing verification, or naming another
-    logical source. The re-observation's receipt cites the first page, which is sound.
-    """
+    from datetime import timedelta
 
     from cruxible_core.evidence.claim_reobservations import ClaimReobservationStore
-    from cruxible_core.procedures.claims_context import AcceptedClaimsContext
-    from cruxible_core.service.evidence import capture_reads
 
     instance = pages_world(tmp_path)
     install(instance, list_spec(), line="test.kev-pages-line")
@@ -781,42 +781,563 @@ def test_an_absence_reobservation_verifies_every_member_of_its_witness(
     second = run_pages(instance, Pages(delisted), line="test.kev-pages-line", minute=1)
     activate(instance, second)
     inverse = held[(_cve(DELISTED), LISTED_IN)].identity.name
-    assert ClaimReobservationStore(instance).history(inverse) == ()
+    before = _inverse_freshness(instance, inverse)
+    restated = [
+        json.dumps({**json.loads(page), "fetched": "again"}, sort_keys=True).encode()
+        for page in delisted
+    ]
+    store = ClaimReobservationStore(instance)
 
-    last = f"{ORIGIN}/kev/2"
-    sources = None
-    if defect == "other_source":
-        sources = [LOGICAL_SOURCE, LOGICAL_SOURCE, "other.source"]
-        real_source = AcceptedClaimsContext.logical_source
+    for minute, pages in ((2, restated), (3, restated), (4, delisted)):
+        state = run_pages(
+            instance,
+            Pages(pages, observed=NOW + timedelta(minutes=minute)),
+            line="test.kev-pages-line",
+            minute=minute,
+        )
+        assert state.status == "succeeded", state.terminal
+        after = _inverse_freshness(instance, inverse)
+        assert after is not None and (before is None or after > before)
+        before = after
+    records = store.history(inverse)
+    assert len(records) == 3  # one per complete run
 
-        def blind(self: Any, capture: str) -> str | None:
-            found = real_source(self, capture)
-            return LOGICAL_SOURCE if found == "other.source" else found
 
-        monkeypatch.setattr(AcceptedClaimsContext, "logical_source", blind)
-    elif defect is not None:
-        real_verify = capture_reads.verify_accepted_capture
+def test_a_recheck_association_is_the_latest_of_its_claim_version(tmp_path: Path) -> None:
+    """Review 2e #1-#2: a per-Claim re-check of an extracted Claim in other
+    bytes associates that Capture's content with exactly the Claim version it
+    checked; only the latest re-check is current (a return to an earlier one is
+    re-checked again, so the terminal's skip gate is false for it), and a
+    historical read uses the association applicable at its instant."""
 
-        def failing(instance: Any, coordinate: Any, digest: str, **kwargs: Any) -> Any:
-            verified = real_verify(instance, coordinate, digest, **kwargs)
-            if isinstance(verified, str) or verified.envelope.source.coordinate.get("url") != last:
-                return verified
-            if defect == "unavailable":
-                return "capture_unavailable"
-            raise capture_reads.CaptureReadInvalid("Capture verification failed: corrupt")
+    from datetime import UTC, datetime, timedelta
 
-        monkeypatch.setattr(capture_reads, "verify_accepted_capture", failing)
-    third = run_pages(
-        instance, Pages(delisted, sources=sources), line="test.kev-pages-line", minute=2
+    from cruxible_client.contracts.claims import claim_artifact_digest, claim_path, parse_claim
+    from cruxible_client.contracts.temporal import format_datetime
+    from cruxible_core.evidence.claim_reobservations import (
+        ClaimReobservationStore,
+        ObservedContent,
+        ReobservationReader,
+        cited_content_keys,
+        claim_reobservation_keys,
     )
-    assert third.status == "succeeded", third.terminal
-    (call,) = (node for node in third.nodes if node.node == "pages")
-    members = tuple(call.summary.capture_digests)
-    recorded = ClaimReobservationStore(instance).history(inverse)
-    if defect is None:
-        assert [record.capture_digest for record in recorded] == [members[0]]
+    from cruxible_core.service.procedures.capture_observations import (
+        InstanceCaptureObservations,
+    )
+
+    instance = pages_world(tmp_path)
+    install(instance, list_spec(), line="test.kev-pages-line")
+    first = run_pages(instance, Pages(split(catalog())), line="test.kev-pages-line")
+    claim_id = _by(proposed(instance, first))[(_cve(WATCHED[0]), LISTED_IN)].identity.name
+    activate(instance, first)
+    head = instance.accepted_coordinate()
+    claim = parse_claim(
+        instance.tree_at(head.git_oid)[claim_path(claim_id)], path=claim_path(claim_id)
+    )
+    cited = claim.backing.procedure_evidence.value.capture_digest
+    (cited_key,) = cited_content_keys(instance, coordinate=head, capture_digests=(cited,))
+    contract = cited_key.contract_digest
+    version = claim_artifact_digest(claim).tagged
+    store = ClaimReobservationStore(instance)
+    # After the run's own records, which the instance's live clock stamped.
+    start = datetime.now(UTC).replace(microsecond=0) + timedelta(hours=1)
+
+    def digest(label: str) -> str:
+        return "sha256:" + hashlib.sha256(label.encode()).hexdigest()
+
+    def recheck(minute: int, capture: str, *, of: str = version) -> None:
+        at = start + timedelta(minutes=minute)
+        instance.recording_clock = lambda: at
+        payload = {
+            "tag": "cruxible-claim-reobservation-v1",
+            "claim_id": claim_id,
+            "capture_digest": digest(capture),
+            "contract_digest": contract,
+            "observed_content_digest": cited_key.observed_content_digest,
+            "capture_content_digest": digest("content-" + capture),
+            "observed_at": format_datetime(at),
+            "claim_artifact_digest": of,
+            "latest": format_datetime(at),
+        }
+        with store._locked(create=True) as conn:  # noqa: SLF001
+            journal, bodies, journal_head = store._writer_head()  # noqa: SLF001
+            stored = store._append(  # noqa: SLF001
+                journal, bodies, journal_head, payload, accepted=head, actor_id="o", now=at
+            )
+            store._apply(conn, payload, stored.record.sequence, stored.record.recorded_at)  # noqa: SLF001
+            conn.commit()
+
+    def fetched(minute: int, capture: str) -> None:
+        at = start + timedelta(minutes=minute)
+        instance.recording_clock = lambda: at
+        store.observe(
+            (ObservedContent(contract, digest("content-" + capture), digest(capture)),),
+            earliest=at,
+            latest=at,
+            run_id=f"RUN-{minute}",
+            node_id="pages",
+            actor_id="o",
+        )
+
+    def fresh(minute: int) -> int:
+        at = start + timedelta(minutes=minute)
+        keys = claim_reobservation_keys(
+            instance, coordinate=head, claim=claim, captures=claim.backing.capture_digests
+        )
+        reading = ReobservationReader(instance).latest(claim_id, keys, at)
+        return max(
+            (int((item.observed_at - start).total_seconds() // 60) for item in reading.evidence),
+            default=-1,
+        )
+
+    port = InstanceCaptureObservations(instance)
+    recheck(10, "B")
+    fetched(12, "B")
+    recheck(20, "D")
+    assert not port.rechecked(claim_id, version, digest("B"))  # B is re-checked again
+    assert port.rechecked(claim_id, version, digest("D"))
+    fetched(30, "B")
+    assert fresh(40) == 20  # B's fetch is not this version's current association
+    assert fresh(15) == 12  # at 15, B was: its fetch at 12 counts
+    recheck(30, "B")
+    assert fresh(40) == 30
+    fetched(35, "B")
+    assert fresh(40) == 35
+    # Another version's re-check never becomes this version's association.
+    recheck(50, "E", of=digest("an-earlier-version"))
+    fetched(55, "E")
+    assert fresh(60) == 35
+    assert port.rechecked(claim_id, version, digest("B"))
+
+
+def test_a_successor_version_is_reconfirmed_on_a_capture_its_predecessor_was(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review 2f #1: a re-check recorded for one Claim version never stands for
+    its successor's. The same Capture and call reconfirming the next version
+    (after a revision) is judged and recorded for that version."""
+
+    from datetime import UTC, datetime, timedelta
+
+    from cruxible_core.evidence.claim_reobservations import (
+        ClaimReobservationStore,
+        ReobservationReader,
+    )
+
+    instance = pages_world(tmp_path)
+    install(instance, list_spec(), line="test.kev-pages-line")
+    first = run_pages(instance, Pages(split(catalog())), line="test.kev-pages-line")
+    held = _by(proposed(instance, first))
+    activate(instance, first)
+    delisted = split(catalog("kev-catalog-delisted"))
+    second = run_pages(instance, Pages(delisted), line="test.kev-pages-line", minute=1)
+    activate(instance, second)
+    inverse = held[(_cve(DELISTED), LISTED_IN)].identity.name
+    seen: list[Any] = []
+    batched = ClaimReobservationStore.record_many
+
+    def spy(self: Any, requests: Any, **kwargs: Any) -> Any:
+        seen.extend(requests)
+        return batched(self, requests, **kwargs)
+
+    monkeypatch.setattr(ClaimReobservationStore, "record_many", spy)
+    state = run_pages(
+        instance,
+        Pages(delisted, observed=NOW + timedelta(minutes=2)),
+        line="test.kev-pages-line",
+        minute=2,
+    )
+    assert state.status == "succeeded", state.terminal
+    (real,) = [item for item in seen if item.claim_id == inverse]
+    store = ClaimReobservationStore(instance)
+    assert len(store.history(inverse)) == 1
+    current = store._version_at(inverse, instance.accepted_coordinate().git_oid)  # noqa: SLF001
+    later = datetime.now(UTC) + timedelta(days=1)
+    reader = ReobservationReader(instance)
+    assert reader.latest_version_record(inverse, current, observed_by=later) is not None
+    # The Claim is revised (its successor version is live); the same Capture
+    # and call reconfirm it.
+    successor = "sha256:" + "9" * 64
+    envelope, cited, _version = store._admissible(  # noqa: SLF001
+        claim_id=real.claim_id,
+        capture_digest=real.capture_digest,
+        coordinate=instance.accepted_coordinate(),
+        extraction=real.extraction,
+        extracted_value=real.extracted_value,
+        repeat=True,
+    )
+    admitted: list[str] = []
+
+    def admit(**kwargs: Any) -> Any:
+        admitted.append(kwargs["claim_id"])
+        return envelope, cited, successor
+
+    monkeypatch.setattr(store, "_version_at", lambda _claim, _oid: successor)
+    monkeypatch.setattr(store, "_admissible", admit)
+    assert store.record_many([real], actor_id="owner") == {}
+    assert admitted == [inverse]  # judged for the successor, not taken as known
+    assert len(store.history(inverse)) == 2
+    assert reader.latest_version_record(inverse, successor, observed_by=later) is not None
+    # A repeat for the successor itself is the record it already holds.
+    assert store.record_many([real], actor_id="owner") == {}
+    assert admitted == [inverse] and len(store.history(inverse)) == 2
+
+
+def _areas(root: Path) -> dict[str, int]:
+    """Apparent bytes under an instance by area (CAS bodies, each exhaust family, rest)."""
+
+    sizes: dict[str, int] = {}
+    for path in root.rglob("*"):
+        if not path.is_file():
+            continue
+        parts = path.relative_to(root).parts
+        area = parts[0] if parts[0] != "exhaust" or len(parts) < 2 else "exhaust/" + parts[1]
+        sizes[area] = sizes.get(area, 0) + path.stat().st_size
+    return sizes
+
+
+def test_an_unchanged_run_stores_the_same_at_2_and_22_absences(tmp_path: Path) -> None:
+    """Round 9 (K and F): the whole unchanged run, every stored byte, at two
+    absence counts. Each held absence is reconfirmed every complete run; that
+    costs one batch journal record whose entries are each Claim's id and
+    version, and nothing else per Claim: the terminal's request items (the
+    reconfirmed items, their receipt and changes) and children are the bodies
+    stored before, and the projection keeps one current point per Claim."""
+
+    from datetime import timedelta
+
+    from cruxible_client.contracts.authoring.inputs import SubjectInput
+    from tests.support.operation_world import author
+
+    grown: dict[int, dict[str, int]] = {}
+    for extra in (0, 20):
+        root = tmp_path / str(extra)
+        root.mkdir()
+        instance = pages_world(root)
+        for index in range(extra):
+            author(
+                instance,
+                SubjectInput(
+                    kind="subject",
+                    subject_kind=VULN,
+                    key={"cve_id": f"CVE-2099-{index:05d}"},
+                    rationale="Watched.",
+                ),
+                name=f"extra-{index}",
+            )
+        install(instance, list_spec(), line="test.kev-pages-line")
+        delisted = split(catalog("kev-catalog-delisted"))
+        first = run_pages(instance, Pages(split(catalog())), line="test.kev-pages-line")
+        activate(instance, first)
+        second = run_pages(instance, Pages(delisted), line="test.kev-pages-line", minute=1)
+        activate(instance, second)
+        for minute in (2, 3):  # the first unchanged run warms up
+            before = _areas(instance.root)
+            state = run_pages(
+                instance,
+                Pages(delisted, observed=NOW + timedelta(minutes=minute)),
+                line="test.kev-pages-line",
+                minute=minute,
+            )
+            assert state.status == "succeeded", state.terminal
+            assert state.completeness is None
+            after = _areas(instance.root)
+        grown[extra] = {
+            area: after.get(area, 0) - before.get(area, 0)
+            for area in after
+            if after.get(area, 0) != before.get(area, 0)
+        }
+    print("UNCHANGED_RUN", grown)
+    # Bodies and journal: one batch entry per reconfirmed absence (its id and
+    # version); the terminal's items, receipt and children are reused.
+    stored = (grown[20].get("cas", 0) - grown[0].get("cas", 0)) / 20
+    assert stored < 400, (stored, grown)
+    # The whole run, every byte (round 9 F): the projection holds each run's
+    # absences as one point of the set it reconfirmed, never a row per Claim.
+    total = (sum(grown[20].values()) - sum(grown[0].values())) / 20
+    assert total < 400, (total, grown)
+
+
+def _cas_files(root: Path) -> dict[str, int]:
+    return {
+        str(path): path.stat().st_size
+        for path in (root / "cas").rglob("*")
+        if path.is_file() and len(path.name) == 64
+    }
+
+
+@pytest.mark.parametrize("fixed", [False, True], ids=["run_input_digest", "read_identity"])
+def test_an_unchanged_derive_reuses_its_capture_at_3_and_24_pages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fixed: bool
+) -> None:
+    """Round 6 item 2 (D): a derive over the same pages and the same state read
+    of an unchanged generation reuses the Capture it made before.
+
+    Its manifest names the read by its run-free identity (manifest v2), so the
+    read's evaluation instant no longer makes a new manifest, envelope,
+    consumed lists or row map every run. ``run_input_digest`` is the round 5
+    rule (each read named by its run input digest), measured for comparison.
+    """
+
+    import cruxible_core.procedures.execution as execution
+    from cruxible_core.procedures.input_planes import run_input_digest
+
+    if not fixed:
+        monkeypatch.setattr(
+            execution,
+            "accepted_read_identity",
+            lambda run_input, _value: run_input_digest(run_input),
+        )
+    grown: dict[int, tuple[int, int, int]] = {}
+    for count in (3, 24):
+        (tmp_path / str(count)).mkdir()
+        instance = pages_world(tmp_path / str(count))
+        install(instance, list_spec(derive=True), line="test.kev-pages-derive-line", origins=True)
+        entries = catalog()
+        bodies = [
+            json.dumps({"vulnerabilities": entries[index::count]}, sort_keys=True).encode()
+            for index in range(count)
+        ]
+        first = run_pages(instance, Pages(bodies), line="test.kev-pages-derive-line")
+        assert first.status == "succeeded", first.terminal
+        activate(instance, first)
+        roots = []
+        held: dict[str, int] = {}
+        for minute in (1, 2):
+            if minute == 2:
+                held = _cas_files(instance.root)
+            state = run_pages(
+                instance, Pages(bodies), line="test.kev-pages-derive-line", minute=minute
+            )
+            assert state.status == "succeeded", state.terminal
+            (call,) = (node for node in state.nodes if node.node == "view")
+            roots.append(tuple(call.summary.capture_digests))
+        added = {path: size for path, size in _cas_files(instance.root).items() if path not in held}
+        # The terminal's shared dependencies list every page; measured apart
+        # (round 7: v2 names the read by identity, so they are reused too).
+        shared = {
+            path: size
+            for path, size in added.items()
+            if b'"tag":"playbill-terminal-shared-dependencies-' in Path(path).read_bytes()
+        }
+        grown[count] = (
+            len(added) - len(shared),
+            sum(added.values()) - sum(shared.values()),
+            sum(shared.values()),
+        )
+        manifest = _manifest(instance, roots[-1][0])
+        assert manifest.tag == "playbill-input-receipt-set-manifest-v2"
+        assert len(manifest.input_capture_digests) == count
+        from cruxible_core.service.procedures.procedure_runs import _records_for_run
+
+        produced = [
+            item
+            for item in _records_for_run(instance, state.run_id)
+            if item.record.event_kind == "produced_capture"
+        ]
+        if fixed:
+            # The same Capture: whatever cites it (an inbox item, a Claim) cites
+            # the same digest every unchanged run, and no Capture lands, so no
+            # Capture-landing Trigger fires for a Line (round 6 item 3).
+            assert roots[0] == roots[1]
+            assert produced == []
+        else:
+            assert roots[0] != roots[1]
+            assert len(produced) == 1
+    print("DERIVE_COST", "fixed" if fixed else "before", grown)
+    bytes_slope = (grown[24][1] - grown[3][1]) / 21
+    shared_slope = (grown[24][2] - grown[3][2]) / 21
+    if fixed:
+        # Nothing a page adds: no derived envelope, manifest, consumed lists,
+        # row map or shared dependency set, only the run's own journal bodies.
+        assert grown[24][0] == grown[3][0], grown
+        assert bytes_slope < 16, grown
+        assert grown[3][2] == grown[24][2] == 0, grown
+        # The complete delta, nothing subtracted (review 2f #5).
+        total = {size: grown[size][1] + grown[size][2] for size in grown}
+        assert (total[24] - total[3]) / 21 < 16, total
     else:
-        assert recorded == ()
+        assert bytes_slope > 100 and shared_slope > 100, grown
+
+
+def _stored(root: Path) -> tuple[int, int]:
+    """Apparent bytes of (journal and bodies, re-observation projection) under one instance."""
+
+    journal = projection = 0
+    for path in root.rglob("*"):
+        if not path.is_file():
+            continue
+        if path.name.startswith("reobservations.sqlite3"):
+            projection += path.stat().st_size
+        else:
+            journal += path.stat().st_size
+    return journal, projection
+
+
+def test_absence_reconfirmations_store_one_record_per_run_at_12_and_120(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Round 6 item 1: a run's absence reconfirmations are one journal record.
+
+    The real absence reconfirmation of the delisted CVE (its receipt, value and
+    call) is taken from a real run, then recorded for 12 and for 120 Claims,
+    once per Claim (the round 5 shape) and once batched. Admission is the real
+    record's own, held fixed, so only the storage shape is measured. Each
+    Claim still reads back as its own record.
+    """
+
+    from dataclasses import replace
+    from datetime import timedelta
+
+    from cruxible_core.evidence.claim_reobservations import ClaimReobservationStore
+
+    instance = pages_world(tmp_path)
+    install(instance, list_spec(), line="test.kev-pages-line")
+    first = run_pages(instance, Pages(split(catalog())), line="test.kev-pages-line")
+    held = _by(proposed(instance, first))
+    activate(instance, first)
+    delisted = split(catalog("kev-catalog-delisted"))
+    second = run_pages(instance, Pages(delisted), line="test.kev-pages-line", minute=1)
+    activate(instance, second)
+    inverse = held[(_cve(DELISTED), LISTED_IN)].identity.name
+    seen: list[Any] = []
+    batched = ClaimReobservationStore.record_many
+
+    def spy(self: Any, requests: Any, **kwargs: Any) -> Any:
+        seen.extend(requests)
+        return batched(self, requests, **kwargs)
+
+    monkeypatch.setattr(ClaimReobservationStore, "record_many", spy)
+    state = run_pages(
+        instance,
+        Pages(delisted, observed=NOW + timedelta(minutes=2)),
+        line="test.kev-pages-line",
+        minute=2,
+    )
+    assert state.status == "succeeded", state.terminal
+    (real,) = [item for item in seen if item.claim_id == inverse]
+    assert real.extraction is not None and real.extraction.absence is not None
+    store = ClaimReobservationStore(instance)
+    admitted = store._admissible(  # noqa: SLF001 - held fixed: only storage is measured
+        claim_id=real.claim_id,
+        capture_digest=real.capture_digest,
+        coordinate=instance.accepted_coordinate(),
+        extraction=real.extraction,
+        extracted_value=real.extracted_value,
+        repeat=True,
+    )
+    monkeypatch.setattr(store, "_admissible", lambda **_kwargs: admitted)
+    monkeypatch.setattr(store, "_version_at", lambda _claim, _oid: admitted[2])
+    assert real.call is not None
+    measured: dict[tuple[str, int], tuple[int, int]] = {}
+    step = 0
+    for shape in ("per_claim", "batched"):
+        for count in (12, 120):
+            step += 1
+            call = (real.call[0] + timedelta(seconds=step), real.call[1] + timedelta(seconds=step))
+            requests = [
+                replace(real, claim_id=f"{inverse}-{shape}-{count}-{index:04d}", call=call)
+                for index in range(count)
+            ]
+            before = _stored(instance.root)
+            if shape == "per_claim":
+                for item in requests:
+                    store.record(
+                        claim_id=item.claim_id,
+                        capture_digest=item.capture_digest,
+                        actor_id="owner",
+                        extraction=item.extraction,
+                        extracted_value=item.extracted_value,
+                        call=item.call,
+                    )
+            else:
+                assert store.record_many(requests, actor_id="owner") == {}
+            after = _stored(instance.root)
+            measured[(shape, count)] = (after[0] - before[0], after[1] - before[1])
+            for item in requests[:: count // 3]:
+                (record,) = store.history(item.claim_id)
+                assert record.capture_digest == real.capture_digest
+    per_claim = {
+        shape: (measured[(shape, 120)][0] - measured[(shape, 12)][0]) / 108
+        for shape in ("per_claim", "batched")
+    }
+    print("ABSENCE_COST", measured, per_claim)
+    # Round 5 stored a whole record per Claim (~2.3 KB); batched, a Claim
+    # costs its id and version in the one record's body.
+    assert per_claim["per_claim"] > 1500, measured
+    assert per_claim["batched"] < 200, measured
+
+
+def _inverse_freshness(instance: Any, claim_id: str) -> Any:
+    """The latest instant the absence Claim's freshness reads (recorded, observed)."""
+
+    from datetime import UTC, datetime, timedelta
+
+    from cruxible_client.contracts.claims import claim_path, parse_claim
+    from cruxible_core.evidence.claim_reobservations import (
+        ReobservationReader,
+        claim_reobservation_keys,
+    )
+
+    head = instance.accepted_coordinate()
+    claim = parse_claim(
+        instance.tree_at(head.git_oid)[claim_path(claim_id)], path=claim_path(claim_id)
+    )
+    keys = claim_reobservation_keys(
+        instance, coordinate=head, claim=claim, captures=claim.backing.capture_digests
+    )
+    reading = ReobservationReader.of(instance).latest(
+        claim_id, keys, datetime.now(UTC) + timedelta(days=1)
+    )
+    return max((item.recorded_at for item in reading.evidence), default=None)
+
+
+@pytest.mark.parametrize("later", ["complete", "failed", "changed"])
+def test_an_absence_is_refreshed_only_by_a_complete_enumeration(tmp_path: Path, later: str) -> None:
+    """Review 2b F-001 and 2c #3: the first page's contents never refresh an absence.
+
+    After the delisting is accepted, the same first page is fetched again. A
+    failed later page leaves the absence where it was; a complete enumeration
+    still lacking its Subject refreshes it, whether unchanged or with an
+    unrelated key added on a later page (the root page still cited).
+    """
+
+    instance = pages_world(tmp_path)
+    install(instance, list_spec(), line="test.kev-pages-line")
+    first = run_pages(instance, Pages(split(catalog())), line="test.kev-pages-line")
+    held = _by(proposed(instance, first))
+    activate(instance, first)
+    delisted = split(catalog("kev-catalog-delisted"))
+    second = run_pages(instance, Pages(delisted), line="test.kev-pages-line", minute=1)
+    activate(instance, second)
+    inverse = held[(_cve(DELISTED), LISTED_IN)].identity.name
+    before = _inverse_freshness(instance, inverse)
+    from datetime import timedelta
+
+    # Observed later than the run accepting the delisting.
+    observed = NOW + timedelta(minutes=2)
+    pages = Pages(list(delisted), observed=observed)
+    if later == "failed":
+        pages = Pages(list(delisted), incomplete_captures=["pages"], observed=observed)
+    elif later == "changed":
+        extra = json.loads(delisted[2])
+        extra["vulnerabilities"] = [
+            *extra["vulnerabilities"],
+            {**extra["vulnerabilities"][0], "cveID": "CVE-2099-0001"},
+        ]
+        pages = Pages(
+            [delisted[0], delisted[1], json.dumps(extra, sort_keys=True).encode()],
+            observed=observed,
+        )
+    third = run_pages(instance, pages, line="test.kev-pages-line", minute=2)
+    assert third.status == "succeeded", third.terminal
+    after = _inverse_freshness(instance, inverse)
+    if later == "failed":
+        assert after == before
+    else:
+        # A complete enumeration that still lacks the Subject refreshes it,
+        # whether its pages are unchanged or another key was added (#3).
+        assert after is not None and (before is None or after > before)
 
 
 def test_a_list_the_provider_says_is_incomplete_never_retires(tmp_path: Path) -> None:
@@ -1041,3 +1562,51 @@ def test_a_real_failed_page_leaves_the_list_incomplete_and_suppresses_retirement
     assert any(
         item.kind == "claim_not_in_source" and item.source_incomplete for item in second.findings
     ), second.findings
+
+
+def test_a_derived_view_is_observed_only_through_the_pages_it_was_derived_from(
+    tmp_path: Path,
+) -> None:
+    """Review 2c #8: the derive's output is not a fetch. No content observation
+    names the view; its rows are observed with the span of the pages it read
+    (fetched by this run), never the derive's own instant."""
+
+    import json as _json
+    from datetime import timedelta
+
+    from cruxible_core.evidence.claim_reobservations import (
+        CONTENT_OBSERVATION_TAG,
+        ROW_OBSERVATION_TAG,
+        ClaimReobservationStore,
+    )
+    from cruxible_core.exhaust.records import parse_journal_payload
+    from cruxible_core.storage.cas import BodyAccessContext
+
+    instance = pages_world(tmp_path)
+    install(instance, list_spec(derive=True), line="test.kev-pages-derive-line", origins=True)
+    pages = Pages(split(catalog()), observed=NOW - timedelta(minutes=5))
+    state = run_pages(instance, pages, line="test.kev-pages-derive-line")
+    assert state.status == "succeeded", state.terminal
+    claims = _by(proposed(instance, state))
+    view = next(iter(claims.values())).backing.procedure_evidence.value.capture_digest
+    store = ClaimReobservationStore(instance)
+    journal = store._journal(create=False)  # noqa: SLF001
+    assert journal is not None
+    access = BodyAccessContext(principal_id="test", can_read_body=True)
+    payloads = [
+        parse_journal_payload(
+            instance.body_store().read(stored.record.payload_digest, access=access)
+        )
+        for stored in journal.select_records(store.stream, partition_id="reobservations")
+    ]
+    for payload in payloads:
+        if payload["tag"] == CONTENT_OBSERVATION_TAG:
+            body = _json.loads(instance.body_store().read(payload["set_digest"], access=access))
+            assert view not in {item[2] for item in body["contents"]}
+    rows = [payload for payload in payloads if payload["tag"] == ROW_OBSERVATION_TAG]
+    # The pages' instant, not the derive's (its wire says NOW).
+    from datetime import datetime as _datetime
+
+    assert rows and all(
+        _datetime.fromisoformat(payload["latest"]) == NOW - timedelta(minutes=5) for payload in rows
+    )

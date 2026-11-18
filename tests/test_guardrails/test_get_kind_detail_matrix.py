@@ -95,8 +95,8 @@ def refs(world, credential_world, prediction_world, run_world):  # type: ignore[
     return by_kind
 
 
-# Read over its own world below.
-_OWN_WORLD = frozenset({"subject_kind", "contract", "capability", "runbook"})
+# Read over its own world below; a note over tests/test_cli/test_playbill_notes.py.
+_OWN_WORLD = frozenset({"subject_kind", "contract", "capability", "runbook", "note"})
 
 
 def test_every_get_kind_has_a_reference_in_the_matrix(refs) -> None:  # type: ignore[no-untyped-def]

@@ -548,6 +548,15 @@ def schema_sql() -> str:
             PRIMARY KEY(source_identity,operation,capability)
         ) STRICT""",
             "CREATE INDEX provider_operations_by_capability ON provider_operations(capability,effect,source_identity,operation)",
+            # The Lines each live Runbook runs (one row per Runbook and Line):
+            # a Line card finds the Runbooks that run it by one index seek,
+            # never a walk of the Runbooks. Written at accept, removed with the
+            # Runbook version it came from.
+            """CREATE TABLE runbook_lines (
+            source_identity TEXT NOT NULL, line TEXT NOT NULL,
+            PRIMARY KEY(source_identity,line)
+        ) STRICT, WITHOUT ROWID""",
+            "CREATE INDEX runbook_lines_by_line ON runbook_lines(line,source_identity)",
             """CREATE TABLE claim_type_names (
             source_identity TEXT NOT NULL REFERENCES claim_types(identity),
             kind TEXT NOT NULL CHECK(kind IN ('predicate','subject_kind')),
@@ -1225,6 +1234,15 @@ def insert_owners(
         if row.kind == "provider":
             operations.extend(operation_index_rows(sources[row.identity]))
     insert_rows(connection, "provider_operations", operations)
+    runbook_lines: list[tuple[SQLValue, ...]] = []
+    for row in parsed.envelopes:
+        runbook = sources[row.identity] if row.kind == "runbook" else None
+        if runbook is not None and runbook.lifecycle.state == "live":
+            runbook_lines.extend(
+                (row.identity, line)
+                for line in dict.fromkeys(item.qualified for item in runbook.lines)
+            )
+    insert_rows(connection, "runbook_lines", runbook_lines)
     consumed: list[tuple[SQLValue, ...]] = []
     for row in parsed.envelopes:
         if row.kind != "claim":

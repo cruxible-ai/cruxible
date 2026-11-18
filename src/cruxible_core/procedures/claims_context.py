@@ -66,6 +66,7 @@ class AcceptedClaimsContext:
         self.tree = instance.immutable_tree_at(coordinate.git_oid)
         self._types: dict[str, ClaimType | None] = {}
         self._capture_sources: dict[str, str | None] = {}
+        self._capture_contents: dict[str, tuple[str, str] | None] = {}
         self._kinds: dict[str, SubjectKind | None] = {}
         self._subjects: dict[tuple[str, KeyTuple], SemanticAddress | None] = {}
         self._references: dict[tuple[str, str], SemanticAddress | None] = {}
@@ -360,6 +361,19 @@ class AcceptedClaimsContext:
                 result = SemanticAddress.whole_artifact(path)
         self._references[(kind, value)] = result
         return result
+
+    def capture_content(self, capture: str) -> tuple[str, str] | None:
+        """A cited Capture's (contract, observed content), from the evidence index."""
+
+        if capture not in self._capture_contents:
+            with self.instance.bind_accepted_projection(self.coordinate) as projection:
+                row = projection.typed.connection.execute(
+                    "SELECT contract_digest, observed_content_digest FROM captures "
+                    "WHERE capture_digest=?",
+                    (capture,),
+                ).fetchone()
+            self._capture_contents[capture] = None if row is None else (str(row[0]), str(row[1]))
+        return self._capture_contents[capture]
 
     def logical_source(self, capture: str) -> str | None:
         from cruxible_client.contracts.captures import parse_capture_envelope

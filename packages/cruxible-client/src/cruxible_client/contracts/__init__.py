@@ -167,6 +167,8 @@ from cruxible_client.contracts.line_inbox import InboxLinkSubject as InboxLinkSu
 from cruxible_client.contracts.line_inbox import InboxLinkTarget as InboxLinkTarget
 from cruxible_client.contracts.line_inbox import InboxList as InboxList
 from cruxible_client.contracts.line_inbox import InboxListEntry as InboxListEntry
+from cruxible_client.contracts.line_inbox import InboxRow as InboxRow
+from cruxible_client.contracts.line_inbox import InboxRows as InboxRows
 from cruxible_client.contracts.line_inbox import InboxSighting as InboxSighting
 from cruxible_client.contracts.operational_reads import GetRunNode
 from cruxible_client.contracts.orient import (
@@ -424,6 +426,7 @@ AuthoringExampleName = Literal[
     "claim-adjudicate-contradicting-evidence",
     "claim-cite-supporting-evidence",
     "claim-adjudicate-unreviewed-evidence",
+    "query-definition",
     "query-claims-by-type",
     "query-ontology",
     "query-procedures",
@@ -462,6 +465,7 @@ NextReason: TypeAlias = Literal[
     "mandate_expiring",
     "consumer_stalled",
     "line_coverage_gap",
+    "trigger_instants_missed",
     "line_work_pending",
     "line_disabled_by_upgrade",
     "line_not_enabled",
@@ -511,6 +515,8 @@ NextRepairOperation: TypeAlias = Literal[
     "cruxible.line.enable",
     "cruxible.line.evaluate",
     "cruxible.line.dispatch",
+    "cruxible.runbook.run",
+    "cruxible.action.run",
     "cruxible.inbox.list",
     "cruxible.prediction.settle",
     "cruxible.kit.add",
@@ -857,6 +863,9 @@ class ProposalInspection(BaseModel):
         default=None,
         exclude_if=lambda value: value is None,
     )
+    #: Each kit-bundled definition this change retires, said once (S7): it
+    #: stays retired across that kit's upgrades.
+    warnings: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
 
 
 class ProposalListEntry(BaseModel):
@@ -873,7 +882,12 @@ class ProposalListEntry(BaseModel):
     #: (``stale_paths``); it waits for its author's readmit. A proposal whose
     #: base merely moved is ``open``: approval or activation lands it at the head.
     status: Literal["open", "awaiting_readmit", "settled", "incomplete"]
-    terminal_reason: Literal["accepted", "refused", "withdrawn", "rejected"] | None = None
+    #: ``superseded``: the same change was proposed again as ``superseded_by``
+    #: (at the head, when an approval, activation or readmit met it behind the
+    #: head; or by a later run of its Line). Act on that proposal.
+    terminal_reason: (
+        Literal["accepted", "refused", "withdrawn", "rejected", "superseded"] | None
+    ) = None
     incomplete_reasons: tuple[
         Literal["missing_admission", "missing_evaluation", "missing_candidate"], ...
     ] = ()
@@ -883,6 +897,16 @@ class ProposalListEntry(BaseModel):
     stale_paths: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
     #: An accepted proposal: the accepted generation its change set settled in.
     accepted_generation: int | None = Field(default=None, exclude_if=lambda value: value is None)
+    #: A superseded proposal: the proposal that took its place.
+    superseded_by: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    #: A superseded, rejected or withdrawn proposal: the principal whose act
+    #: closed it (absent on a superseded record that predates it).
+    closed_by: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    #: A rejected or withdrawn proposal: when it closed, and the reason its
+    #: closer gave (a reviewer's ``proposal reject --reason``, the author's
+    #: ``proposal withdraw --reason``).
+    closed_at: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    closed_reason: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class ProposalList(BaseModel):
@@ -894,6 +918,21 @@ class ProposalList(BaseModel):
     entries: list[ProposalListEntry]
     truncated: bool = False
     next_cursor: str | None = None
+
+    def __str__(self) -> str:
+        """The page as ``cruxible proposal list`` prints it, next page in SDK syntax.
+
+        ``repr()`` counts it.
+        """
+
+        from cruxible_client.contracts.text_display import proposal_list_sdk_lines
+
+        return "\n".join(proposal_list_sdk_lines(self))
+
+    def __repr__(self) -> str:
+        from cruxible_client.contracts.text_display import proposal_list_summary
+
+        return proposal_list_summary(self)
 
 
 class ProposalSelectorResult(BaseModel):
@@ -976,6 +1015,18 @@ class WhoAmI(BaseModel):
     # would return otherwise: the same code, detail and repair.
     can_author: bool
     authoring_refusal: AuthoringRefusal | None
+
+    def __str__(self) -> str:
+        """Who this connection acts as, as text; ``repr()`` is its first line."""
+
+        from cruxible_client.contracts.text_display import whoami_lines
+
+        return "\n".join(whoami_lines(self))
+
+    def __repr__(self) -> str:
+        from cruxible_client.contracts.text_display import one_line_repr
+
+        return one_line_repr(self)
 
 
 class SemanticFieldValue(BaseModel):
@@ -1137,6 +1188,18 @@ class ActivationReceipt(BaseModel):
     #: (a moved proposal an approval or activation landed): the one reviewed.
     readmits: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
+    def __str__(self) -> str:
+        """What activated, as text; ``repr()`` is its first line."""
+
+        from cruxible_client.contracts.text_display import approval_result_lines
+
+        return "\n".join(approval_result_lines(self))
+
+    def __repr__(self) -> str:
+        from cruxible_client.contracts.text_display import one_line_repr
+
+        return one_line_repr(self)
+
 
 #: Why an approval did not activate its candidate: the signer held activation
 #: for someone else, more approvals are required, the caller's tier may not
@@ -1172,6 +1235,18 @@ class ApprovalReceipt(BaseModel):
     #: proposer), and who may give the rest.
     required_signers: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
     eligible_signers: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
+
+    def __str__(self) -> str:
+        """Who signed and what activated, as text; ``repr()`` is its first line."""
+
+        from cruxible_client.contracts.text_display import approval_result_lines
+
+        return "\n".join(approval_result_lines(self))
+
+    def __repr__(self) -> str:
+        from cruxible_client.contracts.text_display import one_line_repr
+
+        return one_line_repr(self)
 
 
 ProposalActivationResult = ActivationReceipt | ProposalRecompiled
@@ -1490,6 +1565,9 @@ class AuthoringPreflightResult(BaseModel):
         default=None,
         exclude_if=lambda value: value is None,
     )
+    #: The payload is identical to accepted state: a submit proposes nothing
+    #: and makes no generation (S2).
+    unchanged: bool = Field(default=False, exclude_if=lambda value: value is False)
 
 
 class AuthoringSubmitResultRecord(BaseModel):
@@ -1497,6 +1575,9 @@ class AuthoringSubmitResultRecord(BaseModel):
 
     tag: Literal["playbill-authoring-submit-result-v1"] = "playbill-authoring-submit-result-v1"
     outcome: AuthoringLanding
+    #: Each kit-bundled definition this change retires, said once (S7): it
+    #: stays retired across that kit's upgrades.
+    warnings: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
     intent: dict[str, Any]
     status: CandidateStatusRecord
     workspace_advertisement: WorkspaceAdvertisement = NOT_ATTACHED_ADVERTISEMENT
@@ -1851,52 +1932,6 @@ class NextResult(BaseModel):
         return self
 
 
-class CurationDetection(BaseModel):
-    """When curation detection last ran and whether it has caught up with the head.
-
-    Detection runs as the ``curation.detect`` internal action on accepted
-    generations; ``trigger`` says whether a live Trigger fires it.
-    """
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    state: Literal["current", "behind", "never_run"]
-    trigger: Literal["live", "missing"]
-    detected_through_generation: int | None = Field(default=None, ge=0)
-    detected_at: str | None = None
-
-
-class CurationInactiveDetector(BaseModel):
-    """A detector that cannot find anything on this instance, and why."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    pattern_kind: str
-    #: ``consumption_receipts_off``: dead vocabulary needs consumption receipts
-    #: (CRUXIBLE_CONSUMPTION_RECEIPTS=on); ``no_block_observations``: block churn
-    #: needs the declared blocks `block sync` or `block repin` recorded.
-    reason: Literal["consumption_receipts_off", "no_block_observations"]
-
-
-class CurationListResult(BaseModel):
-    """One page of the curation queue as detection last recorded it; a pure read."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    tag: Literal["playbill-curation-list-result-v1"] = "playbill-curation-list-result-v1"
-    coordinate: AcceptedCoordinate
-    generation: int = Field(ge=0)
-    operational_head_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
-    items: list[dict[str, Any]] = Field(default_factory=list)
-    detection: CurationDetection
-    detector_coverage: list[dict[str, Any]]
-    inactive_detectors: list[CurationInactiveDetector] = Field(default_factory=list)
-    observation_coverage: dict[str, Any] | None = None
-    truncated: bool = False
-    next_cursor: str | None = None
-    result_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
-
-
 class BlockObserveResult(BaseModel):
     """The declared blocks of the pages a client read, recorded for block-churn detection."""
 
@@ -1908,21 +1943,6 @@ class BlockObserveResult(BaseModel):
     coordinate: AcceptedCoordinate
     generation: int = Field(ge=0)
     observation_coverage: dict[str, Any]
-
-
-class CurationActionResult(BaseModel):
-    """One attributed append-only curation lifecycle transition."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    tag: Literal["playbill-curation-action-result-v1"] = "playbill-curation-action-result-v1"
-    #: ``would_record`` answers a preview, which appended nothing; ``item`` is
-    #: then the item as it stands.
-    status: Literal["recorded", "would_record"] = "recorded"
-    coordinate: AcceptedCoordinate
-    generation: int = Field(ge=0)
-    operational_head_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
-    item: dict[str, Any]
 
 
 class AuditFactors(BaseModel):

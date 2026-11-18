@@ -46,7 +46,10 @@ from cruxible_core.service.proposals.proposals import (
     service_playbill_proposal_status,
     stale_unreadmitted_proposals,
 )
-from cruxible_core.service.proposals.review import service_prepare_playbill_approval
+from cruxible_core.service.proposals.review import (
+    service_prepare_playbill_approval,
+    service_review_playbill_proposal,
+)
 from cruxible_core.storage.cas import BodyAccessContext
 from tests.core_support._support import client_material
 from tests.core_support._write_support import KIND, OWNER, _claim_type, seed_write_surface
@@ -227,6 +230,221 @@ def test_a_change_to_what_it_touches_makes_it_stale_and_names_the_path(
     assert refused.value.reason == "changed_since_base"
     assert expected in str(refused.value)
     assert instance.proposal_evidence().read_withdrawal(source_id) is None
+
+
+def test_two_writes_defining_one_identical_contract_do_not_conflict(tmp_path: Path) -> None:
+    """psw F16: two pending writes each cite the same uncatalogued file, so each
+    carries the file's CaptureContract, byte for byte the same. When the first
+    landed, the second read as stale on that path, left the open list and the
+    reviewer's approval row, and waited for a readmit nobody was told about.
+
+    The head holding exactly what a change set proposes for a path is no
+    conflict: the second stays open, the reviewer keeps the approval row, and
+    approving lands it at the head without the contract it no longer adds.
+    """
+
+    from datetime import UTC, datetime
+
+    from cruxible_client.authoring.doc_writes import write_workspace
+    from cruxible_client.contracts.write import WriteRequest
+    from cruxible_core.coverage.contracts import CoverageAccessProfile
+    from cruxible_core.service.authoring.write_verbs import service_playbill_write
+    from cruxible_core.service.discovery.next import NextRequest, service_playbill_next
+    from cruxible_core.service.proposals.proposals import open_proposal_count
+    from tests.core_support._write_support import caller
+
+    instance, reviewer = _world(tmp_path)
+    workspace = tmp_path / "cited"
+    workspace.mkdir()
+    (workspace / "notes.md").write_text("# Notes\n\nfirst anchor\n\nsecond anchor\n", "utf-8")
+
+    def cite(subject: str, anchor: str) -> str:
+        request = WriteRequest.model_validate(
+            {
+                "because": "The writer checked it.",
+                "changes": [
+                    _set(
+                        subject,
+                        "title",
+                        anchor,
+                        evidence={"kind": "file", "file": f"notes.md#{anchor}"},
+                    )
+                ],
+            }
+        )
+        outcome = write_workspace(
+            request,
+            workspace=workspace,
+            submit=lambda observed: service_playbill_write(
+                instance, request=observed, caller=caller()
+            ),
+        )
+        assert outcome.proposal is not None, outcome
+        return outcome.proposal.proposal_id
+
+    first = cite(f"{KIND}/wi-1", "first anchor")
+    second = cite(f"{KIND}/wi-2", "second anchor")
+    shared = _proposal_paths(instance, first) & _proposal_paths(instance, second)
+    (contract,) = shared
+    assert contract.startswith("capture-contracts/")
+
+    assert _approve(instance, reviewer, first).activation.status == "accepted"  # type: ignore[union-attr]
+
+    entry = _entry(instance, second)
+    assert (entry.status, entry.stale_paths) == ("open", ())
+    assert open_proposal_count(instance) == 1
+    queue = service_playbill_next(
+        instance,
+        request=NextRequest(
+            evaluation_time=datetime.now(UTC),
+            access_profile=CoverageAccessProfile(
+                profile_id="test", permitted_access_classes=("instance", "public")
+            ),
+        ),
+        caller_principal_id="reviewer",
+    )
+    (row,) = [item for item in queue.items if item.subject_identity == second]
+    assert row.reason == "proposal_awaiting_approval"
+    assert row.repair is not None and row.repair.operation == "cruxible.proposal.approve"
+
+    landed = _approve(instance, reviewer, second)
+    assert isinstance(landed, ProposalRecompiled) and landed.proposal_id is not None
+    # The contract is already live, so the landed change set no longer adds it;
+    # that is a different member roll, and the reviewer is shown it.
+    assert landed.status == "pending_review" and not landed.members_identical
+    assert [(item.path, item.change) for item in landed.changed_members] == [(contract, "removed")]
+    assert _approve(instance, reviewer, landed.proposal_id).activation.status == "accepted"  # type: ignore[union-attr]
+
+
+def test_a_late_signer_never_gets_a_challenge_for_changed_members(tmp_path: Path) -> None:
+    """Review F-001: a signer registered after the base has the proposal landed
+    at the head by its challenge. Unbound, CLI and MCP sign whatever challenge
+    comes back, so a landing whose members differ must refuse instead: the
+    second of two writes sharing a CaptureContract lands without the contract
+    once the first is accepted."""
+
+    from cruxible_client.authoring.doc_writes import write_workspace
+    from cruxible_client.contracts.errors import ReviewedCandidateChanged
+    from cruxible_client.contracts.write import WriteRequest
+    from cruxible_core.governance.keys import generate_client_principal_key
+    from cruxible_core.service.authoring.documents import (
+        service_propose_playbill_principal_change,
+    )
+    from cruxible_core.service.authoring.write_verbs import service_playbill_write
+    from tests.core_support._write_support import caller
+
+    instance, owner = seed_write_surface(tmp_path, self_approval=False)
+    reviewer = client_material(tmp_path, instance)
+    workspace = tmp_path / "cited"
+    workspace.mkdir()
+    (workspace / "notes.md").write_text("# Notes\n\nfirst anchor\n\nsecond anchor\n", "utf-8")
+
+    def cite(subject: str, anchor: str) -> str:
+        request = WriteRequest.model_validate(
+            {
+                "because": "The writer checked it.",
+                "changes": [
+                    _set(
+                        subject,
+                        "title",
+                        anchor,
+                        evidence={"kind": "file", "file": f"notes.md#{anchor}"},
+                    )
+                ],
+            }
+        )
+        outcome = write_workspace(
+            request,
+            workspace=workspace,
+            submit=lambda observed: service_playbill_write(
+                instance, request=observed, caller=caller()
+            ),
+        )
+        assert outcome.proposal is not None, outcome
+        return outcome.proposal.proposal_id
+
+    first = cite(f"{KIND}/wi-1", "first anchor")
+    source_id = cite(f"{KIND}/wi-2", "second anchor")
+    assert _approve(instance, reviewer, first).activation.status == "accepted"  # type: ignore[union-attr]
+    late = generate_client_principal_key(
+        tmp_path / "late-keys",
+        principal_id="late",
+        kind="ordinary",
+        forbidden_roots=(instance.root,),
+    )
+    registration = service_propose_playbill_principal_change(
+        instance,
+        principal=late.principal,
+        actor_id="owner",
+        proposal_name="register-late",
+        timestamp="2026-09-29T12:40:00.000000Z",
+    ).proposal
+    assert registration.candidate is not None
+    for material in (owner, reviewer):
+        service_submit_playbill_approval(
+            instance,
+            proposal_id=registration.admission.proposal_id,
+            attestation=_sign(
+                material,
+                registration.candidate.candidate_digest,
+                registration.candidate.candidate.parent_semantic_root,
+            ).attestation,
+            authenticated_submitter=material.principal.principal_id,
+            activate_when_complete=True,
+            may_activate=True,
+        )
+    source = _proposal_result(instance, source_id)
+    assert source.candidate is not None
+
+    with pytest.raises(ReviewedCandidateChanged) as refused:
+        service_prepare_playbill_approval(
+            instance,
+            proposal_id=source_id,
+            signer_id="late",
+            access=BodyAccessContext(principal_id="late", can_read_body=True),
+            land=lambda: "late",
+        )
+
+    successor_id = refused.value.current_proposal_id
+    assert successor_id != source_id and refused.value.members_identical is False
+    assert "members identical: false; nothing was signed" in str(refused.value)
+    assert refused.value.reviewed_candidate_digest == source.candidate.candidate_digest
+    assert refused.value.repair.arguments == {"proposal_id": successor_id}
+    successor = _proposal_result(instance, successor_id)
+    assert successor.candidate is not None
+    assert not instance.proposal_evidence().read_approvals(successor.candidate.candidate_digest)
+    # Reviewed, the successor is on the head, where the late signer is registered.
+    challenge = service_prepare_playbill_approval(
+        instance,
+        proposal_id=successor_id,
+        signer_id="late",
+        access=BodyAccessContext(principal_id="late", can_read_body=True),
+        reviewed_candidate_digest=successor.candidate.candidate_digest,
+    )
+    assert challenge.proposal_id == successor_id
+
+
+def test_a_different_artifact_at_a_proposed_path_is_still_a_conflict(tmp_path: Path) -> None:
+    """Only the exact artifact the change set proposes is no conflict: a path
+    the head holds a different version of names itself, as before."""
+
+    from cruxible_core.service.proposals.staleness import proposal_change_keys
+
+    instance, reviewer = _world(tmp_path)
+    held = _pending(instance, _set(f"{KIND}/wi-1", "title", "held"))
+    proposal = _proposal_result(instance, held)
+    assert proposal.candidate is not None
+    keys = proposal_change_keys(
+        instance, proposal_id=held, candidate_digest=proposal.candidate.candidate_digest
+    )
+    assert {path for path, _digest in keys.proposed} == {
+        member.path
+        for member in proposal.candidate.members
+        if member.disposition in ("create", "replace")
+    }
+    _accept_write(instance, reviewer, _set(f"{KIND}/wi-1", "title", "someone else's"))
+    entry = _entry(instance, held)
+    assert entry.status == "awaiting_readmit" and entry.stale_paths
 
 
 def _proposal_paths(instance: PlaybillInstance, proposal_id: str) -> set[str]:
@@ -425,14 +643,215 @@ def test_an_approval_that_lands_a_moved_proposal_names_its_source(tmp_path: Path
     assert activation.readmits == source_id  # type: ignore[union-attr]
 
 
-def test_a_reviewer_registered_after_the_base_approves_by_landing_it_first(
+def _card(instance: PlaybillInstance, proposal_id: str):  # type: ignore[no-untyped-def]
+    from cruxible_client.contracts.get_reads import GetRequest
+    from cruxible_core.service.discovery.get import service_playbill_get
+
+    return service_playbill_get(
+        instance,
+        request=GetRequest(ref=proposal_id),
+        access=BodyAccessContext(principal_id="reader", can_read_body=True),
+    )
+
+
+def test_a_landed_proposal_closes_as_superseded_under_who_landed_it(tmp_path: Path) -> None:
+    """psw F5: the reviewer's approval landed it; the source read `withdrawn, actor: owner`
+    with no successor. It closes as superseded, naming the successor and the
+    reviewer, in the record, the list entry and the card."""
+
+    from cruxible_client.contracts.get_text import render_get
+
+    instance, reviewer = _world(tmp_path)
+    source_id = _pending(instance, _set(f"{KIND}/wi-1", "title", "held"))
+    _accept_write(instance, reviewer, _set(f"{KIND}/wi-2", "title", "moves the head"))
+    landed = _approve(instance, reviewer, source_id)
+    assert isinstance(landed, ProposalRecompiled) and landed.members_identical
+
+    record = instance.proposal_evidence().read_withdrawal(source_id)
+    assert record is not None
+    assert record.model_dump(mode="json", exclude={"reason", "withdrawn_at"}) == {
+        "tag": "playbill-proposal-withdrawal-v2",
+        "proposal_id": source_id,
+        "actor_id": "reviewer",
+        "kind": "superseded",
+        "superseded_by": landed.proposal_id,
+    }
+    entry = _entry(instance, source_id)
+    assert (entry.status, entry.terminal_reason) == ("settled", "superseded")
+    assert (entry.superseded_by, entry.closed_by) == (landed.proposal_id, "reviewer")
+    text = render_get(_card(instance, source_id))
+    assert text is not None
+    assert (
+        f"reason: superseded\nsuperseded_by: {landed.proposal_id}\nclosed_by: reviewer\n"
+        "actor: owner\n"
+    ) in text
+    assert "withdrawn" not in text
+    # The successor is an ordinary open proposal, and names nothing of the kind.
+    assert landed.proposal_id is not None
+    assert _entry(instance, landed.proposal_id).superseded_by is None
+    with pytest.raises(ProposalWithdrawnError, match=f"superseded by {landed.proposal_id}"):
+        _approve(instance, reviewer, source_id)
+
+
+def test_a_superseded_record_from_before_the_kind_stays_readable(tmp_path: Path) -> None:
+    """A recompiled source was closed as `withdrawn` under its author with
+    `superseded_by` set. Those v1 records parse byte for byte and read as
+    superseded; who closed them was never recorded, so it is not shown."""
+
+    from cruxible_client.contracts.canonical import canonical_bytes
+    from cruxible_client.contracts.proposal_models import ProposalWithdrawalRecord
+
+    instance, _reviewer = _world(tmp_path)
+    source_id = _pending(instance, _set(f"{KIND}/wi-1", "title", "old"))
+    successor_id = _pending(instance, _set(f"{KIND}/wi-2", "title", "new"))
+    stored = {
+        "tag": "playbill-proposal-withdrawal-v1",
+        "proposal_id": source_id,
+        "actor_id": "owner",
+        "reason": f"Recompiled at the head as {successor_id}.",
+        "withdrawn_at": "2026-11-17T03:32:02.568547Z",
+        "superseded_by": successor_id,
+    }
+    legacy = ProposalWithdrawalRecord.model_validate(stored)
+    assert (legacy.kind, legacy.is_superseded) == ("withdrawn", True)
+    assert canonical_bytes(legacy.model_dump(mode="json")) == canonical_bytes(stored)
+    instance.proposal_evidence().write_withdrawal(legacy)
+
+    entry = _entry(instance, source_id)
+    assert (entry.terminal_reason, entry.superseded_by, entry.closed_by) == (
+        "superseded",
+        successor_id,
+        None,
+    )
+    # The new kind is the one shape version 2 adds; v1 never carries it.
+    for wrong in (
+        {**stored, "kind": "superseded"},
+        {**stored, "tag": "playbill-proposal-withdrawal-v2"},
+        {**stored, "tag": "playbill-proposal-withdrawal-v2", "kind": "superseded"}
+        | {"superseded_by": None},
+    ):
+        with pytest.raises(ValueError):
+            ProposalWithdrawalRecord.model_validate(wrong)
+    # An ordinary withdrawal keeps its v1 bytes.
+    plain = ProposalWithdrawalRecord(
+        proposal_id=source_id, actor_id="owner", reason="no", withdrawn_at="2026-11-17T00:00:00Z"
+    )
+    assert set(plain.model_dump(mode="json")) == {
+        "tag",
+        "proposal_id",
+        "actor_id",
+        "reason",
+        "withdrawn_at",
+    }
+
+
+def test_an_approval_bound_to_the_reviewed_candidate_refuses_the_landed_one(
     tmp_path: Path,
+) -> None:
+    """coldmcp-10: bound to the reviewed digest, the approval lands the moved
+    proposal and refuses, naming it and that its members are identical; nothing
+    is stored for either candidate. A digest that is not the proposal's
+    candidate refuses before anything lands."""
+
+    from cruxible_client.contracts.errors import ReviewedCandidateChanged
+
+    instance, reviewer = _world(tmp_path)
+    source_id = _pending(instance, _set(f"{KIND}/wi-1", "title", "held"))
+    source = _proposal_result(instance, source_id)
+    assert source.candidate is not None
+    reviewed = source.candidate.candidate_digest
+    signed = _sign(reviewer, reviewed, source.candidate.candidate.parent_semantic_root)
+    other = "sha256:" + "9" * 64
+    access = BodyAccessContext(principal_id="reviewer", can_read_body=True)
+
+    def submit(digest: str):  # type: ignore[no-untyped-def]
+        return service_submit_playbill_approval(
+            instance,
+            proposal_id=source_id,
+            attestation=signed.attestation,
+            authenticated_submitter="reviewer",
+            activate_when_complete=True,
+            may_activate=True,
+            reviewed_candidate_digest=digest,
+        )
+
+    for refuse in (
+        lambda: submit(other),
+        lambda: service_prepare_playbill_approval(
+            instance,
+            proposal_id=source_id,
+            signer_id="reviewer",
+            access=access,
+            reviewed_candidate_digest=other,
+        ),
+    ):
+        with pytest.raises(ReviewedCandidateChanged) as wrong:
+            refuse()
+        assert f"proposal {source_id} is candidate {reviewed}, not the reviewed {other}" in str(
+            wrong.value
+        )
+        assert wrong.value.repair.arguments == {"proposal_id": source_id}
+    assert not instance.proposal_evidence().read_approvals(reviewed)
+
+    _accept_write(instance, reviewer, _set(f"{KIND}/wi-2", "title", "moves the head"))
+    # The challenge is still for the reviewed candidate; submitting it meets the moved head.
+    challenge = service_prepare_playbill_approval(
+        instance,
+        proposal_id=source_id,
+        signer_id="reviewer",
+        access=access,
+        reviewed_candidate_digest=reviewed,
+    )
+    assert challenge.statement.payload_digest == reviewed
+    with pytest.raises(ReviewedCandidateChanged) as refused:
+        submit(reviewed)
+
+    successor_id = refused.value.current_proposal_id
+    successor = _proposal_result(instance, successor_id)
+    assert successor.candidate is not None and successor_id != source_id
+    assert refused.value.error_code == "cruxible.approval.reviewed_candidate_changed"
+    assert refused.value.members_identical is True
+    assert str(refused.value) == (
+        f"cruxible.approval.reviewed_candidate_changed: proposal {source_id} was proposed "
+        f"again at the head as {successor_id} (candidate "
+        f"{successor.candidate.candidate_digest}), not the reviewed {reviewed}; members "
+        f"identical: true; nothing was signed. Review {successor_id} and approve it"
+    )
+    assert refused.value.repair.operation == "cruxible.proposal.review"
+    assert refused.value.repair.arguments == {"proposal_id": successor_id}
+    evidence = instance.proposal_evidence()
+    assert not evidence.read_approvals(reviewed)
+    assert not evidence.read_approvals(successor.candidate.candidate_digest)
+    assert _entry(instance, successor_id).status == "open"
+    assert _entry(instance, source_id).superseded_by == successor_id
+    # Reviewed again, the successor is approved under its own digest.
+    receipt = service_submit_playbill_approval(
+        instance,
+        proposal_id=successor_id,
+        attestation=_sign(
+            reviewer,
+            successor.candidate.candidate_digest,
+            successor.candidate.candidate.parent_semantic_root,
+        ).attestation,
+        authenticated_submitter="reviewer",
+        activate_when_complete=True,
+        may_activate=True,
+        reviewed_candidate_digest=successor.candidate.candidate_digest,
+    )
+    assert receipt.activation is not None and receipt.activation.status == "accepted"  # type: ignore[union-attr]
+
+
+@pytest.mark.parametrize("bound", [False, True])
+def test_a_reviewer_registered_after_the_base_approves_by_landing_it_first(
+    tmp_path: Path, bound: bool
 ) -> None:
     """F3 / coldmcp-01: a principal registered after a proposal was admitted is absent
     at its base, where its signature is checked, so `approve` refused "principal is
     absent". A caller who may submit approvals now lands the proposal at the head
     first (as approving a moved proposal does) and signs the landed candidate, whose
-    parent registry holds the signer; one who may not is told why and who readmits."""
+    parent registry holds the signer; one who may not is told why and who readmits.
+    ``bound`` to the candidate it reviewed, the challenge lands it and refuses,
+    naming the landed proposal to review."""
 
     from cruxible_client.contracts.errors import ApprovalSignerAfterBase
     from cruxible_core.governance.keys import generate_client_principal_key
@@ -483,12 +902,36 @@ def test_a_reviewer_registered_after_the_base_approves_by_landing_it_first(
     assert instance.proposal_evidence().read_withdrawal(source_id) is None
 
     landed_by: list[str] = []
+
+    def land() -> str:
+        landed_by.append("checked")
+        return "late"
+
+    if bound:
+        from cruxible_client.contracts.errors import ReviewedCandidateChanged
+
+        reviewed = _proposal_result(instance, source_id).candidate.candidate_digest  # type: ignore[union-attr]
+        with pytest.raises(ReviewedCandidateChanged) as changed:
+            service_prepare_playbill_approval(
+                instance,
+                proposal_id=source_id,
+                signer_id="late",
+                access=access,
+                land=land,
+                reviewed_candidate_digest=reviewed,
+            )
+        closed = instance.proposal_evidence().read_withdrawal(source_id)
+        assert closed is not None and (closed.kind, closed.actor_id) == ("superseded", "late")
+        assert changed.value.current_proposal_id == closed.superseded_by
+        assert changed.value.members_identical is True
+        assert "members identical: true; nothing was signed" in str(changed.value)
+        return
     challenge = service_prepare_playbill_approval(
         instance,
         proposal_id=source_id,
         signer_id="late",
         access=access,
-        land=lambda: landed_by.append("checked"),
+        land=land,
     )
     assert landed_by == ["checked"]
     assert challenge.proposal_id != source_id
@@ -497,6 +940,8 @@ def test_a_reviewer_registered_after_the_base_approves_by_landing_it_first(
     assert challenge.statement.signing_semantic_root == head.semantic_root
     withdrawal = instance.proposal_evidence().read_withdrawal(source_id)
     assert withdrawal is not None and withdrawal.superseded_by == challenge.proposal_id
+    # The caller whose challenge landed it closed the source, not its author.
+    assert (withdrawal.kind, withdrawal.actor_id) == ("superseded", "late")
 
     receipt = service_submit_playbill_approval(
         instance,
@@ -565,7 +1010,7 @@ def test_an_ineligible_late_signer_is_refused_before_anything_lands(tmp_path: Pa
             proposal_id=source_id,
             signer_id="rescue",
             access=BodyAccessContext(principal_id="rescue", can_read_body=True),
-            land=lambda: landed.append("landed"),
+            land=lambda: landed.append("landed") or "rescue",
         )
 
     assert landed == []
@@ -618,3 +1063,406 @@ def test_withdrawing_or_rejecting_an_accepted_proposal_says_accepted(tmp_path: P
         assert f"nothing left to {verb}" in str(refused.value)
         assert refused.value.repair.operation == "cruxible.get"
     assert instance.proposal_evidence().read_withdrawal(proposal_id) is None
+
+
+def _reviewed_verdicts(instance: PlaybillInstance, proposal_id: str) -> dict[str, str | None]:
+    """Each value ``proposal review`` shows for the proposal, with its verdict."""
+
+    from cruxible_client.contracts.proposal_summary import ProposalReviewSummary
+
+    review = service_review_playbill_proposal(
+        instance,
+        proposal_id=proposal_id,
+        access=BodyAccessContext(
+            principal_id="reviewer", can_read_body=True, can_read_restricted=True
+        ),
+    )
+    assert isinstance(review, ProposalReviewSummary)
+    return {
+        f"{item.change.subject} {item.change.field}": item.change.verdict
+        for item in review.changes
+        if item.change.field is not None
+    }
+
+
+def _file_world(tmp_path: Path) -> tuple[PlaybillInstance, GeneratedKeyMaterial]:
+    """Independent approval, with a ``noted`` field any workspace file may back."""
+
+    from cruxible_client.contracts.approval_policy import (
+        APPROVAL_POLICY_PATH,
+        ApprovalPolicy,
+        render_approval_policy,
+    )
+    from cruxible_client.contracts.policies import (
+        ClaimEvidenceAdmissionPolicy,
+        ClaimEvidenceAdmissionRule,
+    )
+    from tests.core_support._support import initialize_local
+    from tests.core_support._write_support import (
+        CLAIM_TYPES,
+        SELF_SOURCE,
+        seed_write_vocabulary,
+    )
+    from tests.support.claim_types import claim_type as build_claim_type
+
+    instance, _owner = initialize_local(tmp_path)
+    noted = build_claim_type(
+        predicate=f"{KIND}.noted",
+        allowed_subject_kinds=(KIND,),
+        value_type={"type": "string"},
+        cardinality="one",
+        permitted_roles=("observation",),
+        evidence_admission_policy=ClaimEvidenceAdmissionPolicy(
+            rules=(
+                ClaimEvidenceAdmissionRule(
+                    rule_id="source",
+                    claim_roles=("observation",),
+                    capture_contracts=(SELF_SOURCE.identity.name,),
+                    capture_contract_families=("workspace_file",),
+                    admission="direct",
+                    subject_binding="exact_claim_subject",
+                ),
+            )
+        ),
+    )
+    seed_write_vocabulary(instance, claim_types=(*CLAIM_TYPES, noted))
+    tightening = instance.proposal_service().submit(
+        actor=OWNER,
+        request=ProposalAdmissionRequest(
+            target_ref="refs/proposals/owner/write-seed-policy",
+            proposed_base_oid=instance.accepted_coordinate().git_oid,
+        ),
+        candidate_tree={
+            **instance.tree_at(instance.accepted_coordinate().git_oid),
+            APPROVAL_POLICY_PATH: render_approval_policy(
+                ApprovalPolicy(mode="independent_approval_required")
+            ),
+        },
+        timestamp="2026-09-29T11:59:30.000000Z",
+    )
+    assert tightening.candidate is not None, tightening.evaluation
+    receipt = service_activate_playbill_proposal(
+        instance, proposal_id=tightening.admission.proposal_id, activated_by="owner"
+    )
+    assert receipt.status == "accepted"
+    return instance, client_material(tmp_path, instance)
+
+
+def test_a_proposal_landed_behind_an_earlier_sibling_reviews_its_landing_verdicts(
+    tmp_path: Path,
+) -> None:
+    """vrf 07/10: two writes open at once, each citing the same new workspace
+    file; the earlier one lands, and the later one is proposed again at the
+    head. It was judged at the head generation's timestamp, the earlier
+    sibling's, which precedes everything the later write observed: every value
+    reviewed as ``uncovered`` and then landed ``supported``. A readmission is
+    judged no earlier than its source, so review shows the landing verdicts."""
+
+    from datetime import UTC, datetime
+
+    from cruxible_client.authoring.doc_writes import write_workspace
+    from cruxible_client.contracts.claim_verdicts import ClaimVerdictResult
+    from cruxible_client.contracts.claims import parse_claim
+    from cruxible_client.contracts.write import WriteRequest
+    from cruxible_core.service.authoring.documents import AcceptedCoordinate
+    from cruxible_core.service.authoring.write_verbs import service_playbill_write
+    from cruxible_core.service.discovery.claim_status import claim_resolution_statuses
+    from tests.core_support._write_support import caller
+
+    instance, reviewer = _file_world(tmp_path)
+    workspace = tmp_path / "cited"
+    workspace.mkdir()
+    (workspace / "notes.md").write_text("# Notes\n\nfirst anchor\n\nsecond anchor\n", "utf-8")
+
+    def cite(subject: str, anchor: str) -> str:
+        request = WriteRequest.model_validate(
+            {
+                "because": "The notes say so.",
+                "changes": [
+                    _set(
+                        subject,
+                        "noted",
+                        anchor,
+                        evidence={"kind": "file", "file": f"notes.md#{anchor}"},
+                    )
+                ],
+            }
+        )
+        outcome = write_workspace(
+            request,
+            workspace=workspace,
+            submit=lambda observed: service_playbill_write(
+                instance, request=observed, caller=caller()
+            ),
+        )
+        assert outcome.proposal is not None, outcome
+        return outcome.proposal.proposal_id
+
+    first = cite(f"{KIND}/wi-8", "first anchor")
+    second = cite(f"{KIND}/wi-9", "second anchor")
+    # A plain first proposal: the created Subject's key and the cited value.
+    expected = {f"{KIND}/wi-9 slug": "supported", f"{KIND}/wi-9 noted": "supported"}
+    assert _reviewed_verdicts(instance, second) == expected
+    assert _reviewed_verdicts(instance, first) == {
+        f"{KIND}/wi-8 slug": "supported",
+        f"{KIND}/wi-8 noted": "supported",
+    }
+
+    assert _approve(instance, reviewer, first).activation.status == "accepted"  # type: ignore[union-attr]
+    landed = _approve(instance, reviewer, second)
+    assert isinstance(landed, ProposalRecompiled) and landed.proposal_id is not None
+    # The successor no longer adds the file's contract (the sibling landed it),
+    # and reviews every value with the verdict it lands with.
+    assert not any(
+        path.startswith("capture-contracts/")
+        for path in _proposal_paths(instance, landed.proposal_id)
+    )
+    assert _reviewed_verdicts(instance, landed.proposal_id) == expected
+    successor = _proposal_result(instance, landed.proposal_id)
+    assert successor.candidate is not None
+    source_time = _proposal_result(instance, second).admission.admitted_at
+    assert successor.admission.admitted_at == source_time
+
+    assert _approve(instance, reviewer, landed.proposal_id).activation.status == "accepted"  # type: ignore[union-attr]
+    head = instance.accepted_coordinate()
+    tree = instance.immutable_tree_at(head.git_oid)
+    claims = [
+        parse_claim(tree[member.path], path=member.path)
+        for member in successor.candidate.members
+        if member.artifact_kind == "claim"
+    ]
+    landed_verdicts: dict[str, ClaimVerdictResult] = {}
+    claim_resolution_statuses(
+        instance,
+        claims=tuple(claims),
+        at=AcceptedCoordinate.from_internal(head),
+        evaluation_time=datetime.now(UTC),
+        verdicts_by_identity=landed_verdicts,
+    )
+    assert [item.verdict for item in landed_verdicts.values()] == ["supported", "supported"]
+
+
+def test_the_author_of_a_rejected_proposal_reads_who_when_and_why(tmp_path: Path) -> None:
+    """coldcli step 7 (and coldsdk, coldmcp, coldps): `get PROPOSAL` printed
+    `reason: rejected` and nothing of the reviewer's reason, although the closing
+    record holds it. The card and the list entry carry who closed it, when and
+    the reason given, whole on the card; a withdrawal reads the same way. The
+    bare hex id (no `sha256:`), whole or a prefix, names the proposal too."""
+
+    from cruxible_client.contracts.get_text import render_get
+    from cruxible_client.contracts.text_display import proposal_list_lines
+    from cruxible_core.service.proposals.proposals import (
+        service_reject_playbill_proposal,
+        service_withdraw_playbill_proposal,
+    )
+
+    instance, _reviewer = _world(tmp_path)
+    rejected_id = _pending(instance, _set(f"{KIND}/wi-1", "title", "rejected"))
+    why = "The cited line does not show reachability. Cite the call site. " + "x" * 300
+    at = "2026-11-17T12:00:00.000000Z"
+    service_reject_playbill_proposal(
+        instance, proposal_id=rejected_id, actor_id="reviewer", reason=why, rejected_at=at
+    )
+    withdrawn_id = _pending(instance, _set(f"{KIND}/wi-2", "title", "withdrawn"))
+    service_withdraw_playbill_proposal(
+        instance, proposal_id=withdrawn_id, actor_id="owner", reason="Wrong item.", withdrawn_at=at
+    )
+
+    entry = _entry(instance, rejected_id)
+    assert (entry.status, entry.terminal_reason) == ("settled", "rejected")
+    assert (entry.closed_by, entry.closed_at, entry.closed_reason) == ("reviewer", at, why)
+    card = _card(instance, rejected_id)
+    assert card.card.model_dump(mode="json", include={"reason", "closed_by", "closed_at"}) == {
+        "reason": "rejected",
+        "closed_by": "reviewer",
+        "closed_at": at,
+    }
+    assert card.card.closed_reason == why
+    text = render_get(card)
+    assert text is not None
+    # The reason is never cut; the author stays `actor`.
+    assert (
+        f"reason: rejected\nclosed_by: reviewer\nclosed_at: {at}\n"
+        f"closed_reason: {why}\nactor: owner\n"
+    ) in text
+
+    withdrawn = _entry(instance, withdrawn_id)
+    assert (withdrawn.terminal_reason, withdrawn.closed_by) == ("withdrawn", "owner")
+    assert (withdrawn.closed_at, withdrawn.closed_reason) == (at, "Wrong item.")
+    assert "closed_reason: Wrong item.\n" in (render_get(_card(instance, withdrawn_id)) or "")
+
+    # `proposal list` says it under the row, cut; `get` has it whole.
+    page = service_list_playbill_proposals(instance, status="settled")
+    lines = proposal_list_lines(page)
+    assert f"  withdrawn by owner at {at}: Wrong item." in lines
+    (row,) = [line for line in lines if line.startswith("  rejected by ")]
+    assert row.startswith(f"  rejected by reviewer at {at}: The cited line") and row.endswith("…")
+    assert len(row) < 260 and "\n" not in row
+
+    # An open proposal names none of it.
+    open_id = _pending(instance, _set(f"{KIND}/wi-3", "title", "open"))
+    opened = _entry(instance, open_id)
+    assert (opened.closed_by, opened.closed_at, opened.closed_reason) == (None, None, None)
+
+    # The id without its `sha256:`, whole or as a prefix, and typed.
+    bare = rejected_id.removeprefix("sha256:")
+    for ref in (bare, bare[:12], f"Proposal:{bare}", f"Proposal:{rejected_id}"):
+        assert _card(instance, ref).card.proposal == rejected_id, ref
+    from cruxible_client.contracts.errors import ReadRefusalError
+
+    with pytest.raises(ReadRefusalError) as missing:
+        _card(instance, "0" * 16)
+    assert missing.value.error_code == "cruxible.get.ref_not_found"
+
+
+def test_a_bare_proposal_id_resolves_without_the_refusal_name_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review F-001: a bare-hex proposal lookup that succeeds built the
+    not-found suggestions first (every definition name, fuzzy matched). The
+    proposal is tried right after the indexed name checks miss, so a successful
+    lookup hands the suggestion builder no name, however many definitions the
+    instance holds; only a miss of both builds them."""
+
+    from cruxible_client.contracts.errors import ReadRefusalError
+    from cruxible_core.service.discovery import get as get_module
+
+    instance, reviewer = _world(tmp_path)
+    proposal_id = _pending(instance, _set(f"{KIND}/wi-1", "title", "held"))
+    bare = proposal_id.removeprefix("sha256:")
+
+    enumerated: list[int] = []
+    suggested: list[int] = []
+    names_of, nearest = get_module._names_of, get_module.nearest
+
+    def counted_names(projection, kind):  # type: ignore[no-untyped-def]
+        names = names_of(projection, kind)
+        enumerated.append(len(names))
+        return names
+
+    def counted_nearest(value, names, *args, **kwargs):  # type: ignore[no-untyped-def]
+        suggested.append(len(names))
+        return nearest(value, names, *args, **kwargs)
+
+    monkeypatch.setattr(get_module, "_names_of", counted_names)
+    monkeypatch.setattr(get_module, "nearest", counted_nearest)
+
+    def work(ref: str) -> tuple[int, int]:
+        enumerated.clear()
+        suggested.clear()
+        assert _card(instance, ref).card.proposal == proposal_id
+        return sum(enumerated), sum(suggested)
+
+    small = (work(bare), work(bare[:12]))
+    # A larger vocabulary: more definitions for a refusal to enumerate.
+    _accept_members(
+        instance,
+        reviewer,
+        {
+            claim_type_path(f"{KIND}.extra_{n}"): render_claim_type(
+                _claim_type(f"extra_{n}", value_type={"type": "string"})
+            )
+            for n in range(12)
+        },
+        "more-vocabulary",
+    )
+    large = (work(bare), work(bare[:12]))
+    assert small == large == ((0, 0), (0, 0))
+
+    # The instrument sees the refusal's read, which does grow with the names.
+    enumerated.clear()
+    suggested.clear()
+    with pytest.raises(ReadRefusalError) as missing:
+        _card(instance, "0" * 16)
+    assert missing.value.error_code == "cruxible.get.ref_not_found"
+    assert sum(suggested) >= 12 and sum(enumerated) >= 12
+
+
+def test_a_list_page_loads_closing_reasons_for_its_own_rows_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review F-002: the closing reason was copied into every matching entry
+    and hashed into the cursor before the page was selected. The entries a
+    listing filters, pages and pins never carry closing details; they are read
+    for the selected page's rows, so a one-row page over N rejections handles
+    one reason, and the cursor's digest is what it was without them."""
+
+    from cruxible_core.service.proposals import proposals as proposals_module
+    from cruxible_core.service.proposals.proposals import service_reject_playbill_proposal
+
+    instance, _reviewer = _world(tmp_path)
+    at = "2026-11-17T12:00:00.000000Z"
+    pinned: list[list[dict[str, object]]] = []
+    detailed: list[int] = []
+    list_snapshot = proposals_module.list_snapshot
+    with_details = proposals_module._with_closing_details
+
+    def counted_snapshot(rows):  # type: ignore[no-untyped-def]
+        pinned.append(list(rows))
+        return list_snapshot(rows)
+
+    def counted_details(instance, entries):  # type: ignore[no-untyped-def]
+        result = with_details(instance, entries)
+        detailed.append(sum(len(entry.closed_reason or "") for entry in result))
+        return result
+
+    monkeypatch.setattr(proposals_module, "list_snapshot", counted_snapshot)
+    monkeypatch.setattr(proposals_module, "_with_closing_details", counted_details)
+
+    def reject(count: int, start: int) -> None:
+        for n in range(start, start + count):
+            proposal_id = _pending(instance, _set(f"{KIND}/wi-1", "title", f"value {n}"))
+            service_reject_playbill_proposal(
+                instance,
+                proposal_id=proposal_id,
+                actor_id="reviewer",
+                reason=f"reason {n:03d} " + "r" * 989,
+                rejected_at=at,
+            )
+
+    def one_row_page(cursor: str | None = None) -> tuple[int, int, str | None]:
+        pinned.clear()
+        detailed.clear()
+        page = service_list_playbill_proposals(instance, status="settled", limit=1, cursor=cursor)
+        (entry,) = page.entries
+        if entry.terminal_reason == "rejected":
+            assert (entry.closed_by, entry.closed_at) == ("reviewer", at)
+            assert entry.closed_reason is not None and len(entry.closed_reason) == 1_000
+        (rows,) = pinned
+        # Nothing the cursor pins names a closing detail of a rejection.
+        assert not any(
+            key in row
+            for row in rows
+            if row["terminal_reason"] == "rejected"
+            for key in ("closed_by", "closed_at", "closed_reason")
+        )
+        (reason_characters,) = detailed
+        return len(rows), reason_characters, page.next_cursor
+
+    def walk() -> tuple[int, list[int]]:
+        """Every one-row page: the rows pinned, and the reason text each page read."""
+
+        rows, read, cursor = one_row_page()
+        per_page = [read]
+        while cursor is not None:
+            _rows, read, cursor = one_row_page(cursor)
+            per_page.append(read)
+        return rows, per_page
+
+    reject(3, 0)
+    small_rows, small = walk()
+    reject(6, 3)
+    large_rows, large = walk()
+    assert large_rows == small_rows + 6
+    # Each page reads its own row's reason, whatever the rejections behind it.
+    assert max(small) == max(large) == 1_000
+    assert (sum(small), sum(large)) == (3_000, 9_000)
+
+    # The cursor still refuses a listing that changed under it.
+    _rows, _read, cursor = one_row_page()
+    assert cursor is not None
+    reject(1, 9)
+    from cruxible_core.service.list_pages import ListCursorStale
+
+    with pytest.raises(ListCursorStale):
+        service_list_playbill_proposals(instance, status="settled", limit=1, cursor=cursor)

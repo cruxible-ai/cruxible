@@ -250,7 +250,7 @@ class _WorldClient:
                 instance=instance_id,
                 coordinate=_projection(at or self.coordinate),
                 generation=1,
-                accepted_at=datetime(2026, 9, 7, tzinfo=UTC),
+                proposed_at=datetime(2026, 9, 7, tzinfo=UTC),
                 evaluation_time=datetime(2026, 9, 7, tzinfo=UTC),
                 section="subject_kinds",
                 subject_kinds=tuple(
@@ -264,7 +264,7 @@ class _WorldClient:
             instance=instance_id,
             coordinate=_projection(listing.coordinate),
             generation=1,
-            accepted_at=datetime(2026, 9, 7, tzinfo=UTC),
+            proposed_at=datetime(2026, 9, 7, tzinfo=UTC),
             evaluation_time=datetime(2026, 9, 7, tzinfo=UTC),
             section="claim_types",
             claim_types=tuple(
@@ -1013,7 +1013,6 @@ def test_a_same_set_claim_type_ref_lowers_without_reading_the_unaccepted_type(
         cardinality="one",
         permitted_roles=("observation",),
         referent_sensitivity="identity",
-        sources=(),
         admission_policy=_admission_policy(),
         resolution_policy=_resolution_policy(),
         pins=(),

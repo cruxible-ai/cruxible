@@ -925,6 +925,7 @@ def test_kit_status_shows_a_pending_kit_and_the_command_that_approves_it(
     kit's install proposal waited; init had reported it."""
 
     from cruxible_client.contracts.kits import KitResumeStatus
+    from cruxible_core.kits.base_kit_pin import BASE_KIT_PIN
 
     proposal = "sha256:" + "c" * 64
 
@@ -950,6 +951,29 @@ def test_kit_status_shows_a_pending_kit_and_the_command_that_approves_it(
                         recorded_at="2026-11-15T00:00:00Z",
                         proposal_id="sha256:" + "d" * 64,
                     ),
+                    KitResumeStatus(
+                        kit_id="ops",
+                        version="2.0.0",
+                        state="proposed",
+                        actor_id="owner",
+                        recorded_at="2026-11-15T00:00:00Z",
+                        proposal_id="sha256:" + "a" * 64,
+                        proposal_awaiting_readmit=True,
+                        # A local directory named base records "base" as its origin.
+                        source="base",
+                        content_digest="sha256:" + "b" * 64,
+                    ),
+                    KitResumeStatus(
+                        kit_id="base",
+                        version=BASE_KIT_PIN.version,
+                        state="proposed",
+                        actor_id="owner",
+                        recorded_at="2026-11-15T00:00:00Z",
+                        proposal_id="sha256:" + "9" * 64,
+                        proposal_awaiting_readmit=True,
+                        source="bundled",
+                        content_digest=BASE_KIT_PIN.content_digest,
+                    ),
                 )
             )
 
@@ -961,11 +985,22 @@ def test_kit_status_shows_a_pending_kit_and_the_command_that_approves_it(
     assert "No kits installed." not in result.output
     assert f"base 1.0.0: kit add proposed (as owner); proposal {proposal}\n" in result.output
     assert (
-        f"  next: cruxible proposal approve {proposal} --signer-id ID --key FILE "
+        f"  next: cruxible proposal approve {proposal} --signer-id '<SIGNER_ID>' "
         "(the approval that completes it activates it)\n" in result.output
     )
-    # A proposal no longer open names no next step.
+    # A proposal no longer open names no approve step.
     assert result.output.count("next: cruxible proposal approve") == 1
+    # One awaiting readmit names the add to re-run: the concrete `base` operand only
+    # for the bundled base kit (id and content digest), else the placeholder with
+    # the recorded origin beside it (review F-009).
+    assert (
+        "  awaiting readmit: accepted state changed what it touches; "
+        "next: cruxible kit add '<KIT>' (recorded origin: base)\n" in result.output
+    )
+    assert (
+        "  awaiting readmit: accepted state changed what it touches; "
+        "next: cruxible kit add base\n" in result.output
+    )
 
 
 def test_kit_help_says_what_a_default_provider_stands_for_now() -> None:
@@ -999,6 +1034,8 @@ def test_kit_remove_exits_1_only_when_a_commit_was_blocked(
                 kit_id="acme",
                 version="1.0.0",
                 status=status,  # type: ignore[arg-type]
+                # A refused commit's admission id: nothing to act on (sec N1).
+                proposal_id="sha256:" + "e" * 64 if status == "blocked" else None,
                 detail="Refused: cruxible.change_set.incomplete_closure: 1 live artifact(s)",
             )
 
@@ -1010,3 +1047,258 @@ def test_kit_remove_exits_1_only_when_a_commit_was_blocked(
     assert result.exit_code == exit_code, result.output
     assert f"acme 1.0.0: {status}" in result.output
     assert "Refused: cruxible.change_set.incomplete_closure" in result.output
+    assert "Proposal:" not in result.output
+
+
+def test_a_blocked_kit_change_names_a_proposal_it_left_open(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review F-006: accepted state moved after admission, so the proposal stays open;
+    the blocked answer names it and how to withdraw it."""
+
+    from cruxible_client.contracts.kits import KitRemoveRequest
+
+    proposal = "sha256:" + "f" * 64
+
+    class StubClient:
+        def remove_kit(self, instance_id: str, request: KitRemoveRequest) -> KitChangeResult:
+            return KitChangeResult(
+                kit_id="acme",
+                version="1.0.0",
+                status="blocked",
+                proposal_id=proposal,
+                proposal_open=True,
+                detail="Accepted state moved during kit add; preview the kit again.",
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+
+    result = CliRunner().invoke(cli, [*BASE, "remove", "acme", "--commit", "--at", "abcdef123456"])
+
+    assert result.exit_code == 1, result.output
+    assert (
+        f"Proposal: {proposal} (open; withdraw it: cruxible proposal withdraw {proposal} "
+        "--reason '<TEXT>')" in result.output
+    )
+
+
+def test_a_blocked_kit_remove_prints_its_refusal_first_and_the_plan_as_counts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The retire/keep list of a kit that owns hundreds of paths buried the refusal
+    under it; the refusal and its repair come first, then counts per kind, and
+    --detail lists each path after them (ruling 8)."""
+
+    from cruxible_client.contracts.kits import KitPathPlan, KitRemoveRequest
+
+    refusal = (
+        "Refused: cruxible.change_set.incomplete_closure: 3 live artifact(s) outside this "
+        "change depend on definitions it retires or replaces. Repair: retire the Claims"
+    )
+    plan = (
+        *(
+            KitPathPlan(
+                path=f"claim-types/acme/c{index}.json",
+                action="retire",
+                identity=f"ClaimType:acme.c{index}",
+            )
+            for index in range(40)
+        ),
+        KitPathPlan(
+            path="subject-kinds/acme.account.json",
+            action="retire",
+            identity="SubjectKind:acme.account",
+        ),
+        KitPathPlan(
+            path="capture-contracts/acme.json",
+            action="keep",
+            identity="CaptureContract:acme",
+            detail="Contract versions are immutable and remain accepted",
+        ),
+    )
+
+    class StubClient:
+        def remove_kit(self, instance_id: str, request: KitRemoveRequest) -> KitChangeResult:
+            return KitChangeResult(
+                kit_id="acme", version="1.0.0", status="blocked", plan=plan, detail=refusal
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    commit = ["--commit", "--at", "abcdef123456"]
+
+    brief = CliRunner().invoke(cli, [*BASE, "remove", "acme", *commit])
+    listed = CliRunner().invoke(cli, [*BASE, "remove", "acme", *commit, "--detail"])
+
+    assert brief.exit_code == listed.exit_code == 1, brief.output
+    lines = brief.output.splitlines()
+    start = lines.index("acme 1.0.0: blocked")
+    assert lines[start : start + 5] == [
+        "acme 1.0.0: blocked",
+        refusal,
+        "Plan:",
+        "  keep: 1 (CaptureContract 1)",
+        "  retire: 41 (ClaimType 40, SubjectKind 1)",
+    ]
+    assert "(--detail lists each path)" in brief.output
+    assert "acme.c7" not in brief.output
+    assert listed.output.index(refusal) < listed.output.index("retire: ClaimType:acme.c7")
+    assert "(--detail lists each path)" not in listed.output
+
+
+def test_kit_build_carries_named_files_listed_with_their_sha256(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """kit-build-files: `--file PATH` copies plain files into the kit and lists each in
+    the manifest's files with its sha256, as a released kit's files are listed."""
+
+    from cruxible_client.contracts.kits import KitBuildResult
+    from cruxible_client.kits import read_kit_directory
+
+    workspace = tmp_path / "workspace"
+    (workspace / ".cruxible").mkdir(parents=True)
+    (workspace / "docs").mkdir()
+    (workspace / "README.md").write_text("# Acme kit\n")
+    (workspace / "docs" / "guide.md").write_text("How to use it.\n")
+    monkeypatch.chdir(workspace)
+
+    class StubClient:
+        def build_kit(self, instance_id: str, request: KitBuildRequest) -> KitBuildResult:
+            return KitBuildResult(bundle=_bundle())
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    out = tmp_path / "kit"
+    argv = [*BASE, "build", "--id", "acme", "--version", "1.0.0", "--owns", "acme."]
+    result = CliRunner().invoke(
+        cli, [*argv, "--out", str(out), "--file", "README.md", "--file", "docs/guide.md"]
+    )
+
+    assert result.exit_code == 0, result.output
+    manifest = json.loads((out / "cruxible-kit.json").read_text())
+    assert [(item["path"], item["role"], item["sha256"]) for item in manifest["files"]] == [
+        ("README.md", "readme", "sha256:" + hashlib.sha256(b"# Acme kit\n").hexdigest()),
+        (
+            "docs/guide.md",
+            "reference",
+            "sha256:" + hashlib.sha256(b"How to use it.\n").hexdigest(),
+        ),
+    ]
+    assert (out / "docs" / "guide.md").read_text() == "How to use it.\n"
+    assert read_kit_directory(out).manifest.content_digest == _bundle().manifest.content_digest
+
+    (tmp_path / "outside.md").write_text("elsewhere\n")
+    for path, why in (("missing.md", "is not a file"), ("../outside.md", "outside the workspace")):
+        refused = CliRunner().invoke(
+            cli, [*argv, "--out", str(tmp_path / f"refused-{why[:4]}"), "--file", path]
+        )
+        assert refused.exit_code == 1, refused.output
+        assert "cruxible.kit.file_refused" in refused.output and why in refused.output
+        assert "Repair:" in refused.output
+        assert not (tmp_path / f"refused-{why[:4]}").exists()
+
+
+def test_kit_add_counts_unchanged_paths_and_lists_them_only_with_detail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """S1: a large release's preview lists what changes and counts the rest."""
+
+    from cruxible_client.kits import compact_kit_change
+
+    answer = KitChangeResult(
+        kit_id="acme",
+        version="1.1.0",
+        status="would_propose",
+        plan=(
+            KitPathPlan(
+                path="claim-types/acme.account/plan.json",
+                action="replace",
+                identity="ClaimType:acme.account.plan",
+            ),
+            *(
+                KitPathPlan(
+                    path=f"claim-types/acme.account/f{index}.json",
+                    action="unchanged",
+                    identity=f"ClaimType:acme.account.f{index}",
+                )
+                for index in range(175)
+            ),
+        ),
+    )
+
+    class StubClient:
+        def add_kit(self, instance_id: str, request: KitAddRequest) -> KitChangeResult:
+            return answer
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands.playbill.resolve_kit", lambda _kit: (_bundle(), "acme-1.1.0")
+    )
+
+    brief = CliRunner().invoke(cli, [*BASE, "add", "./acme"])
+    full = CliRunner().invoke(cli, [*BASE, "add", "./acme", "--detail"])
+    as_json = CliRunner().invoke(cli, [*BASE, "add", "./acme", "--json"])
+
+    assert brief.exit_code == full.exit_code == as_json.exit_code == 0, brief.output
+    assert "replace: ClaimType:acme.account.plan" in brief.output
+    assert "acme.account.f7" not in brief.output
+    assert "unchanged: 175 (--detail lists each)" in brief.output
+    assert "unchanged: ClaimType:acme.account.f7" in full.output
+    assert "unchanged: 175" not in full.output
+    payload = json.loads(as_json.output[as_json.output.index("{") :])
+    assert payload["unchanged"] == 175 and len(payload["plan"]) == 1
+    compact = compact_kit_change(answer)
+    assert compact.unchanged == 175 and compact_kit_change(compact) == compact
+
+
+def test_proposal_list_names_changed_paths_by_their_public_names(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review F-007: the awaiting-readmit row printed a playbill. path."""
+
+    from cruxible_client import contracts
+    from cruxible_client.contracts.get_text import definition_path_name
+
+    paths = (
+        "capture-contracts/playbill.coordinator-self-source-v1.json",
+        "claim-types/dev.roadmap_item/owner.json",
+        "contracts/acme.row/v2.json",
+        "subjects/dev.item/x.json",
+        "governance/approval-policy.json",
+    )
+
+    class StubClient:
+        def list_proposals(self, instance_id: str, **_: Any) -> contracts.ProposalList:
+            return contracts.ProposalList(
+                coordinate=contracts.AcceptedCoordinate(
+                    git_oid="a" * 40,
+                    semantic_root="sha256:" + "1" * 64,
+                    generation_root="sha256:" + "2" * 64,
+                    compiler_digest="sha256:" + "3" * 64,
+                ),
+                entries=[
+                    contracts.ProposalListEntry(
+                        proposal_id="sha256:" + "e" * 64,
+                        actor_id="owner",
+                        target_ref="refs/proposals/owner/x",
+                        admitted_at=None,
+                        verdict="candidate",
+                        status="awaiting_readmit",
+                        stale_paths=paths,
+                    )
+                ],
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+
+    server = BASE[:-1]
+    text = CliRunner().invoke(cli, [*server, "proposal", "list"])
+    shown = CliRunner().invoke(cli, [*server, "proposal", "list", "--json"])
+
+    assert text.exit_code == 0, text.output
+    assert "playbill." not in text.output
+    assert (
+        "changed since its base: CaptureContract:cruxible.coordinator-self-source-v1, "
+        "ClaimType:dev.roadmap_item.owner, Contract:acme.row@2, dev.item/x, "
+        "governance/approval-policy.json" in text.output
+    )
+    assert json.loads(shown.output)["entries"][0]["stale_paths"] == list(paths)
+    assert definition_path_name("notes/NOTE-" + "1" * 32 + ".json") == "Note:NOTE-" + "1" * 32

@@ -133,6 +133,8 @@ def test_nested_queue_vocabulary_adds_exactly_the_ratified_projection_variants()
         # Enabled Lines report restart coverage gaps and queued work.
         "line_coverage_gap",
         "line_work_pending",
+        # A cadence or cron Trigger's instants fell due while no daemon ran.
+        "trigger_instants_missed",
         # A live Line whose settled items matched earlier refusals.
         "line_settled_prior_refusals",
         # A Line's unread inbox items, one row per Line with its volume.
@@ -173,6 +175,9 @@ def test_nested_queue_vocabulary_adds_exactly_the_ratified_projection_variants()
         "cruxible.compiler.upgrade",
         "cruxible.line.enable",
         "cruxible.line.dispatch",
+        # A missed timer's target: run the Runbook or fire the action now.
+        "cruxible.runbook.run",
+        "cruxible.action.run",
         # The unread inbox row names the list that shows the Line's items.
         "cruxible.inbox.list",
         "cruxible.prediction.settle",

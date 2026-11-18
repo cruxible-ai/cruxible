@@ -57,6 +57,7 @@ from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.get_reads import GET_BATCH_MAX_REFS, GetBatchRequest
 from cruxible_client.contracts.identity_normalizers import NoneNormalizer
 from cruxible_client.contracts.projection import AcceptedCoordinate
+from cruxible_client.contracts.public_names import public_name
 from cruxible_client.contracts.repair_spelling import render_repair
 from cruxible_client.contracts.repairs import RepairOperation
 from cruxible_client.contracts.shapes import (
@@ -353,36 +354,73 @@ def _minimal_input(claim_type: ClaimType) -> dict[str, object]:
             f"ClaimType:{claim_type.predicate} --detail proof`"
         )
     current = dict(full)
-    sources = _source_ids(current.get("evidence_admission_policy"))
-    if sources:
-        # A policy that is the short form's own rules for these sources is said
-        # as the sources it anticipates.
+    shaped = _shaped_contracts(current.get("evidence_admission_policy"))
+    if shaped:
+        # A policy that is the short form's own rules for these contracts is said
+        # as the shaped contracts in evidence.
         trial = {key: value for key, value in current.items() if key != "evidence_admission_policy"}
-        trial["anticipated_source_ids"] = sources
+        trial["evidence"] = shaped
         if _lowers_to(trial, target):
             current = trial
     for name in _DROP_ORDER:
-        if name not in current:
+        if name not in current or _legible(name, current[name]):
             continue
         trial = {key: value for key, value in current.items() if key != name}
         if _lowers_to(trial, target):
             current = trial
     for name, value in tuple(current.items()):
-        tidied = _tidy(value)
+        tidied = _public_contract_names(_tidy(value))
         if tidied != value and _lowers_to({**current, name: tidied}, target):
             current[name] = tidied
     return current
 
 
-def _source_ids(policy: object) -> list[str]:
+def _public_contract_names(value: object) -> object:
+    """``value`` with each reserved contract identity in its public spelling.
+
+    Display only: lowering maps a public name back to the stored identity, and
+    the caller keeps the result only when it still lowers to the same ClaimType.
+    """
+
+    if isinstance(value, Mapping):
+        kind, name = value.get("kind"), value.get("name")
+        if kind in ("CaptureContract", "Contract") and isinstance(name, str):
+            return {**value, "name": public_name(f"{kind}:{name}").partition(":")[2]}
+        return {key: _public_contract_names(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_public_contract_names(item) for item in value]
+    return value
+
+
+def _legible(name: str, value: object) -> bool:
+    """Whether export keeps this field although lowering would derive it.
+
+    ``evidence_requirement: captured`` and ``permitted_roles`` follow from other
+    fields only by rules a reader cannot see in the file (captured from roles of
+    exactly ``[observation]``, roles from ``default_role``, else ``[normative]``),
+    so the file says them: the roles on every field.
+    """
+
+    if name == "evidence_requirement":
+        return value == "captured"
+    return name == "permitted_roles"
+
+
+def _shaped_contracts(policy: object) -> list[str]:
+    """The public names of the contracts the short form's ``evidence`` rule names."""
+
     if not isinstance(policy, Mapping) or not isinstance(policy.get("rules"), list):
         return []
-    ids = [
-        str(rule["rule_id"]).removeprefix("source-")
-        for rule in cast(list[Mapping[str, object]], policy["rules"])
-        if str(rule.get("rule_id", "")).startswith("source-")
-    ]
-    return sorted(set(ids), key=lambda item: item.encode("utf-8"))
+    names: set[str] = set()
+    for rule in cast(list[Mapping[str, object]], policy["rules"]):
+        if rule.get("rule_id") != "evidence":
+            continue
+        for item in cast(list[object], rule.get("capture_contracts") or []):
+            target = item.get("target") if isinstance(item, Mapping) else None
+            name = target.get("name") if isinstance(target, Mapping) else item
+            if isinstance(name, str):
+                names.add(public_name(name))
+    return sorted(names, key=lambda item: item.encode("utf-8"))
 
 
 def _tidy(value: object) -> object:

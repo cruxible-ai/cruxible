@@ -256,6 +256,10 @@ class ProposalReceiveLimits(_StrictProposalModel):
         return members * self.change_set_record_bytes_per_member
 
 
+#: What a kit proposal does to its kit.
+KitProposalTransition = Literal["add", "remove"]
+
+
 class ProposalAdmissionRequest(_StrictProposalModel):
     tag: Literal["playbill-proposal-request-v1"] = "playbill-proposal-request-v1"
     target_ref: str
@@ -270,6 +274,12 @@ class ProposalAdmissionRequest(_StrictProposalModel):
     rationale: str | None = Field(
         default=None,
         max_length=CHANGE_SET_RATIONALE_MAX_LENGTH,
+    )
+    #: A kit change's transition, set only by the kit door: ``add`` (install,
+    #: upgrade, downgrade, reinstall) or ``remove``. Absent for every other
+    #: proposal, and for kit proposals recorded before the field existed.
+    kit_transition: KitProposalTransition | None = Field(
+        default=None, exclude_if=lambda value: value is None
     )
 
     @field_validator("rationale")
@@ -324,9 +334,19 @@ class ProposalWithdrawalRecord(_StrictProposalModel):
     statement, so a second one over the same proposal is refused rather than
     silently restating the first with a new reason.
 
-    ``kind`` says who closed it: ``withdrawn`` by its author (or a daemon-wide
-    operator), ``rejected`` by a reviewer. ``withdrawn_at`` is the instant it
-    closed either way.
+    ``kind`` says how it closed: ``withdrawn`` by its author (or as superseded
+    by a later run of its Line), ``rejected`` by a reviewer, ``superseded`` when
+    an approval, activation or readmit that met it behind the head proposed the
+    same change again at the head. ``withdrawn_at`` is the instant it closed
+    either way, and ``actor_id`` the principal whose act closed it: for a
+    ``superseded`` record, whoever approved, activated or readmitted, which is
+    often not the author.
+
+    ``superseded`` is the one shape the second format version adds, so a
+    ``superseded`` record is tagged v2 and every other record keeps its v1
+    bytes. Records written before it closed a recompiled proposal as
+    ``withdrawn`` under its author with ``superseded_by`` set; they stay
+    readable as they are, and reads report them as superseded too.
 
     A rejection records each Claim the rejected candidate proposed
     (``refused_claims``: its statement and the Captures it cites), taken while the
@@ -339,17 +359,42 @@ class ProposalWithdrawalRecord(_StrictProposalModel):
     carries over to the successor; it is reviewed afresh.
     """
 
-    tag: Literal["playbill-proposal-withdrawal-v1"] = "playbill-proposal-withdrawal-v1"
+    tag: Literal["playbill-proposal-withdrawal-v1", "playbill-proposal-withdrawal-v2"] = (
+        "playbill-proposal-withdrawal-v1"
+    )
     proposal_id: str
     actor_id: str
     reason: str = Field(min_length=1, max_length=1_000)
     withdrawn_at: str
-    kind: Literal["withdrawn", "rejected"] = Field(
+    kind: Literal["withdrawn", "rejected", "superseded"] = Field(
         default="withdrawn", exclude_if=lambda value: value == "withdrawn"
     )
     refused_claims: tuple[RefusedClaim, ...] = Field(default=(), exclude_if=lambda value: not value)
-    #: The proposal a later run of the same Line submitted in this one's place.
+    #: The proposal submitted in this one's place: the same change proposed
+    #: again at the head, or a later run of the same Line.
     superseded_by: str | None = Field(default=None, exclude_if=lambda value: value is None)
+
+    @classmethod
+    def superseded(
+        cls, *, proposal_id: str, actor_id: str, reason: str, withdrawn_at: str, superseded_by: str
+    ) -> "ProposalWithdrawalRecord":
+        """The closing record of a proposal proposed again at the head as ``superseded_by``."""
+
+        return cls(
+            tag="playbill-proposal-withdrawal-v2",
+            proposal_id=proposal_id,
+            actor_id=actor_id,
+            reason=reason,
+            withdrawn_at=withdrawn_at,
+            kind="superseded",
+            superseded_by=superseded_by,
+        )
+
+    @property
+    def is_superseded(self) -> bool:
+        """Whether another proposal took this one's place, in either format version."""
+
+        return self.superseded_by is not None
 
     @field_validator("proposal_id")
     @classmethod
@@ -386,9 +431,13 @@ class ProposalWithdrawalRecord(_StrictProposalModel):
         if self.refused_claims and self.kind != "rejected":
             raise ValueError("only a rejection keys the Claims it refused")
         if self.superseded_by is not None and (
-            self.kind != "withdrawn" or self.superseded_by == self.proposal_id
+            self.kind == "rejected" or self.superseded_by == self.proposal_id
         ):
             raise ValueError("only a withdrawal names the other proposal that superseded it")
+        if (self.kind == "superseded") != (self.tag == "playbill-proposal-withdrawal-v2"):
+            raise ValueError("exactly a superseded record is format version 2")
+        if self.kind == "superseded" and self.superseded_by is None:
+            raise ValueError("a superseded record names the proposal that superseded it")
         return self
 
 
@@ -622,6 +671,12 @@ class ProposalAdmissionRecord(_StrictProposalModel):
     # names its exact operation here.
     procedure_operation: str | None = Field(default=None, exclude_if=lambda value: value is None)
     originating_line: OriginatingLine | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    #: A kit change's transition (``add`` or ``remove``), recorded when the kit
+    #: door created it; absent for every other proposal and for kit proposals
+    #: admitted before the field existed (those fall back to their rationale).
+    kit_transition: KitProposalTransition | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
 

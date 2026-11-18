@@ -378,7 +378,7 @@ def _post_evidence(
     try:
         get_registry().create_governed_instance_with_id(instance.descriptor.instance_id)
         get_playbill_manager().register(instance.descriptor.instance_id, instance)
-        monkeypatch.setattr(playbill_api, "_actor_id", lambda _instance_id: "owner")
+        monkeypatch.setattr(playbill_api, "_attributed_actor_id", lambda _instance_id: "owner")
         with TestClient(create_app(), raise_server_exceptions=False) as client:
             with monkeypatch.context() as patch:
                 patch.setattr(os, "open", full_disk)

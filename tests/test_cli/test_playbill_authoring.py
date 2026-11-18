@@ -171,7 +171,11 @@ def test_cli_compile_reads_payload_and_submit_uses_only_opaque_intent(
     compiled = runner.invoke(cli, [*common, "compile", str(payload)])
     submitted = runner.invoke(cli, [*common, "submit", "--intent-id", INTENT_ID])
 
-    assert compiled.exit_code == 0, compiled.output
+    # A refused compile exits 1 like a refused submit, naming the refusal on
+    # stderr beside the full record on stdout (coldkit-03).
+    assert compiled.exit_code == 1, compiled.output
+    assert json.loads(compiled.stdout)["verdict"] == "refused"
+    assert "refused: x: refused" in compiled.stderr
     assert submitted.exit_code == 0, submitted.output
     assert calls == [
         ("inst_authoring", authoring),
@@ -233,7 +237,9 @@ def test_cli_submit_takes_a_payload_directly_and_dry_run_saves_nothing(
 
     assert direct.exit_code == 0, direct.output
     assert onto.exit_code == 0, onto.output
-    assert preview.exit_code == 0, preview.output
+    # A refused dry run exits 1 with the refusal line, as compile and submit do.
+    assert preview.exit_code == 1, preview.output
+    assert "refused: x: refused" in preview.stderr
     assert calls == [
         ("submit", authoring, None),
         ("submit", authoring, INTENT_ID),
@@ -247,15 +253,49 @@ def test_cli_submit_takes_a_payload_directly_and_dry_run_saves_nothing(
     assert "takes no --intent-id" in staged_preview.output
 
 
+@pytest.mark.parametrize("verdict", ["passed", "refused"])
+@pytest.mark.parametrize("brief", [False, True], ids=["json", "brief"])
+def test_cli_preflight_exits_1_on_a_refused_verdict_like_every_authoring_command(
+    monkeypatch, verdict: str, brief: bool
+) -> None:  # type: ignore[no-untyped-def]
+    class StubClient:
+        def preflight_authoring_intent(
+            self, instance_id: str, intent_id: str
+        ) -> contracts.AuthoringPreflightResult:
+            diagnostics = (stub_diagnostic("x"),) if verdict == "refused" else ()
+            return stub_preflight_result(verdict=verdict, diagnostics=diagnostics)  # type: ignore[arg-type]
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://authoring.example.test",
+            "--instance-id",
+            "inst_authoring",
+            "authoring",
+            "preflight",
+            INTENT_ID,
+            *(["--brief"] if brief else []),
+        ],
+    )
+
+    if verdict == "passed":
+        assert result.exit_code == 0, result.output
+        assert "refused:" not in result.stderr
+    else:
+        assert result.exit_code == 1, result.output
+        assert "refused: x: refused" in result.stderr
+    if not brief:
+        assert json.loads(result.stdout)["verdict"] == verdict
+
+
 def test_cli_claim_type_propose_delivers_nonblocking_source_lint(
     monkeypatch,
     tmp_path: Path,
 ) -> None:  # type: ignore[no-untyped-def]
     payload = tmp_path / "claim-type.json"
-    values = {
-        **claim_type_input_example().model_dump(mode="json"),
-        "anticipated_source_ids": ["corpus.runbook"],
-    }
+    values = claim_type_input_example().model_dump(mode="json")
     payload.write_text(json.dumps(values))
     warning = {
         "code": "cruxible.claim_type.anticipated_source_contract_omitted",
@@ -281,7 +321,6 @@ def test_cli_claim_type_propose_delivers_nonblocking_source_lint(
                 "inst_authoring",
                 "project.work_item.replace_me",
             )
-            assert input["anticipated_source_ids"] == ["corpus.runbook"]
             return contracts.ClaimTypeInputProposalResult(
                 proposal=contracts.ProposalInspection(
                     proposal={"proposal_id": "sha256:" + "8" * 64},
@@ -1265,3 +1304,23 @@ def test_cli_lint_lines_carry_the_warnings_meaning_when_it_has_words() -> None:
         "never resolve"
     )
     assert _claim_type_lint_meaning("cruxible.claim_type.field_name_reserved") == ""
+
+
+def test_a_refused_preflight_line_says_each_refusal_once() -> None:
+    """psw F18: the code printed twice, then a blocked check that refusal caused."""
+
+    from cruxible_core.cli.commands.playbill import _preflight_refusal_reason
+
+    code = "cruxible.query.value_type_mismatch"
+    preflight = {
+        "frontier": {
+            "diagnostics": [{"code": code, "message": f"{code}: $.where: now compares only"}],
+            "blocked_checks": [
+                {"check": "proposal_evaluation", "reason": "Lowering first.", "blocked_by": [code]},
+                {"check": "other", "reason": "Budget.", "blocked_by": ["cruxible.x.budget"]},
+            ],
+        }
+    }
+    assert _preflight_refusal_reason(preflight) == (
+        f"{code}: $.where: now compares only; blocked other by cruxible.x.budget: Budget."
+    )

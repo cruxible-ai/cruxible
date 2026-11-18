@@ -16,9 +16,10 @@ from __future__ import annotations
 
 import base64
 import json
+from collections import OrderedDict
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import AbstractContextManager, contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from functools import partial
 from types import SimpleNamespace
@@ -55,6 +56,7 @@ from cruxible_client.contracts.triggers import (
     WindowCloseSchedule,
     schedule_is_timed,
 )
+from cruxible_core.derived.memo import memo_get, memo_put
 from cruxible_core.errors import RequestRefusedError
 from cruxible_core.exhaust.line_dispatch import LineDispatchStore, dispatch_root
 from cruxible_core.governance.actor_context import GovernedActorContext
@@ -105,9 +107,10 @@ _TRIGGER_CHANGED = (
 )
 
 # Idle polls need not move coverage per tick: time-only progress advances the
-# dispatch projection at most this often and is never journaled, so a restart
-# claims at most this interval uncovered beyond it (more only if the projection
-# itself is rebuilt, from the last coverage that matched something).
+# dispatch projection at most this often and is never journaled (nor is a
+# run-journal head move that matched nothing), so a restart claims at most this
+# interval uncovered beyond it (more only if the projection itself is rebuilt,
+# from the last coverage that matched something).
 _IDLE_COVERAGE_INTERVAL = timedelta(minutes=1)
 
 
@@ -1024,6 +1027,7 @@ def service_match_listening_lines(
             )
             details: list[str] = []
             stopped = False
+            matched = False
             for trigger in triggers:
                 name = trigger.trigger.identity.qualified
                 if name in scan["done"]:
@@ -1076,7 +1080,10 @@ def service_match_listening_lines(
                     )
                     stopped = True
                     break
-                _enqueue(store, conn, result, actor, now, session_id=session["session_id"])
+                enqueued = _enqueue(
+                    store, conn, result, actor, now, session_id=session["session_id"]
+                )
+                matched = matched or any(item.newly_enqueued for item in enqueued.occurrences)
                 if result.detail is not None:
                     details.append(result.detail)
                 if result.status == "incomplete":
@@ -1097,19 +1104,31 @@ def service_match_listening_lines(
                 trigger.trigger.identity.qualified in scan["done"] for trigger in triggers
             )
             detail = details[0] if details else None
-            # Pending transitions have already landed independently. Time-only
-            # progress is never journaled and can wait (a Trigger's recorded
-            # reach only lags, which is conservative); event progress, partial
-            # scans and a timed Trigger's first reach cannot.
-            time_only = (
+            # Pending transitions have already landed independently. Coverage
+            # that matched nothing is never journaled: neither time-only
+            # progress nor a run-journal head move with no new occurrence. A
+            # projection rebuilt from the journal reads such a segment from its
+            # last journaled coverage, so its positions and recorded reaches
+            # only lag (a re-scan pages from there and re-finds nothing new;
+            # a restart rolls over from the head and asks the time gap to be
+            # evaluated). A match, a cursor change, a partial scan, a changed
+            # detail and a timed Trigger's first reach are journaled.
+            unjournaled = (
                 complete
+                and not matched
                 and not continuing_scan
                 and scan["cursors"] == previous_cursors
-                and scan["through"] == session["positions"]
                 and detail == session.get("detail")
                 and scan["timed"].keys() <= session.get("trigger_until", {}).keys()
             )
-            if time_only and now - evaluated_until < _IDLE_COVERAGE_INTERVAL:
+            # A head move advances positions on every tick (one projection
+            # row), so the next scan never re-reads the same run records; pure
+            # time progress waits for the idle interval.
+            if (
+                unjournaled
+                and scan["through"] == session["positions"]
+                and now - evaluated_until < _IDLE_COVERAGE_INTERVAL
+            ):
                 continue
             session["detail"] = detail
             if complete:
@@ -1126,7 +1145,7 @@ def service_match_listening_lines(
                 )
             else:
                 session["scan"] = scan
-            if time_only:
+            if unjournaled:
                 store.advance_coverage(conn, session)
             else:
                 store.append(conn, "coverage", session, actor=actor, now=now)
@@ -1180,6 +1199,9 @@ class LineCoverageGap:
     line_id: str
     since: datetime
     until: datetime
+    #: Each cadence or cron Trigger aimed at the Line with instants in the range:
+    #: (Trigger identity, first instant, last instant, how many).
+    missed: tuple[tuple[str, datetime, datetime, int], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -1212,6 +1234,70 @@ def _uncovered(
             if part[0] < part[1]
         ]
     return remaining
+
+
+# Per instance root, Trigger version and range: its instants in the range.
+_TimerGap = tuple[datetime, datetime, int] | tuple[()]
+_TIMER_MISSES: OrderedDict[tuple[str, str, str, str], _TimerGap] = OrderedDict()
+_TIMER_MISSES_CAPACITY = 1024
+
+
+def _timer_misses(
+    instance: PlaybillInstance, line: str, ranges: list[tuple[datetime, datetime]]
+) -> list[tuple[tuple[str, datetime, datetime, int], ...]]:
+    """Per range, the instants each cadence or cron Trigger aimed at ``line`` had in it.
+
+    Read when a gap is listed: one Line and its Triggers from the projection,
+    then each count memoized by Trigger version and range, so a later ``next``
+    reads none of it again. Ranges are evaluation ranges, ``[since, until)``. A
+    Line or Trigger that cannot be read gives no counts (its gap stays a
+    ``line_coverage_gap``).
+    """
+
+    from cruxible_core.service.procedures.procedure_runs import trigger_accepted_at
+    from cruxible_core.triggers.cadence import timer_gap
+
+    try:
+        coordinate = instance.accepted_coordinate()
+        accepted = _accepted_line_by_reference(instance, coordinate=coordinate, reference=line)
+        timers = [
+            (trigger, trigger_accepted_at(instance, trigger))
+            for trigger in line_triggers(instance, accepted, coordinate=coordinate)
+            if schedule_is_timed(trigger.trigger.schedule)
+            and not isinstance(trigger.trigger.schedule, GenerationAcceptedSchedule)
+        ]
+    except (CruxibleError, OSError, ValueError):
+        return [() for _ in ranges]
+    found = []
+    root = str(instance.root)
+    tick = timedelta(microseconds=1)
+    for since, until in ranges:
+        misses = []
+        for trigger, accepted_at in timers:
+            key = (
+                root,
+                trigger.artifact_digest,
+                str(format_datetime(since)),
+                str(format_datetime(until)),
+            )
+            cached: _TimerGap | None = memo_get(_TIMER_MISSES, key)
+            if cached is None:
+                # () records "no instant in the range", so it is not counted again.
+                cached = (
+                    timer_gap(
+                        trigger.trigger.schedule,
+                        accepted_at=accepted_at,
+                        after=since - tick,
+                        through=until - tick,
+                    )
+                    or ()
+                )
+                memo_put(_TIMER_MISSES, key, cached, capacity=_TIMER_MISSES_CAPACITY)
+            if cached:
+                first, last, count = cached
+                misses.append((trigger.trigger.identity.qualified, first, last, count))
+        found.append(tuple(misses))
+    return found
 
 
 def line_attention(
@@ -1283,7 +1369,20 @@ def line_attention(
                 pending.append(
                     LinePendingWork(session["line"], session["line_id"], due, _instant(oldest))
                 )
-    return tuple(gaps), tuple(pending)
+    # Each listed gap's missed timer instants, read after the store lock is released.
+    by_line: dict[str, list[LineCoverageGap]] = {}
+    for gap in gaps:
+        by_line.setdefault(gap.line, []).append(gap)
+    counted = {
+        id(gap): missed
+        for line, held in by_line.items()
+        for gap, missed in zip(
+            held,
+            _timer_misses(instance, line, [(gap.since, gap.until) for gap in held]),
+            strict=True,
+        )
+    }
+    return tuple(replace(gap, missed=counted[id(gap)]) for gap in gaps), tuple(pending)
 
 
 def service_dispatch_line(

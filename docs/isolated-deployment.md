@@ -109,8 +109,8 @@ with `--commit --at OID` (the preview's coordinate) is terminal: it
 ends one instance's governed writes and cannot be undone. It is ADMIN-tiered and
 deletes NOTHING. Afterwards:
 
-- every governed write -- proposals, approvals, activation, curation
-  rulings, Claim attestations, predictions and settlements, and
+- every governed write -- proposals, approvals, activation, Claim
+  attestations, predictions and settlements, and
   Procedure/Line runs -- refuses with the typed
   `cruxible.instance.decommissioned` error carrying the recorded reason;
 - reads keep serving at the accepted coordinate, and `orient` and `next` report
@@ -146,7 +146,7 @@ For cloud deployments:
 
 - keep ordinary signing keys in client custody or an external signing service;
 - keep recovery keys offline or under stronger custody;
-- back up accepted ledgers and CAS objects;
+- back up each instance's `ledger.git/`, `cas/` and `exhaust/` together;
 - treat SQLite projections as rebuildable;
 - never bake bearer tokens or private keys into images.
 
@@ -157,6 +157,29 @@ compile files. Compile file catalogs client-side and submit path-free bundles.
 For APIs and databases, record stable source coordinates and evidence rather
 than copying whole tables into Cruxible.
 
+## Providers without index access
+
+A kit ships its own providers inside it, and names a general-purpose provider
+(such as `cruxible-provider-web`) as a published dependency at an exact
+version, which `kit add` installs from the provider index: PyPI unless the
+operator configured another. A daemon that cannot reach PyPI has two ways to
+supply that wheel:
+
+- **An internal index.** List it in `provider_index_urls` in
+  `<state-root>/daemon/provider-runtime.json` (written while the daemon is
+  stopped; see [Provider runtime operational
+  configuration](cli-reference.md#provider-runtime-operational-configuration)).
+  It must serve the same build: the kit records the wheel's hash, and another
+  build under the same name and version is refused.
+- **The files themselves.** Carry the wheel, its lock and its dependency
+  wheels to the machine and install them before adding the kit: `cruxible
+  provider install WHEEL --lock LOCK --dependency WHEEL` (once per dependency
+  wheel). `kit add` then finds operations that serve the kit's slots and
+  installs nothing by name (the preview says `satisfied`).
+
+Either way the registry dependencies a lock pins must also be reachable, from
+the configured indexes or as `--dependency` wheels.
+
 ## Recovery
 
 Runtime admin recovery is a local filesystem-ownership operation. Cruxible
@@ -165,3 +188,9 @@ have different custody and audit procedures.
 
 Test restoration by rebuilding projections from accepted Git/CAS state, not by
 assuming a copied SQLite file is sufficient.
+
+The `exhaust/` directory is part of the instance, not a cache: it holds the
+run journals, observation history, Line enablement and inbox decisions that
+the ledger cites or that exist nowhere else. Back it up with the ledger and
+the CAS, and restore the three together. No command prunes or clears a
+journal; a long journal is the intended use.

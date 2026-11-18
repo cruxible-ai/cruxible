@@ -43,10 +43,12 @@ Counted on the measuring thread only:
   counts once), whenever the connection was opened;
 - ``fsyncs`` and ``file_opens``: whole-settle observations. ``non_acceptance_fsyncs`` excludes the
   acceptance batch and ledger Git-object flushes (reported separately);
-- ``journal_fsyncs``, ``journal_file_opens``, ``journal_appends``: the complete
-  terminal item group, including its reservations and CAS publication. The
-  group has no fsyncs, one file open per new body, and one journal append
-  regardless of the number of items. How many distinct CAS shards a group's
+- ``journal_fsyncs``, ``journal_file_opens``, ``journal_appends``,
+  ``journal_records`` and ``journal_items``: the complete terminal item group
+  (its run-free bodies and its one ``item_dependencies`` record), including
+  its reservation and CAS publication. The group has no fsyncs, one file open
+  per new body, and one journal append of one record regardless of the number
+  of items (``journal_items`` is how many it covers). How many distinct CAS shards a group's
   bodies land in is chance (content-addressed names collide), so the shards
   the group's own payloads require are derived from their digests
   (``journal_required_shards``): the first open of each is counted in
@@ -81,7 +83,6 @@ from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.subjects import SubjectShell, render_subject, subject_path
 from cruxible_core.exhaust.backends import LocalJournalBackend
 from cruxible_core.exhaust.journal_index import JournalIndex
-from cruxible_core.exhaust.records import journal_payload_bytes
 from cruxible_core.ledger import activation, recovery
 from cruxible_core.procedures.execution import ProcedureExecutor
 from cruxible_core.proposals import settlement
@@ -117,7 +118,11 @@ PER_ITEM = {
     "encodes": 140,
     "encoded_bytes": 100 * 1024,
     "sql_connects": 0.25,
-    "sql_statements": 35,
+    # A new row set's subscription index (ruling 2026-11-16 b) writes each new
+    # row's set membership, its source head and its source once: two more
+    # statements per newly settled item (measured 37); an unchanged run writes
+    # none (tests/test_scale/test_unchanged_run_cost.py).
+    "sql_statements": 38,
     "non_acceptance_fsyncs": 0.1,
     "journal_fsyncs": 0,
     # One payload file per body; a shard handle counts only when reopened.
@@ -262,7 +267,19 @@ def _flushing(original: Callable[..., Any]) -> Callable[..., Any]:
 
 @contextmanager
 def _journal_counted() -> Iterator[None]:
-    original = ProcedureExecutor._append_events
+    """Count one terminal's item group: its bodies, its one record and its reservation.
+
+    The group is ``_record_terminal_items``: the run-free bodies it stores in
+    one ``store_many`` and the one ``item_dependencies`` record citing them.
+    The shards its bodies require are derived from their digests when they
+    are built, outside the measured window.
+    """
+
+    from cruxible_core.procedures import execution as execution_module
+    from cruxible_core.storage.cas import digest_bytes
+
+    original = ProcedureExecutor._record_terminal_items
+    build = execution_module.build_terminal_items
     append = LocalJournalBackend.append_many
     flush = activation.flush_acceptance
     read = JournalIndex.read_row
@@ -279,22 +296,25 @@ def _journal_counted() -> Iterator[None]:
         finally:
             _COUNTS.in_acceptance_flush = False
 
+    def building(*args: Any, **kwargs: Any) -> Any:
+        built = build(*args, **kwargs)
+        if _COUNTS.measuring() and _COUNTS.in_item_group:
+            # Derived outside the measured window: the digests the store will name.
+            thread, _COUNTS.thread = _COUNTS.thread, None
+            try:
+                required = {digest_bytes(body).value[:2] for body in built.bodies}
+            finally:
+                _COUNTS.thread = thread
+            _COUNTS.counts["journal_required_shards"] += len(required)
+            _COUNTS.counts["journal_items"] += int(built.payload["count"])
+            _COUNTS.required_shards = required
+        return built
+
     def group(self: Any, *args: Any, **kwargs: Any) -> Any:
         if not _COUNTS.measuring():
             return original(self, *args, **kwargs)
-        payloads = kwargs["payloads"] if "payloads" in kwargs else args[3]
-        # Derived outside the measured window: the digests the store will name.
-        thread, _COUNTS.thread = _COUNTS.thread, None
-        try:
-            required = {
-                self.bodies.digest_bytes(journal_payload_bytes(payload)).value[:2]
-                for payload in payloads
-            }
-        finally:
-            _COUNTS.thread = thread
-        _COUNTS.counts["journal_required_shards"] += len(required)
         _COUNTS.in_item_group = True
-        _COUNTS.required_shards = required
+        _COUNTS.required_shards = set()
         _COUNTS.group_shards = set()
         try:
             return original(self, *args, **kwargs)
@@ -308,14 +328,16 @@ def _journal_counted() -> Iterator[None]:
         return append(self, drafts, **kwargs)
 
     activation.flush_acceptance = barrier
-    ProcedureExecutor._append_events = group
+    ProcedureExecutor._record_terminal_items = group
+    execution_module.build_terminal_items = building
     LocalJournalBackend.append_many = append_many
     JournalIndex.read_row = read_row
     try:
         yield
     finally:
         activation.flush_acceptance = flush
-        ProcedureExecutor._append_events = original
+        ProcedureExecutor._record_terminal_items = original
+        execution_module.build_terminal_items = build
         LocalJournalBackend.append_many = append
         JournalIndex.read_row = read
 
@@ -523,6 +545,9 @@ def _forget_parsed_receipts() -> None:
     from cruxible_core.query import engine, explanation
 
     settlement._CHANGE_SET_PARSES.clear()
+    # Worlds built from the same items hash to the same digests, so a digest
+    # validated by an earlier test in this process would hide cold work.
+    canonical._valid_sha256_hex.cache_clear()
     recovery.reset_released_records()
     memos = (
         closure._PROOFS,
@@ -642,8 +667,11 @@ def test_a_settles_work_per_item_stays_at_its_floor(
         tmp_path, monkeypatch, revise=revise, count=N, many=many
     )
 
-    assert small["journal_records"] == N
-    assert large["journal_records"] == 2 * N
+    # One grouped record covers the terminal's items: one append, one record,
+    # whatever the item count (a single append goes through append_many).
+    assert small["journal_items"] == N
+    assert large["journal_items"] == 2 * N
+    assert small["journal_records"] == large["journal_records"] == 1
     assert small["journal_appends"] == large["journal_appends"] == 1
     _assert_shards_as_required(small, large, after_large)
     slope = {name: (large[name] - small[name]) / N for name in PER_ITEM}
@@ -694,8 +722,9 @@ def test_settle_cost_per_claim_is_flat_at_12_and_48(
                 tmp_path / case / str(count), monkeypatch, revise=revise, count=count
             )
             slopes[case][count] = {name: (large[name] - small[name]) / count for name in counters}
-            assert small["journal_records"] == count
-            assert large["journal_records"] == 2 * count
+            assert small["journal_items"] == count
+            assert large["journal_items"] == 2 * count
+            assert small["journal_records"] == large["journal_records"] == 1
             assert small["journal_appends"] == large["journal_appends"] == 1
             _assert_shards_as_required(small, large, after)
             for name, ceiling in PER_ITEM.items():
@@ -791,46 +820,33 @@ def test_a_small_commit_after_a_large_one_does_not_encode_the_parent_change(
 def test_reobservation_same_value_new_bytes_visits_each_item_once(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """D-R8: one admission per changed row, one cited-envelope read per batch."""
+    """D-R8, ruling 2026-11-16 (c): new bytes holding the same rows deliver nothing.
+
+    The extract step's one row observation refreshes every Claim produced from
+    those rows: no item reaches delivery, nothing is recorded per Claim, and
+    the cited envelopes are not read, at either size.
+    """
     from cruxible_core.evidence.claim_reobservations import ClaimReobservationStore
-    from cruxible_core.storage.cas import ContentAddressedBodyStore
+    from cruxible_core.procedures.proposal_delivery import ProposalTerminalEgressSink
 
     _roomy_selection_budget(monkeypatch)
-    observations = []
-    original_admit = ClaimReobservationStore._admissible
-    original_read = ContentAddressedBodyStore.read
-    active = [False]
+    original_record = ProposalTerminalEgressSink._record_reobservations
     counters: Counter[str] = Counter()
-    cited: set[str] = set()
 
-    def admit(self: Any, **kwargs: Any) -> Any:
-        counters["items"] += 1
-        active[0] = True
-        try:
-            return original_admit(self, **kwargs)
-        finally:
-            active[0] = False
+    def record(self: Any, request: Any, unchanged: Any) -> Any:
+        counters["items"] += len(unchanged)
+        return original_record(self, request, unchanged)
 
-    def read(self: Any, digest: str, **kwargs: Any) -> Any:
-        if active[0] and digest in cited:
-            counters["cited_reads"] += 1
-        return original_read(self, digest, **kwargs)
-
-    monkeypatch.setattr(ClaimReobservationStore, "_admissible", admit)
-    monkeypatch.setattr(ContentAddressedBodyStore, "read", read)
+    monkeypatch.setattr(ProposalTerminalEgressSink, "_record_reobservations", record)
     for count in (N, 2 * N):
         directory = tmp_path / str(count)
         directory.mkdir()
         instance, root, line = settle_support.settle_world(directory, claims_terminal=True)
         _create_subjects(instance, settle_support.OWNERS[instance.root], count)
         _settle((instance, root, line), 0, count, 0)
-        from cruxible_client.contracts.claims import parse_claim
-
-        tree = instance.immutable_tree_at(instance.accepted_coordinate().git_oid)
-        claims = [parse_claim(tree[path], path=path) for path in tree if path.startswith("claims/")]
-        cited.clear()
-        cited.update(capture for claim in claims for capture in claim.backing.capture_digests)
         head = instance.accepted_coordinate()
+        store = ClaimReobservationStore(instance)
+        before = store.head_sequence()
         counters.clear()
         (root / fixtures.RELATIVE_PATH).write_bytes(
             canonical.canonical_bytes(
@@ -845,12 +861,11 @@ def test_reobservation_same_value_new_bytes_visits_each_item_once(
         )
         assert state.status == "succeeded", state.terminal
         (egress,) = state.terminal_egress
-        assert egress.proposal_id is None and len(egress.children) == count
+        assert egress.proposal_id is None and egress.children == ()
         assert instance.accepted_coordinate() == head
-        assert counters == {"items": count, "cited_reads": 1}
-        observations.append(dict(counters))
-    assert observations[1]["items"] == 2 * observations[0]["items"]
-    assert observations[1]["cited_reads"] == observations[0]["cited_reads"] == 1
+        assert counters["items"] == 0
+        # The run's fetch and its extract step: two shared records, whatever the count.
+        assert store.head_sequence() - before == 2
 
 
 def _measure_absence_work(tmp_path, monkeypatch, *, policy, count):
@@ -904,22 +919,29 @@ def _assert_shards_as_required(*windows: Counter[str]) -> None:
 def test_added_per_item_shard_work_exceeds_the_journal_open_ceiling(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, extra: str
 ) -> None:
-    """The guard's own check: one more shard open per stored body fails the ceiling."""
+    """The guard's own check: shard opens added per logical item fail the ceiling.
 
-    from cruxible_core.storage.cas import ContentAddressedBodyStore
+    Item bodies are run-free and deduplicated (an absence terminal's items
+    share one body), so work added per stored body need not grow with items;
+    the injected work is added per item of the terminal's group instead: two
+    opens per item, of a shard the group requires (opened again) or of one it
+    does not require.
+    """
 
-    store_many = ContentAddressedBodyStore.store_many
+    import cruxible_core.procedures.execution as execution_module
 
-    def opening_more(self: Any, contents: Any, *, journal_payload: bool = False) -> Any:
-        stored = store_many(self, contents, journal_payload=journal_payload)
-        if journal_payload:
-            for item in stored:
-                value = item.digest.removeprefix("sha256:")
-                shard = value[:2] if extra == "own_shard_again" else f"{int(value[:2], 16) ^ 1:02x}"
-                os.close(self._shard(shard, create=True))
-        return stored
+    original = execution_module.ProcedureExecutor._record_terminal_items
 
-    monkeypatch.setattr(ContentAddressedBodyStore, "store_many", opening_more)
+    def opening_more(self: Any, *args: Any, **kwargs: Any) -> Any:
+        bound = original(self, *args, **kwargs)
+        required = sorted(_COUNTS.required_shards) or ["00"]
+        shard = required[0] if extra == "own_shard_again" else f"{int(required[0], 16) ^ 1:02x}"
+        for _child in bound.children:
+            for _ in range(2):
+                os.close(self.bodies._shard(shard, create=True))  # noqa: SLF001
+        return bound
+
+    monkeypatch.setattr(execution_module.ProcedureExecutor, "_record_terminal_items", opening_more)
     small = _measure_absence_work(tmp_path / "small", monkeypatch, policy="mirror", count=N)
     large = _measure_absence_work(tmp_path / "large", monkeypatch, policy="mirror", count=2 * N)
     slope = (large["journal_file_opens"] - small["journal_file_opens"]) / N

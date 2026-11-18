@@ -190,11 +190,57 @@ class ReviewTriggerDefinition(_SummaryModel):
     target: str
 
 
+class ReviewClaimTypeDefinition(_SummaryModel):
+    """A new field: what it holds and what may back it."""
+
+    kind: Literal["claim-type"] = "claim-type"
+    #: The value type in the Contract type grammar (``enum[a|b]``, ``subject<K>``).
+    value: str
+    cardinality: Literal["one", "many"]
+    subject_kinds: tuple[str, ...]
+    #: Permitted roles, the default role first when one is set.
+    roles: tuple[str, ...]
+    default_role: str | None = Field(default=None, exclude_if=_omit_none)
+    evidence_requirement: str
+    #: The CaptureContracts its evidence rules admit, by public name.
+    evidence: tuple[str, ...] = Field(default=(), exclude_if=_omit_empty)
+    description: ReviewSummaryValue | None = Field(default=None, exclude_if=_omit_none)
+
+
+class ReviewLink(_SummaryModel):
+    relation: str
+    #: A kind-qualified identity: ``ClaimType:p``, ``Procedure:n``, ``Subject:kind/id``.
+    target: str
+
+
+class ReviewDocumentDefinition(_SummaryModel):
+    """A Document as it would stand: its title and what it is linked to."""
+
+    kind: Literal["document"] = "document"
+    title: str
+    document_kind: str
+    links: tuple[ReviewLink, ...] = ()
+
+
+class ReviewNoteDefinition(_SummaryModel):
+    """A note as it would stand: the section, and the Subjects it is about."""
+
+    kind: Literal["note"] = "note"
+    #: The catalogued workspace source (files.yaml name).
+    file: str
+    section: SectionPath
+    #: ``kind/id`` of each Subject.
+    about: tuple[str, ...]
+
+
 ReviewDefinitionDetail = Annotated[
     ReviewLineDefinition
     | ReviewMandateDefinition
     | ReviewRunbookDefinition
-    | ReviewTriggerDefinition,
+    | ReviewTriggerDefinition
+    | ReviewClaimTypeDefinition
+    | ReviewDocumentDefinition
+    | ReviewNoteDefinition,
     Field(discriminator="kind"),
 ]
 
@@ -211,8 +257,8 @@ class ReviewDefinition(_SummaryModel):
     """One proposed definition: its kind, name and action, and its typed fields.
 
     ``detail`` is the definition as it would stand (Line, ProcedureMandate,
-    Runbook, Trigger); other kinds, and retirements, carry none. ``changed``
-    lists a revision's changed fields.
+    Runbook, Trigger, Document, note; a ClaimType when created); other kinds,
+    and retirements, carry none. ``changed`` lists a revision's changed fields.
     """
 
     kind: str
@@ -271,8 +317,15 @@ class ProposalReviewSummary(_SummaryModel):
     withheld: BodyRestricted | None = Field(default=None, exclude_if=lambda value: value is None)
 
     def __str__(self) -> str:
-        """The review as ``cruxible proposal review`` prints it; ``repr()`` stays the model."""
+        """The review as ``cruxible proposal review`` prints it; ``repr()`` is its first line."""
 
         from cruxible_client.contracts.text_display import render_review_summary
 
         return render_review_summary(self)
+
+    def __repr__(self) -> str:
+        """The first line of what the CLI prints (S1); ``model_dump()`` is the model."""
+
+        from cruxible_client.contracts.text_display import one_line_repr
+
+        return one_line_repr(self)

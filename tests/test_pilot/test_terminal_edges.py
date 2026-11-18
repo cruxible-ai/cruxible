@@ -241,7 +241,10 @@ def test_evidence_refresh_obeys_the_same_replaces_policy(tmp_path: Path) -> None
     assert second.terminal_egress[0].proposal_id is None
     from cruxible_core.evidence.claim_reobservations import ClaimReobservationStore
 
-    assert len(ClaimReobservationStore(instance).history(prior.identity.name)) == 1
+    # The record's row changed (a field the Claim does not read), its value
+    # did not (D-R8): one per-Claim re-observation, sized by the change.
+    store = ClaimReobservationStore(instance)
+    assert len(store.history(prior.identity.name)) == 1
     # An explicit empty replaces list cannot refresh even an observation.
     spec = procedure_spec(
         base=claims_spec(

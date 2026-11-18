@@ -246,6 +246,18 @@ class LineEnablement(BaseModel):
             raise ValueError("exactly a stopped enablement names when it stopped")
         return self
 
+    def __str__(self) -> str:
+        """The enablement as ``cruxible line enable`` prints it; ``repr()`` is its first line."""
+
+        from cruxible_client.contracts.text_display import line_enablement_lines
+
+        return "\n".join(line_enablement_lines(self))
+
+    def __repr__(self) -> str:
+        from cruxible_client.contracts.text_display import one_line_repr
+
+        return one_line_repr(self)
+
 
 class LineDispatchItem(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)

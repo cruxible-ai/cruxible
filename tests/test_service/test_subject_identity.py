@@ -302,8 +302,10 @@ def test_a_reference_whose_key_a_subject_holds_names_it(instance: PlaybillInstan
         f"{DECISION}.slug",
         f"{DECISION}.title",
     }
-    for ref in (f"{DECISION}/ship_it", f"{DECISION}/ship-it"):
-        outcome = write(instance, {"op": "set", "subject": ref, "field": "title", "value": "B"})
+    # Each write sets a new value, so each lands (a same-value set answers
+    # unchanged, S2); either way the reference resolves to the one Subject.
+    for ref, value in ((f"{DECISION}/ship_it", "B"), (f"{DECISION}/ship-it", "C")):
+        outcome = write(instance, {"op": "set", "subject": ref, "field": "title", "value": value})
         assert outcome.status == "accepted", outcome
         assert outcome.subjects_added == ()
 

@@ -26,20 +26,26 @@ from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
+from cruxible_client.contracts.canonical import canonical_bytes, canonical_digest
 from cruxible_client.contracts.captures import (
     CaptureEnvelopeAny,
     observed_content,
     parse_capture_envelope,
 )
-from cruxible_client.contracts.claim_evidence import AbsenceWitness, ClaimEvidenceReceipt
+from cruxible_client.contracts.claim_evidence import (
+    AbsenceWitness,
+    ClaimEvidenceReceipt,
+    ExtractedBasis,
+)
 from cruxible_client.contracts.claim_verdicts import (
     CaptureReobservationEvidence,
     CaptureVerdictEvidence,
 )
 from cruxible_client.contracts.claims import claim_artifact_digest, claim_path, parse_claim
-from cruxible_client.contracts.errors import CruxibleError, ReadRefusalError
+from cruxible_client.contracts.errors import CasError, CruxibleError, ReadRefusalError
 from cruxible_client.contracts.primitives import new_id
 from cruxible_client.contracts.procedures.node_summary import ReobservationRefusalReason
 from cruxible_client.contracts.projection import AcceptedCoordinate
@@ -48,6 +54,7 @@ from cruxible_core.exhaust.backends import LocalJournalBackend, journal_log_path
 from cruxible_core.exhaust.records import (
     CLAIM_REOBSERVATION_JOURNAL_FAMILY,
     JournalStreamIdentityV1,
+    StoredProcedureJournalRecordV1,
     parse_journal_payload,
 )
 from cruxible_core.exhaust.writer import ProcedureExhaustWriter
@@ -62,8 +69,40 @@ _LOCK = threading.RLock()
 _FENCE = "claim-reobservation-local-v1"
 _PARTITION = "reobservations"
 _EVENT_TAG = "cruxible-claim-reobservation-v1"
+#: One delivery's per-Claim re-observations in one journal record (the 0.5.0
+#: absence fallback's storage shape): what the records share is stated once
+#: per group, and each Claim costs its id and version. Read back, each Claim is
+#: exactly the per-Claim record it would have been.
+_BATCH_TAG = "cruxible-claim-reobservation-batch-v1"
+_GROUP_FIELDS = (
+    "capture_digest",
+    "contract_digest",
+    "observed_content_digest",
+    "capture_content_digest",
+    "observed_at",
+    "latest",
+)
+#: One acquiring call's observation of every content it fetched (ruling 1a):
+#: recorded at the fetch, keyed by (contract, observed content), never per Claim.
+CONTENT_OBSERVATION_TAG = "cruxible-content-observation-v1"
+#: The (contract, content, Capture) set one observation covers: run-free, so a
+#: call that fetched the same contents again cites the body it stored before.
+OBSERVED_CONTENTS_BODY = "cruxible-observed-contents-v1"
+#: One extract step's observation of its whole extracted row set (ruling
+#: 2026-11-16 a), keyed by each row's (contract, source, record key, value)
+#: digest: a Claim produced from a row is fresh as of the latest observation of
+#: a set holding it, whatever bytes carried the rows.
+ROW_OBSERVATION_TAG = "cruxible-row-observation-v1"
+#: The (contract, row) set one row observation covers: run-free and
+#: Capture-free, so the same rows in new bytes cite the body stored before.
+OBSERVED_ROWS_BODY = "cruxible-observed-rows-v1"
+#: Which row each record of one Capture's extraction is, by extract spec and
+#: record locator: how a Claim citing that record finds the row it depends on.
+ROW_MAP_BODY = "cruxible-row-map-v1"
+#: The row maps of one extract step's Captures (run-free).
+ROW_MAPS_BODY = "cruxible-row-maps-v1"
 _ACCESS = BodyAccessContext(principal_id="claim-reobservation", can_read_body=True)
-_SCHEMA_VERSION = 5
+_SCHEMA_VERSION = 21
 REOBSERVATION_DIRECTORY = "claim-reobservations"
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 # ``reobservations`` keeps the full history (audit, historical verification).
@@ -80,37 +119,162 @@ _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 # admitted, so a version's latest observation by a given instant is one seek on
 # ``reobservations_by_version`` (prediction settlement), however many records of
 # the lineage, or of that version observed later, there are.
+# ``applied`` names the journal record the projection was last caught up to,
+# by sequence and record digest (which commits the whole journal prefix): an
+# open finds a journal that is behind it, or does not continue it (lost or
+# replaced under a kept projection), by one head read, and rebuilds.
+# ``unavailable_records`` names each journal record whose payload body was
+# missing when it was replayed: its effect is not projected, and that is kept.
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS progress (
  singleton INTEGER PRIMARY KEY, sequence INTEGER NOT NULL, recorded_us INTEGER NOT NULL
+) STRICT;
+CREATE TABLE IF NOT EXISTS applied (
+ singleton INTEGER PRIMARY KEY, sequence INTEGER NOT NULL, record_digest TEXT NOT NULL
+) STRICT;
+CREATE TABLE IF NOT EXISTS unavailable_records (
+ sequence INTEGER PRIMARY KEY, payload_digest TEXT NOT NULL
 ) STRICT;
 CREATE TABLE IF NOT EXISTS reobservations (
  claim_id TEXT NOT NULL, capture_digest TEXT NOT NULL, contract_digest TEXT NOT NULL,
  observed_content_digest TEXT NOT NULL, observed_at TEXT NOT NULL, recorded_at TEXT NOT NULL,
  observed_us INTEGER NOT NULL, recorded_us INTEGER NOT NULL, sequence INTEGER NOT NULL,
- claim_artifact_digest TEXT NOT NULL,
- PRIMARY KEY(claim_id, capture_digest)
+ claim_artifact_digest TEXT NOT NULL, latest_us INTEGER NOT NULL,
+ capture_content_digest TEXT NOT NULL,
+ PRIMARY KEY(claim_id, claim_artifact_digest, capture_digest, observed_us)
 ) STRICT;
 CREATE INDEX IF NOT EXISTS reobservations_by_sequence ON reobservations (claim_id, sequence);
 CREATE INDEX IF NOT EXISTS reobservations_by_version
  ON reobservations (claim_id, claim_artifact_digest, observed_us, capture_digest);
 CREATE TABLE IF NOT EXISTS reobservation_points (
- claim_id TEXT NOT NULL, contract_digest TEXT NOT NULL, observed_content_digest TEXT NOT NULL,
- recorded_us INTEGER NOT NULL, observed_us INTEGER NOT NULL, capture_digest TEXT NOT NULL,
- sequence INTEGER NOT NULL,
- PRIMARY KEY(claim_id, contract_digest, observed_content_digest, recorded_us, observed_us,
-  capture_digest)
+ claim_id TEXT NOT NULL, claim_artifact_digest TEXT NOT NULL, contract_digest TEXT NOT NULL,
+ observed_content_digest TEXT NOT NULL, recorded_us INTEGER NOT NULL, observed_us INTEGER NOT NULL,
+ capture_digest TEXT NOT NULL, sequence INTEGER NOT NULL,
+ PRIMARY KEY(claim_id, claim_artifact_digest, contract_digest, observed_content_digest,
+  recorded_us, observed_us, capture_digest)
 ) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS observed_sets (
+ contract_digest TEXT NOT NULL, observed_content_digest TEXT NOT NULL, set_digest TEXT NOT NULL,
+ capture_digest TEXT NOT NULL,
+ PRIMARY KEY(contract_digest, observed_content_digest, set_digest)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS observed_sets_by_set ON observed_sets (set_digest);
+CREATE TABLE IF NOT EXISTS instants (
+ sequence INTEGER PRIMARY KEY, recorded_us INTEGER NOT NULL
+) STRICT;
+CREATE INDEX IF NOT EXISTS instants_by_recorded ON instants (recorded_us, sequence);
+CREATE TABLE IF NOT EXISTS observation_sets (
+ set_digest TEXT PRIMARY KEY, procedure TEXT NOT NULL, last_sequence INTEGER NOT NULL,
+ earliest_us INTEGER NOT NULL, earliest_recorded_us INTEGER NOT NULL,
+ earliest_sequence INTEGER NOT NULL, latest_us INTEGER NOT NULL
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS observation_points (
+ set_digest TEXT NOT NULL, sequence INTEGER NOT NULL, recorded_us INTEGER NOT NULL,
+ earliest_us INTEGER NOT NULL, latest_us INTEGER NOT NULL,
+ PRIMARY KEY(set_digest, sequence)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS observation_points_by_sequence ON observation_points (sequence);
+CREATE TABLE IF NOT EXISTS set_peaks (
+ set_digest TEXT NOT NULL, sequence INTEGER NOT NULL, recorded_us INTEGER NOT NULL,
+ earliest_us INTEGER NOT NULL, earliest_recorded_us INTEGER NOT NULL,
+ earliest_sequence INTEGER NOT NULL, latest_us INTEGER NOT NULL,
+ PRIMARY KEY(set_digest, sequence)
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS source_heads (
+ source TEXT PRIMARY KEY, set_digest TEXT NOT NULL
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS key_sources (
+ contract_digest TEXT NOT NULL, observed_content_digest TEXT NOT NULL, source TEXT NOT NULL,
+ PRIMARY KEY(contract_digest, observed_content_digest, source)
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS key_heads (
+ contract_digest TEXT NOT NULL, observed_content_digest TEXT NOT NULL, source TEXT NOT NULL,
+ sequence INTEGER NOT NULL, recorded_us INTEGER NOT NULL, set_digest TEXT NOT NULL,
+ carried_us INTEGER NOT NULL, carried_recorded_us INTEGER NOT NULL,
+ carried_sequence INTEGER NOT NULL, carried_capture TEXT NOT NULL,
+ carried_latest_us INTEGER NOT NULL,
+ PRIMARY KEY(contract_digest, observed_content_digest, source, sequence)
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS capture_maps (
+ capture_digest TEXT NOT NULL, spec_digest TEXT NOT NULL, map_digest TEXT NOT NULL,
+ extraction TEXT NOT NULL, sequence INTEGER NOT NULL, recorded_us INTEGER NOT NULL,
+ PRIMARY KEY(capture_digest, spec_digest, map_digest)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS capture_maps_by_extraction ON capture_maps (extraction);
+CREATE INDEX IF NOT EXISTS capture_maps_by_sequence ON capture_maps (sequence);
+CREATE TABLE IF NOT EXISTS row_sets (
+ maps_digest TEXT NOT NULL, lineage TEXT NOT NULL, set_digest TEXT NOT NULL,
+ PRIMARY KEY(maps_digest, lineage)
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS seen_maps (digest TEXT PRIMARY KEY) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS switches (sequence INTEGER PRIMARY KEY) STRICT;
+CREATE TABLE IF NOT EXISTS absence_members (
+ claim_id TEXT NOT NULL, claim_artifact_digest TEXT NOT NULL, contract_digest TEXT NOT NULL,
+ observed_content_digest TEXT NOT NULL, set_digest TEXT NOT NULL,
+ PRIMARY KEY(claim_id, claim_artifact_digest, contract_digest, observed_content_digest,
+  set_digest)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS absence_members_by_set ON absence_members (set_digest);
+CREATE TABLE IF NOT EXISTS absence_points (
+ set_digest TEXT NOT NULL, recorded_us INTEGER NOT NULL, observed_us INTEGER NOT NULL,
+ latest_us INTEGER NOT NULL, capture_digest TEXT NOT NULL, sequence INTEGER NOT NULL,
+ step INTEGER NOT NULL,
+ PRIMARY KEY(set_digest, recorded_us, observed_us, capture_digest)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS absence_steps
+ ON absence_points (set_digest, recorded_us, observed_us, capture_digest) WHERE step=1;
+CREATE INDEX IF NOT EXISTS absence_points_by_capture
+ ON absence_points (set_digest, capture_digest, observed_us);
+CREATE INDEX IF NOT EXISTS absence_points_by_observed
+ ON absence_points (set_digest, observed_us, latest_us);
 """
+# A batch's absence reconfirmations (the 0.5.0 per-Claim fallback, round 9 F):
+# each is still its own Claim's admitted record, but the projection holds them
+# as the set of (Claim, version, contract, content) a group reconfirmed, its
+# members written once per distinct set, and one point per group per run. An
+# unchanged run's absences are the set before: one point row, however many
+# Claims it holds, and every historical instant still answers exactly.
+# Every admitted call keeps its point (history, repeat detection and deadline
+# settlement read them all, as they read ``reobservations``). ``step`` marks
+# the points that raised the set's running latest observation, as
+# ``reobservation_points`` does per Claim: freshness reads only those, so an
+# older call recorded later is kept and never moves freshness back.
+# Content observations (ruling 1a) and row observations (2026-11-16), as maintained heads.
+#
+# ``observed_sets`` holds one row per member of each distinct observed set,
+# written once when the set first appears. Every observation writes one
+# ``observation_points`` row (the history), one ``instants`` row (its
+# recording instant) and moves its set's ``observation_sets`` head, which keeps the set's
+# running maxima: the greatest call-earliest instant (with the record that set
+# it) and the greatest call-latest instant. ``set_peaks`` holds one row per
+# change of those maxima, by sequence: a set's maxima through any journal
+# position are one seek, so an older call recorded later never moves freshness
+# back (F-003), and historical and read-position reads see exactly the records
+# they admit.
+#
+# Each content key's observations are reached through ``key_heads``: for each
+# observing source (Procedure and call node), the set the source's latest call
+# holding the key observed, with the best observation of the key carried from
+# the sets that source held it in before. A row is written only when a source's
+# call observes a different set than its last (a change: the same O(set) as the
+# set's first appearance); an unchanged call writes none. A key's freshness
+# through a position is then, per source, one seek on ``key_heads`` and one on
+# ``set_peaks``: never a walk over the sets or calls that ever held it (F-004).
+# Recorded order is journal order, so a recording instant maps to a journal
+# position by one seek on ``instants``.
+# Each step is of one Claim version (review 2e #1): a record proves the
+# statement of the version live when it was admitted, never its successor's.
 _LAST_POINT = (
     "SELECT capture_digest, observed_us, recorded_us FROM reobservation_points "
-    "WHERE claim_id=? AND contract_digest=? AND observed_content_digest=? AND recorded_us<=? "
-    "AND sequence<=? ORDER BY recorded_us DESC, observed_us DESC, capture_digest DESC LIMIT 1"
+    "WHERE claim_id=? AND claim_artifact_digest=? AND contract_digest=? "
+    "AND observed_content_digest=? AND recorded_us<=? AND sequence<=? "
+    "ORDER BY recorded_us DESC, observed_us DESC, capture_digest DESC LIMIT 1"
 )
 _NEXT_POINT = (
     "SELECT recorded_us FROM reobservation_points "
-    "WHERE claim_id=? AND contract_digest=? AND observed_content_digest=? AND recorded_us>? "
-    "AND sequence<=? ORDER BY recorded_us LIMIT 1"
+    "WHERE claim_id=? AND claim_artifact_digest=? AND contract_digest=? "
+    "AND observed_content_digest=? AND recorded_us>? AND sequence<=? "
+    "ORDER BY recorded_us LIMIT 1"
 )
 _NEVER = 1 << 62
 _LAST_SEQUENCE = "SELECT MAX(sequence) FROM reobservations WHERE claim_id=? AND sequence<=?"
@@ -118,7 +282,7 @@ _VERSION_RECORD = (
     "SELECT capture_digest, contract_digest, observed_content_digest, observed_at, recorded_at, "
     "sequence FROM reobservations INDEXED BY reobservations_by_version "
     "WHERE claim_id=? AND claim_artifact_digest=? AND observed_us<=? AND sequence<=? "
-    "ORDER BY observed_us DESC, capture_digest DESC LIMIT 1"
+    "AND latest_us<=? ORDER BY observed_us DESC, capture_digest DESC LIMIT 1"
 )
 
 
@@ -188,6 +352,34 @@ class RecordedReobservation:
     accepted_coordinate: AcceptedCoordinate
 
 
+@dataclass(frozen=True)
+class ReobservationRequest:
+    """One per-Claim re-observation a delivery asks the store to record."""
+
+    claim_id: str
+    capture_digest: str
+    extraction: ClaimEvidenceReceipt | None = None
+    extracted_value: object = None
+    call: tuple[datetime, datetime] | None = None
+
+
+def _batch_records(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """The per-Claim records one batch record holds, in its stored order."""
+
+    found: list[dict[str, Any]] = []
+    for group in payload["groups"]:
+        shared: dict[str, Any] = {
+            "tag": _EVENT_TAG,
+            **{key: group[key] for key in _GROUP_FIELDS if key in group},
+        }
+        if "extraction" in group:
+            shared["extraction"] = group["extraction"]
+            shared["extracted_value"] = group.get("extracted_value")
+        for claim_id, version in group["claims"]:
+            found.append({**shared, "claim_id": claim_id, "claim_artifact_digest": version})
+    return found
+
+
 def _instant(value: object) -> datetime:
     parsed = parse_datetime(str(value))
     if parsed is None:
@@ -197,6 +389,157 @@ def _instant(value: object) -> datetime:
 
 def _root(instance: PlaybillInstance) -> Path:
     return instance.root / instance.descriptor.storage.exhaust / REOBSERVATION_DIRECTORY
+
+
+_SHARED_TAGS = frozenset({CONTENT_OBSERVATION_TAG, ROW_OBSERVATION_TAG})
+
+
+def _ordered(conn: sqlite3.Connection, sequence: int, recorded_at: datetime) -> int:
+    """The record's recording instant, refused when it precedes the record ahead of it.
+
+    Journal order is recorded order by construction (``record``): replay takes
+    every instant as written and refuses a journal that breaks it.
+    """
+
+    row = conn.execute("SELECT recorded_us FROM progress WHERE singleton=1").fetchone()
+    recorded_us = _micros(recorded_at)
+    if row is not None and recorded_us < int(row[0]):
+        raise ClaimReobservationJournalCorrupt(
+            f"record {sequence} was recorded at {format_datetime(recorded_at)}, before "
+            f"the record ahead of it ({format_datetime(_from_micros(row[0]))})"
+        )
+    return recorded_us
+
+
+def _absence_sets(
+    conn: sqlite3.Connection,
+    claim_id: str,
+    version: str | None = None,
+    pair: tuple[str, str] | None = None,
+) -> list[str]:
+    """The reconfirmation sets holding a Claim (one version, one cited content)."""
+
+    query = "SELECT DISTINCT set_digest FROM absence_members WHERE claim_id=?"
+    params: list[str] = [claim_id]
+    if version is not None:
+        query += " AND claim_artifact_digest=?"
+        params.append(version)
+        if pair is not None:
+            query += " AND contract_digest=? AND observed_content_digest=?"
+            params.extend(pair)
+    return [str(row[0]) for row in conn.execute(query, params)]
+
+
+def _absence_last(
+    conn: sqlite3.Connection, set_digest: str, *, at_us: int, through: int, steps: bool = True
+) -> tuple[str, int, int, int] | None:
+    """A set's last freshness step recorded by ``at_us`` through ``through``:
+    (Capture, observed, recorded, sequence). One seek on its key. With
+    ``steps`` false, its last point of any kind (a delayed older call's too)."""
+
+    row = conn.execute(
+        "SELECT capture_digest, observed_us, recorded_us, sequence FROM absence_points "
+        f"WHERE set_digest=? AND recorded_us<=? AND sequence<=? {'AND step=1 ' if steps else ''}"
+        "ORDER BY recorded_us DESC, observed_us DESC, capture_digest DESC LIMIT 1",
+        (set_digest, at_us, through),
+    ).fetchone()
+    return None if row is None else (str(row[0]), int(row[1]), int(row[2]), int(row[3]))
+
+
+def _absence_member(conn: sqlite3.Connection, set_digest: str, claim_id: str) -> tuple[str, str]:
+    row = conn.execute(
+        "SELECT contract_digest, observed_content_digest FROM absence_members "
+        "WHERE set_digest=? AND claim_id=? LIMIT 1",
+        (set_digest, claim_id),
+    ).fetchone()
+    return str(row[0]), str(row[1])
+
+
+#: Records only unshipped dev/rc builds wrote (ruling 2026-11-16 (3)): an
+#: instance holding one is re-initialised, not migrated.
+_RETIRED_TAGS = frozenset({"cruxible-content-transition-v1"})
+
+
+def _refuse_retired_tag(tag: object) -> None:
+    if tag in _RETIRED_TAGS:
+        raise ClaimReobservationJournalCorrupt(
+            f"the re-observation journal holds a {tag} record, which only an unreleased "
+            "development build wrote and this build does not read; re-initialise this "
+            "instance (cruxible init) to use this build"
+        )
+
+
+def _shared_body(instance: PlaybillInstance, digest: str, *, tag: str) -> dict[str, Any]:
+    """One content or row observation's canonical body."""
+
+    import json
+
+    from cruxible_client.contracts.canonical import canonical_bytes
+
+    content = instance.body_store().read(digest, access=_ACCESS)
+    value = json.loads(content)
+    if not isinstance(value, dict) or value.get("tag") != tag or canonical_bytes(value) != content:
+        raise ValueError(f"invalid {tag} body")
+    return value
+
+
+@dataclass(frozen=True)
+class ObservedContent:
+    """One content an acquiring call observed: its contract, content and Capture."""
+
+    contract_digest: str
+    observed_content_digest: str
+    capture_digest: str
+
+
+@dataclass(frozen=True)
+class RowMap:
+    """One Capture's extracted records as rows: (record locator, row digest) each."""
+
+    capture_digest: str
+    spec_digest: str
+    contract_digest: str
+    rows: tuple[tuple[str, str], ...]
+    #: The extraction this map is (Capture, spec, selection, typing): how a
+    #: later identical extraction finds the stored map without deriving it.
+    extraction: str = ""
+    #: The stored map body's digest when the extraction is already known (its
+    #: ``rows`` are then not carried: the body holds them).
+    digest: str = ""
+
+
+#: Row map bodies by digest: immutable artifacts, parsed once per process
+#: (the cost model's content-id cache: grows only with distinct maps).
+_ROW_MAPS: dict[str, dict[str, tuple[str, str]]] = {}
+#: The same maps as read-only locator -> row views, built once per map: a
+#: known extraction hands the run this view, never a copy (review 2e #4).
+_ROW_VIEWS: dict[str, Mapping[str, str]] = {}
+
+
+def _row_map(instance: PlaybillInstance, digest: str) -> dict[str, tuple[str, str]]:
+    """One Capture's row map, by record locator: an immutable body parsed once per process."""
+
+    held = _ROW_MAPS.get(digest)
+    if held is None:
+        body = _shared_body(instance, digest, tag=ROW_MAP_BODY)
+        contract = str(body["contract"])
+        held = {str(locator): (contract, str(row)) for locator, row in body["rows"]}
+        with _LOCK:
+            _ROW_MAPS[digest] = held
+    return held
+
+
+def row_digest(contract: str, source: str, key: object, fields: object) -> str:
+    """One extracted row's identity: its contract, logical source, record key and value."""
+
+    from cruxible_client.contracts.canonical import Sha256Value, typed_digest
+
+    value = typed_digest(Sha256Value, "cruxible-row-value-v1", {"fields": fields}).tagged
+    return typed_digest(
+        Sha256Value,
+        "cruxible-observed-row-v1",
+        {"contract": contract, "source": source, "key": key, "value": value},
+    ).tagged
 
 
 class ClaimReobservationStore:
@@ -229,44 +572,207 @@ class ClaimReobservationStore:
             conn = sqlite3.connect(self.path) if self.root.is_dir() else sqlite3.connect(":memory:")
             try:
                 if conn.execute("PRAGMA user_version").fetchone()[0] != _SCHEMA_VERSION:
-                    conn.execute("DROP TABLE IF EXISTS progress")
-                    conn.execute("DROP TABLE IF EXISTS reobservations")
-                    conn.execute("DROP TABLE IF EXISTS reobservation_points")
-                    conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
+                    self._reset(conn)
                 conn.executescript(_SCHEMA)
-                row = conn.execute("SELECT sequence FROM progress WHERE singleton=1").fetchone()
-                start = row[0] + 1 if row else 1
-                for stored in (
-                    ()
-                    if journal is None
-                    else journal.select_records(
-                        self.stream, partition_id=_PARTITION, first_sequence=start
-                    )
-                ):
-                    payload = parse_journal_payload(
-                        self.instance.body_store().read(
-                            stored.record.payload_digest, access=_ACCESS
+                last = None
+                unapplied = self._unapplied(conn, journal)
+                if unapplied and not conn.in_transaction:
+                    # One transaction with the mark: a savepoint opened outside
+                    # one would commit each record as it is released.
+                    conn.execute("BEGIN")
+                for stored in unapplied:
+                    last = stored
+                    conn.execute("SAVEPOINT record")
+                    try:
+                        self._replay(conn, stored)
+                    except CasError:
+                        # A frame can outlive its payload, or a body the payload
+                        # cites (best-effort exhaust). Unavailable evidence,
+                        # never a failed read: the record projects nothing and
+                        # is named as skipped.
+                        conn.execute("ROLLBACK TO record")
+                        conn.execute(
+                            "INSERT OR REPLACE INTO unavailable_records VALUES(?,?)",
+                            (stored.record.sequence, stored.record.payload_digest),
                         )
-                    )
-                    if not isinstance(payload, dict) or payload.get("tag") != _EVENT_TAG:
-                        raise ValueError("invalid Claim re-observation record")
-                    if "claim_artifact_digest" not in payload:
-                        # A record written before records named their version:
-                        # the version live at the head it was admitted at (one
-                        # Claim read, paid once, when the projection is rebuilt).
-                        payload = {
-                            **payload,
-                            "claim_artifact_digest": self._version_at(
-                                str(payload["claim_id"]),
-                                stored.record.accepted_coordinate.git_oid,
+                        conn.execute(
+                            "INSERT OR REPLACE INTO progress VALUES(1,?,?)",
+                            (
+                                stored.record.sequence,
+                                _ordered(conn, stored.record.sequence, stored.record.recorded_at),
                             ),
-                        }
-                    self._apply(conn, payload, stored.record.sequence, stored.record.recorded_at)
+                        )
+                    conn.execute("RELEASE record")
+                if last is not None:
+                    self._mark_applied(conn, last)
                 conn.commit()
                 yield conn
                 conn.commit()
             finally:
                 conn.close()
+
+    def _replay(self, conn: sqlite3.Connection, stored: StoredProcedureJournalRecordV1) -> None:
+        """Project one retained journal record (``CasError`` when a body it needs is gone)."""
+
+        payload = parse_journal_payload(
+            self.instance.body_store().read(stored.record.payload_digest, access=_ACCESS)
+        )
+        if isinstance(payload, dict) and payload.get("tag") in _SHARED_TAGS:
+            self._apply_shared(conn, payload, stored.record.sequence, stored.record.recorded_at)
+            return
+        if isinstance(payload, dict) and payload.get("tag") == _BATCH_TAG:
+            self._apply_batch(conn, payload, stored.record.sequence, stored.record.recorded_at)
+            return
+        if isinstance(payload, dict) and payload.get("tag") != _EVENT_TAG:
+            _refuse_retired_tag(payload.get("tag"))
+        if not isinstance(payload, dict) or payload.get("tag") != _EVENT_TAG:
+            raise ValueError("invalid Claim re-observation record")
+        if "claim_artifact_digest" not in payload:
+            # A record written before records named their version: the version
+            # live at the head it was admitted at (one Claim read, paid once,
+            # when the projection is rebuilt).
+            payload = {
+                **payload,
+                "claim_artifact_digest": self._version_at(
+                    str(payload["claim_id"]),
+                    stored.record.accepted_coordinate.git_oid,
+                ),
+            }
+        self._apply(conn, payload, stored.record.sequence, stored.record.recorded_at)
+
+    def _payload(self, stored: StoredProcedureJournalRecordV1) -> object | None:
+        """One retained record's payload, or ``None`` when its body is unavailable.
+
+        A journal frame can outlive its payload body (best-effort exhaust: a
+        crash loses recent bodies, and the read records the damage). Such a
+        record has no readable effect: followers skip it and keep serving.
+        """
+
+        try:
+            content = self.instance.body_store().read(stored.record.payload_digest, access=_ACCESS)
+        except CasError:
+            return None
+        return parse_journal_payload(content)
+
+    def unavailable(self) -> tuple[tuple[int, str], ...]:
+        """Each replayed record whose payload was unavailable: (sequence, payload digest)."""
+
+        with self._locked() as conn:
+            return tuple(
+                (int(sequence), str(digest))
+                for sequence, digest in conn.execute(
+                    "SELECT sequence, payload_digest FROM unavailable_records ORDER BY sequence"
+                )
+            )
+
+    @staticmethod
+    def _reset(conn: sqlite3.Connection) -> None:
+        """Drop every projected table: the next catch-up rebuilds from the journal's start.
+
+        One transaction: interrupted, the old projection is whole (its mark
+        still names the journal it was built from, so the next open resets
+        again), never some of its tables under a dropped mark, which the next
+        open would fill from another journal.
+        """
+
+        conn.commit()
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            ClaimReobservationStore._drop(conn)
+            conn.execute("COMMIT")
+        except BaseException:
+            conn.execute("ROLLBACK")
+            raise
+
+    @staticmethod
+    def _drop(conn: sqlite3.Connection) -> None:
+        for table in (
+            "progress",
+            "applied",
+            "unavailable_records",
+            "reobservations",
+            "reobservation_points",
+            "observed_sets",
+            "instants",
+            "limits",
+            "delay_buckets",
+            "observation_sets",
+            "observation_points",
+            "set_peaks",
+            "source_heads",
+            "key_sources",
+            "key_heads",
+            "capture_rows",
+            "capture_maps",
+            "seen_maps",
+            "row_sets",
+            "switches",
+            "absence_members",
+            "absence_points",
+            "transitions",
+            "transition_exceptions",
+        ):
+            conn.execute(f"DROP TABLE IF EXISTS {table}")
+        conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
+
+    def _unapplied(
+        self, conn: sqlite3.Connection, journal: LocalJournalBackend | None
+    ) -> tuple[StoredProcedureJournalRecordV1, ...]:
+        """The journal records the projection has yet to apply, in order.
+
+        The projection is disposable and the journal the authority: when the
+        journal is behind the record last applied, or does not continue it (the
+        journal was lost or replaced and the projection kept), everything
+        projected is dropped and every record returned, so no record is ever
+        applied under a sequence another record held, and no read fails for it.
+        The check is one head read; the rebuild runs only when it trips.
+        """
+
+        if journal is None:
+            return ()
+        row = conn.execute("SELECT sequence FROM progress WHERE singleton=1").fetchone()
+        start = int(row[0]) + 1 if row else 1
+        mark = conn.execute(
+            "SELECT sequence, record_digest FROM applied WHERE singleton=1"
+        ).fetchone()
+        if mark is None:
+            return journal.select_records(
+                self.stream, partition_id=_PARTITION, first_sequence=start
+            )
+        applied, digest = int(mark[0]), str(mark[1])
+        head = journal.read_head(self.stream, _PARTITION)
+        if head.sequence == applied and head.record_digest == digest:
+            return ()
+        records: tuple[StoredProcedureJournalRecordV1, ...] = ()
+        continues = head.sequence > applied
+        if continues:
+            records = journal.select_records(
+                self.stream, partition_id=_PARTITION, first_sequence=start
+            )
+            # The first record past the mark commits to the record before it.
+            continues = not (
+                records
+                and records[0].record.sequence == applied + 1
+                and records[0].record.previous_record_digest != digest
+            )
+        if continues:
+            return records
+        # Before the first drop, durably: whatever followed the journal the
+        # projection was built from (next's facts) must not take this one for
+        # it, even when it regrows in the same file to the same sequence.
+        _mark_recovered(self.root)
+        self._reset(conn)
+        conn.executescript(_SCHEMA)
+        return journal.select_records(self.stream, partition_id=_PARTITION, first_sequence=1)
+
+    @staticmethod
+    def _mark_applied(conn: sqlite3.Connection, stored: StoredProcedureJournalRecordV1) -> None:
+        """Name the journal record the projection now stands at."""
+
+        conn.execute(
+            "INSERT OR REPLACE INTO applied VALUES(1,?,?)",
+            (stored.record.sequence, stored.record_digest),
+        )
 
     def _version_at(self, claim_id: str, git_oid: str) -> str:
         """The artifact digest of the Claim version at one accepted head ('' when absent)."""
@@ -282,19 +788,16 @@ class ClaimReobservationStore:
         conn: sqlite3.Connection, payload: Mapping[str, Any], sequence: int, recorded_at: datetime
     ) -> None:
         observed_at = _instant(payload["observed_at"])
-        row = conn.execute("SELECT recorded_us FROM progress WHERE singleton=1").fetchone()
-        # Journal order is recorded order by construction (``record``): replay
-        # takes every instant as written and refuses a journal that breaks it.
-        recorded_us = _micros(recorded_at)
-        if row is not None and recorded_us < int(row[0]):
-            raise ClaimReobservationJournalCorrupt(
-                f"record {sequence} was recorded at {format_datetime(recorded_at)}, before "
-                f"the record ahead of it ({format_datetime(_from_micros(row[0]))})"
-            )
+        recorded_us = _ordered(conn, sequence, recorded_at)
         observed_us = _micros(observed_at)
-        key = (payload["claim_id"], payload["contract_digest"], payload["observed_content_digest"])
+        key = (
+            payload["claim_id"],
+            str(payload.get("claim_artifact_digest", "")),
+            payload["contract_digest"],
+            payload["observed_content_digest"],
+        )
         inserted = conn.execute(
-            "INSERT OR IGNORE INTO reobservations VALUES (?,?,?,?,?,?,?,?,?,?)",
+            "INSERT OR IGNORE INTO reobservations VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 payload["claim_id"],
                 payload["capture_digest"],
@@ -306,6 +809,14 @@ class ClaimReobservationStore:
                 recorded_us,
                 sequence,
                 str(payload.get("claim_artifact_digest", "")),
+                # When the observing call ended (ruling 1b): a deadline counts
+                # it only if it ended by then. A record without one ended at
+                # its own instant (earlier builds, dev instances only).
+                _micros(_instant(payload["latest"])) if "latest" in payload else observed_us,
+                # The re-observing Capture's own content: what a later identical
+                # fetch of it observes (``ReobservationReader.rechecked``). An
+                # earlier build's record names none, and is no association.
+                str(payload.get("capture_content_digest", "")),
             ),
         ).rowcount
         if inserted:
@@ -315,10 +826,285 @@ class ClaimReobservationStore:
                 str(last[0]),
             ):
                 conn.execute(
-                    "INSERT OR IGNORE INTO reobservation_points VALUES (?,?,?,?,?,?,?)",
+                    "INSERT OR IGNORE INTO reobservation_points VALUES (?,?,?,?,?,?,?,?)",
                     (*key, recorded_us, observed_us, payload["capture_digest"], sequence),
                 )
         conn.execute("INSERT OR REPLACE INTO progress VALUES(1,?,?)", (sequence, recorded_us))
+
+    def _apply_batch(
+        self,
+        conn: sqlite3.Connection,
+        payload: Mapping[str, Any],
+        sequence: int,
+        recorded_at: datetime,
+    ) -> None:
+        """Project one batch record: absence groups as sets, the rest per Claim."""
+
+        recorded_us = _ordered(conn, sequence, recorded_at)
+        for group in payload["groups"]:
+            extraction = group.get("extraction")
+            if not (isinstance(extraction, Mapping) and extraction.get("absence") is not None):
+                for item in _batch_records({"groups": [group]}):
+                    self._apply(conn, item, sequence, recorded_at)
+                continue
+            contract = str(group["contract_digest"])
+            content = str(group["observed_content_digest"])
+            members = sorted(
+                {(str(claim), str(version)) for claim, version in group["claims"]},
+                key=lambda pair: (pair[0].encode(), pair[1].encode()),
+            )
+            set_digest = canonical_digest(
+                "cruxible-absence-reconfirmation-set-v1",
+                {"contract": contract, "content": content, "members": [list(m) for m in members]},
+            )
+            if (
+                conn.execute(
+                    "SELECT 1 FROM absence_members WHERE set_digest=? LIMIT 1", (set_digest,)
+                ).fetchone()
+                is None
+            ):
+                conn.executemany(
+                    "INSERT OR IGNORE INTO absence_members VALUES (?,?,?,?,?)",
+                    [(claim, version, contract, content, set_digest) for claim, version in members],
+                )
+            observed_us = _micros(_instant(group["observed_at"]))
+            capture = str(group["capture_digest"])
+            # Every admitted call is kept (review 2g F-001). Only one that
+            # raises the set's latest observation is a freshness step (the
+            # larger Capture digest breaks a tie, as per Claim): an older call
+            # recorded later never moves freshness back.
+            last = _absence_last(conn, set_digest, at_us=_NEVER, through=_NEVER)
+            step = last is None or (observed_us, capture) > (last[1], last[0])
+            conn.execute(
+                "INSERT OR IGNORE INTO absence_points VALUES (?,?,?,?,?,?,?)",
+                (
+                    set_digest,
+                    recorded_us,
+                    observed_us,
+                    _micros(_instant(group["latest"])),
+                    capture,
+                    sequence,
+                    int(step),
+                ),
+            )
+        conn.execute("INSERT OR REPLACE INTO progress VALUES(1,?,?)", (sequence, recorded_us))
+
+    def _apply_shared(
+        self,
+        conn: sqlite3.Connection,
+        payload: Mapping[str, Any],
+        sequence: int,
+        recorded_at: datetime,
+    ) -> None:
+        """Project one content or row observation: rows for what changed only.
+
+        An observation writes its set's members once (the first time the set
+        appears), then its point, its instant, its set's head and, when it
+        raised the set's maxima, one change point. When the observing source's
+        call observed another set before, each member key gets a ``key_heads``
+        row carrying its best observation so far: that is the set's size, paid
+        only on a change. A row observation's Capture row maps are projected
+        the first time each map is seen (``capture_maps``): one row per new
+        Capture's map, never one per Claim produced from it.
+        """
+
+        recorded_us = _ordered(conn, sequence, recorded_at)
+        earliest_us = _micros(_instant(payload["earliest"]))
+        latest_us = _micros(_instant(payload["latest"]))
+        conn.execute("INSERT OR REPLACE INTO instants VALUES (?,?)", (sequence, recorded_us))
+        rows_tag = payload["tag"] == ROW_OBSERVATION_TAG
+        set_digest = str(payload["set_digest"])
+        head = conn.execute(
+            "SELECT procedure, earliest_us, earliest_recorded_us, earliest_sequence, "
+            "latest_us FROM observation_sets WHERE set_digest=?",
+            (set_digest,),
+        ).fetchone()
+        maps = (
+            self._project_maps(
+                conn, payload, need_rows=head is None, sequence=sequence, recorded_us=recorded_us
+            )
+            if rows_tag
+            else {}
+        )
+        if head is None:
+            body = _shared_body(
+                self.instance,
+                set_digest,
+                tag=OBSERVED_ROWS_BODY if rows_tag else OBSERVED_CONTENTS_BODY,
+            )
+            if rows_tag:
+                # A row's reported Capture: one holding it in this record (an
+                # enumeration's, the record's own root Capture).
+                fallback = str(payload.get("capture", ""))
+                members = [
+                    (str(contract), str(row), maps.get(str(row), fallback))
+                    for contract, row in body["rows"]
+                ]
+            else:
+                members = [
+                    (str(contract), str(content), str(capture))
+                    for contract, content, capture in body["contents"]
+                ]
+            conn.executemany(
+                "INSERT OR REPLACE INTO observed_sets VALUES (?,?,?,?)",
+                [(contract, key, set_digest, capture) for contract, key, capture in members],
+            )
+            lineage = body.get("lineage")
+            procedure = str(lineage.get("procedure", "")) if isinstance(lineage, dict) else ""
+        else:
+            procedure = str(head[0])
+        maps_digest = payload.get("maps_digest")
+        if (
+            rows_tag
+            and isinstance(maps_digest, str)
+            and conn.execute(
+                "SELECT 1 FROM row_sets WHERE maps_digest=? AND set_digest=?",
+                (maps_digest, set_digest),
+            ).fetchone()
+            is None
+        ):
+            # The extraction's maps hold this set: a later identical extraction
+            # finds it by one seek (the set body read once per new pairing).
+            held = _shared_body(self.instance, set_digest, tag=OBSERVED_ROWS_BODY).get("lineage")
+            conn.execute(
+                "INSERT OR IGNORE INTO row_sets VALUES (?,?,?)",
+                (
+                    maps_digest,
+                    canonical_bytes(held if isinstance(held, dict) else {}).decode(),
+                    set_digest,
+                ),
+            )
+        source = f"{procedure}\x1f{payload.get('node_id', '')}"
+        last = conn.execute(
+            "SELECT set_digest FROM source_heads WHERE source=?", (source,)
+        ).fetchone()
+        if last is None or str(last[0]) != set_digest:
+            self._switch_source(conn, source, set_digest, sequence, recorded_us, first=last is None)
+        conn.execute(
+            "INSERT OR IGNORE INTO observation_points VALUES (?,?,?,?,?)",
+            (set_digest, sequence, recorded_us, earliest_us, latest_us),
+        )
+        best = (earliest_us, recorded_us, sequence)
+        if head is not None and int(head[1]) >= earliest_us:
+            best = (int(head[1]), int(head[2]), int(head[3]))
+        latest = latest_us if head is None else max(latest_us, int(head[4]))
+        if head is None or best[2] == sequence or latest != int(head[4]):
+            conn.execute(
+                "INSERT OR IGNORE INTO set_peaks VALUES (?,?,?,?,?,?,?)",
+                (set_digest, sequence, recorded_us, *best, latest),
+            )
+        conn.execute(
+            "INSERT OR REPLACE INTO observation_sets VALUES (?,?,?,?,?,?,?)",
+            (set_digest, procedure, sequence, *best, latest),
+        )
+        conn.execute("INSERT OR REPLACE INTO progress VALUES(1,?,?)", (sequence, recorded_us))
+
+    def _project_maps(
+        self,
+        conn: sqlite3.Connection,
+        payload: Mapping[str, Any],
+        *,
+        need_rows: bool,
+        sequence: int,
+        recorded_us: int,
+    ) -> dict[str, str]:
+        """Project a row observation's Capture row maps not seen before.
+
+        Returns row -> a Capture holding it when ``need_rows`` (the set is new:
+        its rows' Captures are written with its members, O(rows) once). A maps
+        body seen before and an existing set read nothing: the unchanged case.
+        """
+
+        digest = payload.get("maps_digest")
+        if not isinstance(digest, str):
+            return {}
+        seen = conn.execute("SELECT 1 FROM seen_maps WHERE digest=?", (digest,)).fetchone()
+        if seen and not need_rows:
+            return {}
+        found: dict[str, str] = {}
+        for map_digest in _shared_body(self.instance, digest, tag=ROW_MAPS_BODY)["maps"]:
+            body = _shared_body(self.instance, str(map_digest), tag=ROW_MAP_BODY)
+            capture = str(body["capture"])
+            for _locator, row in body["rows"]:
+                found.setdefault(str(row), capture)
+            if conn.execute("SELECT 1 FROM seen_maps WHERE digest=?", (map_digest,)).fetchone():
+                continue
+            # One row per Capture's map: a record's row is read from the map
+            # body (an immutable artifact, parsed once per process).
+            # When the map was first recorded: a row lookup at a read reads
+            # only the maps that existed then (review 2f #2).
+            conn.execute(
+                "INSERT OR IGNORE INTO capture_maps VALUES (?,?,?,?,?,?)",
+                (
+                    capture,
+                    str(body["spec"]),
+                    str(map_digest),
+                    str(body.get("extraction", "")),
+                    sequence,
+                    recorded_us,
+                ),
+            )
+            conn.execute("INSERT OR IGNORE INTO seen_maps VALUES (?)", (map_digest,))
+        conn.execute("INSERT OR IGNORE INTO seen_maps VALUES (?)", (digest,))
+        return found
+
+    @staticmethod
+    def _switch_source(
+        conn: sqlite3.Connection,
+        source: str,
+        set_digest: str,
+        sequence: int,
+        recorded_us: int,
+        *,
+        first: bool = False,
+    ) -> None:
+        """Point each member key of the set at it for this source, carrying its best so far.
+
+        A key's carried observation is the best of what it carried and what its
+        previous set held for this source, as of just before this record: two
+        seeks per member, written only when the source's set changed (none to
+        carry from on a source's first observation).
+        """
+
+        rows = []
+        for contract, content, _capture in conn.execute(
+            "SELECT contract_digest, observed_content_digest, capture_digest FROM observed_sets "
+            "WHERE set_digest=?",
+            (set_digest,),
+        ).fetchall():
+            prior = (
+                None
+                if first
+                else conn.execute(
+                    "SELECT k.carried_us, k.carried_recorded_us, k.carried_sequence, "
+                    "k.carried_capture, k.carried_latest_us, s.earliest_us, "
+                    "s.earliest_recorded_us, s.earliest_sequence, s.latest_us, o.capture_digest "
+                    "FROM key_heads k "
+                    "JOIN observation_sets s ON s.set_digest=k.set_digest "
+                    "JOIN observed_sets o ON o.contract_digest=k.contract_digest AND "
+                    "o.observed_content_digest=k.observed_content_digest AND "
+                    "o.set_digest=k.set_digest "
+                    "WHERE k.contract_digest=? AND k.observed_content_digest=? AND k.source=? "
+                    "ORDER BY k.sequence DESC LIMIT 1",
+                    (contract, content, source),
+                ).fetchone()
+            )
+            carried: tuple[int, int, int, str, int] = (-1, -1, -1, "", -1)
+            if prior is not None:
+                held = (int(prior[0]), int(prior[1]), int(prior[2]), str(prior[3]))
+                peak = (int(prior[5]), int(prior[6]), int(prior[7]), str(prior[9]))
+                top = max(held, peak, key=lambda item: (item[0], item[3]))
+                carried = (*top, max(int(prior[4]), int(prior[8])))
+            rows.append((contract, content, source, sequence, recorded_us, set_digest, *carried))
+        conn.executemany("INSERT OR IGNORE INTO key_heads VALUES (?,?,?,?,?,?,?,?,?,?,?)", rows)
+        conn.executemany(
+            "INSERT OR IGNORE INTO key_sources VALUES (?,?,?)",
+            [(row[0], row[1], source) for row in rows],
+        )
+        conn.execute("INSERT OR REPLACE INTO source_heads VALUES (?,?)", (source, set_digest))
+        # A source switching sets moved its members' heads: the follower
+        # names their keys for this record (review 2d #4).
+        conn.execute("INSERT OR IGNORE INTO switches VALUES (?)", (sequence,))
 
     # -- admission ----------------------------------------------------------
 
@@ -332,6 +1118,7 @@ class ClaimReobservationStore:
         extracted_value: object = None,
         cited_envelopes: dict[str, CaptureEnvelopeAny] | None = None,
         verified_witnesses: dict[object, None] | None = None,
+        repeat: bool = False,
     ) -> tuple[CaptureEnvelopeAny, str, str]:
         """The re-observing Capture's envelope, or the typed refusal.
 
@@ -384,7 +1171,14 @@ class ClaimReobservationStore:
                 "is recorded only for a live Claim",
                 reason="claim_not_live",
             )
-        if capture_digest in claim.backing.capture_digests:
+        reconfirming = (
+            repeat
+            and extraction is not None
+            and extraction.absence is not None
+            and claim.backing.procedure_evidence is not None
+            and claim.backing.procedure_evidence.absence is not None
+        )
+        if capture_digest in claim.backing.capture_digests and not reconfirming:
             raise ClaimReobservationRefused(
                 f"Claim {claim_id} already cites Capture {capture_digest}: "
                 "nothing new was observed",
@@ -557,8 +1351,20 @@ class ClaimReobservationStore:
         extracted_value: object = None,
         cited_envelopes: dict[str, CaptureEnvelopeAny] | None = None,
         verified_witnesses: dict[object, None] | None = None,
+        call: tuple[datetime, datetime] | None = None,
     ) -> ReobservationRecord | None:
         """Record one admissible re-observation at the current head; a repeat is the same record.
+
+        ``call`` is the earliest and latest member instants of the call that
+        fetched the Capture this run (ruling 1b): the record is observed at its
+        earliest, and a deadline counts it only if the call ended by then.
+        Unknown (a Capture handed to the run, a write's restatement), the
+        envelope's instant is the observation and the record's own recording
+        instant its end: a call always ends before its record is made, so that
+        bound is never late. An absence is reconfirmed by every complete run
+        (the 0.5.0 per-Claim fallback): a reconfirmation on the Capture it
+        already cites is admitted when the call is known, one small record per
+        run, its observation that run's call.
 
         Admission is judged at the accepted head, held still from the check
         through the durable append (``holding_accepted_head``), and only when the
@@ -586,6 +1392,7 @@ class ClaimReobservationStore:
                 extracted_value=extracted_value,
                 cited_envelopes=cited_envelopes,
                 verified_witnesses=verified_witnesses,
+                repeat=call is not None,
             )
             self._at(
                 claim_id=claim_id,
@@ -598,11 +1405,9 @@ class ClaimReobservationStore:
         # durable append, under the locks every acceptance takes in the order
         # it takes them (instance state, ledger activation), then this store's.
         with self.instance.holding_accepted_head() as main, self._locked(create=True) as conn:
-            known = conn.execute(
-                "SELECT contract_digest, observed_content_digest, observed_at, recorded_at "
-                "FROM reobservations WHERE claim_id=? AND capture_digest=?",
-                (claim_id, capture_digest),
-            ).fetchone()
+            # The version live at the verified coordinate (whatever main says).
+            live = self._version_at(claim_id, self.instance.accepted_coordinate().git_oid)
+            known = self._known(conn, claim_id, live, capture_digest, call) if live else None
             if known is not None:
                 return ReobservationRecord(
                     claim_id=claim_id,
@@ -630,6 +1435,7 @@ class ClaimReobservationStore:
                 extracted_value=extracted_value,
                 cited_envelopes=cited_envelopes,
                 verified_witnesses=verified_witnesses,
+                repeat=call is not None,
             )
             journal = self._journal(create=True)
             assert journal is not None
@@ -662,7 +1468,17 @@ class ClaimReobservationStore:
                 envelope=envelope,
                 now=self.instance.recording_clock(),
             )
+            capture_content = record.observed_content_digest
             record = replace(record, observed_content_digest=cited_content)
+            if call is not None:
+                # This run's call observed it (a reused Capture's envelope says
+                # when its bytes were first observed).
+                record = replace(
+                    record,
+                    observed_at=max(
+                        record.observed_at, min(call[0].astimezone(UTC), record.recorded_at)
+                    ),
+                )
             last = conn.execute("SELECT recorded_us FROM progress WHERE singleton=1").fetchone()
             if last is not None and _micros(record.recorded_at) < int(last[0]):
                 record = replace(record, recorded_at=_from_micros(last[0]))
@@ -673,8 +1489,14 @@ class ClaimReobservationStore:
                 "capture_digest": record.capture_digest,
                 "contract_digest": record.contract_digest,
                 "observed_content_digest": record.observed_content_digest,
+                "capture_content_digest": capture_content,
                 "observed_at": format_datetime(record.observed_at),
                 "claim_artifact_digest": version,
+                "latest": format_datetime(
+                    now
+                    if call is None
+                    else max(record.observed_at, min(call[1].astimezone(UTC), now))
+                ),
             }
             if extraction is not None:
                 payload["extraction"] = extraction.model_dump(mode="json")
@@ -702,8 +1524,472 @@ class ClaimReobservationStore:
             # verdict-input fingerprint (``reobservation_journal_signature``)
             # already see it, whatever happens to the projection below.
             self._apply(conn, payload, stored.record.sequence, stored.record.recorded_at)
+            self._mark_applied(conn, stored)
             conn.commit()
         return record
+
+    def record_many(
+        self,
+        requests: Sequence[ReobservationRequest],
+        *,
+        actor_id: str,
+        cited_envelopes: dict[str, CaptureEnvelopeAny] | None = None,
+        verified_witnesses: dict[object, None] | None = None,
+    ) -> dict[int, ClaimReobservationRefused]:
+        """Record many per-Claim re-observations as one journal record; the refusals by index.
+
+        Each request is judged exactly as :meth:`record` judges it (a repeat is
+        the record already held; a refused one is left out), and each admitted
+        one reads back as the per-Claim record it would have been. Only the
+        storage shape differs: one journal record per delivery, what the
+        records share stated once per group, each Claim its id and version
+        (the 0.5.0 absence fallback: one reconfirmation per held absence per
+        complete run).
+        """
+
+        refused: dict[int, ClaimReobservationRefused] = {}
+        if not requests:
+            return refused
+        if is_previewing():
+            now = self.instance.recording_clock()
+            coordinate = self.instance.accepted_coordinate()
+            for index, request in enumerate(requests):
+                try:
+                    envelope, _cited, _version = self._admissible(
+                        claim_id=request.claim_id,
+                        capture_digest=request.capture_digest,
+                        coordinate=coordinate,
+                        extraction=request.extraction,
+                        extracted_value=request.extracted_value,
+                        cited_envelopes=cited_envelopes,
+                        verified_witnesses=verified_witnesses,
+                        repeat=request.call is not None,
+                    )
+                    self._at(
+                        claim_id=request.claim_id,
+                        capture_digest=request.capture_digest,
+                        envelope=envelope,
+                        now=now,
+                    )
+                except ClaimReobservationRefused as exc:
+                    refused[index] = exc
+            return refused
+        with self.instance.holding_accepted_head() as main, self._locked(create=True) as conn:
+            accepted = self.instance.accepted_coordinate()
+            admitted: list[tuple[int, ReobservationRequest, CaptureEnvelopeAny, str, str]] = []
+            for index, request in enumerate(requests):
+                live = self._version_at(request.claim_id, accepted.git_oid)
+                if live and self._known(
+                    conn, request.claim_id, live, request.capture_digest, request.call
+                ):
+                    continue
+                if accepted.git_oid != main:
+                    refused[index] = ClaimReobservationRefused(
+                        "accepted state moved past this instance's verified head; "
+                        "the re-observation is judged again at the new head",
+                        reason="head_moved",
+                    )
+                    continue
+                try:
+                    envelope, cited_content, version = self._admissible(
+                        claim_id=request.claim_id,
+                        capture_digest=request.capture_digest,
+                        coordinate=accepted,
+                        extraction=request.extraction,
+                        extracted_value=request.extracted_value,
+                        cited_envelopes=cited_envelopes,
+                        verified_witnesses=verified_witnesses,
+                        repeat=request.call is not None,
+                    )
+                except ClaimReobservationRefused as exc:
+                    refused[index] = exc
+                    continue
+                admitted.append((index, request, envelope, cited_content, version))
+            if not admitted:
+                return refused
+            journal, bodies, head = self._writer_head()
+            now = self.instance.recording_clock()
+            last = conn.execute("SELECT recorded_us FROM progress WHERE singleton=1").fetchone()
+            stamp = (
+                _from_micros(last[0]) if last is not None and _micros(now) < int(last[0]) else now
+            )
+            groups: dict[bytes, dict[str, Any]] = {}
+            for index, request, envelope, cited_content, version in admitted:
+                try:
+                    record = self._at(
+                        claim_id=request.claim_id,
+                        capture_digest=request.capture_digest,
+                        envelope=envelope,
+                        now=now,
+                    )
+                except ClaimReobservationRefused as exc:
+                    refused[index] = exc
+                    continue
+                shared = self._shared_fields(
+                    replace(record, observed_content_digest=cited_content),
+                    call=request.call,
+                    stamp=stamp,
+                )
+                shared["capture_content_digest"] = record.observed_content_digest
+                if request.extraction is not None:
+                    shared["extraction"] = request.extraction.model_dump(mode="json")
+                    shared["extracted_value"] = request.extracted_value
+                group = groups.setdefault(canonical_bytes(shared), {**shared, "claims": []})
+                group["claims"].append([request.claim_id, version])
+            if not groups:
+                return refused
+            payload: dict[str, Any] = {
+                "tag": _BATCH_TAG,
+                "groups": [groups[key] for key in sorted(groups)],
+            }
+            stored = self._append(
+                journal, bodies, head, payload, accepted=accepted, actor_id=actor_id, now=stamp
+            )
+            self._apply_batch(conn, payload, stored.record.sequence, stored.record.recorded_at)
+            self._mark_applied(conn, stored)
+            conn.commit()
+        return refused
+
+    @staticmethod
+    def _known(
+        conn: sqlite3.Connection,
+        claim_id: str,
+        version: str,
+        capture_digest: str,
+        call: tuple[datetime, datetime] | None,
+    ) -> tuple[Any, ...] | None:
+        """The held record a repeat names: of this exact Claim version (review 2f
+        #1: a predecessor's re-check is never its successor's), with a call one
+        observed at that call."""
+
+        row = conn.execute(
+            "SELECT contract_digest, observed_content_digest, observed_at, recorded_at "
+            "FROM reobservations WHERE claim_id=? AND claim_artifact_digest=? "
+            "AND capture_digest=? AND (? IS NULL OR observed_us=?)",
+            (
+                claim_id,
+                version,
+                capture_digest,
+                None if call is None else _micros(call[0]),
+                None if call is None else _micros(call[0]),
+            ),
+        ).fetchone()
+        if row is not None:
+            return tuple(row)
+        # A batch's absence reconfirmation is held in its group's set.
+        for set_digest in _absence_sets(conn, claim_id, version):
+            point = conn.execute(
+                "SELECT observed_us, recorded_us FROM absence_points "
+                "INDEXED BY absence_points_by_capture "
+                "WHERE set_digest=? AND capture_digest=? AND (? IS NULL OR observed_us=?) LIMIT 1",
+                (
+                    set_digest,
+                    capture_digest,
+                    None if call is None else _micros(call[0]),
+                    None if call is None else _micros(call[0]),
+                ),
+            ).fetchone()
+            if point is not None:
+                return (
+                    *_absence_member(conn, set_digest, claim_id),
+                    format_datetime(_from_micros(point[0])),
+                    format_datetime(_from_micros(point[1])),
+                )
+        return None
+
+    def _writer_head(self) -> tuple[LocalJournalBackend, Any, Any]:
+        """Recover reserved material, then activate the writer at the journal head."""
+
+        journal = self._journal(create=True)
+        assert journal is not None
+        from cruxible_core.storage.material_reservations import (
+            ProcedureMaterialReservationStore,
+        )
+
+        bodies = self.instance.body_store()
+        ProcedureMaterialReservationStore(bodies.reservation_root).recover_run_material(
+            lambda reservation: journal.select_records(
+                self.stream,
+                event_kind="claim_reobservation",
+                payload_digest=reservation.body_digest,
+            ),
+            bodies=bodies,
+            intended_event_kinds=frozenset({"claim_reobservation"}),
+        )
+        head = journal.read_head(self.stream, _PARTITION)
+        journal.activate_writer(self.stream, _PARTITION, fencing_token=_FENCE, expected_head=head)
+        return journal, bodies, head
+
+    @staticmethod
+    def _shared_fields(
+        record: ReobservationRecord, *, call: tuple[datetime, datetime] | None, stamp: datetime
+    ) -> dict[str, Any]:
+        """A record's observation fields; ``record.recorded_at`` is the clock's actual read.
+
+        With the fetching call known, it is observed at the call's earliest
+        (clamped to the clock) and ends at the call's latest (clamped to the
+        durable ``stamp``); otherwise it ends at ``stamp``.
+        """
+
+        observed_at = record.observed_at
+        if call is not None:
+            observed_at = max(observed_at, min(call[0].astimezone(UTC), record.recorded_at))
+        return {
+            "capture_digest": record.capture_digest,
+            "contract_digest": record.contract_digest,
+            "observed_content_digest": record.observed_content_digest,
+            "observed_at": format_datetime(observed_at),
+            "latest": format_datetime(
+                stamp if call is None else max(observed_at, min(call[1].astimezone(UTC), stamp))
+            ),
+        }
+
+    def _append(
+        self,
+        journal: LocalJournalBackend,
+        bodies: Any,
+        head: Any,
+        payload: dict[str, Any],
+        *,
+        accepted: Any,
+        actor_id: str,
+        now: datetime,
+    ) -> Any:
+        return ProcedureExhaustWriter(journal=journal, bodies=bodies, fencing_token=_FENCE).append(
+            stream=self.stream,
+            partition_id=_PARTITION,
+            event_kind="claim_reobservation",
+            accepted_coordinate=AcceptedCoordinate.from_internal(accepted),
+            definition_digest=self.stream.identity_digest,
+            actor_context=GovernedActorContext(
+                actor_type="service_account",
+                actor_id=actor_id,
+                org_id=self.instance.descriptor.instance_id,
+                operation_id=new_id("op", length=16, separator="_"),
+                timestamp=now,
+            ),
+            recorded_at=now,
+            payload=payload,
+            expected_head=head,
+        )
+
+    def observe(
+        self,
+        contents: Sequence[ObservedContent],
+        *,
+        earliest: datetime,
+        latest: datetime,
+        run_id: str,
+        node_id: str,
+        actor_id: str,
+        lineage: Mapping[str, str] | None = None,
+    ) -> int | None:
+        """Record one acquiring call's observation of every content it fetched (ruling 1a).
+
+        ``lineage`` names the Procedure (identity and artifact digest) whose
+        call observed it (D-R14): it is part of the run-free set body, so an
+        unchanged Procedure reproduces the body and a changed one (a new
+        extract spec over the same bytes) records its new lineage.
+
+        One journal record per call, keyed by content: the set of (contract,
+        content, Capture) is a run-free body, so a call that fetched the same
+        contents again stores no new body and the projection writes one point.
+        ``earliest`` and ``latest`` are the call's first and last member
+        observation instants (ruling 1b). Nothing is judged per Claim: a Claim
+        citing any Capture of one of these contents under its contract reads
+        this observation as its freshness. A call observed after the clock's
+        instant records nothing (the provider's instant cannot be trusted
+        then). Returns the record's sequence, or None when nothing was recorded.
+        """
+
+        from cruxible_client.contracts.canonical import canonical_bytes
+
+        if not contents or is_previewing():
+            return None
+        unique: dict[tuple[str, str], str] = {}
+        for item in contents:
+            pair = (item.contract_digest, item.observed_content_digest)
+            unique[pair] = max(unique.get(pair, ""), item.capture_digest)
+        body = canonical_bytes(
+            {
+                "tag": OBSERVED_CONTENTS_BODY,
+                **({} if lineage is None else {"lineage": dict(lineage)}),
+                "contents": [
+                    [contract, content, capture]
+                    for (contract, content), capture in sorted(unique.items())
+                ],
+            }
+        )
+        return self._append_shared(
+            {
+                "tag": CONTENT_OBSERVATION_TAG,
+                "set_digest": self.instance.body_store().store(body, journal_payload=True).digest,
+                "earliest": format_datetime(earliest.astimezone(UTC)),
+                "latest": format_datetime(latest.astimezone(UTC)),
+                "run_id": run_id,
+                "node_id": node_id,
+            },
+            latest=latest,
+            actor_id=actor_id,
+        )
+
+    def observe_rows(
+        self,
+        maps: Sequence[RowMap],
+        *,
+        earliest: datetime,
+        latest: datetime,
+        run_id: str,
+        node_id: str,
+        actor_id: str,
+        lineage: Mapping[str, str] | None = None,
+    ) -> int | None:
+        """Record one extract step's observation of its whole row set (2026-11-16 a).
+
+        ``maps`` holds each extracted Capture's records as rows. The row set
+        body is run-free and Capture-free: the same rows in new bytes cite the
+        set stored before, and a Claim produced from any of them reads this
+        observation as its freshness, with no per-Claim write. Each Capture's
+        row map is a run-free body too (stored new only for a new Capture), so
+        an unchanged step writes one constant-size journal record. ``earliest``
+        and ``latest`` are the acquiring call's member instants (ruling 1b).
+        """
+
+        from cruxible_client.contracts.canonical import canonical_bytes
+
+        if not maps or is_previewing():
+            return None
+        bodies = self.instance.body_store()
+        lineage_key = canonical_bytes({} if lineage is None else dict(lineage)).decode()
+        map_digests = sorted(
+            item.digest
+            or bodies.store(
+                canonical_bytes(
+                    {
+                        "tag": ROW_MAP_BODY,
+                        "capture": item.capture_digest,
+                        "spec": item.spec_digest,
+                        "contract": item.contract_digest,
+                        "extraction": item.extraction,
+                        "rows": [list(row) for row in item.rows],
+                    }
+                ),
+                journal_payload=True,
+            ).digest
+            for item in maps
+        )
+        # One digest per Capture: the maps body is the extraction's identity,
+        # so the set it holds is one seek when every map is known (2d #6).
+        # A known maps body (its set recorded) is only hashed, never stored again.
+        maps_body = canonical_bytes({"tag": ROW_MAPS_BODY, "maps": map_digests})
+        maps_digest = bodies.digest_bytes(maps_body).tagged
+        set_digest = (
+            ReobservationReader.of(self.instance).row_set(maps_digest, lineage_key)
+            if all(item.digest for item in maps)
+            else None
+        )
+        if set_digest is None:
+            if bodies.store(maps_body, journal_payload=True).digest != maps_digest:
+                raise ValueError("row maps body digest did not reproduce")
+            rows = sorted(
+                {
+                    (contract, row)
+                    for item in maps
+                    for contract, row in (
+                        _row_map(self.instance, item.digest).values()
+                        if item.digest
+                        else ((item.contract_digest, row) for _locator, row in item.rows)
+                    )
+                }
+            )
+            if not rows:
+                return None
+            set_digest = bodies.store(
+                canonical_bytes(
+                    {
+                        "tag": OBSERVED_ROWS_BODY,
+                        **({} if lineage is None else {"lineage": dict(lineage)}),
+                        "rows": [list(row) for row in rows],
+                    }
+                ),
+                journal_payload=True,
+            ).digest
+        return self._append_shared(
+            {
+                "tag": ROW_OBSERVATION_TAG,
+                "set_digest": set_digest,
+                "maps_digest": maps_digest,
+                "earliest": format_datetime(earliest.astimezone(UTC)),
+                "latest": format_datetime(latest.astimezone(UTC)),
+                "run_id": run_id,
+                "node_id": node_id,
+            },
+            latest=latest,
+            actor_id=actor_id,
+        )
+
+    def _append_shared(
+        self, payload: dict[str, Any], *, latest: datetime, actor_id: str
+    ) -> int | None:
+        """Append one content or row observation at the store's own clock."""
+
+        with self._locked(create=True) as conn:
+            journal = self._journal(create=True)
+            assert journal is not None
+            from cruxible_core.storage.material_reservations import (
+                ProcedureMaterialReservationStore,
+            )
+
+            bodies = self.instance.body_store()
+            ProcedureMaterialReservationStore(bodies.reservation_root).recover_run_material(
+                lambda reservation: journal.select_records(
+                    self.stream,
+                    event_kind="claim_reobservation",
+                    payload_digest=reservation.body_digest,
+                ),
+                bodies=bodies,
+                intended_event_kinds=frozenset({"claim_reobservation"}),
+            )
+            head = journal.read_head(self.stream, _PARTITION)
+            journal.activate_writer(
+                self.stream, _PARTITION, fencing_token=_FENCE, expected_head=head
+            )
+            now = self.instance.recording_clock().astimezone(UTC)
+            if latest.astimezone(UTC) > now:
+                return None
+            last = conn.execute("SELECT recorded_us FROM progress WHERE singleton=1").fetchone()
+            if last is not None and _micros(now) < int(last[0]):
+                now = _from_micros(last[0])
+            stored = ProcedureExhaustWriter(
+                journal=journal, bodies=bodies, fencing_token=_FENCE
+            ).append(
+                stream=self.stream,
+                partition_id=_PARTITION,
+                event_kind="claim_reobservation",
+                accepted_coordinate=AcceptedCoordinate.from_internal(
+                    self.instance.accepted_coordinate()
+                ),
+                definition_digest=self.stream.identity_digest,
+                actor_context=GovernedActorContext(
+                    actor_type="service_account",
+                    actor_id=actor_id,
+                    org_id=self.instance.descriptor.instance_id,
+                    operation_id=new_id("op", length=16, separator="_"),
+                    timestamp=now,
+                ),
+                recorded_at=now,
+                payload=payload,
+                expected_head=head,
+            )
+            self._apply_shared(
+                conn,
+                payload,
+                stored.record.sequence,
+                stored.record.recorded_at,
+            )
+            self._mark_applied(conn, stored)
+            conn.commit()
+            return stored.record.sequence
 
     # -- reads --------------------------------------------------------------
 
@@ -733,13 +2019,110 @@ class ClaimReobservationStore:
         ):
             if through is not None and stored.record.sequence > through:
                 break
-            payload = parse_journal_payload(
-                self.instance.body_store().read(stored.record.payload_digest, access=_ACCESS)
-            )
+            payload = self._payload(stored)
+            if payload is None:
+                continue  # unavailable: the projection holds nothing of it
+            if isinstance(payload, dict) and payload.get("tag") in _SHARED_TAGS:
+                continue  # keyed by content, not by a lineage (``observed_after``)
+            if isinstance(payload, dict) and payload.get("tag") == _BATCH_TAG:
+                records.extend(
+                    (stored.record.sequence, str(item["claim_id"]))
+                    for item in _batch_records(payload)
+                )
+                continue
             if not isinstance(payload, dict) or payload.get("tag") != _EVENT_TAG:
                 raise ValueError("invalid Claim re-observation record")
             records.append((stored.record.sequence, str(payload["claim_id"])))
         return tuple(records)
+
+    def observed_after(
+        self, sequence: int, *, through: int | None = None
+    ) -> tuple[frozenset[str], frozenset[tuple[str, str]], frozenset[str]]:
+        """What the records after ``sequence`` (through ``through``) re-observed.
+
+        The lineages a per-Claim record names; the keys of each observed set
+        first recorded in that range, or that a source switched to (members
+        whose heads moved, B -> A -> B included: a change, paid as the switch's
+        projection rows are); and every observed set recorded in it. A
+        repeated set is reached by its digest alone, never by expanding its
+        members again (review 2c #6): a follower reaches the Claims whose
+        freshness read a key or a set holding it. One payload read per
+        record, one seek per observation and one body read per new set.
+        """
+
+        journal = self._journal(create=False)
+        if journal is None:
+            return frozenset(), frozenset(), frozenset()
+        claims: set[str] = set()
+        keys: set[tuple[str, str]] = set()
+        sets: set[str] = set()
+        with self._locked() as conn:
+            for stored in journal.select_records(
+                self.stream, partition_id=_PARTITION, first_sequence=sequence + 1
+            ):
+                if through is not None and stored.record.sequence > through:
+                    break
+                payload = self._payload(stored)
+                if payload is None:
+                    continue  # unavailable: the projection holds nothing of it
+                if not isinstance(payload, dict):
+                    raise ValueError("invalid Claim re-observation record")
+                tag = payload.get("tag")
+                if tag in _SHARED_TAGS:
+                    set_digest = str(payload["set_digest"])
+                    sets.add(set_digest)
+                    first = conn.execute(
+                        "SELECT MIN(sequence) FROM observation_points WHERE set_digest=?",
+                        (set_digest,),
+                    ).fetchone()
+                    switched = conn.execute(
+                        "SELECT 1 FROM switches WHERE sequence=?", (stored.record.sequence,)
+                    ).fetchone()
+                    if (
+                        first is not None
+                        and first[0] is not None
+                        and int(first[0]) < int(stored.record.sequence)
+                        and switched is None
+                    ):
+                        continue  # the same set again: its digest reaches its readers
+                    rows_tag = tag == ROW_OBSERVATION_TAG
+                    body = _shared_body(
+                        self.instance,
+                        set_digest,
+                        tag=OBSERVED_ROWS_BODY if rows_tag else OBSERVED_CONTENTS_BODY,
+                    )
+                    keys.update(
+                        (str(item[0]), str(item[1]))
+                        for item in body["rows" if rows_tag else "contents"]
+                    )
+                elif tag == _EVENT_TAG:
+                    claims.add(str(payload["claim_id"]))
+                elif tag == _BATCH_TAG:
+                    claims.update(str(item["claim_id"]) for item in _batch_records(payload))
+                else:
+                    _refuse_retired_tag(tag)
+        return frozenset(claims), frozenset(keys), frozenset(sets)
+
+    def maps_after(self, sequence: int, *, through: int | None = None) -> frozenset[str]:
+        """The Captures a row map was first recorded for after ``sequence`` (through
+        ``through``): one range read on the maps' sequence index.
+
+        A new map of a Capture can change which row its extracted records are
+        (none, when its maps then disagree), so it changes what the Claims
+        produced from that Capture read, whatever their stored verdict.
+        """
+
+        if not self.root.is_dir():
+            return frozenset()
+        with self._locked() as conn:
+            return frozenset(
+                str(row[0])
+                for row in conn.execute(
+                    "SELECT DISTINCT capture_digest FROM capture_maps "
+                    "WHERE sequence>? AND sequence<=?",
+                    (sequence, _NEVER if through is None else through),
+                )
+            )
 
     def history(self, claim_id: str) -> tuple[ReobservationRecord, ...]:
         """Every re-observation ever recorded for one lineage, in capture order.
@@ -756,6 +2139,22 @@ class ClaimReobservationStore:
                 "ORDER BY capture_digest",
                 (claim_id,),
             ).fetchall()
+            for set_digest in _absence_sets(conn, claim_id):
+                contract, content = _absence_member(conn, set_digest, claim_id)
+                rows.extend(
+                    (
+                        point[0],
+                        contract,
+                        content,
+                        format_datetime(_from_micros(point[1])),
+                        format_datetime(_from_micros(point[2])),
+                    )
+                    for point in conn.execute(
+                        "SELECT capture_digest, observed_us, recorded_us FROM absence_points "
+                        "WHERE set_digest=? ORDER BY recorded_us",
+                        (set_digest,),
+                    )
+                )
         return tuple(
             ReobservationRecord(
                 claim_id=claim_id,
@@ -784,14 +2183,44 @@ def reobservation_journal_signature(root: Path, *, exhaust: str, instance_id: st
     return None if found is None else found[1]
 
 
+#: Written (a fresh random value) each time projection recovery finds the
+#: journal is not the one it applied. Named after the projection, whose
+#: recovery state it is.
+_RECOVERED = "reobservations.sqlite3.recovered"
+
+
+def _mark_recovered(directory: Path) -> None:
+    """Durably give the journal in ``directory`` a new identity (see ``_RECOVERED``)."""
+
+    import os
+    from uuid import uuid4
+
+    temporary = directory / f".{_RECOVERED}.{uuid4().hex}"
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        os.write(descriptor, uuid4().hex.encode())
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    os.replace(temporary, directory / _RECOVERED)
+    descriptor = os.open(directory, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
 def reobservation_journal_identity(
     root: Path, *, exhaust: str, instance_id: str
 ) -> tuple[str, str] | None:
-    """The re-observation log's file (device and inode) and its full signature, from one stat.
+    """The re-observation journal a cursor is kept against, and the log's full signature.
 
-    The file names the journal a cursor was kept against: a journal rebuilt
-    from nothing is a different file. The signature moves with every append.
-    ``None`` when nothing was ever recorded.
+    The journal is named by its log file (device and inode: a journal rebuilt
+    from nothing is a different file) and by the last recovery that found the
+    log was not the one the projection had applied (a log that lost its tail
+    in place and regrew is the same file at the same sequence, and another
+    journal). The signature moves with every append. ``None`` when nothing was
+    ever recorded. One stat and, after a recovery, one small read.
     """
 
     stream = JournalStreamIdentityV1(
@@ -804,19 +2233,42 @@ def reobservation_journal_identity(
         stat = log.stat()
     except FileNotFoundError:
         return None
+    try:
+        recovered = ":" + (root / exhaust / REOBSERVATION_DIRECTORY / _RECOVERED).read_text()
+    except FileNotFoundError:
+        recovered = ""
     return (
-        f"{stat.st_dev}:{stat.st_ino}",
+        f"{stat.st_dev}:{stat.st_ino}{recovered}",
         f"{stat.st_dev}:{stat.st_ino}:{stat.st_size}:{stat.st_mtime_ns}:{stat.st_ctime_ns}",
     )
 
 
 @dataclass(frozen=True)
 class ReobservationKey:
-    """One cited Capture of a Claim and the (contract, content) it observed."""
+    """One cited Capture of a Claim and the (contract, content) it observed.
+
+    ``shared`` false: only the lineage's own per-Claim records count for the
+    key, never a shared content or row observation (an absence: its root
+    page's contents say nothing about the rest of its enumeration, F-001).
+    """
 
     cited_capture_digest: str
     contract_digest: str
     observed_content_digest: str
+    shared: bool = True
+    #: The Claim version whose own records count for the key (``claim_keys_on``
+    #: names it; every admitted record names the version it checked).
+    version: str = ""
+    #: Set on an extracted record's row key: (Capture, extract spec, locator).
+    #: ``latest`` resolves the row from the maps that existed at its own
+    #: instant (review 2f #2); the key's contract and content are its row at
+    #: the read position ('' when the maps then disagree).
+    row_record: tuple[str, str, str] | None = None
+    #: Set on a recheck association (review 2e #1-#2): the Claim version whose
+    #: latest per-Claim re-check names the content; ``latest`` resolves that
+    #: association again at its own instant, so a historical read uses the
+    #: one applicable then.
+    recheck_version: str = ""
 
 
 @dataclass(frozen=True)
@@ -825,7 +2277,8 @@ class ReobservationReading:
 
     ``evidence`` is the latest applicable record per cited Capture;
     ``boundaries`` every instant that answer can change at (each record's
-    observation and recording, and the next recording of each key);
+    observation and recording, the next recording of each key, and each
+    recording of a row map of an extracted record's Capture);
     ``sequence`` the lineage's last journal sequence, which names its whole
     record set for a remembered answer.
     """
@@ -833,6 +2286,26 @@ class ReobservationReading:
     evidence: tuple[CaptureReobservationEvidence, ...] = ()
     boundaries: tuple[datetime, ...] = ()
     sequence: int = 0
+    #: The cited keys the read looked up: what ``sequence`` is taken over.
+    keys: tuple["ReobservationKey", ...] = ()
+    #: The observed sets currently holding those keys (each source's head set):
+    #: a repeated observation of one reaches this lineage's stale facts with no
+    #: expansion of the set's members (review 2c #6).
+    sets: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class _Point:
+    """One observation a key's freshness can read: its instants and its record."""
+
+    observed_us: int
+    latest_us: int
+    recorded_us: int
+    sequence: int
+    capture_digest: str
+
+    def rank(self) -> tuple[int, str]:
+        return (self.observed_us, self.capture_digest)
 
 
 class ReobservationReader:
@@ -859,6 +2332,8 @@ class ReobservationReader:
         self._conn: sqlite3.Connection | None = None
         self._signature: str | None = None
         self._projection: tuple[int, int] | None = None
+        #: Whether any content observation was projected (None: not known yet).
+        self._shared: bool | None = None
         self._pid = os.getpid()
         self.probes = 0
         self.rows_read = 0
@@ -882,6 +2357,7 @@ class ReobservationReader:
         self._conn = None  # the parent's; never closed from the child
         self._signature = None
         self._projection = None
+        self._shared = None
         self._pid = os.getpid()
 
     def _guard_fork(self) -> None:
@@ -909,6 +2385,9 @@ class ReobservationReader:
             instance_id=self.instance.descriptor.instance_id,
         )
         if signature is None:
+            # No journal: whatever returns later is caught up to (or rebuilt
+            # from) again, even the very log last read.
+            self._signature = None
             return None
         identity = self._projection_identity()
         if self._conn is None or identity is None or identity != self._projection:
@@ -922,23 +2401,463 @@ class ReobservationReader:
             self._conn = sqlite3.connect(self.store.path, check_same_thread=False)
             self._projection = self._projection_identity()
             self._signature = signature
+            self._shared = None
         elif signature != self._signature:
             with self.store._locked():
-                pass  # catch the projection up from the journal
+                pass  # catch the projection up from the journal (or rebuild it)
             self._signature = signature
+            self._shared = None
         return self._conn
 
-    def sequence(self, claim_id: str) -> int:
-        """The lineage's last journal sequence: 0 when it was never re-observed."""
+    def follow(self) -> None:
+        """Catch the projection up to the journal, recovering it when the journal
+        is not the one it applied: two stats when nothing changed. A caller
+        about to name the journal (``reobservation_journal_identity``) does this
+        first, so the name it records is the one that recovery left."""
+
+        self._guard_fork()
+        with self._lock:
+            self._connection()
+
+    def sequence(self, claim_id: str, keys: Sequence[ReobservationKey] = ()) -> int:
+        """The last journal sequence that observed this lineage: 0 when none did.
+
+        The lineage's own records, and the content and row observations of the
+        keys it depends on (``keys``): what names the whole record set a
+        remembered verdict read.
+        """
 
         self._guard_fork()
         with self._lock:
             conn = self._connection()
             if conn is None:
                 return 0
+            through = _through()
             self.probes += 1
-            row = conn.execute(_LAST_SEQUENCE, (claim_id, _through())).fetchone()
+            row = conn.execute(_LAST_SEQUENCE, (claim_id, through)).fetchone()
+            found = 0 if row is None or row[0] is None else int(row[0])
+            found = max(found, self._absence_sequence(conn, claim_id, through))
+            if keys and self._content_observed(conn):
+                for pair in {
+                    (key.contract_digest, key.observed_content_digest)
+                    for key in keys
+                    if key.shared and key.observed_content_digest
+                }:
+                    found = max(found, self._key_sequence(conn, pair, through))
+                # A new map of an extracted record's Capture can change which
+                # row it is from then on: it names the record set too.
+                for record in {key.row_record[:2] for key in keys if key.row_record is not None}:
+                    found = max(found, self._maps_sequence(conn, *record, through))
+        return found
+
+    def _absence_sequence(self, conn: sqlite3.Connection, claim_id: str, through: int) -> int:
+        """The last journal sequence a reconfirmation set holding the Claim recorded."""
+
+        found = 0
+        for set_digest in _absence_sets(conn, claim_id):
+            self.probes += 1
+            last = _absence_last(conn, set_digest, at_us=_NEVER, through=through, steps=False)
+            if last is not None:
+                found = max(found, last[3])
+        return found
+
+    def latest_observation(
+        self, contract_digest: str, observed_content_digest: str
+    ) -> datetime | None:
+        """When the content was last observed: the latest instant of its latest call.
+
+        What a Capture's minimum retention counts from once a re-fetch reuses
+        it (ruling 1c): the envelope's instant is when its contents were first
+        observed. Per observing source, its key head and its set's maxima
+        through the read position: two seeks each. None when never observed.
+        """
+
+        self._guard_fork()
+        with self._lock:
+            conn = self._connection()
+            if conn is None or not self._content_observed(conn):
+                return None
+            through = _through()
+            best = -1
+            pair = (contract_digest, observed_content_digest)
+            for source in self._sources(conn, pair):
+                head = self._head(conn, pair, source, through)
+                if head is None:
+                    continue
+                best = max(best, int(head[10]))
+                peak = self._peak(conn, str(head[0]), through)
+                if peak is not None:
+                    best = max(best, int(peak[3]))
+        return None if best < 0 else _from_micros(best)
+
+    def observed(self, claim_id: str, keys: Sequence[ReobservationKey]) -> bool:
+        """Whether the lineage, or any key it depends on, was ever observed here.
+
+        One seek for the lineage and one per key: what decides whether a
+        Claim's freshness can read anything at all.
+        """
+
+        self._guard_fork()
+        with self._lock:
+            conn = self._connection()
+            if conn is None:
+                return False
+            self.probes += 1
+            row = conn.execute(_LAST_SEQUENCE, (claim_id, _NEVER)).fetchone()
+            if row is not None and row[0] is not None:
+                return True
+            if _absence_sets(conn, claim_id):
+                return True
+            for key in keys:
+                self.probes += 1
+                if (
+                    key.row_record is not None
+                    and conn.execute(
+                        "SELECT 1 FROM capture_maps "
+                        "WHERE capture_digest=? AND spec_digest=? LIMIT 1",
+                        key.row_record[:2],
+                    ).fetchone()
+                ):
+                    return True  # its row at some instant may have been observed
+                if conn.execute(
+                    "SELECT 1 FROM key_sources WHERE contract_digest=? "
+                    "AND observed_content_digest=? LIMIT 1",
+                    (key.contract_digest, key.observed_content_digest),
+                ).fetchone():
+                    return True
+        return False
+
+    def rechecked(
+        self, claim_id: str, version: str, *, at_us: int | None = None
+    ) -> tuple[str, str, str] | None:
+        """One Claim version's latest per-Claim re-check: (Capture, contract, its content).
+
+        Scoped to the exact version the record checked (review 2e #1): a
+        successor's statement is never refreshed by content checked against
+        its predecessor. The latest by observation through the read position
+        and, with ``at_us``, recorded by then (review 2e #2: the association
+        applicable at a historical read). A few seeks on the version index.
+        """
+
+        self._guard_fork()
+        with self._lock:
+            conn = self._connection()
+            if conn is None:
+                return None
+            return self._rechecked_on(conn, claim_id, version, at_us=at_us, through=_through())
+
+    def _rechecked_on(
+        self,
+        conn: sqlite3.Connection,
+        claim_id: str,
+        version: str,
+        *,
+        at_us: int | None,
+        through: int,
+    ) -> tuple[str, str, str] | None:
+        self.probes += 1
+        row = conn.execute(
+            "SELECT capture_digest, contract_digest, capture_content_digest "
+            "FROM reobservations INDEXED BY reobservations_by_version "
+            "WHERE claim_id=? AND claim_artifact_digest=? AND sequence<=? AND recorded_us<=? "
+            "ORDER BY observed_us DESC, capture_digest DESC LIMIT 1",
+            (claim_id, version, through, _NEVER if at_us is None else at_us),
+        ).fetchone()
+        if row is None or not row[2]:
+            return None
+        return str(row[0]), str(row[1]), str(row[2])
+
+    def extraction_map(self, extraction: str) -> str | None:
+        """The stored row map of one known extraction (one seek), if any."""
+
+        self._guard_fork()
+        with self._lock:
+            conn = self._connection()
+            if conn is None:
+                return None
+            self.probes += 1
+            row = conn.execute(
+                "SELECT map_digest FROM capture_maps WHERE extraction=? LIMIT 1", (extraction,)
+            ).fetchone()
+        return None if row is None else str(row[0])
+
+    def row_set(self, maps_digest: str, lineage: str) -> str | None:
+        """The row set an extraction's maps hold under one lineage (one seek), if known."""
+
+        self._guard_fork()
+        with self._lock:
+            conn = self._connection()
+            if conn is None:
+                return None
+            self.probes += 1
+            row = conn.execute(
+                "SELECT set_digest FROM row_sets WHERE maps_digest=? AND lineage=?",
+                (maps_digest, lineage),
+            ).fetchone()
+        return None if row is None else str(row[0])
+
+    def map_rows(self, map_digest: str) -> Mapping[str, str]:
+        """One stored row map by record locator: a read-only view built once per
+        process per map, so a known extraction costs no copy (review 2e #4)."""
+
+        view = _ROW_VIEWS.get(map_digest)
+        if view is None:
+            view = MappingProxyType(
+                {
+                    locator: row
+                    for locator, (_contract, row) in _row_map(self.instance, map_digest).items()
+                }
+            )
+            with _LOCK:
+                _ROW_VIEWS[map_digest] = view
+        return view
+
+    def row_of(
+        self,
+        capture_digest: str,
+        spec_digest: str,
+        locator: str,
+        *,
+        at_us: int | None = None,
+    ) -> tuple[str, str] | None:
+        """The (contract, row) one extracted record of a Capture is, or None when no
+        row observation mapped it, or the maps that existed disagree."""
+
+        self._guard_fork()
+        with self._lock:
+            conn = self._connection()
+            if conn is None:
+                return None
+            return self._row_on(
+                conn, (capture_digest, spec_digest, locator), at_us=at_us, through=_through()
+            )
+
+    def _row_on(
+        self,
+        conn: sqlite3.Connection,
+        record: tuple[str, str, str],
+        *,
+        at_us: int | None,
+        through: int,
+        boundaries: set[datetime] | None = None,
+    ) -> tuple[str, str] | None:
+        capture_digest, spec_digest, locator = record
+        self.probes += 1
+        # One map per selection and typing of the Capture's records a step
+        # read (review 2c #4), each recorded when it was first seen. Only the
+        # maps that existed at the read count (review 2f #2): a later map can
+        # never change an answer about an instant before it. Each map's
+        # recording is an instant the answer can change at, whether the maps
+        # agree or not (review 2g F-002): ``boundaries`` takes them all, so a
+        # remembered answer never spans one.
+        limit = _NEVER if at_us is None else at_us
+        maps = []
+        for map_digest, recorded_us in conn.execute(
+            "SELECT map_digest, recorded_us FROM capture_maps WHERE capture_digest=? "
+            "AND spec_digest=? AND sequence<=?",
+            (capture_digest, spec_digest, through),
+        ):
+            if boundaries is not None:
+                boundaries.add(_from_micros(recorded_us))
+            if int(recorded_us) <= limit:
+                maps.append(str(map_digest))
+        # A typing can make the locator another row (review 2e #3): the
+        # Claim's row is known only when every map holding the locator then
+        # agrees; otherwise None, and the Claim depends on its cited content
+        # and its own records, never on a row it may not be.
+        found = {
+            held
+            for held in (_row_map(self.instance, digest).get(locator) for digest in maps)
+            if held is not None
+        }
+        return found.pop() if len(found) == 1 else None
+
+    def _maps_sequence(
+        self, conn: sqlite3.Connection, capture: str, spec: str, through: int
+    ) -> int:
+        """The last journal sequence that recorded a map of this Capture and spec."""
+
+        self.probes += 1
+        row = conn.execute(
+            "SELECT MAX(sequence) FROM capture_maps WHERE capture_digest=? AND spec_digest=? "
+            "AND sequence<=?",
+            (capture, spec, through),
+        ).fetchone()
         return 0 if row is None or row[0] is None else int(row[0])
+
+    def content_observed(self) -> bool:
+        """Whether any content or row observation was ever recorded (one probe)."""
+
+        self._guard_fork()
+        with self._lock:
+            conn = self._connection()
+            return conn is not None and self._content_observed(conn)
+
+    def _content_observed(self, conn: sqlite3.Connection) -> bool:
+        """Whether the projection holds any content or row observation.
+
+        Kept once true until the projection is caught up again or replaced:
+        such rows are never removed, so the answer only ever turns true.
+        """
+
+        if self._shared is None:
+            row = conn.execute("SELECT EXISTS(SELECT 1 FROM observation_sets)").fetchone()
+            self._shared = bool(row[0]) or None
+        return bool(self._shared)
+
+    # -- maintained heads ---------------------------------------------------
+
+    def _position(self, conn: sqlite3.Connection, at_us: int) -> int:
+        """The last observation recorded by ``at_us``: one seek (recorded order is
+        journal order)."""
+
+        if at_us >= _NEVER:
+            return _NEVER
+        self.probes += 1
+        row = conn.execute(
+            "SELECT sequence FROM instants WHERE recorded_us<=? "
+            "ORDER BY recorded_us DESC, sequence DESC LIMIT 1",
+            (at_us,),
+        ).fetchone()
+        return 0 if row is None else int(row[0])
+
+    def _window(self, conn: sqlite3.Connection, *, at_us: int, through: int) -> "_Window":
+        """The journal positions a read admits: recorded by ``at_us`` and through
+        the read position (recorded order is journal order: one seek)."""
+
+        return _Window(through=min(through, self._position(conn, at_us)))
+
+    def _sources(self, conn: sqlite3.Connection, pair: tuple[str, str]) -> list[str]:
+        """The sources (Procedure and step) whose calls ever observed the key."""
+
+        self.probes += 1
+        return [
+            str(row[0])
+            for row in conn.execute(
+                "SELECT source FROM key_sources WHERE contract_digest=? "
+                "AND observed_content_digest=?",
+                pair,
+            )
+        ]
+
+    def _head(
+        self, conn: sqlite3.Connection, pair: tuple[str, str], source: str, through: int
+    ) -> tuple[Any, ...] | None:
+        """The source's key head through ``through``: its set and carried best (one seek)."""
+
+        self.probes += 1
+        row = conn.execute(
+            "SELECT set_digest, carried_us, carried_recorded_us, carried_sequence, "
+            "carried_capture, sequence, recorded_us, 0, 0, 0, carried_latest_us FROM key_heads "
+            "WHERE contract_digest=? AND observed_content_digest=? AND source=? AND sequence<=? "
+            "ORDER BY sequence DESC LIMIT 1",
+            (*pair, source, through),
+        ).fetchone()
+        return None if row is None else tuple(row)
+
+    def _peak(
+        self, conn: sqlite3.Connection, set_digest: str, through: int
+    ) -> tuple[int, ...] | None:
+        """A set's maxima through ``through``: (earliest, its recording, its sequence, latest)."""
+
+        self.probes += 1
+        row = conn.execute(
+            "SELECT earliest_us, earliest_recorded_us, earliest_sequence, latest_us FROM set_peaks "
+            "WHERE set_digest=? AND sequence<=? ORDER BY sequence DESC LIMIT 1",
+            (set_digest, through),
+        ).fetchone()
+        return None if row is None else tuple(int(item) for item in row)
+
+    def _capture(self, conn: sqlite3.Connection, pair: tuple[str, str], set_digest: str) -> str:
+        row = conn.execute(
+            "SELECT capture_digest FROM observed_sets WHERE contract_digest=? "
+            "AND observed_content_digest=? AND set_digest=?",
+            (*pair, set_digest),
+        ).fetchone()
+        return "" if row is None else str(row[0])
+
+    def _next(
+        self, conn: sqlite3.Connection, sql: str, params: tuple[object, ...], into: set[datetime]
+    ) -> None:
+        row = conn.execute(sql, params).fetchone()
+        if row is not None:
+            into.add(_from_micros(row[0]))
+
+    def _key_point(
+        self,
+        conn: sqlite3.Connection,
+        pair: tuple[str, str],
+        window: "_Window",
+        boundaries: set[datetime] | None = None,
+        sets: set[str] | None = None,
+    ) -> _Point | None:
+        """The observation of one key with the greatest earliest instant the window admits.
+
+        Per observing source, the best of its carried observation and its
+        current set's maximum through the window (one seek each): the maximum
+        over everything recorded by then. Ties prefer the larger Capture digest.
+        """
+
+        best: _Point | None = None
+        for source in self._sources(conn, pair):
+            head = self._head(conn, pair, source, window.through)
+            if boundaries is not None:
+                self._next(
+                    conn,
+                    "SELECT recorded_us FROM key_heads WHERE contract_digest=? "
+                    "AND observed_content_digest=? AND source=? AND sequence>? "
+                    "ORDER BY sequence LIMIT 1",
+                    (*pair, source, window.through),
+                    boundaries,
+                )
+            if head is None:
+                continue
+            set_digest = str(head[0])
+            if sets is not None:
+                sets.add(set_digest)
+            capture = self._capture(conn, pair, set_digest)
+            found = []
+            peak = self._peak(conn, set_digest, window.through)
+            if boundaries is not None:
+                self._next(
+                    conn,
+                    "SELECT recorded_us FROM set_peaks WHERE set_digest=? AND sequence>? "
+                    "ORDER BY sequence LIMIT 1",
+                    (set_digest, window.through),
+                    boundaries,
+                )
+            if peak is not None:
+                found.append(_Point(peak[0], peak[3], peak[1], peak[2], capture))
+            if int(head[3]) >= 0:
+                found.append(
+                    _Point(int(head[1]), int(head[10]), int(head[2]), int(head[3]), str(head[4]))
+                )
+            for point in found:
+                if best is None or point.rank() > best.rank():
+                    best = point
+        return best
+
+    def _key_sequence(self, conn: sqlite3.Connection, pair: tuple[str, str], through: int) -> int:
+        """The last observation a read of one key depends on.
+
+        Per source, its key head and its set's last point (one seek each).
+        """
+
+        found = 0
+        for source in self._sources(conn, pair):
+            head = self._head(conn, pair, source, through)
+            if head is None:
+                continue
+            found = max(found, int(head[5]))
+            self.probes += 1
+            last = conn.execute(
+                "SELECT sequence FROM observation_points WHERE set_digest=? AND sequence<=? "
+                "ORDER BY sequence DESC LIMIT 1",
+                (str(head[0]), through),
+            ).fetchone()
+            if last is not None:
+                found = max(found, int(last[0]))
+        return found
 
     def latest_version_record(
         self, claim_id: str, version: str, *, observed_by: datetime
@@ -946,7 +2865,8 @@ class ReobservationReader:
         """One Claim version's latest recorded re-observation observed by ``observed_by``.
 
         ``version`` is the Claim's artifact digest: only records admitted while
-        that exact version was live count. One
+        that exact version was live count, and only when their call ended by
+        ``observed_by`` (a call running across the deadline does not count). One
         seek on ``reobservations_by_version`` and one journal record read by
         its sequence: records observed after ``observed_by``, and the lineage's
         other versions, are never visited.
@@ -958,10 +2878,34 @@ class ReobservationReader:
             if conn is None:
                 return None
             self.probes += 1
+            through = _through()
             row = conn.execute(
                 _VERSION_RECORD,
-                (claim_id, version, _micros(observed_by), _through()),
+                (claim_id, version, _micros(observed_by), through, _micros(observed_by)),
             ).fetchone()
+            # A batched absence reconfirmation of that version: per set holding it.
+            for set_digest in _absence_sets(conn, claim_id, version):
+                self.probes += 1
+                point = conn.execute(
+                    "SELECT capture_digest, observed_us, recorded_us, sequence FROM absence_points "
+                    "INDEXED BY absence_points_by_observed WHERE set_digest=? AND observed_us<=? "
+                    "AND latest_us<=? AND sequence<=? "
+                    "ORDER BY observed_us DESC, capture_digest DESC LIMIT 1",
+                    (set_digest, _micros(observed_by), _micros(observed_by), through),
+                ).fetchone()
+                if point is None:
+                    continue
+                if row is None or (int(point[1]), str(point[0])) > (
+                    _micros(_instant(row[3])),
+                    str(row[0]),
+                ):
+                    row = (
+                        str(point[0]),
+                        *_absence_member(conn, set_digest, claim_id),
+                        format_datetime(_from_micros(point[1])),
+                        format_datetime(_from_micros(point[2])),
+                        int(point[3]),
+                    )
         if row is None:
             return None
         self.rows_read += 1
@@ -1004,15 +2948,16 @@ class ReobservationReader:
     def latest(
         self, claim_id: str, keys: Sequence[ReobservationKey], at: datetime
     ) -> ReobservationReading:
-        """The latest record per key applicable at ``at``: one seek each.
+        """The latest observation per depended-on key applicable at ``at``.
 
         Applicable means recorded by ``at`` (and so observed by it: admission
-        refuses a Capture observed after its record). Among those the latest
-        observation wins, ties broken by the larger Capture digest, exactly as
-        ``claim_verdicts`` selects -- which is the last change point of that key
-        recorded by ``at``. Work is two seeks per distinct key (that point, and
-        the next one as a time boundary), however many records the lineage
-        holds or were recorded late.
+        refuses a Capture observed after its record). Two sources count, and
+        the latest observation wins, ties broken by the larger Capture digest,
+        exactly as ``claim_verdicts`` selects: the lineage's own records (the
+        last change point of that key recorded by ``at``) and the content or
+        row observations of the key (the call's earliest instant). Work is a
+        few seeks per distinct key and observing source, however many records
+        the lineage holds, runs observed it, or sets held it.
         """
 
         at_us = _micros(at)
@@ -1027,42 +2972,120 @@ class ReobservationReader:
             through = _through()
             row = conn.execute(_LAST_SEQUENCE, (claim_id, through)).fetchone()
             sequence = 0 if row is None or row[0] is None else int(row[0])
-            if not sequence:
+            sequence = max(sequence, self._absence_sequence(conn, claim_id, through))
+            shared = self._content_observed(conn)
+            if not sequence and not shared:
                 return ReobservationReading()
-            found: dict[tuple[str, str], tuple[str, int, int] | None] = {}
+            window = self._window(conn, at_us=at_us, through=through) if shared else None
+            found: dict[tuple[str, str, str], _Point | None] = {}
+            held_sets: set[str] = set()
             for key in keys:
                 pair = (key.contract_digest, key.observed_content_digest)
-                if pair not in found:
-                    self.probes += 2
-                    hit = conn.execute(_LAST_POINT, (claim_id, *pair, at_us, through)).fetchone()
-                    upcoming = conn.execute(
-                        _NEXT_POINT, (claim_id, *pair, at_us, through)
-                    ).fetchone()
-                    self.rows_read += int(hit is not None)
-                    if upcoming is not None:
-                        boundaries.add(_from_micros(upcoming[0]))
-                    found[pair] = None if hit is None else (str(hit[0]), int(hit[1]), int(hit[2]))
-                selected = found[pair]
+                if key.row_record is not None:
+                    # The maps of its Capture name the record set too, as
+                    # ``sequence`` counts them, whatever they resolve to.
+                    sequence = max(
+                        sequence, self._maps_sequence(conn, *key.row_record[:2], through)
+                    )
+                    resolved = self._row_on(
+                        conn, key.row_record, at_us=at_us, through=through, boundaries=boundaries
+                    )
+                    if resolved is None:
+                        continue
+                    pair = resolved
+                if key.recheck_version:
+                    applicable = self._rechecked_on(
+                        conn, claim_id, key.recheck_version, at_us=at_us, through=through
+                    )
+                    if applicable is None:
+                        continue
+                    pair = (applicable[1], applicable[2])
+                slot = (key.version, *pair)
+                if slot not in found:
+                    best: _Point | None = None
+                    if sequence:
+                        self.probes += 2
+                        owner = (claim_id, key.version)
+                        hit = conn.execute(_LAST_POINT, (*owner, *pair, at_us, through)).fetchone()
+                        upcoming = conn.execute(
+                            _NEXT_POINT, (*owner, *pair, at_us, through)
+                        ).fetchone()
+                        if upcoming is not None:
+                            boundaries.add(_from_micros(upcoming[0]))
+                        if hit is not None:
+                            best = _Point(
+                                observed_us=int(hit[1]),
+                                latest_us=int(hit[1]),
+                                recorded_us=int(hit[2]),
+                                sequence=0,
+                                capture_digest=str(hit[0]),
+                            )
+                        # Its batched absence reconfirmations: a seek per set
+                        # holding it (round 9 F), never one per run.
+                        for set_digest in _absence_sets(conn, claim_id, key.version, pair):
+                            self.probes += 2
+                            last = _absence_last(conn, set_digest, at_us=at_us, through=through)
+                            ahead = conn.execute(
+                                "SELECT recorded_us FROM absence_points WHERE set_digest=? "
+                                "AND recorded_us>? AND sequence<=? AND step=1 "
+                                "ORDER BY recorded_us LIMIT 1",
+                                (set_digest, at_us, through),
+                            ).fetchone()
+                            if ahead is not None:
+                                boundaries.add(_from_micros(ahead[0]))
+                            if last is not None:
+                                reconfirmed = _Point(
+                                    observed_us=last[1],
+                                    latest_us=last[1],
+                                    recorded_us=last[2],
+                                    sequence=0,
+                                    capture_digest=last[0],
+                                )
+                                if best is None or reconfirmed.rank() > best.rank():
+                                    best = reconfirmed
+                    if window is not None and key.shared:
+                        point = self._key_point(conn, pair, window, boundaries, held_sets)
+                        if point is not None and (best is None or point.rank() > best.rank()):
+                            best = point
+                        sequence = max(sequence, self._key_sequence(conn, pair, through))
+                    self.rows_read += int(best is not None)
+                    found[slot] = best
+                selected = found[slot]
                 if selected is None:
                     continue
-                digest, observed_us, recorded_us = selected
-                observed, recorded = _from_micros(observed_us), _from_micros(recorded_us)
+                observed = _from_micros(selected.observed_us)
+                recorded = _from_micros(selected.recorded_us)
                 boundaries.update((observed, recorded))
                 evidence.append(
                     CaptureReobservationEvidence(
                         cited_capture_digest=key.cited_capture_digest,
-                        reobserving_capture_digest=digest,
+                        reobserving_capture_digest=selected.capture_digest,
                         observed_at=observed,
                         recorded_at=recorded,
                     )
                 )
         return ReobservationReading(
             evidence=tuple(
-                sorted(evidence, key=lambda item: item.cited_capture_digest.encode("ascii"))
+                sorted(
+                    evidence,
+                    key=lambda item: (
+                        item.cited_capture_digest.encode("ascii"),
+                        item.observed_at,
+                        item.reobserving_capture_digest.encode("ascii"),
+                    ),
+                )
             ),
             boundaries=tuple(sorted(boundaries)),
             sequence=sequence,
+            sets=tuple(sorted(held_sets)),
         )
+
+
+@dataclass(frozen=True)
+class _Window:
+    """The journal positions one read admits: every record through ``through``."""
+
+    through: int
 
 
 def _after_fork_in_child() -> None:
@@ -1087,42 +3110,148 @@ def cited_reobservation_keys(
 ) -> tuple[ReobservationKey, ...]:
     """Each cited Capture with the contract and content it observed, from the evidence index."""
 
-    keys: list[ReobservationKey] = []
+    return cited_content_keys(
+        instance, coordinate=coordinate, capture_digests=[item.capture_digest for item in captures]
+    )
+
+
+def cited_content_keys(
+    instance: PlaybillInstance,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    capture_digests: Sequence[str],
+) -> tuple[ReobservationKey, ...]:
+    """Each Capture digest with the (contract, content) it observed: one lookup each."""
+
     with instance.bind_accepted_projection(coordinate) as projection:
-        for item in captures:
-            row = projection.typed.connection.execute(
-                "SELECT contract_digest, observed_content_digest FROM captures "
-                "WHERE capture_digest=?",
-                (item.capture_digest,),
-            ).fetchone()
-            if row is not None:
-                keys.append(ReobservationKey(item.capture_digest, str(row[0]), str(row[1])))
+        return content_keys_on(projection.typed.connection, capture_digests)
+
+
+def content_keys_on(
+    connection: sqlite3.Connection, capture_digests: Sequence[str]
+) -> tuple[ReobservationKey, ...]:
+    """``cited_content_keys`` on an accepted projection connection already bound."""
+
+    keys: list[ReobservationKey] = []
+    for digest in capture_digests:
+        row = connection.execute(
+            "SELECT contract_digest, observed_content_digest FROM captures WHERE capture_digest=?",
+            (digest,),
+        ).fetchone()
+        if row is not None:
+            keys.append(ReobservationKey(digest, str(row[0]), str(row[1])))
     return tuple(keys)
+
+
+def claim_keys_on(
+    connection: sqlite3.Connection,
+    reader: "ReobservationReader",
+    claim: Any,
+    capture_digests: Sequence[str],
+) -> tuple[ReobservationKey, ...]:
+    """The keys one Claim's freshness depends on (ruling 2026-11-16).
+
+    An absence reads only its own per-Claim reconfirmations, keyed by the
+    content its root cites (the 0.5.0 fallback): a shared observation of its
+    root page says nothing about the rest of the enumeration (F-001). A Claim
+    produced from an extracted record depends on that record's row and on
+    the exact cited content; once a per-Claim record re-checked it in other
+    bytes (its row changed elsewhere), that Capture's content too, so later
+    identical fetches of those bytes keep refreshing it with no new record.
+    Any other Claim depends on the contents it cites (1a).
+    """
+
+    version = claim_artifact_digest(claim).tagged
+    content = tuple(
+        replace(key, version=version) for key in content_keys_on(connection, capture_digests)
+    )
+    evidence = getattr(getattr(claim, "backing", None), "procedure_evidence", None)
+    witness = getattr(evidence, "absence", None)
+    if isinstance(witness, AbsenceWitness):
+        by_capture = {key.cited_capture_digest: key for key in content}
+        root = by_capture.get(witness.capture)
+        if root is None:
+            return ()
+        return (replace(root, shared=False),)
+    keys = list(content)
+    value = getattr(evidence, "value", None)
+    if isinstance(value, ExtractedBasis):
+        record = (value.capture_digest, value.extract_spec_digest, value.record_locator)
+        row = reader.row_of(*record)
+        keys.append(
+            ReobservationKey(
+                value.capture_digest,
+                *(row or ("", "")),
+                version=version,
+                row_record=record,
+            )
+        )
+        rechecked = reader.rechecked(claim.identity.name, version)
+        if rechecked is not None and rechecked[0] != value.capture_digest:
+            # The latest Capture a per-Claim record re-checked THIS version in:
+            # its later identical fetches refresh it with no new record. A
+            # return to an earlier re-checked Capture is re-checked again
+            # (the terminal restates it), so one association is current.
+            keys.append(
+                ReobservationKey(
+                    value.capture_digest,
+                    rechecked[1],
+                    rechecked[2],
+                    version=version,
+                    recheck_version=version,
+                )
+            )
+    return tuple(keys)
+
+
+def claim_reobservation_keys(
+    instance: PlaybillInstance,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    claim: Any,
+    captures: Sequence[str],
+) -> tuple[ReobservationKey, ...]:
+    """``claim_keys_on`` on its own accepted projection bind."""
+
+    with instance.bind_accepted_projection(coordinate) as projection:
+        return claim_keys_on(
+            projection.typed.connection, ReobservationReader.of(instance), claim, captures
+        )
 
 
 def reobservations_at(
     instance: PlaybillInstance,
     *,
     coordinate: AcceptedProjectionCoordinate,
-    claim_id: str,
+    claim: Any,
     captures: Sequence[CaptureVerdictEvidence],
     at: datetime,
 ) -> ReobservationReading:
     """The recorded re-observations that count for one Claim's verdict at ``at``.
 
-    A lineage never re-observed costs one indexed probe and nothing else; one
-    that was costs one lookup per cited Capture and one ordered probe per cited
-    (contract, content), however long its history.
+    A lineage never observed costs one indexed probe and nothing else; one
+    that was costs one lookup per cited Capture and a few seeks per key it
+    depends on, however long its history.
     """
 
     reader = ReobservationReader.of(instance)
-    if not reader.sequence(claim_id):
+    claim_id = claim.identity.name
+    if not reader.sequence(claim_id) and not reader.content_observed():
         return ReobservationReading()
-    keys = cited_reobservation_keys(instance, coordinate=coordinate, captures=captures)
-    return reader.latest(claim_id, keys, at)
+    keys = claim_reobservation_keys(
+        instance,
+        coordinate=coordinate,
+        claim=claim,
+        captures=[item.capture_digest for item in captures],
+    )
+    return replace(reader.latest(claim_id, keys, at), keys=keys)
 
 
 __all__ = [
+    "CONTENT_OBSERVATION_TAG",
+    "ROW_OBSERVATION_TAG",
+    "RowMap",
+    "ObservedContent",
     "REOBSERVATION_DIRECTORY",
     "ClaimReobservationJournalCorrupt",
     "ClaimReobservationRefused",
@@ -1132,7 +3261,13 @@ __all__ = [
     "ReobservationReading",
     "ReobservationRecord",
     "RecordedReobservation",
+    "ReobservationRequest",
+    "cited_content_keys",
+    "content_keys_on",
     "cited_reobservation_keys",
+    "claim_keys_on",
+    "claim_reobservation_keys",
+    "row_digest",
     "reobservation_journal_identity",
     "reobservation_journal_signature",
     "reobservations_at",

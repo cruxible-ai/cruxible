@@ -11,16 +11,17 @@ first, in an order a run's status never changes; a filter keeps running runs.
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Literal, get_args
+from typing import Any, Literal, cast, get_args
 
 from pydantic import TypeAdapter
 
 from cruxible_client.contracts import ProcedureRunState
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.capture_reads import BodyRestricted
+from cruxible_client.contracts.errors import CasError
 from cruxible_client.contracts.operational_reads import (
     OPERATIONAL_CARD_LIST_LIMIT,
     RUN_CARD_LIST_MEMBERS_MAX,
@@ -45,7 +46,7 @@ from cruxible_client.contracts.procedures.results import (
 from cruxible_client.contracts.temporal import parse_datetime
 from cruxible_core.exhaust import LocalJournalBackend
 from cruxible_core.exhaust.journal_index import RunLocator, RunLocatorKey
-from cruxible_core.exhaust.payloads import UnavailablePayload, read_payload
+from cruxible_core.exhaust.payloads import UnavailablePayload, read_payload, read_payload_bytes
 from cruxible_core.exhaust.records import JournalStreamIdentityV1
 from cruxible_core.procedures.execution import (
     ProcedureRunAdmission,
@@ -519,9 +520,10 @@ def _list_members(
     """Each call node's list members, from the run's ``source_acquisition`` records.
 
     One journal-index range of this run's acquisition records, bounded by the
-    card's member limit; one payload read per record on it. A list member's
-    record names its field ``<field>/<index>``; a whole capture field has
-    none.
+    card's member limit; one payload read per record on it, and for a call's
+    one v2 record one read of its members body. A list member names its field
+    ``<field>/<index>``; a whole capture field has none. A v2 call whose
+    members run past the limit is named in the second value directly.
 
     The second value is every displayed call with list members past that
     range, found with one bounded indexed existence probe (``limit=1``) per
@@ -546,72 +548,162 @@ def _list_members(
         limit=RUN_CARD_LIST_MEMBERS_MAX + 1,
     )
     found: dict[str, list[GetRunListMember]] = {}
+    served = 0
+    truncated_nodes: set[str] = set()
+    displayed = {node.node for node in nodes}
     for item in stored[:RUN_CARD_LIST_MEMBERS_MAX]:
         payload = run_payload(instance, item.record.payload_digest)
         if not isinstance(payload, Mapping):
             continue
-        member = _list_member_field(payload)
-        if member is None:
+        if served == RUN_CARD_LIST_MEMBERS_MAX and _is_call_record(payload):
+            # Past the card's limit a call's record says whether it holds list
+            # members; its members bodies are never opened.
+            node_id = str(payload.get("node_id", "?"))
+            if int(cast(int, payload.get("listed", 0))) and node_id in displayed:
+                truncated_nodes.add(node_id)
             continue
-        field, index = member
-        decision = payload.get("decision")
-        result = payload.get("result")
-        decision = decision if isinstance(decision, Mapping) else {}
-        result = result if isinstance(result, Mapping) else {}
-        selected = list(decision.get("selected_capture_digests") or ())
-        considered = list(decision.get("considered_capture_digests") or ())
-        reasons = list(decision.get("reason_codes") or ())
-        status = decision.get("disposition")
-        if status not in ("selected", "omitted", "defaulted", "refused"):
-            continue
-        reason = reasons[0] if reasons else result.get("reason_code")
-        request = payload.get("member_request_digest")
-        found.setdefault(str(payload.get("node_id", "?")), []).append(
-            GetRunListMember(
-                field=field,
-                index=index,
-                capture=(selected or considered or [None])[0],
-                request=request if isinstance(request, str) else None,
-                status=status,
-                reason=reason if isinstance(reason, str) else None,
-            )
-        )
-    truncated_nodes: set[str] = set()
+        record = payload
+        shown = 0
+        for payload in _acquisition_members(instance, record):
+            member = _list_member_field(payload)
+            if member is None:
+                continue
+            if served == RUN_CARD_LIST_MEMBERS_MAX:
+                # A v1 record past the card's limit: the call's unserved overflow.
+                node_id = str(payload.get("node_id", "?"))
+                if node_id in displayed:
+                    truncated_nodes.add(node_id)
+                break
+            served += 1
+            shown += 1
+            _add_list_member(found, payload, member)
+            if served == RUN_CARD_LIST_MEMBERS_MAX and _is_call_record(record):
+                # The limit is reached: the record's count says whether the
+                # call holds more, so no further members chunk is opened.
+                node_id = str(record.get("node_id", "?"))
+                if int(cast(int, record.get("listed", 0))) > shown and node_id in displayed:
+                    truncated_nodes.add(node_id)
+                break
     if len(stored) > RUN_CARD_LIST_MEMBERS_MAX and nodes:
-        served_through = stored[RUN_CARD_LIST_MEMBERS_MAX - 1].record.sequence
-        # The displayed list's own first entry is not necessarily the run's
-        # first fired node: the card shows only the latest ones. Anchor the
-        # first interval on the actual preceding node_fired record (one
-        # lookup, done once), so an earlier, undisplayed call's own overflow
-        # is never attributed to the first displayed node.
-        previous_sequence = 0
-        preceding = journal.index.select(
-            stream,
-            run_id=run_id,
-            event_kind="node_fired",
-            last_sequence=nodes[0].sequence - 1,
-            descending=True,
-            limit=1,
+        truncated_nodes |= _overflowing_calls(
+            instance, journal, stream, run_id, nodes, stored[RUN_CARD_LIST_MEMBERS_MAX - 1]
         )
-        if preceding:
-            previous_sequence = preceding[0].record.sequence
-        for node in nodes:
-            lower = max(served_through, previous_sequence) + 1
-            if lower <= node.sequence:
-                overflow = journal.index.select(
-                    stream,
-                    run_id=run_id,
-                    event_kind="source_acquisition",
-                    first_sequence=lower,
-                    last_sequence=node.sequence,
-                    limit=1,
-                )
-                if overflow:
-                    payload = run_payload(instance, overflow[0].record.payload_digest)
-                    if isinstance(payload, Mapping) and _list_member_field(payload) is not None:
-                        truncated_nodes.add(node.node)
-            previous_sequence = node.sequence
     return found, frozenset(truncated_nodes)
+
+
+def _is_call_record(payload: Mapping[str, Any]) -> bool:
+    return payload.get("tag") == "playbill-procedure-source-acquisition-v2"
+
+
+def _acquisition_members(
+    instance: PlaybillInstance, payload: Mapping[str, Any]
+) -> Iterator[Mapping[str, Any]]:
+    """A ``source_acquisition`` record's members, each shaped as a v1 per-member record.
+
+    A v1 record is one member; a v2 record (one per call) cites its members
+    in chunks, each read only when the reader gets that far (a card stops at
+    its limit). A lost chunk ends the members.
+    """
+
+    if not _is_call_record(payload):
+        yield payload
+        return
+    from cruxible_core.procedures.execution import acquisition_member_chunks
+
+    node_id = payload.get("node_id")
+    chunks = acquisition_member_chunks(
+        payload, lambda digest: instance.body_store().read(digest, access=_ACCESS)
+    )
+    for digest in chunks or ():
+        raw = read_payload_bytes(instance.body_store(), str(digest), access=_ACCESS)
+        body = None if isinstance(raw, UnavailablePayload) else json.loads(raw)
+        members = body.get("members") if isinstance(body, Mapping) else None
+        if not isinstance(members, list):
+            return
+        for member in members:
+            if isinstance(member, Mapping):
+                yield {**member, "node_id": node_id}
+
+
+def _add_list_member(
+    found: dict[str, list[GetRunListMember]],
+    payload: Mapping[str, Any],
+    member: tuple[str, int],
+) -> None:
+    field, index = member
+    decision = payload.get("decision")
+    result = payload.get("result")
+    decision = decision if isinstance(decision, Mapping) else {}
+    result = result if isinstance(result, Mapping) else {}
+    selected = list(decision.get("selected_capture_digests") or ())
+    considered = list(decision.get("considered_capture_digests") or ())
+    reasons = list(decision.get("reason_codes") or ())
+    status = decision.get("disposition")
+    if status not in ("selected", "omitted", "defaulted", "refused"):
+        return
+    reason = reasons[0] if reasons else result.get("reason_code")
+    request = payload.get("member_request_digest")
+    found.setdefault(str(payload.get("node_id", "?")), []).append(
+        GetRunListMember(
+            field=field,
+            index=index,
+            capture=(selected or considered or [None])[0],
+            request=request if isinstance(request, str) else None,
+            status=status,
+            reason=reason if isinstance(reason, str) else None,
+        )
+    )
+
+
+def _overflowing_calls(
+    instance: PlaybillInstance,
+    journal: LocalJournalBackend,
+    stream: JournalStreamIdentityV1,
+    run_id: str,
+    nodes: Sequence[GetRunNode],
+    last_served: Any,
+) -> set[str]:
+    """Displayed calls with acquisition records past the card's record range."""
+
+    truncated_nodes: set[str] = set()
+    served_through = last_served.record.sequence
+    # The displayed list's own first entry is not necessarily the run's
+    # first fired node: the card shows only the latest ones. Anchor the
+    # first interval on the actual preceding node_fired record (one
+    # lookup, done once), so an earlier, undisplayed call's own overflow
+    # is never attributed to the first displayed node.
+    previous_sequence = 0
+    preceding = journal.index.select(
+        stream,
+        run_id=run_id,
+        event_kind="node_fired",
+        last_sequence=nodes[0].sequence - 1,
+        descending=True,
+        limit=1,
+    )
+    if preceding:
+        previous_sequence = preceding[0].record.sequence
+    for node in nodes:
+        lower = max(served_through, previous_sequence) + 1
+        if lower <= node.sequence:
+            overflow = journal.index.select(
+                stream,
+                run_id=run_id,
+                event_kind="source_acquisition",
+                first_sequence=lower,
+                last_sequence=node.sequence,
+                limit=1,
+            )
+            if overflow:
+                payload = run_payload(instance, overflow[0].record.payload_digest)
+                if isinstance(payload, Mapping) and (
+                    int(cast(int, payload.get("listed", 0)))
+                    if _is_call_record(payload)
+                    else _list_member_field(payload) is not None
+                ):
+                    truncated_nodes.add(node.node)
+        previous_sequence = node.sequence
+    return truncated_nodes
 
 
 def _with_members(
@@ -706,7 +798,7 @@ def run_consumed_captures(
     with no node fired yet has consumed nothing.
     """
 
-    from cruxible_core.procedures.execution import CONSUMPTION_VERSION
+    from cruxible_core.procedures.execution import consumed_captures
 
     if run_id is None:
         return (), True
@@ -727,18 +819,20 @@ def run_consumed_captures(
         digests.append(locators[0].final_payload_digest)
     found: set[str] = set()
     known = True
+    bodies = instance.body_store()
     for digest in digests:
         payload = run_payload(instance, digest)
-        consumption = payload.get("consumption") if isinstance(payload, Mapping) else None
-        captures = consumption.get("captures") if isinstance(consumption, Mapping) else None
-        if (
-            not isinstance(consumption, Mapping)
-            or consumption.get("v") != CONSUMPTION_VERSION
-            or not isinstance(captures, list)
-        ):
+        try:
+            captures = consumed_captures(
+                payload.get("consumption") if isinstance(payload, Mapping) else None,
+                lambda body: bytes(bodies.read(body, access=_ACCESS)),
+            )
+        except (CasError, OSError, ValueError):
+            captures = None  # a lost or damaged consumption body: unknown
+        if captures is None:
             known = False
             continue
-        found.update(str(item) for item in captures)
+        found.update(captures)
     return tuple(sorted(found)), known
 
 

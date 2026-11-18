@@ -6,8 +6,8 @@ description: Define or extend Cruxible vocabulary and evidence-backed values for
 # Create state
 
 Cruxible holds typed Claims about Subjects, with evidence and accepted history.
-Begin with `cruxible orient` for the small index and relevant ClaimType
-descriptions; existing named queries and governed Documents may already
+Begin with `cruxible orient` for the small index (`cruxible get
+ClaimType:NAME` gives a field's description); existing named queries and governed Documents may already
 describe the needed state. An available kit can supply vocabulary;
 `adopt-kit` handles its installation. Before re-deriving a conclusion, check
 whether an accepted Claim already answers it; cite that Claim instead of
@@ -50,7 +50,10 @@ whose `key` is the kind's one key value or `{field: value}` (SDK
 `subject=` and as a value). File passages, sections, Captures, contracts and
 the writer's own words provide evidence through the supported write surface.
 A workspace file is cited by its path; a file the catalog does not name yet is
-catalogued by the write that cites it. Evidence belongs to each Claim: a decision and the values that
+catalogued by the write that cites it. A quoted code line (`--evidence-file
+PATH#TEXT`) is a pointer for reviewers, not a witness that resurfaces the
+judgment; a judgment that depends on code cites a check result where one exists
+(a scanner's finding), and prose keeps quote and section citations. Evidence belongs to each Claim: a decision and the values that
 rest on its reasoning (its date included) cite the section written in the
 same change. Preserve verdict flags instead of treating every stored value as
 supported.
