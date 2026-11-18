@@ -213,6 +213,10 @@ One daemon owns the state; three clients talk to it:
   vocabulary into typed Python, as in the example at the top. See the
   [SDK reference](packages/cruxible-client/README.md).
 
+The verbs are the same on all three: `orient`, `query` and `get` read; `set`
+and `write` change values; `authoring` changes definitions. `init` starts a
+local daemon for you; `cruxible server start` runs one yourself.
+
 The [plugin](plugins/README.md) for Claude Code and Codex adds five general
 skills: `survey` works out what in a project with no kit is worth holding as
 state, `adopt-kit` starts from a kit, and `create-state`, `automate-state` and
