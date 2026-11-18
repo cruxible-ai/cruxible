@@ -459,6 +459,17 @@ quickstart and concepts pages.
 
 ### Fixed during the release candidate
 
+- **A closed proposal says who closed it, when and why.** `get PROPOSAL`
+  printed `reason: rejected` and none of the reviewer's `proposal reject
+  --reason` text, so an author could not read why. The card (CLI, SDK
+  `cx.get`, MCP `cruxible_get`) and each `proposal list` entry now carry
+  `closed_by`, `closed_at` and `closed_reason` for a rejected or withdrawn
+  proposal; `proposal list` prints them under the row (the reason cut at 200
+  characters), and `get` prints the reason whole.
+- **`get` takes a proposal id without `sha256:`.** The bare hex id, whole or
+  a prefix of at least 8 characters (also after `Proposal:`), answered
+  `cruxible.get.ref_not_found`; it now names the proposal when no artifact has
+  that name.
 - **A proposal proposed again at the head reviews the verdicts it lands
   with.** A pending write that an earlier-written sibling overtook was judged,
   when approval proposed it again at the head, at the sibling's time, before

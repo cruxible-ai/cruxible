@@ -670,6 +670,10 @@ def render_get(
                     continue
                 if value in (None, [], {}):
                     continue
+                if key == "closed_reason" and result.kind == "proposal":
+                    # A reviewer's reason is read whole: it is why the author is here.
+                    lines.append(f"closed_reason: {printable(value)}")
+                    continue
                 if key == "schedule" and result.kind == "trigger" and card.get("sched"):
                     # S3: the compact ``sched`` line says it; JSON keeps the schedule.
                     continue

@@ -897,10 +897,16 @@ class ProposalListEntry(BaseModel):
     stale_paths: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
     #: An accepted proposal: the accepted generation its change set settled in.
     accepted_generation: int | None = Field(default=None, exclude_if=lambda value: value is None)
-    #: A superseded proposal: the proposal that took its place, and the
-    #: principal whose act closed it (absent on records that predate it).
+    #: A superseded proposal: the proposal that took its place.
     superseded_by: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    #: A superseded, rejected or withdrawn proposal: the principal whose act
+    #: closed it (absent on a superseded record that predates it).
     closed_by: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    #: A rejected or withdrawn proposal: when it closed, and the reason its
+    #: closer gave (a reviewer's ``proposal reject --reason``, the author's
+    #: ``proposal withdraw --reason``).
+    closed_at: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    closed_reason: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class ProposalList(BaseModel):

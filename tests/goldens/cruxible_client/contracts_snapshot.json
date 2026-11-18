@@ -75212,6 +75212,18 @@
                 "default": null,
                 "title": "Candidate Digest"
               },
+              "closed_at": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Closed At"
+              },
               "closed_by": {
                 "anyOf": [
                   {
@@ -75223,6 +75235,18 @@
                 ],
                 "default": null,
                 "title": "Closed By"
+              },
+              "closed_reason": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Closed Reason"
               },
               "incomplete_reasons": {
                 "default": [],
@@ -75482,6 +75506,26 @@
             "title": "Candidate Digest"
           }
         },
+        "closed_at": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "closed_at",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Closed At"
+          }
+        },
         "closed_by": {
           "default": null,
           "default_json_serializable": true,
@@ -75500,6 +75544,26 @@
             ],
             "default": null,
             "title": "Closed By"
+          }
+        },
+        "closed_reason": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "closed_reason",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Closed Reason"
           }
         },
         "incomplete_reasons": {
@@ -75727,6 +75791,18 @@
             "default": null,
             "title": "Candidate Digest"
           },
+          "closed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Closed At"
+          },
           "closed_by": {
             "anyOf": [
               {
@@ -75738,6 +75814,18 @@
             ],
             "default": null,
             "title": "Closed By"
+          },
+          "closed_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Closed Reason"
           },
           "incomplete_reasons": {
             "default": [],

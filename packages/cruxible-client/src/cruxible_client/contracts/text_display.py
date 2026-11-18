@@ -1394,6 +1394,13 @@ def proposal_list_lines(result: Any) -> list[str]:
         )
         if entry.superseded_by is not None:
             lines.append(f"  superseded_by: {entry.superseded_by}")
+        if entry.closed_reason is not None:
+            # Who closed it, when, and why; `get PROPOSAL_ID` has the reason whole.
+            reason = printable(entry.closed_reason)
+            cut = reason if len(reason) <= 200 else reason[:199] + "…"
+            lines.append(
+                f"  {entry.terminal_reason} by {entry.closed_by} at {entry.closed_at}: {cut}"
+            )
         if entry.stale_paths:
             from cruxible_client.contracts.get_text import definition_path_name
 

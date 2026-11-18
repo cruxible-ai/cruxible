@@ -94,6 +94,10 @@ class _StrictOperationalReadModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
+#: The endings one closing record (``ProposalWithdrawalRecord``) makes.
+_CLOSED_REASONS = frozenset({"superseded", "rejected", "withdrawn"})
+
+
 class PlaybillProposalListEntryV1(_StrictOperationalReadModel):
     tag: Literal["playbill-proposal-list-entry-v1"] = "playbill-proposal-list-entry-v1"
     proposal_id: str
@@ -112,17 +116,28 @@ class PlaybillProposalListEntryV1(_StrictOperationalReadModel):
     #: ``settled`` + ``accepted`` only: the accepted generation its change set
     #: settled in (the proposal index's maintained settlement record).
     accepted_generation: int | None = Field(default=None, exclude_if=lambda value: value is None)
-    #: ``settled`` + ``superseded`` only: the proposal that took its place, and
-    #: the principal whose approval, activation, readmit or Line run closed it.
+    #: ``settled`` + ``superseded`` only: the proposal that took its place.
     superseded_by: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    #: A closed proposal (``superseded``, ``rejected`` or ``withdrawn``): the
+    #: principal whose act closed it (a reviewer's rejection, the author's
+    #: withdrawal, or the approval, activation, readmit or Line run that
+    #: superseded it).
     closed_by: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    #: ``rejected`` or ``withdrawn`` only: when it closed, and the reason its
+    #: closer gave, from its closing record.
+    closed_at: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    closed_reason: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @model_validator(mode="after")
     def _status_shape(self) -> "PlaybillProposalListEntryV1":
         if (self.superseded_by is not None) != (self.terminal_reason == "superseded"):
             raise ValueError("exactly a superseded proposal names its successor")
-        if self.closed_by is not None and self.superseded_by is None:
-            raise ValueError("only a superseded proposal names who closed it")
+        if self.closed_by is not None and self.terminal_reason not in _CLOSED_REASONS:
+            raise ValueError("only a closed proposal names who closed it")
+        if (self.closed_at is not None or self.closed_reason is not None) and (
+            self.terminal_reason not in {"rejected", "withdrawn"}
+        ):
+            raise ValueError("only a rejected or withdrawn proposal carries its closing reason")
         if (self.accepted_generation is not None) != (self.terminal_reason == "accepted"):
             raise ValueError("exactly an accepted proposal names its accepted generation")
         if bool(self.stale_paths) != (self.status == "awaiting_readmit"):
@@ -494,10 +509,18 @@ def _proposal_entries(
         awaiting_readmit = bool(stale_paths) and not missing
         if reason == "stale":
             reason = None
-        superseded_by = closed_by = None
+        superseded_by = closed_by = closed_at = closed_reason = None
         if reason == "withdrawn":
             # One closing record carries every ending; its kind tells them apart.
             closed = evidence.read_withdrawal(row["proposal_id"])
+            if closed is not None and not closed.is_superseded and not missing:
+                # A rejection or a withdrawal: who closed it, when, and the
+                # reason given, as the record (already read here) holds them.
+                closed_by, closed_at, closed_reason = (
+                    closed.actor_id,
+                    closed.withdrawn_at,
+                    closed.reason,
+                )
             if closed is not None and closed.kind == "rejected":
                 reason = "rejected"
             elif closed is not None and closed.is_superseded and not missing:
@@ -534,6 +557,8 @@ def _proposal_entries(
                 ),
                 superseded_by=superseded_by,
                 closed_by=closed_by,
+                closed_at=closed_at,
+                closed_reason=closed_reason,
             )
         )
     return tuple(entries)

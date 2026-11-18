@@ -601,7 +601,26 @@ def _resolve_get_ref_as_written(
                 key_reader=_tree_key_reader(instance, coordinate),
                 subject_suggestions=subject_suggestions,
             )
-        return _resolve_bare(projection, value, surface=surface)
+        try:
+            return _resolve_bare(projection, value, surface=surface)
+        except ReadRefusalError as exc:
+            if exc.error_code != "cruxible.get.ref_not_found" or not _BARE_PROPOSAL_ID.fullmatch(
+                value
+            ):
+                raise
+            unnamed = exc
+    # No artifact has this name, and it reads as a proposal id or prefix
+    # without its ``sha256:``: one keyed lookup on the proposal index.
+    from cruxible_client.contracts.errors import ProposalNotFoundError
+
+    try:
+        return _resolve_proposal(instance, value)
+    except ProposalNotFoundError:
+        raise unnamed from None
+
+
+#: A proposal id, or a prefix of one, written without ``sha256:``.
+_BARE_PROPOSAL_ID = re.compile(r"^[0-9a-f]{8,64}$")
 
 
 def _declared_subject_kind(projection: Any, kind: str) -> bool:
@@ -649,6 +668,8 @@ def _resolve_proposal(instance: PlaybillInstance, selector: str) -> ResolvedRef:
     if selector.startswith("refs/"):
         resolved = service_resolve_playbill_proposal_selector(instance, selector=selector)
         return ResolvedRef("proposal", resolved.proposal_id, f"Proposal:{resolved.proposal_id}")
+    if _BARE_PROPOSAL_ID.fullmatch(selector):
+        selector = f"sha256:{selector}"
     try:
         entry = service_playbill_proposal_status(instance, proposal_id=selector)
     except AmbiguousIdPrefix as exc:
@@ -2478,6 +2499,8 @@ def _proposal_card(
         reason=entry.terminal_reason,
         superseded_by=entry.superseded_by,
         closed_by=entry.closed_by,
+        closed_at=entry.closed_at,
+        closed_reason=entry.closed_reason,
         actor=entry.actor_id,
         admitted_at=entry.admitted_at,
         rationale=None if admission is None else admission.rationale,

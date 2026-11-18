@@ -1240,3 +1240,76 @@ def test_a_proposal_landed_behind_an_earlier_sibling_reviews_its_landing_verdict
         verdicts_by_identity=landed_verdicts,
     )
     assert [item.verdict for item in landed_verdicts.values()] == ["supported", "supported"]
+
+
+def test_the_author_of_a_rejected_proposal_reads_who_when_and_why(tmp_path: Path) -> None:
+    """coldcli step 7 (and coldsdk, coldmcp, coldps): `get PROPOSAL` printed
+    `reason: rejected` and nothing of the reviewer's reason, although the closing
+    record holds it. The card and the list entry carry who closed it, when and
+    the reason given, whole on the card; a withdrawal reads the same way. The
+    bare hex id (no `sha256:`), whole or a prefix, names the proposal too."""
+
+    from cruxible_client.contracts.get_text import render_get
+    from cruxible_client.contracts.text_display import proposal_list_lines
+    from cruxible_core.service.proposals.proposals import (
+        service_reject_playbill_proposal,
+        service_withdraw_playbill_proposal,
+    )
+
+    instance, _reviewer = _world(tmp_path)
+    rejected_id = _pending(instance, _set(f"{KIND}/wi-1", "title", "rejected"))
+    why = "The cited line does not show reachability. Cite the call site. " + "x" * 300
+    at = "2026-11-17T12:00:00.000000Z"
+    service_reject_playbill_proposal(
+        instance, proposal_id=rejected_id, actor_id="reviewer", reason=why, rejected_at=at
+    )
+    withdrawn_id = _pending(instance, _set(f"{KIND}/wi-2", "title", "withdrawn"))
+    service_withdraw_playbill_proposal(
+        instance, proposal_id=withdrawn_id, actor_id="owner", reason="Wrong item.", withdrawn_at=at
+    )
+
+    entry = _entry(instance, rejected_id)
+    assert (entry.status, entry.terminal_reason) == ("settled", "rejected")
+    assert (entry.closed_by, entry.closed_at, entry.closed_reason) == ("reviewer", at, why)
+    card = _card(instance, rejected_id)
+    assert card.card.model_dump(mode="json", include={"reason", "closed_by", "closed_at"}) == {
+        "reason": "rejected",
+        "closed_by": "reviewer",
+        "closed_at": at,
+    }
+    assert card.card.closed_reason == why
+    text = render_get(card)
+    assert text is not None
+    # The reason is never cut; the author stays `actor`.
+    assert (
+        f"reason: rejected\nclosed_by: reviewer\nclosed_at: {at}\n"
+        f"closed_reason: {why}\nactor: owner\n"
+    ) in text
+
+    withdrawn = _entry(instance, withdrawn_id)
+    assert (withdrawn.terminal_reason, withdrawn.closed_by) == ("withdrawn", "owner")
+    assert (withdrawn.closed_at, withdrawn.closed_reason) == (at, "Wrong item.")
+    assert "closed_reason: Wrong item.\n" in (render_get(_card(instance, withdrawn_id)) or "")
+
+    # `proposal list` says it under the row, cut; `get` has it whole.
+    page = service_list_playbill_proposals(instance, status="settled")
+    lines = proposal_list_lines(page)
+    assert f"  withdrawn by owner at {at}: Wrong item." in lines
+    (row,) = [line for line in lines if line.startswith("  rejected by ")]
+    assert row.startswith(f"  rejected by reviewer at {at}: The cited line") and row.endswith("…")
+    assert len(row) < 260 and "\n" not in row
+
+    # An open proposal names none of it.
+    open_id = _pending(instance, _set(f"{KIND}/wi-3", "title", "open"))
+    opened = _entry(instance, open_id)
+    assert (opened.closed_by, opened.closed_at, opened.closed_reason) == (None, None, None)
+
+    # The id without its `sha256:`, whole or as a prefix, and typed.
+    bare = rejected_id.removeprefix("sha256:")
+    for ref in (bare, bare[:12], f"Proposal:{bare}", f"Proposal:{rejected_id}"):
+        assert _card(instance, ref).card.proposal == rejected_id, ref
+    from cruxible_client.contracts.errors import ReadRefusalError
+
+    with pytest.raises(ReadRefusalError) as missing:
+        _card(instance, "0" * 16)
+    assert missing.value.error_code == "cruxible.get.ref_not_found"
