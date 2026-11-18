@@ -6,8 +6,8 @@ description: Define or extend Cruxible vocabulary and evidence-backed values for
 # Create state
 
 Cruxible holds typed Claims about Subjects, with evidence and accepted history.
-Begin with `cruxible orient` for the small index and relevant ClaimType
-descriptions; existing named queries and governed Documents may already
+Begin with `cruxible orient` for the small index (`cruxible get
+ClaimType:NAME` gives a field's description); existing named queries and governed Documents may already
 describe the needed state. An available kit can supply vocabulary;
 `adopt-kit` handles its installation. Before re-deriving a conclusion, check
 whether an accepted Claim already answers it; cite that Claim instead of
