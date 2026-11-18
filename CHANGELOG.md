@@ -572,7 +572,14 @@ quickstart and concepts pages.
   out its evaluation instant, a claims terminal's evidence item list is a
   run-free body cited by digest, and a run-journal head move that matched
   nothing journals no Line coverage.
-  <!-- TODO(0.5.0): measured bytes per unchanged run -->
+  A run in which no source changed stores no new document and fires no
+  Trigger, and its values are counted `unchanged`. It still appends its run
+  records to the instance's journal: the journal grows with every run by
+  design, no command prunes it, and it is part of the instance, backed up with
+  the ledger. When a source's raw response changes without changing what is
+  derived from it (a vulnerability database editing an advisory's metadata,
+  say), the derived document is recorded again with its new inputs and its
+  Trigger runs once more; that run changes no Claim and adds no new inbox item.
 - **Repairs and next lines run as written, in each client's spelling.** A
   refusal's repair printed an operation id and JSON on the CLI (`Repair:
   cruxible.proposal.readmit {"dry_run":true}`), and MCP and SDK results named
