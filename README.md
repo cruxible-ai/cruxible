@@ -14,6 +14,9 @@ they’ve learned through a typed, code-like interface, so they model the world
 rather than solely write notes about it. Their observations and judgments
 become building blocks that later sessions reuse instead of re-deriving.
 
+Runs on Linux (x86-64) and macOS (Apple silicon) with Python 3.11+; on
+Windows, use WSL2. [Install and start](#install-and-start).
+
 <!-- TODO(0.5.0): the examples below are from one run on the integration build
 (a shop's delivery promises; 2026-11-18, outputs and definitions in
 wt-i/promise), trimmed: ids shortened; sequence numbers, generation ids and
@@ -116,19 +119,18 @@ record.
 - **Deterministic.** No LLM runs inside Cruxible. Agents and people propose
   and judge; Cruxible applies declared rules deterministically.
 
-Herbert Simon's watchmakers make the point. Tempus builds each watch in one
-go, and every interruption scatters the parts; Hora builds stable
-subassemblies, so an interruption costs only the piece in hand. Agent
-sessions are interrupted all the time. Notes are Tempus. Each accepted fact
-in Cruxible is one of Hora's subassemblies: it stays put, so the work done so
-far survives and the next session builds on it.
-
-## Don't replace your markdown, bring it to life
-
-Your pages stay where they are. Facts cite passages in them, and long prose
-stays in pages instead of being forced into fields. Tables generated from
-facts are flagged when the facts behind them change and re-rendered on sync,
-and you can browse the current facts as plain files you can grep.
+Herbert Simon's
+[watchmakers](https://faculty.sites.iastate.edu/tesfatsi/archive/tesfatsi/ArchitectureOfComplexity.HSimon1962.pdf#page=5)
+show why complex systems tend to be built from stable intermediate parts.
+Tempus builds each watch in one go, and every interruption makes him start
+over. Hora builds stable subassemblies, so an interruption costs only the
+piece in hand. Agent sessions with fresh context windows work like Tempus:
+context is pulled in on demand, and facts are re-derived and re-interpreted
+each time. Cruxible gives agents Hora's subassemblies. Each accepted fact
+has a fixed place: it belongs to the thing it describes, links to the things
+it relates to, and keeps the evidence it was derived from. Ask about one
+thing and everything known about it comes back together, so the cost of
+working something out is paid once and knowledge accumulates.
 
 ## The security kit: the same loop on real work
 
