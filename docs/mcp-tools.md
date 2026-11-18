@@ -506,7 +506,10 @@ Prediction settlement records the activation and resolution in operational
 exhaust; it does not create or mutate Claims, and it does not create a second
 authority plane beside accepted state.
 
-<!-- TODO(0.5.0): freshness limits note -->
+Settlement reads the observation Claim version's acceptance and that
+version's own per-Claim re-checks; the identical bytes and row sets that keep
+a Claim fresh do not settle a prediction. Freshness and settlement have known
+limits in 0.5.0: see [what freshness does and does not do](evidence-and-admission.md#what-freshness-does-and-does-not-do-in-050).
 
 ## Queries, orient and get
 

@@ -471,7 +471,7 @@ Builds a ClaimTypeDraft with explicit object, cardinality, role, evidence, admis
 | `admission_policy` | Required | Typed policy governing Claim admission. |
 | `resolution_policy` | Required | Typed policy governing Claim resolution; separate from acceptance. |
 | `pins` | Required | Declared ArtifactPin dependencies. Exact pins belong to their artifact contract. |
-| `evidence_freshness` | Required | Optional freshness duration. None leaves it unspecified. <!-- TODO(0.5.0): freshness limits note --> |
+| `evidence_freshness` | Required | Optional freshness duration; only a field that sets one ages. None leaves it unspecified. See [freshness in 0.5.0](../../docs/evidence-and-admission.md#what-freshness-does-and-does-not-do-in-050). |
 | `attestation_consequence_policy` | `None` | Optional policy for consequences of accepted signed attestations. |
 | `canonical_form` | `None` | Ordered transforms literal values are stored in; left out, a successor keeps its predecessor's. |
 | `evidence` | `()` | Shaped CaptureContract names that back the field (the short form's `evidence`). Own words and workspace file and section citations need no entry. |
@@ -1251,7 +1251,7 @@ Creates a governed proposal for an independent resolution contract over an alrea
 
 **Conditions and effects:** Does not approve or accept the proposal.
 
-<!-- TODO(0.5.0): freshness limits note -->
+Settlement has known limits in 0.5.0; see [freshness in 0.5.0](../../docs/evidence-and-admission.md#what-freshness-does-and-does-not-do-in-050).
 
 | Parameter | Default | Meaning |
 |---|---|---|
@@ -1278,7 +1278,7 @@ Evaluates and records settlement for a prediction named by contract name or boun
 
 **Conditions and effects:** terminal_run_id and terminal_record_digest must be supplied together. Missing/non-Boolean outcome refuses; procedure success alone is not settlement.
 
-<!-- TODO(0.5.0): freshness limits note -->
+An observation counts at the time its Claim version was accepted, or at that version's own per-Claim re-check observed by the window's close; the identical bytes and row sets that keep a Claim fresh do not settle a prediction. See [freshness in 0.5.0](../../docs/evidence-and-admission.md#what-freshness-does-and-does-not-do-in-050).
 
 | Parameter | Default | Meaning |
 |---|---|---|
@@ -1335,7 +1335,7 @@ Scans the attached workspace and reads actionable work with explicit access prof
 
 | Parameter | Default | Meaning |
 |---|---|---|
-| `expiring_within` | `None` (seven days) | A `cruxible_client.Duration`: how far ahead expiring evidence counts. <!-- TODO(0.5.0): freshness limits note --> |
+| `expiring_within` | `None` (seven days) | A `cruxible_client.Duration`: how far ahead expiring evidence counts. Only fields that set `stale_after` expire; see [freshness in 0.5.0](../../docs/evidence-and-admission.md#what-freshness-does-and-does-not-do-in-050). |
 
 <a id="api-cruxible-duplicates"></a>
 
