@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+Every user-visible fix or feature adds its entry here in the same change
+that lands it; entries move under a version heading when the release is
+tagged. Work items for these changes live on the active release line in
+the project's own state instance.
+
+## [0.5.0] - 2026-11-18
+
 This release replaces the 0.3 configuration graph with a new state model.
 Values are Claims about Subjects under ClaimTypes; every change is a proposal
 checked deterministically, accepted under an approval policy with signed
