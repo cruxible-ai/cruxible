@@ -4,24 +4,27 @@
 creates it), so hatch would drop it from both the sdist and the wheel; the
 ``artifacts`` entries in pyproject.toml put it back. ``uv build`` makes the
 wheel from the sdist, so both must carry it. This builds a copy of the project
-holding a tiny fake bundle the way the release job does, checks both archives,
-and serves ``index.html`` and the manifest from the unpacked wheel.
+holding a tiny fake bundle the way the release job does, checks both archives
+with the release job's own check (``scripts/console_release.py check``), and
+serves ``index.html`` and the manifest from the unpacked wheel.
 """
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import shutil
 import subprocess
 import sys
-import tarfile
 import zipfile
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
-from cruxible_core.console.bundle import MANIFEST_NAME, write_manifest
+import cruxible_core
+from cruxible_core.console.bundle import write_manifest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -56,6 +59,16 @@ print(json.dumps({
 """
 
 
+def _release_script() -> ModuleType:
+    spec = importlib.util.spec_from_file_location(
+        "console_release", REPO_ROOT / "scripts" / "console_release.py"
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def test_a_built_wheel_carries_and_serves_the_console_bundle(tmp_path: Path) -> None:
     uv = shutil.which("uv")
     if uv is None:
@@ -74,7 +87,13 @@ def test_a_built_wheel_carries_and_serves_the_console_bundle(tmp_path: Path) -> 
     (dist / "assets").mkdir(parents=True)
     (dist / "index.html").write_text("<!doctype html><title>fake console</title>")
     (dist / "assets" / "app.js").write_text("console.log(1)")
-    write_manifest(dist, console_commit="f" * 40, console_pin={}, pin_matches_core=True)
+    write_manifest(
+        dist,
+        console_commit="f" * 40,
+        console_pin={},
+        pin_matches_core=True,
+        core_version=cruxible_core.__version__,
+    )
 
     out = tmp_path / "out"
     built = subprocess.run(
@@ -86,22 +105,14 @@ def test_a_built_wheel_carries_and_serves_the_console_bundle(tmp_path: Path) -> 
     )
     assert built.returncode == 0, built.stdout + built.stderr
 
-    [sdist] = out.glob("cruxible-*.tar.gz")
-    with tarfile.open(sdist) as archive:
-        sdist_names = {name.split("/", 1)[1] for name in archive.getnames() if "/" in name}
-    assert "src/cruxible_core/console_dist/index.html" in sdist_names
-    assert f"src/cruxible_core/console_dist/{MANIFEST_NAME}" in sdist_names
+    # The release job's check: both archives carry the manifest and every file it lists.
+    manifest = _release_script().check_dist(out, commit="f" * 40)
+    assert set(manifest["files"]) == {"index.html", "assets/app.js"}
 
     [wheel] = out.glob("cruxible-*.whl")
     unpacked = tmp_path / "unpacked"
     with zipfile.ZipFile(wheel) as archive:
-        names = set(archive.namelist())
         archive.extractall(unpacked)
-    assert {
-        "cruxible_core/console_dist/index.html",
-        "cruxible_core/console_dist/assets/app.js",
-        f"cruxible_core/console_dist/{MANIFEST_NAME}",
-    } <= names
 
     env = {
         **os.environ,

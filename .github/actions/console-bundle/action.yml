@@ -1,0 +1,46 @@
+name: Build the console bundle
+description: >-
+  Check out the console at the commit scripts/console_release.json pins, build
+  it with the Node and pnpm versions its package.json declares, and install it
+  into src/cruxible_core/console_dist/ with scripts/build_console.py (which
+  refuses unless the console's pin matches this core). Run it after checking
+  out core and setting up uv, before `uv build`.
+
+runs:
+  using: composite
+  steps:
+    - name: Read the console pin
+      id: pin
+      shell: bash
+      run: python scripts/console_release.py pin >> "$GITHUB_OUTPUT"
+
+    # The console repository is public: an ordinary second checkout, no credential kept.
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      with:
+        repository: ${{ steps.pin.outputs.repository }}
+        ref: ${{ steps.pin.outputs.commit }}
+        path: cruxible-app
+        persist-credentials: false
+
+    # pnpm from the console's packageManager field, Node from its engines.node.
+    - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      with:
+        package_json_file: cruxible-app/package.json
+
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      with:
+        node-version-file: cruxible-app/package.json
+        package-manager-cache: false
+
+    # Out of core's tree before anything builds: hatch's sdist takes every file
+    # .gitignore does not exclude, so a checkout (and its node_modules) left in
+    # the workspace would ship inside the sdist.
+    - name: Build and install the console
+      shell: bash
+      env:
+        CONSOLE_COMMIT: ${{ steps.pin.outputs.commit }}
+      run: |
+        set -euo pipefail
+        mv cruxible-app "$RUNNER_TEMP/cruxible-app"
+        uv run --frozen --no-dev python scripts/build_console.py \
+          --console "$RUNNER_TEMP/cruxible-app" --commit "$CONSOLE_COMMIT"

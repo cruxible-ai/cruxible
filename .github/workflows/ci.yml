@@ -160,3 +160,27 @@ jobs:
         env:
           CRUXIBLE_RUN_WHEEL_TESTS: "1"
         run: uv run pytest tests/test_packaging -m wheel --tb=short
+
+  # The release wheel carries the console (publish.yml): prove on every pull
+  # request that the pinned console commit builds against this core and that
+  # the wheel and sdist carry it, so a tag is never the first run. The console
+  # commit must be on GitHub (cruxible-ai/cruxible-app) for its checkout to work.
+  console-wheel:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4.2.0
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Build the console into the package
+        uses: ./.github/actions/console-bundle
+
+      - name: Build cruxible
+        run: uv build --package cruxible --out-dir dist
+
+      - name: Verify the wheel and sdist carry the console
+        run: python scripts/console_release.py check dist
