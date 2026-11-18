@@ -1,6 +1,6 @@
 # Cruxible agent plugin
 
-One plugin supplies four general skills and a lean MCP client of the Cruxible
+One plugin supplies five general skills and a lean MCP client of the Cruxible
 daemon. The instance's ClaimTypes, governed guidance Documents and Runbooks
 describe the domain. The plugin contains no kit-specific audit method.
 

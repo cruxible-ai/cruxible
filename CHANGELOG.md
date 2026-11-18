@@ -409,8 +409,8 @@ quickstart and concepts pages.
 - **SDK write batches create Subjects.** `batch.create(kind, key=...)` returns
   a handle usable as `subject=` or a value in the same write, and a
   `cx.new_subject(...)` draft works in the same places.
-- **A plugin for Claude Code and Codex.** `plugins/cruxible` ships four
-  general skills (`adopt-kit`, `automate-state`, `create-state`,
+- **A plugin for Claude Code and Codex.** `plugins/cruxible` ships five
+  general skills (`survey`, `adopt-kit`, `create-state`, `automate-state`,
   `review-state`) and a lean MCP catalog; see `plugins/README.md`.
 
 ### Operations

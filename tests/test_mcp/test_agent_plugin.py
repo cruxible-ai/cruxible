@@ -54,7 +54,7 @@ def test_generated_host_packages_are_current_and_share_the_release() -> None:
     # The package can be copied out of the checkout without breaking references.
     package = ROOT / PACKAGE
     skills = {path.parent.name for path in (package / "skills").glob("*/SKILL.md")}
-    assert skills == {"adopt-kit", "create-state", "review-state", "automate-state"}
+    assert skills == {"adopt-kit", "create-state", "review-state", "automate-state", "survey"}
     # Skills link core docs as bundled copies, never as web URLs.
     bundled = {path.name for path in (package / "docs").glob("*.md")}
     assert bundled == set(BUNDLED_DOCS)
