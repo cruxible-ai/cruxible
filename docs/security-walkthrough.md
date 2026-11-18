@@ -543,6 +543,41 @@ awaiting: independent approval; approvers: reviewer
 next: cx.proposal("sha256:54251d28…").approve(signer=cx.signer("reviewer"), reviewed=cx.proposal("sha256:54251d28…").review())
 ~~~
 
+The same write over MCP is one `cruxible_write` call. This is the write
+above through a different client, not a second judgment: sent first, its
+result's `status` is `awaiting_approval` and its `next` names
+`cruxible_proposal_approve` with `signer_id` `reviewer`; sent after the SDK's
+write has landed, it finds the pair and the value already live and changes
+nothing:
+
+~~~json
+{
+  "because": "CVE-2020-14343: the only yaml.load in the repo is in dockerized_labs/a9_uckv_lab, a separate container with its own requirements; the Django app this SBOM describes never imports yaml.",
+  "accept": "never",
+  "changes": [
+    {
+      "op": "create",
+      "label": "pair",
+      "subject_kind": "security.app_exposure",
+      "key": {
+        "occurrence": "security.occurrence/sbom.cdx.json--pkg-pypi-pyyaml-5.1",
+        "vulnerability": "security.vulnerability/cve-2020-14343"
+      }
+    },
+    {
+      "op": "set",
+      "subject": {"created": "pair"},
+      "field": "justification",
+      "value": "vulnerable_code_not_in_execute_path",
+      "evidence": {
+        "kind": "file",
+        "file": "dockerized_labs/a9_uckv_lab/app.py#data = yaml.load(file.stream, Loader=yaml.Loader)"
+      }
+    }
+  ]
+}
+~~~
+
 The reviewer works in its own session, as `reviewer`, and reads the proposal
 before approving it. Its `next` lists the proposal
 (`proposal_awaiting_approval`), and the review leads with the values and the
@@ -600,41 +635,12 @@ awaiting: independent approval; approvers: reviewer
 next: cruxible proposal approve sha256:5e06bd1cbc8f251fc9156639336dfa47f76f39cacc19fede4145271aa47dea9b --signer-id reviewer
 ~~~
 
-For MCP-only clients, a judgment is one `cruxible_write` call with the same
-members. This one records Django's CVE-2023-46695, the top row of the
-worklist, as `affected`:
-
-~~~json
-{
-  "because": "CVE-2023-46695: NewUserForm extends UserCreationForm, whose username field is UsernameField, on django 4.2 (fixed in 4.2.7); the README documents running natively on Windows, where the slow NFKC normalization applies.",
-  "accept": "never",
-  "changes": [
-    {
-      "op": "create",
-      "label": "pair",
-      "subject_kind": "security.app_exposure",
-      "key": {
-        "occurrence": "security.occurrence/sbom.cdx.json--pkg-pypi-django-4.2",
-        "vulnerability": "security.vulnerability/cve-2023-46695"
-      }
-    },
-    {
-      "op": "set",
-      "subject": {"created": "pair"},
-      "field": "verdict",
-      "value": "affected",
-      "evidence": {
-        "kind": "file",
-        "file": "introduction/forms.py#class NewUserForm(UserCreationForm):"
-      }
-    }
-  ]
-}
-~~~
-
-The result's `status` is `awaiting_approval`, and its `next` names the
-approval (`cruxible_proposal_approve` with `signer_id` `reviewer`). An MCP
-server acts as the principal it was started as, the owner here, so the
+A third judgment here was written over MCP, in the `cruxible_write` form shown
+above: the `verdict` `affected` on Django's CVE-2023-46695, the top row of the
+worklist, citing `introduction/forms.py#class NewUserForm(UserCreationForm):`
+(the form's username field is the affected `UsernameField`, and the README
+documents running natively on Windows, where the slow normalization applies).
+An MCP server acts as the principal it was started as, the owner here, so the
 reviewer approves from its own session: the CLI as above, or an MCP server
 started with `CRUXIBLE_PRINCIPAL_ID=reviewer`.
 
