@@ -204,6 +204,28 @@ Its target kind follows from the relation when there is one; state
 predicate values without expanding the primary rows. Numeric text can be
 ordered as decimal with `{field: binding.predicate, type: decimal}`.
 
+A filter can compare two fields, including fields reached through a hop. Here,
+each open delivery promise whose order needs more than the supplier has in
+stock:
+
+~~~yaml
+kind: query_definition
+query_definition:
+  query: shop.promises_at_risk
+  description: Open delivery promises whose order needs more than the supplier has in stock.
+  from: {order: shop.order}
+  hops:
+    - item: order.item!
+  where: order.promise == "open" and order.needed > item.in_stock
+  fields: [order.needed, order.promised_for, {sku: item.sku}, {in_stock: item.in_stock}]
+~~~
+
+~~~text
+$ cruxible query --name shop.promises_at_risk
+subject              in_stock  needed  promised_for  sku          flags
+shop.order/ord-1042  5         12      2026-11-20    blue-widget  -
+~~~
+
 A pair hop binds a pair Subject by its ends: `e: security.exposure{component:
 c, vulnerability: v}` binds the one live pair of those ends, and `o:
 security.occurrence{component: c} with scope` every live pair of `c` holding a
