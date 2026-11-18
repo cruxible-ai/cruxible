@@ -35,7 +35,7 @@ from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 #: The highest ordinal a published release created instances under. Entries at
 #: or below it are frozen; raise it to the newest ordinal when a release is cut.
 #: 0 means nothing is published yet, so entry 1 may still be replaced.
-SEED_HISTORY_FROZEN_THROUGH = 0
+SEED_HISTORY_FROZEN_THROUGH = 1
 
 
 @dataclass(frozen=True)
