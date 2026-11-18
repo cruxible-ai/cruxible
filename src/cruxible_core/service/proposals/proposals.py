@@ -1597,6 +1597,13 @@ def _readmit_exact_bytes(
         generation = instance.accepted_history()[-1]
         if generation.record is None:  # pragma: no cover - stale source requires a successor
             raise ProposalIntegrityError("readmission requires an accepted candidate timestamp")
+        # The readmission is judged no earlier than its source was: a head
+        # generation authored before the source (a sibling proposal that landed
+        # first) has an earlier timestamp, and judged then, every Capture the
+        # source's own write observed would lie in the future and back nothing
+        # (each value would review as uncovered, then land supported). Both
+        # times are fixed by the link, so the readmission stays idempotent.
+        timestamp = max(generation.record.candidate.timestamp, source.admission.admitted_at)
         actor = AuthenticatedActor(actor_id=actor_id)
         request = ProposalAdmissionRequest(
             target_ref=_readmission_target_ref(actor_id, operation_digest),
@@ -1628,7 +1635,7 @@ def _readmit_exact_bytes(
                 actor=actor,
                 request=request,
                 candidate_tree=candidate_tree,
-                timestamp=generation.record.candidate.timestamp,
+                timestamp=timestamp,
                 readmits=link,
             )
             return PlaybillProposalReadmitResultV1(
@@ -1645,7 +1652,7 @@ def _readmit_exact_bytes(
                 actor=actor,
                 request=request,
                 candidate_tree=candidate_tree,
-                timestamp=generation.record.candidate.timestamp,
+                timestamp=timestamp,
                 readmits=link,
                 originating_line=source.admission.originating_line,
                 confirm_head=mode.confirm_head,

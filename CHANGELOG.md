@@ -459,6 +459,12 @@ quickstart and concepts pages.
 
 ### Fixed during the release candidate
 
+- **A proposal proposed again at the head reviews the verdicts it lands
+  with.** A pending write that an earlier-written sibling overtook was judged,
+  when approval proposed it again at the head, at the sibling's time, before
+  its own evidence existed: `proposal review` (CLI, SDK, MCP) showed every
+  value `verdict uncovered`, then it landed `supported`. It is now judged no
+  earlier than its source.
 - **An explicit none reaches the daemon.** `cruxible set --none`, MCP
   `cruxible_set`, SDK `cx.set` and write files sending a none on a one-valued
   field failed request validation (`body.value.NoneValue.none: Field

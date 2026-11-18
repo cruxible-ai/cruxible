@@ -46,7 +46,10 @@ from cruxible_core.service.proposals.proposals import (
     service_playbill_proposal_status,
     stale_unreadmitted_proposals,
 )
-from cruxible_core.service.proposals.review import service_prepare_playbill_approval
+from cruxible_core.service.proposals.review import (
+    service_prepare_playbill_approval,
+    service_review_playbill_proposal,
+)
 from cruxible_core.storage.cas import BodyAccessContext
 from tests.core_support._support import client_material
 from tests.core_support._write_support import KIND, OWNER, _claim_type, seed_write_surface
@@ -1060,3 +1063,180 @@ def test_withdrawing_or_rejecting_an_accepted_proposal_says_accepted(tmp_path: P
         assert f"nothing left to {verb}" in str(refused.value)
         assert refused.value.repair.operation == "cruxible.get"
     assert instance.proposal_evidence().read_withdrawal(proposal_id) is None
+
+
+def _reviewed_verdicts(instance: PlaybillInstance, proposal_id: str) -> dict[str, str | None]:
+    """Each value ``proposal review`` shows for the proposal, with its verdict."""
+
+    from cruxible_client.contracts.proposal_summary import ProposalReviewSummary
+
+    review = service_review_playbill_proposal(
+        instance,
+        proposal_id=proposal_id,
+        access=BodyAccessContext(
+            principal_id="reviewer", can_read_body=True, can_read_restricted=True
+        ),
+    )
+    assert isinstance(review, ProposalReviewSummary)
+    return {
+        f"{item.change.subject} {item.change.field}": item.change.verdict
+        for item in review.changes
+        if item.change.field is not None
+    }
+
+
+def _file_world(tmp_path: Path) -> tuple[PlaybillInstance, GeneratedKeyMaterial]:
+    """Independent approval, with a ``noted`` field any workspace file may back."""
+
+    from cruxible_client.contracts.approval_policy import (
+        APPROVAL_POLICY_PATH,
+        ApprovalPolicy,
+        render_approval_policy,
+    )
+    from cruxible_client.contracts.policies import (
+        ClaimEvidenceAdmissionPolicy,
+        ClaimEvidenceAdmissionRule,
+    )
+    from tests.core_support._support import initialize_local
+    from tests.core_support._write_support import (
+        CLAIM_TYPES,
+        SELF_SOURCE,
+        seed_write_vocabulary,
+    )
+    from tests.support.claim_types import claim_type as build_claim_type
+
+    instance, _owner = initialize_local(tmp_path)
+    noted = build_claim_type(
+        predicate=f"{KIND}.noted",
+        allowed_subject_kinds=(KIND,),
+        value_type={"type": "string"},
+        cardinality="one",
+        permitted_roles=("observation",),
+        evidence_admission_policy=ClaimEvidenceAdmissionPolicy(
+            rules=(
+                ClaimEvidenceAdmissionRule(
+                    rule_id="source",
+                    claim_roles=("observation",),
+                    capture_contracts=(SELF_SOURCE.identity.name,),
+                    capture_contract_families=("workspace_file",),
+                    admission="direct",
+                    subject_binding="exact_claim_subject",
+                ),
+            )
+        ),
+    )
+    seed_write_vocabulary(instance, claim_types=(*CLAIM_TYPES, noted))
+    tightening = instance.proposal_service().submit(
+        actor=OWNER,
+        request=ProposalAdmissionRequest(
+            target_ref="refs/proposals/owner/write-seed-policy",
+            proposed_base_oid=instance.accepted_coordinate().git_oid,
+        ),
+        candidate_tree={
+            **instance.tree_at(instance.accepted_coordinate().git_oid),
+            APPROVAL_POLICY_PATH: render_approval_policy(
+                ApprovalPolicy(mode="independent_approval_required")
+            ),
+        },
+        timestamp="2026-09-29T11:59:30.000000Z",
+    )
+    assert tightening.candidate is not None, tightening.evaluation
+    receipt = service_activate_playbill_proposal(
+        instance, proposal_id=tightening.admission.proposal_id, activated_by="owner"
+    )
+    assert receipt.status == "accepted"
+    return instance, client_material(tmp_path, instance)
+
+
+def test_a_proposal_landed_behind_an_earlier_sibling_reviews_its_landing_verdicts(
+    tmp_path: Path,
+) -> None:
+    """vrf 07/10: two writes open at once, each citing the same new workspace
+    file; the earlier one lands, and the later one is proposed again at the
+    head. It was judged at the head generation's timestamp, the earlier
+    sibling's, which precedes everything the later write observed: every value
+    reviewed as ``uncovered`` and then landed ``supported``. A readmission is
+    judged no earlier than its source, so review shows the landing verdicts."""
+
+    from datetime import UTC, datetime
+
+    from cruxible_client.authoring.doc_writes import write_workspace
+    from cruxible_client.contracts.claim_verdicts import ClaimVerdictResult
+    from cruxible_client.contracts.claims import parse_claim
+    from cruxible_client.contracts.write import WriteRequest
+    from cruxible_core.service.authoring.documents import AcceptedCoordinate
+    from cruxible_core.service.authoring.write_verbs import service_playbill_write
+    from cruxible_core.service.discovery.claim_status import claim_resolution_statuses
+    from tests.core_support._write_support import caller
+
+    instance, reviewer = _file_world(tmp_path)
+    workspace = tmp_path / "cited"
+    workspace.mkdir()
+    (workspace / "notes.md").write_text("# Notes\n\nfirst anchor\n\nsecond anchor\n", "utf-8")
+
+    def cite(subject: str, anchor: str) -> str:
+        request = WriteRequest.model_validate(
+            {
+                "because": "The notes say so.",
+                "changes": [
+                    _set(
+                        subject,
+                        "noted",
+                        anchor,
+                        evidence={"kind": "file", "file": f"notes.md#{anchor}"},
+                    )
+                ],
+            }
+        )
+        outcome = write_workspace(
+            request,
+            workspace=workspace,
+            submit=lambda observed: service_playbill_write(
+                instance, request=observed, caller=caller()
+            ),
+        )
+        assert outcome.proposal is not None, outcome
+        return outcome.proposal.proposal_id
+
+    first = cite(f"{KIND}/wi-8", "first anchor")
+    second = cite(f"{KIND}/wi-9", "second anchor")
+    # A plain first proposal: the created Subject's key and the cited value.
+    expected = {f"{KIND}/wi-9 slug": "supported", f"{KIND}/wi-9 noted": "supported"}
+    assert _reviewed_verdicts(instance, second) == expected
+    assert _reviewed_verdicts(instance, first) == {
+        f"{KIND}/wi-8 slug": "supported",
+        f"{KIND}/wi-8 noted": "supported",
+    }
+
+    assert _approve(instance, reviewer, first).activation.status == "accepted"  # type: ignore[union-attr]
+    landed = _approve(instance, reviewer, second)
+    assert isinstance(landed, ProposalRecompiled) and landed.proposal_id is not None
+    # The successor no longer adds the file's contract (the sibling landed it),
+    # and reviews every value with the verdict it lands with.
+    assert not any(
+        path.startswith("capture-contracts/")
+        for path in _proposal_paths(instance, landed.proposal_id)
+    )
+    assert _reviewed_verdicts(instance, landed.proposal_id) == expected
+    successor = _proposal_result(instance, landed.proposal_id)
+    assert successor.candidate is not None
+    source_time = _proposal_result(instance, second).admission.admitted_at
+    assert successor.admission.admitted_at == source_time
+
+    assert _approve(instance, reviewer, landed.proposal_id).activation.status == "accepted"  # type: ignore[union-attr]
+    head = instance.accepted_coordinate()
+    tree = instance.immutable_tree_at(head.git_oid)
+    claims = [
+        parse_claim(tree[member.path], path=member.path)
+        for member in successor.candidate.members
+        if member.artifact_kind == "claim"
+    ]
+    landed_verdicts: dict[str, ClaimVerdictResult] = {}
+    claim_resolution_statuses(
+        instance,
+        claims=tuple(claims),
+        at=AcceptedCoordinate.from_internal(head),
+        evaluation_time=datetime.now(UTC),
+        verdicts_by_identity=landed_verdicts,
+    )
+    assert [item.verdict for item in landed_verdicts.values()] == ["supported", "supported"]
