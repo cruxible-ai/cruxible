@@ -759,10 +759,12 @@ What it does and refuses:
   same origin. It sends no CORS headers. The daemon credential never reaches
   the page, and the browser's cookies never reach the daemon.
 
-The built console ships inside release wheels. An install without it (a
-source checkout) says so; build one into the package with
-`python scripts/build_console.py --console PATH --commit SHA`, or run the
-console's own dev server from a cruxible-app checkout.
+The built console ships inside release wheels: the release job builds the
+cruxible-app commit `scripts/console_release.json` pins, refuses one whose
+pin does not match this core, and refuses to publish a wheel that does not
+carry it. An install without it (a source checkout) says so; build one into
+the package with `python scripts/build_console.py --console PATH --commit
+SHA`, or run the console's own dev server from a cruxible-app checkout.
 
 ## host and workspace
 
