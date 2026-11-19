@@ -8,9 +8,9 @@ describe the domain. The plugin contains no kit-specific audit method.
 
 ## Package and install
 
-`plugins/release.json` is the release definition. **0.0.0 is an unpublished
-version placeholder**: replace it with the chosen release version at the bump,
-then run `python scripts/build_agent_plugin.py`. Do not publish the placeholder.
+`plugins/release.json` is the release definition: its version is the Cruxible
+release the plugin launches, set at each version bump, after which
+`python scripts/build_agent_plugin.py` regenerates the package.
 `--check` checks the generated manifests, catalogs, MCP configs, README, skill
 copies and bundled docs without modifying them. Edit source skills under
 `skills/`, not the generated `plugins/cruxible/skills/` copies. The core docs the

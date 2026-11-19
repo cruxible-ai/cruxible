@@ -67,7 +67,7 @@ dependencies = [
     "mcp>=1.30.0,<2",
     # Provider installs materialize environments with the provider runtime toolchain
     # (providers/package_materialization.py imports it); core never runs provider code.
-    "cruxible-provider-runtime>=0.2.0",
+    "cruxible-provider-runtime>=0.5.0",
     # The provider runtime materializes environments with uv (`uv pip sync`, `uv
     # build`); the PyPI package ships the binary beside the interpreter, so a pip
     # install and the runtime image both have it (providers/package_materialization.py

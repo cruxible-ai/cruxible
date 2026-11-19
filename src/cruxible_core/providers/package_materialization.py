@@ -41,7 +41,7 @@ def toolchain(module: str) -> Any:
         return importlib.import_module(f"cruxible_provider_runtime.{module}")
     except ModuleNotFoundError as exc:
         raise ConfigError(
-            "Provider installation requires cruxible-provider-runtime 0.2.0 or later "
+            "Provider installation requires cruxible-provider-runtime 0.5.0 or later "
             "installed in the daemon environment, plus uv. Local wheels are supported."
         ) from exc
 
