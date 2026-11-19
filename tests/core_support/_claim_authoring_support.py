@@ -1,0 +1,516 @@
+"""Test-only Claim seeding through the sanctioned AuthoringIntent coordinator.
+
+The pre-0.4 direct Claim proposal surface was retired in PC-DEL3.  These small
+adapters let semantic/read tests keep concise fixture declarations while every
+candidate they create now travels through the current coordinator and Claim-v2
+lowering path.
+"""
+
+from __future__ import annotations
+
+import base64
+import hashlib
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict
+
+from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.authoring.models import (
+    AuthoringClaimStatement,
+    AuthoringExistingClaimDisposition,
+    ClaimAuthoringPayload,
+    ClaimDependencyDrafts,
+    SelfSourceBody,
+    WorkingAnchorWindow,
+    WorkingDigestCoordinate,
+    WorkingSelectionObservation,
+)
+from cruxible_client.contracts.captures import (
+    COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
+    DirectClaimSelection,
+    DirectForeignSourceSelection,
+    builtin_contract_for_write,
+    capture_contract_path,
+    foreign_source_capture_contract,
+)
+from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest
+from cruxible_client.contracts.claims import (
+    ClaimStatement,
+    LiteralClaimObject,
+    claim_artifact_digest,
+    claim_path,
+    claim_statement_digest,
+    new_claim_id,
+    parse_claim,
+)
+from cruxible_client.contracts.policies import (
+    ClaimEvidenceAdmissionPolicy,
+    ClaimEvidenceAdmissionRule,
+)
+from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.subjects import SubjectShell, render_subject, subject_path
+from cruxible_client.contracts.temporal import parse_datetime
+from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator, AuthoringSubmitResult
+from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
+from cruxible_core.proposals.settlement import ChangeActorBinding
+from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.service.authoring.documents import (
+    AcceptedCoordinate,
+    ProposalInspection,
+    service_inspect_playbill_proposal,
+)
+from cruxible_core.storage.cas import BodyAccessContext
+from tests.core_support._subject_kind_support import declare_created_kinds
+from tests.core_support._support import client_material
+from tests.support.claim_types import claim_type_changes
+from tests.test_claims.test_claims import _claim_type, _subject
+from tests.test_ledger.test_activation import _sign
+
+TIMESTAMP = "2026-08-16T20:00:00.000000Z"
+STATUS_CLAIM_ID = "CLM-" + "1" * 32
+SUMMARY_CLAIM_ID = "CLM-" + "2" * 32
+
+
+class _StrictFixtureModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class ExistingStatementHandoffV1(_StrictFixtureModel):
+    statement_digest: str
+    disposition: Literal["not_tested", "support", "contradict", "unsure"]
+
+
+class DirectClaimAuthoringV1(_StrictFixtureModel):
+    """Old fixture spelling, lowered only through AuthoringIntent."""
+
+    statement: ClaimStatement
+    rationale: str
+    claim_id: str | None = None
+    predecessor_artifact_digest: str | None = None
+    retire: bool = False
+    materialize_source: bool = True
+    source_selection: DirectClaimSelection | None = None
+    subject_shell: SubjectShell | None = None
+    claim_type_artifact: ClaimType | None = None
+    dependency_subject_shells: tuple[SubjectShell, ...] = ()
+    dependency_claim_types: tuple[ClaimType, ...] = ()
+    existing_statement_handoffs: tuple[ExistingStatementHandoffV1, ...] = ()
+
+
+@dataclass(frozen=True)
+class AuthoredClaimV1:
+    claim_identity: str
+    claim_path: str
+    statement_digest: str
+    artifact_digest: str
+    capture_digest: str
+    capture_digests: tuple[str, ...]
+    observed_at: object
+    existing_statements: tuple[object, ...] = ()
+    handoffs: tuple[ExistingStatementHandoffV1, ...] = ()
+    warnings: tuple[object, ...] = ()
+
+
+@dataclass(frozen=True)
+class DirectClaimProposalV1(AuthoredClaimV1):
+    proposal: ProposalInspection | None = None
+
+
+def _dispositions(
+    instance: PlaybillInstance,
+    authoring: DirectClaimAuthoringV1,
+) -> tuple[AuthoringExistingClaimDisposition, ...]:
+    by_statement: dict[str, str] = {}
+    same_slot: dict[
+        str,
+        Literal["not_tested", "support", "contradict", "unsure"],
+    ] = {}
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    for path, content in tree.items():
+        if not path.startswith("claims/"):
+            continue
+        claim = parse_claim(content, path=path)
+        by_statement[claim_statement_digest(claim.statement).tagged] = claim.identity.name
+        if (
+            claim.lifecycle.state == "live"
+            and claim.statement.subject == authoring.statement.subject
+            and claim.statement.predicate == authoring.statement.predicate
+        ):
+            same_slot[claim.identity.name] = "not_tested"
+    for item in authoring.existing_statement_handoffs:
+        same_slot[by_statement[item.statement_digest]] = item.disposition
+    return tuple(
+        sorted(
+            (
+                AuthoringExistingClaimDisposition(
+                    claim_id=claim_id,
+                    disposition=disposition,
+                )
+                for claim_id, disposition in same_slot.items()
+            ),
+            key=lambda item: item.claim_id.encode("ascii"),
+        )
+    )
+
+
+def _payload(
+    instance: PlaybillInstance,
+    authoring: DirectClaimAuthoringV1,
+    *,
+    timestamp: str,
+) -> ClaimAuthoringPayload | ClaimAuthoringPayload:
+    if authoring.retire:
+        raise ValueError("retirement fixtures must use cruxible.claim.retire")
+    if authoring.dependency_subject_shells or authoring.dependency_claim_types:
+        raise ValueError("one-Claim dependency drafts accept only the Claim's direct dependencies")
+    statement = authoring.statement
+    source = authoring.source_selection
+    citation_role: Literal["evidence"] | None = None
+    if isinstance(source, DirectForeignSourceSelection):
+        content = instance.body_store().read(
+            source.span.content_digest,
+            access=BodyAccessContext(principal_id="claim-fixture", can_read_body=True),
+        )
+        selected = content[source.span.start_byte : source.span.end_byte]
+        anchor = content.decode("utf-8").strip()
+        selected_digest = "sha256:" + hashlib.sha256(selected).hexdigest()
+        source_value = WorkingSelectionObservation(
+            source_id=source.logical_source_identity,
+            coordinate=WorkingDigestCoordinate(
+                source_content_digest="sha256:" + hashlib.sha256(content).hexdigest(),
+                source_byte_length=len(content),
+            ),
+            selected_content_base64=base64.b64encode(selected).decode("ascii"),
+            selected_bytes_digest=selected_digest,
+            selector=WorkingAnchorWindow(
+                anchor=anchor,
+                start_byte=source.span.start_byte,
+                end_byte=source.span.end_byte,
+                observed_occurrence_count=1,
+            ),
+        )
+        citation_role = "evidence"
+    elif source is not None:
+        raise ValueError("CAS-only fixture selections have no sanctioned Flow-A source identity")
+    else:
+        fixture_source_id = "fixture.work-items"
+        fixture_contract = foreign_source_capture_contract(fixture_source_id)
+        accepted_tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+        if capture_contract_path(fixture_contract.identity.name) in accepted_tree:
+            selected = statement.object.model_dump_json().encode("utf-8")
+            digest = "sha256:" + hashlib.sha256(selected).hexdigest()
+            source_value = WorkingSelectionObservation(
+                source_id=fixture_source_id,
+                coordinate=WorkingDigestCoordinate(
+                    source_content_digest=digest,
+                    source_byte_length=len(selected),
+                ),
+                selected_content_base64=base64.b64encode(selected).decode("ascii"),
+                selected_bytes_digest=digest,
+                selector=WorkingAnchorWindow(
+                    anchor=selected.decode("utf-8"),
+                    start_byte=0,
+                    end_byte=len(selected),
+                    observed_occurrence_count=1,
+                ),
+            )
+            citation_role = "evidence"
+        else:
+            source_value = SelfSourceBody(
+                content_base64=base64.b64encode(
+                    statement.object.model_dump_json().encode("utf-8")
+                ).decode("ascii")
+            )
+    base = {
+        "statement": AuthoringClaimStatement(
+            subject=statement.subject,
+            predicate=statement.predicate,
+            qualifier=statement.qualifier,
+            object=statement.object,
+            role=statement.role,
+            effective_from=statement.effective_from,
+            effective_until=statement.effective_until,
+        ),
+        "rationale": authoring.rationale,
+        "source": source_value,
+        "citation_role": citation_role,
+        "revises": (
+            authoring.claim_id
+            if authoring.claim_id is not None
+            and claim_path(authoring.claim_id)
+            in instance.tree_at(instance.accepted_coordinate().git_oid)
+            else None
+        ),
+        "existing_claim_dispositions": _dispositions(instance, authoring),
+    }
+    if authoring.subject_shell is None and authoring.claim_type_artifact is None:
+        return ClaimAuthoringPayload(**base)
+    claim_type = authoring.claim_type_artifact
+    if claim_type is not None:
+        # The drafted type names the contract the bound Claim installs in the
+        # same change: the coordinator's own words, or the cited foreign source.
+        profile = (
+            builtin_contract_for_write(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT, None)
+            if not isinstance(source_value, WorkingSelectionObservation)
+            else foreign_source_capture_contract(source_value.source_id)
+        )
+        claim_type = claim_type.model_copy(
+            update={
+                "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(
+                    rules=(
+                        ClaimEvidenceAdmissionRule(
+                            rule_id="coordinator-source",
+                            claim_roles=tuple(
+                                role
+                                for role in claim_type.permitted_roles
+                                if role in {"normative", "observation", "derivation"}
+                            ),
+                            capture_contracts=(profile.identity.name,),
+                            admission="direct",
+                            subject_binding="exact_claim_subject",
+                        ),
+                    )
+                )
+            }
+        )
+    shell = authoring.subject_shell
+    accepted = instance.tree_at(instance.accepted_coordinate().git_oid)
+    if shell is not None and subject_path(shell.subject_kind, shell.subject_id) not in accepted:
+        # A Claim draft never creates its Subject (core names new Subjects): the
+        # fixture's Subject lands first, under a minted declaration of its kind.
+        create_subjects(instance, (shell,), timestamp=timestamp)
+    return ClaimAuthoringPayload(
+        **base,
+        dependency_drafts=ClaimDependencyDrafts(
+            subject=shell,
+            claim_type=claim_type,
+        ),
+    )
+
+
+def create_subjects(
+    instance: PlaybillInstance, shells: tuple[SubjectShell, ...], *, timestamp: str
+) -> None:
+    """Accept fixture Subjects (and a minted declaration of each new kind) as one generation.
+
+    Submitted and activated through the live service path, signed by the owner
+    when the approval policy asks for an independent approval.
+    """
+
+    from cruxible_core.service.authoring.documents import (
+        service_activate_playbill_proposal,
+        service_submit_playbill_approval,
+    )
+
+    base = instance.accepted_coordinate()
+    accepted = instance.tree_at(base.git_oid)
+    tree = dict(accepted)
+    for shell in shells:
+        tree[subject_path(shell.subject_kind, shell.subject_id)] = render_subject(shell)
+    declare_created_kinds(accepted, tree, instance=instance)
+    proposed = instance.proposal_service().submit(
+        actor=AuthenticatedActor(actor_id="owner"),
+        request=ProposalAdmissionRequest(
+            target_ref=f"refs/proposals/owner/fixture-subjects-{len(instance.accepted_history())}",
+            proposed_base_oid=base.git_oid,
+        ),
+        candidate_tree=tree,
+        timestamp=timestamp,
+    )
+    candidate = proposed.candidate
+    assert candidate is not None, proposed.evaluation
+    proposal_id = proposed.admission.proposal_id
+    if candidate.approval_requirements:
+        approval = _sign(
+            client_material(instance.root.parent, instance),
+            candidate.candidate_digest,
+            base.semantic_root,
+        )
+        service_submit_playbill_approval(
+            instance,
+            proposal_id=proposal_id,
+            attestation=approval.attestation,
+            authenticated_submitter="owner",
+        )
+    receipt = service_activate_playbill_proposal(
+        instance, proposal_id=proposal_id, activated_by="owner"
+    )
+    assert receipt.status == "accepted", receipt
+
+
+def service_reobserve_playbill_claim(
+    instance: PlaybillInstance,
+    *,
+    authoring: DirectClaimAuthoringV1,
+    actor_id: str,
+    timestamp: str,
+    recorded_at: str | None = None,
+) -> AuthoringSubmitResult:
+    """Restate a live Claim on content it already cites: a recorded no-op.
+
+    The instance's recording clock reads ``recorded_at`` (the canonical
+    timestamp by default), so the re-observation is recorded at the instant the
+    fixture names.
+    """
+
+    instance.recording_clock = lambda: parse_datetime_required(recorded_at or timestamp)
+    coordinator = AuthoringIntentCoordinator(
+        instance=instance,
+        store=AuthoringIntentCoordinator.for_instance(instance).store,
+        claim_id_factory=lambda: authoring.claim_id or new_claim_id(),
+    )
+    actor = AuthenticatedActor(actor_id=actor_id)
+    created = coordinator.create(
+        actor=actor,
+        payload=_payload(instance, authoring, timestamp=timestamp),
+        canonical_timestamp=timestamp,
+    )
+    submitted = coordinator.submit(created.intent.intent_id, actor=actor)
+    if submitted.status.proposal_id is not None or submitted.status.state != "accepted":
+        raise AssertionError(submitted.status)
+    return submitted
+
+
+def parse_datetime_required(value: str) -> datetime:
+    parsed = parse_datetime(value)
+    assert parsed is not None
+    return parsed
+
+
+def service_propose_playbill_claim(
+    instance: PlaybillInstance,
+    *,
+    authoring: DirectClaimAuthoringV1,
+    actor_id: str,
+    proposal_name: str,
+    timestamp: str,
+    base: AcceptedCoordinate | None = None,
+) -> DirectClaimProposalV1:
+    del proposal_name
+    coordinator = AuthoringIntentCoordinator(
+        instance=instance,
+        store=AuthoringIntentCoordinator.for_instance(instance).store,
+        claim_id_factory=lambda: authoring.claim_id or new_claim_id(),
+    )
+    actor = AuthenticatedActor(actor_id=actor_id)
+    created = coordinator.create(
+        actor=actor,
+        payload=_payload(instance, authoring, timestamp=timestamp),
+        canonical_timestamp=timestamp,
+        base_coordinate=base,
+    )
+    submitted = coordinator.submit(created.intent.intent_id, actor=actor)
+    if submitted.status.proposal_id is None:
+        raise AssertionError(submitted.intent.last_preflight)
+    inspection = service_inspect_playbill_proposal(
+        instance,
+        proposal_id=submitted.status.proposal_id,
+    )
+    evaluated_oid = inspection.proposal.evaluation.evaluated_tree_oid
+    if evaluated_oid is None:
+        raise AssertionError(inspection.proposal.evaluation.diagnostics)
+    identity = submitted.intent.semantic_identity
+    path = claim_path(identity)
+    claim = parse_claim(instance.proposal_tree(evaluated_oid)[path], path=path)
+    if claim.retirement is not None:
+        raise AssertionError("AuthoringIntent fixture did not lower to a live Claim")
+    captures = tuple(item.capture_digest for item in claim.backing.citations)
+    return DirectClaimProposalV1(
+        proposal=inspection,
+        claim_identity=claim.identity.qualified,
+        claim_path=path,
+        statement_digest=claim_statement_digest(claim.statement).tagged,
+        artifact_digest=claim_artifact_digest(claim).tagged,
+        capture_digest=captures[0],
+        capture_digests=captures,
+        observed_at=submitted.intent.canonical_timestamp,
+        handoffs=authoring.existing_statement_handoffs,
+    )
+
+
+def _authoring() -> DirectClaimAuthoringV1:
+    shell = _subject()
+    claim_type = _claim_type()
+    return DirectClaimAuthoringV1(
+        statement=ClaimStatement(
+            subject=SemanticAddress.whole_artifact(
+                f"subjects/{shell.subject_kind}/{shell.subject_id}.json"
+            ),
+            claim_type=claim_type.identity,
+            claim_type_digest=claim_type_digest(claim_type).tagged,
+            predicate=claim_type.predicate,
+            object=LiteralClaimObject(value="ready"),
+            role="observation",
+        ),
+        rationale="The review inputs are complete.",
+        subject_shell=shell,
+        claim_type_artifact=claim_type,
+    )
+
+
+def _summary_claim_type() -> ClaimType:
+    return _claim_type().model_copy(
+        update=claim_type_changes(
+            predicate="project.work_item.summary",
+            value_type={"type": "string"},
+            identity=ArtifactIdentity(kind="ClaimType", name="project.work_item.summary"),
+        )
+    )
+
+
+def _status_authoring(*, claim_id: str | None = STATUS_CLAIM_ID) -> DirectClaimAuthoringV1:
+    return _authoring().model_copy(update={"claim_id": claim_id})
+
+
+def _summary_authoring(*, claim_id: str | None = SUMMARY_CLAIM_ID) -> DirectClaimAuthoringV1:
+    shell = _subject()
+    claim_type = _summary_claim_type()
+    return DirectClaimAuthoringV1(
+        statement=ClaimStatement(
+            subject=SemanticAddress.whole_artifact(
+                f"subjects/{shell.subject_kind}/{shell.subject_id}.json"
+            ),
+            claim_type=claim_type.identity,
+            claim_type_digest=claim_type_digest(claim_type).tagged,
+            predicate=claim_type.predicate,
+            object=LiteralClaimObject(value="Ship the review surface"),
+            role="observation",
+        ),
+        rationale="The summary is the one line the work item is tracked by.",
+        claim_id=claim_id,
+        subject_shell=shell,
+        claim_type_artifact=claim_type,
+    )
+
+
+def _activate_direct_claim(
+    instance: PlaybillInstance,
+    _owner: object,
+    proposed: object,
+) -> None:
+    inspection = proposed.proposal
+    candidate = inspection.proposal.candidate
+    evaluated_oid = inspection.proposal.evaluation.evaluated_tree_oid
+    assert candidate is not None and evaluated_oid is not None
+    base = instance.accepted_coordinate()
+    bundle = instance.prepare_generation(
+        base=base,
+        candidate_tree=instance.proposal_tree(evaluated_oid),
+        candidate=candidate,
+        approvals=(
+            _sign(
+                client_material(instance.root.parent, instance),
+                candidate.candidate_digest,
+                base.semantic_root,
+            ),
+        ),
+        actor_binding=ChangeActorBinding(actor_id="owner"),
+        proposal_actor_id="owner",
+        sequence=len(instance.accepted_history()),
+    )
+    publisher = instance.activation_publisher()
+    projection = publisher.prebuild(bundle, base=base)
+    assert publisher.activate(bundle, projection, base=base).status == "accepted"
+    instance.refresh()

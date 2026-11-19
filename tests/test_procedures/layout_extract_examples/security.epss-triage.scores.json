@@ -1,0 +1,12 @@
+{
+  "capture": "$steps.scores_api.captures",
+  "id": "scores",
+  "key": {
+    "cve_id": {
+      "type": "key_part<security.vulnerability:cve_id>"
+    }
+  },
+  "kind": "extract",
+  "only_keys": "$steps.watch_keys.rows",
+  "records": "scores"
+}

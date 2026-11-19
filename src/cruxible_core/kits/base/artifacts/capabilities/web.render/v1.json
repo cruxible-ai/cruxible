@@ -1,0 +1,17 @@
+{
+  "artifact_format": "cruxible-capability-v1",
+  "description": "Derives one readable document from one fetched HTML Capture: its main content as Markdown (form text), or canonical JSON with its URL, final URL, title, text and links (form json), returned as one Capture. It reads only the Capture's bytes and contacts nothing.",
+  "effect": "pure",
+  "in": {
+    "digest": "sha256:c0e06e5cbd863213018a8026139238fd3863f579bd1876833ac66646a9f8d6f9",
+    "name": "web.render.request",
+    "version": 1
+  },
+  "name": "web.render",
+  "out": {
+    "digest": "sha256:98ad590db76fb64359263725031b5bfc17f6adfa339f38466d9b584e6053213a",
+    "name": "web.render.result",
+    "version": 1
+  },
+  "version": 1
+}

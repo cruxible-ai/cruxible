@@ -1,0 +1,209 @@
+"""Internal changeset-driven successor construction; cold reconstruction is the oracle.
+
+Only ActivationPublisher supplies this verified bundle/prefix. No serialized delta
+or caller-supplied SQL is accepted. The immutable parent is verified before copying;
+all changed artifacts still pass the ordinary compiler. Unsupported ownership
+shapes deliberately use the existing full assembler.
+"""
+
+from __future__ import annotations
+
+import time
+from collections.abc import Sequence
+from dataclasses import dataclass
+from pathlib import Path
+from typing import TYPE_CHECKING, Callable, TypeVar
+
+from cruxible_client.contracts.canonical import is_candidate_card_path
+from cruxible_client.contracts.errors import ProjectionIntegrityError
+from cruxible_core.compiler.projection_artifacts import parse_projection_tree
+from cruxible_core.compiler.projection_tree import read_registered_delta
+from cruxible_core.indexes.projection import (
+    AcceptedProjectionCoordinate,
+    AssemblerRequest,
+    CandidateGenerationProjectionCoordinate,
+    projection_manifest_name,
+)
+from cruxible_core.indexes.sqlite import (
+    bind_projection,
+    projection_tree_inventory,
+    update_projection_database,
+)
+from cruxible_core.ledger.git import GitLedger
+from cruxible_core.proposals.settlement import (
+    ChangeSetRecord,
+    VerifiedGenerationBundle,
+)
+
+if TYPE_CHECKING:
+    from cruxible_core.compiler.assembler import ProjectionAssembler
+
+# These compilers emit rows owned by their artifact identity, derived from the
+# artifact and its own change-set history alone. Rows another owner reads are
+# keyed back to their source: an ExhaustPromotion's track-record rows live in
+# promotion_subjects under the promotion, an attestation's citations under its
+# envelope, and a SubjectKind change re-derives subject_keys for its kind
+# (replace_rows). A compiler upgrade changes the compiler, which the gate below
+# always rebuilds cold.
+_LOCAL_KINDS = frozenset(
+    {
+        "attestation",
+        "capability",
+        "contract",
+        "exhaust-promotion",
+        "resolution-contract",
+        "subject-kind",
+        "trigger",
+        "note",
+        "runbook",
+        "document",
+        "capture-contract",
+        "claim",
+        "subject",
+        "claim-type",
+        "procedure",
+        "line",
+        "query-definition",
+        "provider",
+        "procedure-mandate",
+        "approval-policy",
+        "procedure-runtime-policy",
+        "principal",
+    }
+)
+T = TypeVar("T")
+
+
+# The verified change-set records that touched each of these paths, at the base.
+MemberHistory = Callable[[Sequence[str]], tuple[tuple[str, ChangeSetRecord], ...]]
+
+
+@dataclass(frozen=True)
+class GenerationDelta:
+    base: AcceptedProjectionCoordinate
+    bundle: VerifiedGenerationBundle
+    member_history: MemberHistory
+
+
+def _timed(timings: dict[str, int], phase: str, fn: Callable[[], T]) -> T:
+    start = time.perf_counter_ns()
+    try:
+        return fn()
+    finally:
+        timings[phase] += time.perf_counter_ns() - start
+
+
+def populate_successor(
+    assembler: ProjectionAssembler,
+    *,
+    request: AssemblerRequest,
+    destination: Path,
+    delta: GenerationDelta,
+    timings: dict[str, int],
+) -> dict[str, int] | None:
+    """Update an independently staged database, or select the cold path before writing."""
+    bundle, base = delta.bundle, delta.base
+    if not isinstance(assembler.accepted, CandidateGenerationProjectionCoordinate):
+        raise ProjectionIntegrityError("an accepted rebuild cannot consume a candidate delta")
+    if bundle.projection_coordinate(base=base) != assembler.accepted:
+        raise ProjectionIntegrityError("derived-index delta names another successor")
+    # Also what lets the delta reader infer case-rigid directories from this
+    # registry (projection_tree._case_rigid_tops): the parent passed the same one.
+    if base.compiler != assembler.accepted.compiler:
+        return None
+    if not isinstance(bundle.record, ChangeSetRecord):
+        return None
+    if any(member.artifact_kind not in _LOCAL_KINDS for member in bundle.record.members):
+        return None
+
+    parent_request = AssemblerRequest(
+        instance_id=base.instance_id,
+        repository_path=base.repository_path,
+        git_object_format=base.git_object_format,
+        git_oid=base.git_oid,
+        semantic_root=base.semantic_root,
+        generation_root=base.generation_root,
+        compiler_digest=base.compiler.rule_digest,
+        schema_version=base.compiler.schema_version,
+        output_staging_directory=str(destination.parent / ".parent"),
+        limits=request.limits,
+    )
+    parent_manifest = assembler.publication_directory / projection_manifest_name(parent_request)
+    # Genesis or an explicitly missing derivative can always rebuild from authority.
+    if not parent_manifest.is_file():
+        return None
+
+    repository = assembler._repository
+    # The delta is gated through Git's structural diff; any other repository
+    # rebuilds from its whole inventory.
+    if not isinstance(repository, GitLedger):
+        return None
+    members = frozenset(member.path for member in bundle.record.members)
+    with bind_projection(parent_manifest, expected=base) as parent:
+        parent.require_source_authentication(repository=repository)
+
+        def changed_inputs() -> tuple[dict[str, bytes], tuple[int, int]]:
+            # Git's structural diff costs what changed; the unreported
+            # complement is byte-identical to the verified parent's tree.
+            changes = repository.changed_entries(base.git_oid, request.git_oid)
+            changed = {change.path for change in changes}
+            extra = {p for p in changed - members if not is_candidate_card_path(p)}
+            if extra != {bundle.record_path}:
+                raise ProjectionIntegrityError("Git successor differs outside its changeset")
+            blobs, inventory = read_registered_delta(
+                repository,
+                changes,
+                base_oid=base.git_oid,
+                head_oid=request.git_oid,
+                parent_inventory=projection_tree_inventory(parent),
+                limits=request.limits,
+                include_paths=members | {bundle.record_path},
+            )
+            result = {blob.path: blob.content for blob in blobs}
+            if bundle.record_path not in result:
+                raise ProjectionIntegrityError("verified successor changeset is absent")
+            return result, inventory
+
+        inputs, inventory = _timed(timings, "git_traversal", changed_inputs)
+        # Only records that touched these members bear on their revisions and
+        # explanation proofs, so the build never walks the whole history.
+        prior = delta.member_history(tuple(sorted(members)))
+        if any(record.sequence >= bundle.record.sequence for _path, record in prior):
+            raise ProjectionIntegrityError("derived-index member history is not before the delta")
+        records = (*prior, (bundle.record_path, bundle.record))
+        parsed = _timed(
+            timings,
+            "parse_normalize",
+            lambda: parse_projection_tree(
+                {p: body for p, body in inputs.items() if p in members},
+                bodies=assembler.bodies,
+                coordinate=request,
+                accepted_coordinates_by_sequence=assembler.accepted_coordinates_by_sequence,
+                selected_member_history=records,
+                carry_members=True,
+            ),
+        )
+        # Verify the compiled member identities/digests against the changeset, not
+        # a heuristic based on filename. Principal members have no envelope.
+        envelope_by_path = {row.path: row for row in parsed.envelopes}
+        for member in bundle.record.members:
+            row = envelope_by_path.get(member.path)
+            if row is not None and row.artifact_digest != getattr(
+                member, "candidate_artifact_digest", None
+            ):
+                raise ProjectionIntegrityError("compiled delta member differs from its changeset")
+        return _timed(
+            timings,
+            "sqlite_load",
+            lambda: update_projection_database(
+                destination,
+                parent=parent,
+                request=request,
+                parsed=parsed,
+                changed_paths=members,
+                sources=inputs,
+                inventory=inventory,
+                bodies=assembler.bodies,
+                resolve_digest=assembler.resolve_claim_digest,
+            ),
+        )

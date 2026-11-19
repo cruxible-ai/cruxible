@@ -1,0 +1,388 @@
+"""Strict protocol and inspection types for Cruxible bootstrap."""
+
+from __future__ import annotations
+
+import hashlib
+import re
+from pathlib import PurePosixPath
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from cruxible_client.contracts.approval_policy import ApprovalPolicyMode
+from cruxible_client.contracts.canonical import Sha256Value
+from cruxible_client.contracts.ledger_mirror import validate_mirror_url
+
+GitObjectFormat = Literal["sha1", "sha256"]
+AuthorityMode = Literal["legacy", "ledger", "inactive"]
+PrincipalKind = Literal["ordinary", "recovery", "daemon"]
+OperatingProfile = Literal["local", "cloud"]
+RecoveryPosture = Literal["narrowed-no-recovery", "recovery-configured"]
+
+_PRINCIPAL_ID_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
+_LOWER_HEX_32_RE = re.compile(r"^[0-9a-f]{64}$")
+_GIT_OID_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
+
+
+class StrictModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class PrincipalRecord(StrictModel):
+    """One public principal record stored in the signed genesis tree."""
+
+    tag: Literal["playbill-principal-v1"] = "playbill-principal-v1"
+    principal_id: str
+    algorithm: Literal["ed25519-v1"] = "ed25519-v1"
+    public_key: str
+    kind: PrincipalKind
+    status: Literal["active", "revoked"] = "active"
+
+    @field_validator("principal_id")
+    @classmethod
+    def _principal_id(cls, value: str) -> str:
+        if not _PRINCIPAL_ID_RE.fullmatch(value):
+            raise ValueError("principal_id must be a canonical lowercase identifier")
+        return value
+
+    @field_validator("public_key")
+    @classmethod
+    def _public_key(cls, value: str) -> str:
+        if not _LOWER_HEX_32_RE.fullmatch(value):
+            raise ValueError("public_key must contain 32 bytes of lowercase Ed25519 hex")
+        return value
+
+    @property
+    def public_key_digest(self) -> str:
+        digest = hashlib.sha256(bytes.fromhex(self.public_key)).hexdigest()
+        return f"sha256:{digest}"
+
+
+class TrustRoot(StrictModel):
+    """Out-of-band inputs required to reopen and verify generation zero."""
+
+    tag: Literal["playbill-trust-root-v1"] = "playbill-trust-root-v1"
+    instance_id: str = Field(min_length=1, max_length=256)
+    daemon_public_key: str
+    principals: tuple[PrincipalRecord, ...]
+
+    @field_validator("instance_id")
+    @classmethod
+    def _instance_id(cls, value: str) -> str:
+        normalized = value.strip()
+        if normalized != value or not normalized:
+            raise ValueError("instance_id must be nonblank and already normalized")
+        return value
+
+    @field_validator("daemon_public_key")
+    @classmethod
+    def _daemon_public_key(cls, value: str) -> str:
+        if not _LOWER_HEX_32_RE.fullmatch(value):
+            raise ValueError("daemon_public_key must contain 32 bytes of lowercase hex")
+        return value
+
+    @model_validator(mode="after")
+    def _principal_registry(self) -> "TrustRoot":
+        ids = [record.principal_id for record in self.principals]
+        if ids != sorted(set(ids)):
+            raise ValueError("principals must be sorted and unique by principal_id")
+        daemon = [record for record in self.principals if record.principal_id == "daemon"]
+        if len(daemon) != 1:
+            raise ValueError("trust root must contain exactly one daemon principal")
+        if daemon[0].public_key != self.daemon_public_key:
+            raise ValueError("daemon principal differs from daemon_public_key")
+        if daemon[0].kind != "daemon":
+            raise ValueError("daemon principal must have daemon kind")
+        ordinary = [
+            record
+            for record in self.principals
+            if record.kind == "ordinary" and record.status == "active"
+        ]
+        if len(ordinary) < 1:
+            raise ValueError("trust root requires at least one active ordinary principal")
+        if any(
+            record.kind == "daemon" for record in self.principals if record.principal_id != "daemon"
+        ):
+            raise ValueError("only the daemon principal may have daemon kind")
+        return self
+
+
+class StorageLayout(StrictModel):
+    """Relative managed paths; no private filename is exposed by inspection."""
+
+    ledger: str = "ledger.git"
+    projections: str = "projections"
+    cas: str = "cas"
+    exhaust: str = "exhaust"
+    credentials: str = "credentials"
+    leases: str = "leases"
+
+    @field_validator("ledger", "projections", "cas", "exhaust", "credentials", "leases")
+    @classmethod
+    def _relative_path(cls, value: str) -> str:
+        path = PurePosixPath(value)
+        if (
+            not value
+            or str(path) != value
+            or path.is_absolute()
+            or "\\" in value
+            or any(part in {"", ".", ".."} for part in path.parts)
+        ):
+            raise ValueError("storage paths must be canonical relative POSIX paths")
+        return value
+
+    @model_validator(mode="after")
+    def _unique_paths(self) -> "StorageLayout":
+        values = list(self.model_dump().values())
+        if len(values) != len(set(values)):
+            raise ValueError("storage paths must be unique")
+        parts = [PurePosixPath(value).parts for value in values]
+        for index, left in enumerate(parts):
+            for right in parts[index + 1 :]:
+                shorter, longer = sorted((left, right), key=len)
+                if longer[: len(shorter)] == shorter:
+                    raise ValueError("storage paths must not contain one another")
+        return self
+
+
+class CompilerCoordinate(StrictModel):
+    """Validated semantic compiler/schema coordinate outside the bootstrap preimage.
+
+    ``implementation`` names the reference semantics whose rule digest is
+    accepted. The physical assembler engine that realizes those semantics is
+    recorded separately as nonlogical projection build metadata.
+    """
+
+    tag: Literal["playbill-compiler-v1"] = "playbill-compiler-v1"
+    implementation: Literal["python-reference"] = "python-reference"
+    schema_version: Literal[1] = 1
+    rule_digest: str
+
+    @field_validator("rule_digest")
+    @classmethod
+    def _rule_digest(cls, value: str) -> str:
+        Sha256Value.from_tagged(value)
+        return value
+
+
+class GenesisCoordinate(StrictModel):
+    """Persisted, recomputable generation-zero coordinate."""
+
+    git_oid: str
+    bootstrap_root: str
+    semantic_root: str
+    generation_root: str
+
+    @field_validator("git_oid")
+    @classmethod
+    def _git_oid(cls, value: str) -> str:
+        if not _GIT_OID_RE.fullmatch(value):
+            raise ValueError("git_oid must be lowercase SHA-1 or SHA-256 hex")
+        return value
+
+    @field_validator("bootstrap_root", "semantic_root", "generation_root")
+    @classmethod
+    def _sha256_coordinate(cls, value: str) -> str:
+        Sha256Value.from_tagged(value)
+        return value
+
+
+class GenerationDescriptor(StrictModel):
+    """Exact `playbill-gen-v1` preimage fields, using raw digest hex."""
+
+    tag: Literal["playbill-gen-v1"] = "playbill-gen-v1"
+    semantic_root: str
+    git_oid: str
+    parent_generation_root: str
+
+    @field_validator("semantic_root", "parent_generation_root")
+    @classmethod
+    def _root(cls, value: str) -> str:
+        if not _LOWER_HEX_32_RE.fullmatch(value):
+            raise ValueError("generation descriptor roots must be lowercase SHA-256 hex")
+        return value
+
+    @field_validator("git_oid")
+    @classmethod
+    def _oid(cls, value: str) -> str:
+        if not _GIT_OID_RE.fullmatch(value):
+            raise ValueError("generation descriptor Git OID is malformed")
+        return value
+
+
+class AuthorityMatrix(StrictModel):
+    """One scalar write authority per migration family."""
+
+    families: dict[str, AuthorityMode]
+
+    @field_validator("families")
+    @classmethod
+    def _families(cls, value: dict[str, AuthorityMode]) -> dict[str, AuthorityMode]:
+        required = {"config", "documents", "graph", "procedures", "workflows"}
+        if set(value) != required:
+            raise ValueError(
+                "authority matrix must name exactly config, documents, graph, "
+                "procedures, and workflows"
+            )
+        return dict(sorted(value.items()))
+
+
+def initial_authority_matrix() -> AuthorityMatrix:
+    return AuthorityMatrix(
+        families={
+            "config": "legacy",
+            "documents": "inactive",
+            "graph": "legacy",
+            "procedures": "legacy",
+            "workflows": "legacy",
+        }
+    )
+
+
+#: Upper bound on the operator's decommission reason. It is stored in the
+#: canonical descriptor and echoed in every refusal, so it is bounded prose,
+#: not a place to park a document.
+DECOMMISSION_REASON_MAX_LENGTH = 512
+
+
+def validate_decommission_prose(value: str) -> str:
+    """Bound one line of operator prose that is stored and then echoed back.
+
+    The terminal record and the served request model both hold this constraint,
+    and they hold it by calling this one function rather than by each restating
+    it: a value the record refuses must never be admitted at the boundary and
+    then rejected from inside the write, where the refusal is a pydantic
+    ``ValidationError`` nothing on the wire can type.
+    """
+
+    if not value.strip() or value.strip() != value:
+        raise ValueError("decommission fields must be nonblank and already normalized")
+    # The reason is rendered back to an operator in the CLI refusal and in the
+    # `next` row detail. A control character there forges daemon output (a
+    # newline plus "Error: ..." reads as the daemon's own line), so it is
+    # refused rather than left to each renderer to escape.
+    if any(character.isprintable() is False for character in value):
+        raise ValueError("decommission fields may not contain control characters")
+    return value
+
+
+class Decommission(StrictModel):
+    """The terminal lifecycle state of one governed instance.
+
+    Decommissioning ENDS an instance's governed writes without deleting a byte:
+    every accepted generation, receipt, and body stays exactly where it is and
+    stays readable. Archiving or erasing the directory afterwards is the
+    operator's own step, deliberately outside this record.
+    """
+
+    tag: Literal["playbill-instance-decommission-v1"] = "playbill-instance-decommission-v1"
+    reason: str = Field(min_length=1, max_length=DECOMMISSION_REASON_MAX_LENGTH)
+    decommissioned_at: str
+    decommissioned_by: str = Field(min_length=1, max_length=256)
+
+    @field_validator("reason", "decommissioned_by")
+    @classmethod
+    def _nonblank(cls, value: str) -> str:
+        return validate_decommission_prose(value)
+
+
+class Descriptor(StrictModel):
+    """The strict operational descriptor for one opt-in managed instance."""
+
+    tag: Literal["playbill-instance-v1"] = "playbill-instance-v1"
+    format_version: Literal[1] = 1
+    instance_id: str
+    git_object_format: GitObjectFormat
+    daemon_algorithm: Literal["ed25519-v1"] = "ed25519-v1"
+    daemon_public_key: str
+    compiler: CompilerCoordinate
+    authority: AuthorityMatrix
+    operating_profile: OperatingProfile
+    recovery_posture: RecoveryPosture
+    storage: StorageLayout
+    genesis: GenesisCoordinate
+    # Absent on every live instance, and absent from the canonical bytes when it
+    # is: a descriptor written before this field re-renders byte-identically, so
+    # existing instances keep replaying.
+    decommissioned: Decommission | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    # Where this ledger publishes itself, on the same terms. It is operational
+    # configuration rather than accepted state: no generation, candidate or
+    # digest reads it, changing it changes nothing that was already governed,
+    # and an instance that publishes nowhere renders exactly the bytes it always
+    # did. It never carries a credential -- a URL with userinfo is refused at
+    # every door -- because `orient` prints this string back.
+    mirror_url: str | None = Field(default=None, exclude_if=lambda value: value is None)
+
+    @field_validator("instance_id")
+    @classmethod
+    def _instance_id(cls, value: str) -> str:
+        normalized = value.strip()
+        if normalized != value or not normalized:
+            raise ValueError("instance_id must be nonblank and already normalized")
+        return value
+
+    @field_validator("daemon_public_key")
+    @classmethod
+    def _daemon_public_key(cls, value: str) -> str:
+        if not _LOWER_HEX_32_RE.fullmatch(value):
+            raise ValueError("daemon_public_key must contain 32 bytes of lowercase hex")
+        return value
+
+    @field_validator("mirror_url")
+    @classmethod
+    def _mirror_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return validate_mirror_url(value)
+
+
+class PrincipalInspection(StrictModel):
+    principal_id: str
+    algorithm: str
+    kind: PrincipalKind
+    status: str
+    public_key_digest: str
+
+
+class Inspection(StrictModel):
+    """Credential-safe read model for internal/service-level inspection."""
+
+    descriptor_tag: str
+    format_version: int
+    instance_id: str
+    git_object_format: GitObjectFormat
+    head_oid: str
+    bootstrap_root: str
+    semantic_root: str
+    generation_root: str
+    compiler: CompilerCoordinate
+    authority: AuthorityMatrix
+    operating_profile: OperatingProfile
+    recovery_posture: RecoveryPosture
+    approval_policy_mode: ApprovalPolicyMode
+    principals: tuple[PrincipalInspection, ...]
+    managed_root: str
+    storage_directories: dict[str, str]
+    daemon_private_key_present: bool
+
+
+__all__ = [
+    "AuthorityMatrix",
+    "AuthorityMode",
+    "CompilerCoordinate",
+    "GenesisCoordinate",
+    "GenerationDescriptor",
+    "GitObjectFormat",
+    "OperatingProfile",
+    "Descriptor",
+    "Inspection",
+    "TrustRoot",
+    "PrincipalInspection",
+    "PrincipalRecord",
+    "PrincipalKind",
+    "RecoveryPosture",
+    "StorageLayout",
+    "initial_authority_matrix",
+]

@@ -1,0 +1,126 @@
+{
+  "admission_policy": {
+    "corroboration_requirements": [],
+    "freeze_requirements": [],
+    "tag": "playbill-claim-admission-policy-v1"
+  },
+  "allowed_subject_kinds": [
+    "project.work_item"
+  ],
+  "artifact_format": "cruxible-claim-type-v11",
+  "canonical_form": [],
+  "cardinality": "one",
+  "evidence_admission_policy": {
+    "rules": [
+      {
+        "admission": "direct",
+        "attestation_requirement": "none",
+        "capture_contracts": [
+          {
+            "logical_sources": [],
+            "role": "capture-contract",
+            "target": {
+              "kind": "CaptureContract",
+              "name": "playbill.coordinator-self-source-v1"
+            }
+          }
+        ],
+        "claim_roles": [
+          "normative",
+          "observation"
+        ],
+        "rule_id": "direct-self-asserted",
+        "subject_binding": "exact_claim_subject",
+        "tag": "cruxible-claim-evidence-admission-rule-v4"
+      },
+      {
+        "admission": "direct",
+        "attestation_requirement": "none",
+        "capture_contracts": [
+          {
+            "logical_sources": [],
+            "role": "capture-contract",
+            "target": {
+              "kind": "CaptureContract",
+              "name": "playbill.foreign-source.corpus.handbook.md"
+            }
+          },
+          {
+            "logical_sources": [],
+            "role": "capture-contract",
+            "target": {
+              "kind": "CaptureContract",
+              "name": "playbill.foreign-source.corpus.runbook.md"
+            }
+          },
+          {
+            "logical_sources": [],
+            "role": "capture-contract",
+            "target": {
+              "kind": "CaptureContract",
+              "name": "playbill.foreign-source.notes.scratch.md"
+            }
+          }
+        ],
+        "claim_roles": [
+          "observation"
+        ],
+        "rule_id": "foreign-working-sources",
+        "subject_binding": "exact_claim_subject",
+        "tag": "cruxible-claim-evidence-admission-rule-v4"
+      }
+    ],
+    "tag": "cruxible-claim-evidence-admission-policy-v4"
+  },
+  "evidence_requirement": "self",
+  "identity": {
+    "kind": "ClaimType",
+    "name": "project.work_item.status"
+  },
+  "lifecycle": {
+    "predecessor_digest": null,
+    "state": "live"
+  },
+  "member_descriptions": [],
+  "permitted_roles": [
+    "normative",
+    "observation"
+  ],
+  "pins": [],
+  "precedence": {
+    "revisable_by_procedures": [
+      "environment_binding",
+      "observation",
+      "derivation"
+    ],
+    "roles": [
+      "normative",
+      "environment_binding",
+      "observation",
+      "derivation"
+    ]
+  },
+  "predicate": "project.work_item.status",
+  "referent_sensitivity": "identity",
+  "requires_complete_input": [],
+  "resolution_policy": {
+    "cardinality": "one",
+    "conflict_result": "unresolved",
+    "eligible_verdicts": [
+      "supported"
+    ],
+    "require_current": true,
+    "required_basis_kinds": [],
+    "selector": "only_contender",
+    "tag": "playbill-claim-resolution-policy-v1"
+  },
+  "revision_evidence": "accumulate",
+  "value": {
+    "kind": "enum",
+    "members": [
+      "blocked",
+      "done",
+      "ready"
+    ]
+  }
+}

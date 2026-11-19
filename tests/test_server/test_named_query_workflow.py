@@ -1,0 +1,155 @@
+"""SDK and declarative CLI/MCP author, submit, accept and run the same queries."""
+
+import json
+
+import pytest
+from click.testing import CliRunner
+from cryptography.hazmat.primitives.serialization import load_ssh_private_key
+
+from cruxible_client import contracts as api
+from cruxible_client.authoring.examples import (
+    query_claims_by_type_example,
+    query_ontology_example,
+    query_procedures_example,
+)
+from cruxible_client.authoring.sdk import Cruxible, Proposal
+from cruxible_client.authoring.signing import LocalEd25519ApprovalSigner
+from cruxible_client.contracts.authoring.inputs import (
+    ChangeSetInput,
+    ClaimTypeInput,
+    QueryDefinitionInput,
+)
+from cruxible_client.contracts.get_reads import GetQueryCard
+from cruxible_client.contracts.query.authored import QuerySpecInput
+from cruxible_client.transport.http import CruxibleClient
+from cruxible_core.cli.main import cli
+from cruxible_core.mcp import handlers
+from tests.test_authoring.test_authoring_change_set_intents import _predicate_type
+
+
+def query_authored_example() -> QueryDefinitionInput:
+    return QueryDefinitionInput(
+        kind="query_definition",
+        query_definition=QuerySpecInput.model_validate(
+            {
+                "query": "project.authored_work_items",
+                "from": {"item": "project.work_item"},
+                "where": 'item.status == "ready"',
+                "fields": ["item", "item.status"],
+            }
+        ),
+    )
+
+
+@pytest.mark.parametrize("surface", ["sdk", "cli", "mcp"])
+@pytest.mark.parametrize(
+    "example",
+    [
+        query_ontology_example,
+        query_procedures_example,
+        query_claims_by_type_example,
+        query_authored_example,
+    ],
+)
+def test_named_query_complete_workflow(playbill_http, tmp_path, monkeypatch, surface, example):
+    transport, instance_id, private_key = playbill_http
+    client = CruxibleClient(base_url="http://cruxible")
+    client._client = transport
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    pb = Cruxible._from_client(client, instance_id=instance_id, workspace=workspace)
+    definition = example()
+    ordinary = example in (query_claims_by_type_example, query_authored_example)
+    input = (
+        ChangeSetInput(
+            kind="change_set",
+            members=(
+                ClaimTypeInput(
+                    kind="claim_type", claim_type=_predicate_type("project.work_item.status")
+                ),
+                definition,
+            ),
+        )
+        if ordinary
+        else definition
+    )
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: client)
+    monkeypatch.setattr(handlers, "_get_client", lambda: client)
+
+    def invoke(*args):
+        extra = () if args[:1] == ("authoring",) else ("--json",)
+        result = CliRunner().invoke(
+            cli, ["--server-url", "http://cruxible", "--instance-id", instance_id, *args, *extra]
+        )
+        assert result.exit_code == 0, result.output
+        return json.loads(result.stdout)
+
+    if surface == "sdk":
+        if ordinary:
+            change = pb.changes()
+            ref = change.claim_type(_predicate_type("project.work_item.status"))
+            change.query_definition(
+                definition, vocabulary=() if example is query_authored_example else (ref,)
+            )
+            intent = change.prepare()
+        else:
+            intent = pb.query_definition(definition=definition).prepare()
+        assert not intent.refused, intent.diagnostics
+        proposal = intent.submit(accept="never").proposal
+        assert proposal is not None
+    else:
+        if surface == "cli":
+            payload_file = tmp_path / "query.json"
+            payload_file.write_text(input.model_dump_json())
+            compiled = invoke("authoring", "compile", str(payload_file))
+            assert compiled["verdict"] == "passed", compiled
+            submitted = invoke(
+                "authoring",
+                "submit",
+                "--no-accept",
+                "--intent-id",
+                compiled["certificate"]["intent_id"],
+            )
+        else:
+            compiled = handlers.handle_playbill_authoring_compile(
+                instance_id, input.model_dump(mode="json"), intent_id=None
+            )
+            assert compiled.verdict == "passed", compiled
+            submitted = handlers.handle_playbill_authoring_submit(
+                instance_id, intent_id=compiled.certificate.intent_id, accept="never"
+            ).model_dump(mode="json")
+        proposal = Proposal(pb, submitted["status"]["proposal_id"])
+    key = load_ssh_private_key(private_key.read_bytes(), password=None)
+    signer = LocalEd25519ApprovalSigner(
+        signer_id="reviewer",
+        private_key_path=private_key,
+        public_key=key.public_key().public_bytes_raw().hex(),
+    )
+    reviewed = proposal.review()
+    receipt = proposal.approve(signer=signer, reviewed=reviewed)
+    assert receipt.activation is not None and receipt.activation.status == "accepted"
+    name = definition.query_definition.identity.name
+    if example is query_authored_example:
+        card = pb.get(f"QueryDefinition:{name}").value
+        assert isinstance(card, GetQueryCard)
+        assert isinstance(card.definition, QuerySpecInput)
+        assert card.definition.query == name
+        assert card.definition.from_ == definition.query_definition.from_
+    if surface == "cli":
+        page = api.QueryResultRecord.model_validate(
+            invoke("query", "--name", name, "--receipt", "full")
+        )
+    elif surface == "mcp":
+        page = handlers.handle_playbill_query(instance_id, name=name, receipt="full")
+    else:
+        page = pb.query(name=name, receipt="full").page
+    replay = page.receipt.replay
+    assert replay is not None
+    assert replay.result.verdict == "completed"
+    assert replay.execution.definition_digest == page.receipt.spec_digest
+    if not ordinary:
+        assert replay.result.result_shape == "artifact_definition"
+        assert not replay.result.truncation.truncated
+        definitions = tuple(row.artifact for row in replay.result.rows if row.artifact)
+        if example is query_procedures_example:
+            assert definitions == ()

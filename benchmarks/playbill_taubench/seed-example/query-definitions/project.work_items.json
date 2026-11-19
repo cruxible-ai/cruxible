@@ -1,0 +1,52 @@
+{
+  "artifact_format": "cruxible-query-definition-v3",
+  "dedupe": "subject",
+  "default_budgets": {
+    "max_results": 10,
+    "max_traversal_depth": 0
+  },
+  "entry": {
+    "binding": "item",
+    "subject_kinds": [
+      "project.work_item"
+    ]
+  },
+  "evaluation_policy": {
+    "conflict_behavior": "surface_conflicts",
+    "visible_currency": [
+      "current"
+    ],
+    "visible_verdicts": [
+      "supported"
+    ]
+  },
+  "identity": {
+    "kind": "QueryDefinition",
+    "name": "project.work_items"
+  },
+  "maximum_budgets": {
+    "max_results": 50,
+    "max_traversal_depth": 0
+  },
+  "projection": {
+    "fields": [
+      {
+        "name": "item_id",
+        "value": {
+          "binding": "item",
+          "field": "subject_id",
+          "kind": "subject_field"
+        }
+      },
+      {
+        "name": "status",
+        "value": {
+          "binding": "item",
+          "kind": "claim_value",
+          "predicate": "project.work_item.status"
+        }
+      }
+    ]
+  },
+  "result_shape": "subject"
+}

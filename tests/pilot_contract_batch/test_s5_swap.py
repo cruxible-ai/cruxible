@@ -1,0 +1,177 @@
+"""Scenario 5: swap one fitting provider for another on an accepted Line (note §2.2, §2.5).
+
+Transcript shape::
+
+    $ cruxible authoring submit line.json   (search -> pilot-search, results -> pilot-results)
+      accepted; results: web.search.results@1, identical
+    $ cruxible line run pilot.search-ranks
+      succeeded; 3 pilot.page.rank Claims proposed, each citing 1 Capture
+      receipts: results web.search.results@1 fit identical
+    $ cruxible proposal activate ...
+    $ cruxible authoring submit line.json   (results -> pilot-results-wide)
+      accepted; results: web.search.results@1, structural
+    $ cruxible line run pilot.search-ranks
+      succeeded; nothing to propose: same derived Capture, same Claims
+      receipts: results web.search.results@1 fit structural
+
+Green when: both runs succeed; after the swap the live rank Claims are the
+same (url -> rank), the derived document the extract read is byte-identical
+(same content digest; the Capture envelopes differ only in the build and
+operation signature that produced it), and nothing is proposed; each run's receipts record the same
+capability pin, with ``fit: identical`` before the swap and ``structural``
+after (the wide provider's own request accepts one more optional field), and
+the operation's own signature digest differs between the two.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from tests.pilot_contract_batch import search_world, surfaces
+from tests.pilot_contract_batch.fixtures import providers
+from tests.pilot_contract_batch.harness import Scenario
+
+
+def _derived(instance: Any, state: Any) -> tuple[Any, ...]:
+    """The envelopes of the Captures the ``ranked`` call derived, in order."""
+
+    from cruxible_client.contracts.captures import parse_capture_envelope
+    from cruxible_core.storage.cas import BodyAccessContext
+
+    (call,) = (node for node in state.nodes if node.node == "ranked")
+    access = BodyAccessContext(principal_id="pilot", can_read_body=True)
+    return tuple(
+        parse_capture_envelope(instance.body_store().read(digest, access=access))
+        for digest in call.summary.capture_digests
+    )
+
+
+def _provider_receipts(instance: Any, state: Any) -> dict[str, Any]:
+    """The run's provider invocation receipts, by operation, as journaled."""
+
+    from cruxible_client.contracts.provider_execution import ProviderInvocationCompleted
+    from cruxible_core.exhaust.payloads import read_payload
+    from cruxible_core.service.procedures.procedure_runs import _records_for_run
+    from cruxible_core.storage.cas import BodyAccessContext
+
+    access = BodyAccessContext(principal_id="pilot", can_read_body=True)
+    found: dict[str, Any] = {}
+    for stored in _records_for_run(instance, state.receipt.run_id):
+        if stored.record.event_kind != "provider_invocation_completed":
+            continue
+        payload = read_payload(instance.body_store(), stored.record.payload_digest, access=access)
+        receipt = ProviderInvocationCompleted.model_validate(payload).receipt
+        found[receipt.operation] = receipt
+    return found
+
+
+@pytest.mark.pilot(
+    "s5-swap",
+    owner=surfaces.SWAP,
+    title="swap a fitting provider for another on an accepted Line: same Claims, fit recorded",
+)
+def test_swapping_a_fitting_provider_keeps_claims_and_records_the_fit(
+    pilot: Scenario, tmp_path: Path
+) -> None:
+    instance, base = search_world.setup(pilot, tmp_path, search_world.ranks_spec())
+    search = providers.search_package(base)
+    exact = providers.results_package(base)
+    wide = providers.wide_results_package(base)
+    for package in (exact, wide):
+        search_world.install(pilot, instance, package)
+
+    pilot.call(
+        "cruxible authoring submit line.json   (search -> pilot-search, results -> pilot-results)"
+    )
+    first_line = surfaces.accept_line(
+        instance, search_world.line_input({"search": "pilot-search", "results": "pilot-results"})
+    )
+    pilot.got(
+        f"accepted; results: {first_line.slots['results'].capability.spelling}, "
+        f"{first_line.slots['results'].fit}"
+    )
+    search_world.grant(instance)
+
+    pilot.call(f"cruxible line run {search_world.LINE}")
+    first = search_world.run(instance, {"search": search, providers.RESULTS: exact})
+    shape = search_world.evidence_shape(instance, first)
+    before = surfaces.run_slot_records(instance, first)
+    pilot.got(f"{first.status}; {len(shape)} {search_world.RANK} Claims proposed")
+    pilot.got(
+        f"receipts: results {before['results'].capability.spelling} fit {before['results'].fit}"
+    )
+    search_world.activate(instance, first)
+    ranks = search_world.ranks(instance)
+    pilot.show("live ranks", ranks)
+
+    pilot.call("cruxible authoring submit line.json   (results -> pilot-results-wide)")
+    second_line = surfaces.accept_line(
+        instance,
+        search_world.line_input({"search": "pilot-search", "results": "pilot-results-wide"}),
+    )
+    pilot.got(
+        f"accepted; results: {second_line.slots['results'].capability.spelling}, "
+        f"{second_line.slots['results'].fit}"
+    )
+
+    pilot.call(f"cruxible line run {search_world.LINE}")
+    second = search_world.run(instance, {"search": search, providers.RESULTS: wide}, minute=1)
+    after = surfaces.run_slot_records(instance, second)
+    proposal = second.terminal_egress[0].proposal_id
+    pilot.got(f"{second.status}; proposal: {proposal or 'none (nothing changed)'}")
+    pilot.got(
+        "derived document: "
+        + ", ".join(item.commitment.digest[:19] + "..." for item in _derived(instance, first))
+        + " before, "
+        + ", ".join(item.commitment.digest[:19] + "..." for item in _derived(instance, second))
+        + " after"
+    )
+    pilot.got(
+        f"receipts: results {after['results'].capability.spelling} fit {after['results'].fit}"
+    )
+
+    assert first.status == "succeeded", first.terminal
+    assert shape == sorted((url, 1) for url in search_world.URLS)
+    assert ranks == {
+        hit["link"]: rank
+        for rank, hit in enumerate(providers.RECORDED_HITS[search_world.QUERY], start=1)
+    }
+    assert first_line.slots["results"].fit == "identical"
+    assert second_line.slots["results"].fit == "structural"
+
+    assert second.status == "succeeded", second.terminal
+    assert proposal is None
+    assert search_world.ranks(instance) == ranks
+    # The same document from both providers: one content digest each time. The
+    # envelopes differ only in which build and operation produced it (a Capture's
+    # envelope commits to its producer), so the Capture digests differ by design.
+    derived_first, derived_second = _derived(instance, first), _derived(instance, second)
+    assert [item.commitment for item in derived_first] == [
+        item.commitment for item in derived_second
+    ]
+    for one, other in zip(derived_first, derived_second, strict=True):
+        assert one.production_evidence.provider_artifact_digest != (
+            other.production_evidence.provider_artifact_digest
+        )
+        assert one.production_evidence.operation_signature_digest != (
+            other.production_evidence.operation_signature_digest
+        )
+
+    # The provider invocation receipts carry the same capability pin and fit.
+    first_receipt = _provider_receipts(instance, first)[providers.RESULTS]
+    second_receipt = _provider_receipts(instance, second)[providers.RESULTS]
+    pin = before["results"].capability
+    for receipt, fit in ((first_receipt, "identical"), (second_receipt, "structural")):
+        assert receipt.capability is not None
+        assert (receipt.capability.name, receipt.capability.version) == (pin.name, pin.version)
+        assert (receipt.capability.digest, receipt.fit) == (pin.digest, fit)
+
+    assert before["results"].capability == after["results"].capability
+    assert before["results"].capability.spelling == f"{providers.RESULTS}@1"
+    assert (before["results"].fit, after["results"].fit) == ("identical", "structural")
+    assert (
+        before["results"].operation_signature_digest != after["results"].operation_signature_digest
+    )

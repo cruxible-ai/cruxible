@@ -1,0 +1,392 @@
+"""Deterministic merkle manifest laws: structure, incrementality, and tag disjointness."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import random
+from collections.abc import Mapping
+from pathlib import Path
+
+import pytest
+
+from cruxible_client.contracts.canonical import (
+    CanonicalEncodingError,
+    SemanticMerkleRoot,
+    SemanticRoot,
+    canonical_bytes,
+    manifest_for_tree,
+)
+from cruxible_client.contracts.errors import MerkleIntegrityError
+from cruxible_client.contracts.merkle import (
+    EMPTY_MERKLE_ROOT,
+    MERKLE_LEAF_DOMAIN,
+    MERKLE_NODE_DOMAIN,
+    MERKLE_ROOT_DOMAIN,
+    ROOT_PREFIX,
+    MerkleNode,
+    _MerkleNodes,
+    build_merkle_manifest,
+    detach_merkle_tree,
+    merkle_manifest_root,
+    update_merkle_manifest,
+    verify_merkle_manifest,
+    verify_merkle_nodes,
+)
+
+GOLDEN = Path(__file__).parents[1] / "goldens" / "playbill" / "merkle-manifest-v1.json"
+
+# Every randomized law below is driven from this one constant. Replay determinism
+# is the property under test, so the generator must never read a clock.
+PROPERTY_SEED = 20260818
+
+MEMBERS: Mapping[str, str] = {
+    "documents/playbill-design.json": "11" * 32,
+    "documents/nested/deep/leaf.json": "22" * 32,
+    "principals/daemon.json": "33" * 32,
+    "subjects/alpha.json": "44" * 32,
+}
+
+
+def _digest(domain: str, payload: Mapping[str, object]) -> str:
+    return hashlib.sha256(canonical_bytes({"tag": domain, **payload})).hexdigest()
+
+
+def test_empty_manifest_has_an_explicit_defined_root() -> None:
+    manifest = build_merkle_manifest({})
+    assert set(manifest.nodes) == {ROOT_PREFIX}
+    assert manifest.nodes[ROOT_PREFIX].segments == ()
+    assert manifest.root == EMPTY_MERKLE_ROOT
+    node = _digest(MERKLE_NODE_DOMAIN, {"children": []})
+    assert manifest.root == SemanticMerkleRoot(_digest(MERKLE_ROOT_DOMAIN, {"node": node}))
+    verify_merkle_nodes(manifest.nodes, claimed_root=manifest.root.tagged)
+
+
+def test_node_preimages_are_domain_separated_by_leaf_interior_and_root() -> None:
+    manifest = build_merkle_manifest({"a/b.yaml": "55" * 32})
+    leaf = manifest.node("a/b.yaml")
+    assert leaf.is_leaf
+    assert leaf.digest.value == _digest(
+        MERKLE_LEAF_DOMAIN, {"path": "a/b.yaml", "member_digest": "55" * 32}
+    )
+    directory = manifest.node("a")
+    assert not directory.is_leaf
+    assert directory.digest.value == _digest(
+        MERKLE_NODE_DOMAIN, {"children": [["b.yaml", leaf.digest.value]]}
+    )
+    root_node = manifest.node(ROOT_PREFIX)
+    assert root_node.digest.value == _digest(
+        MERKLE_NODE_DOMAIN, {"children": [["a", directory.digest.value]]}
+    )
+    assert manifest.root.value == _digest(MERKLE_ROOT_DOMAIN, {"node": root_node.digest.value})
+    # The three domains are genuinely distinct, not the same bytes under a label.
+    assert len({leaf.digest.value, directory.digest.value, manifest.root.value}) == 3
+
+
+def test_independent_builds_agree_on_root_and_every_node() -> None:
+    shuffled = dict(sorted(MEMBERS.items(), reverse=True))
+    left = build_merkle_manifest(MEMBERS)
+    right = build_merkle_manifest(shuffled)
+    assert left.root == right.root
+    assert left.nodes == right.nodes
+    assert left.members() == dict(sorted(MEMBERS.items()))
+
+
+def test_the_manifest_root_reads_a_tree_through_its_member_digests() -> None:
+    tree = {path: f"content for {path}".encode() for path in MEMBERS}
+    assert merkle_manifest_root(tree) == build_merkle_manifest(manifest_for_tree(tree)).root
+
+
+def test_a_manifest_root_spelling_can_never_be_confused_with_a_sha256_digest() -> None:
+    """The one manifest root is `merkle-sha256:`; no `sha256:` value verifies as one."""
+
+    tree = {path: f"content for {path}".encode() for path in MEMBERS}
+    merkle = merkle_manifest_root(tree)
+    assert merkle.tagged.startswith("merkle-sha256:")
+    respelled = "sha256:" + merkle.value
+    with pytest.raises(ValueError, match="merkle-sha256"):
+        SemanticMerkleRoot.from_tagged(respelled)
+    with pytest.raises(ValueError):
+        SemanticRoot.from_tagged(merkle.tagged)
+    with pytest.raises(ValueError):
+        verify_merkle_manifest(manifest_for_tree(tree), claimed_root=respelled)
+    # A well-spelled root over other bytes refuses as an integrity failure.
+    with pytest.raises(MerkleIntegrityError):
+        verify_merkle_manifest(
+            manifest_for_tree(tree), claimed_root=SemanticMerkleRoot("00" * 32).tagged
+        )
+
+
+def test_verification_accepts_the_true_root_and_refuses_a_perturbed_leaf() -> None:
+    members = dict(MEMBERS)
+    claimed = build_merkle_manifest(members).root.tagged
+    manifest = verify_merkle_manifest(members, claimed_root=claimed)
+    verify_merkle_nodes(manifest.nodes, claimed_root=manifest.root.tagged)
+    for path in members:
+        perturbed = {**members, path: "ff" * 32}
+        assert build_merkle_manifest(perturbed).root != manifest.root
+        with pytest.raises(MerkleIntegrityError):
+            verify_merkle_manifest(perturbed, claimed_root=manifest.root.tagged)
+
+
+def test_tampering_with_any_interior_node_is_caught_by_node_verification() -> None:
+    manifest = build_merkle_manifest(MEMBERS)
+    for prefix, node in manifest.nodes.items():
+        tampered = dict(manifest.nodes)
+        # A well-formed digest that simply is not the one the node derives.
+        tampered[prefix] = MerkleNode(
+            prefix=node.prefix,
+            digest=type(node.digest)("ab" * 32),
+            member_digest=node.member_digest,
+            segments=node.segments,
+        )
+        with pytest.raises(MerkleIntegrityError):
+            verify_merkle_nodes(tampered, claimed_root=manifest.root.tagged)
+
+
+def test_node_verification_refuses_unreachable_and_misfiled_nodes() -> None:
+    manifest = build_merkle_manifest(MEMBERS)
+    orphaned = {**manifest.nodes, "orphan/node.yaml": manifest.node("subjects/alpha.json")}
+    with pytest.raises(MerkleIntegrityError):
+        verify_merkle_nodes(orphaned, claimed_root=manifest.root.tagged)
+    truncated = {
+        prefix: node for prefix, node in manifest.nodes.items() if prefix != "documents/nested"
+    }
+    with pytest.raises(MerkleIntegrityError):
+        verify_merkle_nodes(truncated, claimed_root=manifest.root.tagged)
+
+
+def test_incremental_update_reuses_every_untouched_scalar_node_row() -> None:
+    manifest = build_merkle_manifest(MEMBERS)
+    updated = update_merkle_manifest(manifest, updated={"subjects/alpha.json": "99" * 32})
+
+    assert isinstance(manifest.nodes, _MerkleNodes)
+    assert isinstance(updated.nodes, _MerkleNodes)
+    changed_paths = {ROOT_PREFIX, "subjects", "subjects/alpha.json"}
+    recomputed = {
+        prefix
+        for prefix, row in updated.nodes._rows.items()
+        if manifest.nodes._rows.get(prefix) is not row  # immutable payload sharing
+    }
+    assert recomputed == changed_paths
+    for prefix in set(manifest.nodes) - changed_paths:
+        assert updated.nodes._rows[prefix] is manifest.nodes._rows[prefix]
+    assert updated.root == build_merkle_manifest({**MEMBERS, "subjects/alpha.json": "99" * 32}).root
+
+
+def test_removal_prunes_emptied_directories_and_leaves_siblings_untouched() -> None:
+    manifest = build_merkle_manifest(MEMBERS)
+    pruned = update_merkle_manifest(manifest, removed=["documents/nested/deep/leaf.json"])
+    assert "documents/nested" not in pruned.nodes
+    assert "documents/nested/deep" not in pruned.nodes
+    assert (
+        pruned.nodes["documents/playbill-design.json"]
+        == manifest.nodes["documents/playbill-design.json"]
+    )
+    assert pruned.nodes["principals"] == manifest.nodes["principals"]
+    expected = {k: v for k, v in MEMBERS.items() if k != "documents/nested/deep/leaf.json"}
+    assert pruned.root == build_merkle_manifest(expected).root
+    assert pruned.nodes == build_merkle_manifest(expected).nodes
+
+
+def test_removing_every_member_returns_the_defined_empty_root() -> None:
+    manifest = build_merkle_manifest(MEMBERS)
+    emptied = update_merkle_manifest(manifest, removed=list(MEMBERS))
+    assert emptied.root == EMPTY_MERKLE_ROOT
+    assert set(emptied.nodes) == {ROOT_PREFIX}
+
+
+def test_empty_change_set_is_a_no_op() -> None:
+    manifest = build_merkle_manifest(MEMBERS)
+    unchanged = update_merkle_manifest(manifest)
+    assert unchanged.root == manifest.root
+    assert unchanged.nodes == manifest.nodes
+
+
+def _random_path(rng: random.Random) -> str:
+    directories = ("documents", "subjects", "principals", "documents/nested", "claims/a/b")
+    return f"{rng.choice(directories)}/m{rng.randrange(12):02d}.json"
+
+
+def _random_member(rng: random.Random) -> str:
+    return f"{rng.randrange(1 << 64):016x}" * 4
+
+
+def test_incremental_updates_match_from_scratch_builds_over_a_seeded_walk() -> None:
+    rng = random.Random(PROPERTY_SEED)
+    members: dict[str, str] = {}
+    manifest = build_merkle_manifest(members)
+    saw_prune = False
+    for _ in range(400):
+        updates: dict[str, str] = {}
+        removals: set[str] = set()
+        for _ in range(rng.randrange(1, 4)):
+            if members and rng.random() < 0.4:
+                path = rng.choice(sorted(members))
+                if path in updates:
+                    continue
+                removals.add(path)
+            else:
+                path = _random_path(rng)
+                if path in removals:
+                    continue
+                updates[path] = _random_member(rng)
+        before = set(manifest.nodes)
+        manifest = update_merkle_manifest(manifest, updated=updates, removed=sorted(removals))
+        saw_prune = saw_prune or bool(before - set(manifest.nodes) - removals)
+        for path in removals:
+            members.pop(path)
+        members.update(updates)
+        rebuilt = build_merkle_manifest(members)
+        assert manifest.root == rebuilt.root
+        assert manifest.nodes == rebuilt.nodes
+        assert manifest.members() == dict(sorted(members.items()))
+        verify_merkle_nodes(manifest.nodes, claimed_root=manifest.root.tagged)
+    assert saw_prune, "the seeded walk must exercise subtree-emptying removals"
+    assert members, "the seeded walk must end with a nonempty manifest"
+
+
+def test_seeded_walk_is_reproducible_across_independent_runs() -> None:
+    def walk() -> str:
+        rng = random.Random(PROPERTY_SEED)
+        manifest = build_merkle_manifest({})
+        for _ in range(50):
+            manifest = update_merkle_manifest(
+                manifest, updated={_random_path(rng): _random_member(rng)}
+            )
+        return manifest.root.tagged
+
+    assert walk() == walk()
+
+
+def test_structural_conflicts_and_malformed_members_are_refused() -> None:
+    with pytest.raises(CanonicalEncodingError):
+        build_merkle_manifest({"a": "11" * 32, "a/b.yaml": "22" * 32})
+    with pytest.raises(CanonicalEncodingError):
+        build_merkle_manifest({"a/b.yaml": "not-a-digest"})
+    with pytest.raises(CanonicalEncodingError):
+        build_merkle_manifest({"/absolute.yaml": "11" * 32})
+    with pytest.raises(CanonicalEncodingError):
+        build_merkle_manifest({"documents/a.json": "11" * 32, "documents/A.json": "22" * 32})
+
+    manifest = build_merkle_manifest(MEMBERS)
+    with pytest.raises(CanonicalEncodingError):
+        update_merkle_manifest(manifest, updated={"documents": "11" * 32})
+    with pytest.raises(CanonicalEncodingError):
+        update_merkle_manifest(manifest, updated={"documents/playbill-design.json/x": "11" * 32})
+    with pytest.raises(CanonicalEncodingError):
+        update_merkle_manifest(manifest, removed=["documents"])
+    with pytest.raises(CanonicalEncodingError):
+        update_merkle_manifest(manifest, removed=["documents/absent.json"])
+    with pytest.raises(CanonicalEncodingError):
+        update_merkle_manifest(
+            manifest, updated={"subjects/beta.json": "11" * 32}, removed=["subjects/beta.json"]
+        )
+    with pytest.raises(CanonicalEncodingError):
+        update_merkle_manifest(manifest, updated={"documents/Nested/x.json": "11" * 32})
+    with pytest.raises(CanonicalEncodingError):
+        update_merkle_manifest(manifest, updated={"documents/Playbill-Design.json": "11" * 32})
+
+
+def test_merkle_manifest_has_a_frozen_end_to_end_golden() -> None:
+    golden = json.loads(GOLDEN.read_bytes())
+    assert golden["format"] == "playbill-merkle-manifest-golden-v1"
+
+    members = golden["input"]["members"]
+    manifest = build_merkle_manifest(members)
+    expected = golden["expected"]
+    assert manifest.root.tagged == expected["root"]
+    assert EMPTY_MERKLE_ROOT.tagged == expected["empty_root"]
+    assert {prefix: node.digest.tagged for prefix, node in manifest.nodes.items()} == expected[
+        "nodes"
+    ]
+    assert (
+        canonical_bytes(
+            {
+                "tag": MERKLE_LEAF_DOMAIN,
+                "member_digest": members["documents/playbill-design.json"],
+                "path": "documents/playbill-design.json",
+            }
+        ).decode()
+        == expected["leaf_preimage"]
+    )
+    assert (
+        canonical_bytes(
+            {"tag": MERKLE_ROOT_DOMAIN, "node": manifest.node(ROOT_PREFIX).digest.value}
+        ).decode()
+        == expected["root_preimage"]
+    )
+
+    incremental = update_merkle_manifest(
+        build_merkle_manifest(golden["input"]["parent_members"]),
+        updated=golden["input"]["change_set"]["updated"],
+        removed=golden["input"]["change_set"]["removed"],
+    )
+    assert incremental.root.tagged == expected["root"]
+    verify_merkle_nodes(incremental.nodes, claimed_root=expected["root"])
+
+
+def test_incremental_merkle_update_does_not_enumerate_untouched_node_map() -> None:
+    from cruxible_client.contracts.merkle import MerkleTree
+
+    class NoEnumeration(_MerkleNodes):
+        def __iter__(self):
+            raise AssertionError("incremental update enumerated the whole node map")
+
+        def items(self):
+            raise AssertionError("incremental update enumerated the whole node map")
+
+        def values(self):
+            raise AssertionError("incremental update enumerated the whole node map")
+
+    original = build_merkle_manifest(MEMBERS)
+    assert isinstance(original.nodes, _MerkleNodes)
+    guarded = MerkleTree(original.root, NoEnumeration(original.nodes._rows), original.domains)
+    detached = detach_merkle_tree(guarded)
+    assert isinstance(detached.nodes, _MerkleNodes)
+    assert detached.nodes._rows is original.nodes._rows
+    updated = update_merkle_manifest(guarded, updated={"subjects/alpha.json": "99" * 32})
+    expected = build_merkle_manifest({**MEMBERS, "subjects/alpha.json": "99" * 32})
+    assert isinstance(updated.nodes, _MerkleNodes)
+    assert updated.root == expected.root
+    assert updated.nodes == expected.nodes
+    assert original.members() == MEMBERS
+
+
+def test_returned_merkle_nodes_and_digests_cannot_poison_retained_rows() -> None:
+    original = build_merkle_manifest(MEMBERS)
+    retained = detach_merkle_tree(original)
+    advanced = update_merkle_manifest(original, updated={"subjects/alpha.json": "99" * 32})
+    path = "documents/playbill-design.json"
+    expected = retained.nodes[path]
+    poisoned = original.nodes[path]
+    poisoned.__dict__["prefix"] = "poison"
+    poisoned.__dict__["segments"] = ("poison",)
+    poisoned.digest.__dict__["value"] = "ff" * 32
+    assert original.nodes[path] == expected
+    assert retained.nodes[path] == expected
+    assert advanced.nodes[path] == expected
+    assert original.nodes.get(path) is not original.nodes.get(path)
+    assert original.nodes[path].digest is not original.nodes[path].digest
+    verify_merkle_nodes(retained.nodes, claimed_root=retained.root.tagged)
+
+
+def test_merkle_handoff_detaches_root_domain_and_legacy_node_shells() -> None:
+    from cruxible_client.contracts.merkle import MerkleTree
+
+    built = build_merkle_manifest(MEMBERS)
+    legacy = MerkleTree(built.root, dict(built.nodes), built.domains)
+    retained = detach_merkle_tree(legacy)
+    returned = detach_merkle_tree(retained)
+    assert isinstance(retained.nodes, _MerkleNodes)
+    assert isinstance(returned.nodes, _MerkleNodes)
+    assert returned.nodes._rows is retained.nodes._rows
+    legacy.root.__dict__["value"] = "ff" * 32
+    legacy.domains.__dict__["leaf"] = "poison"
+    legacy.nodes["subjects/alpha.json"].digest.__dict__["value"] = "ff" * 32
+    returned.root.__dict__["value"] = "ee" * 32
+    returned.domains.__dict__["root"] = "poison"
+    assert retained.root == build_merkle_manifest(MEMBERS).root
+    assert retained.domains.leaf == MERKLE_LEAF_DOMAIN
+    assert retained.domains.root == MERKLE_ROOT_DOMAIN
+    verify_merkle_nodes(retained.nodes, claimed_root=retained.root.tagged)

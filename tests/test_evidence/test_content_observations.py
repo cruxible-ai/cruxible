@@ -1,0 +1,622 @@
+"""Content observations and transitions keep cited content fresh (rulings 1a, 1b, 1d).
+
+A fetch is recorded once per acquiring call, keyed by (contract, observed
+content), never per Claim; a Claim citing any Capture of that content reads it
+as its freshness. A claims terminal that found its Claims unchanged in new
+bytes records one transition from the cited content, except the Claims that
+changed.
+"""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+
+import pytest
+
+from cruxible_client.contracts.claims import claim_citation_references
+from cruxible_core.evidence.claim_reobservations import (
+    ClaimReobservationJournalCorrupt,
+    ClaimReobservationStore,
+    ObservedContent,
+    ReobservationReader,
+    cited_content_keys,
+)
+from cruxible_core.service.evidence.evidence import service_evaluate_playbill_claim_verdict
+from tests.test_integration.test_next_closed_loop import _current_claim, _freshness_world
+
+_HOUR = 3_600_000_000
+_START = datetime(2026, 8, 16, 20, 0, tzinfo=UTC)
+_OTHER = "sha256:" + "e" * 64
+
+
+def _verdict(instance, at: datetime):  # type: ignore[no-untyped-def]
+    return service_evaluate_playbill_claim_verdict(
+        instance,
+        claim_identity=_current_claim(instance).identity.qualified,
+        evaluation_time=at,
+    ).verdict
+
+
+def _cited(instance):  # type: ignore[no-untyped-def]
+    claim = _current_claim(instance)
+    cited = claim_citation_references(claim)[0].capture_digest
+    (key,) = cited_content_keys(
+        instance, coordinate=instance.accepted_coordinate(), capture_digests=(cited,)
+    )
+    return claim, cited, key
+
+
+def _observe(store, at: datetime, contents, *, earliest: datetime, latest: datetime):  # type: ignore[no-untyped-def]
+    store.instance.recording_clock = lambda: at
+    return store.observe(
+        contents, earliest=earliest, latest=latest, run_id="RUN-x", node_id="fetch", actor_id="o"
+    )
+
+
+def test_one_observation_per_call_refreshes_every_claim_citing_the_content(
+    tmp_path: Path,
+) -> None:
+    instance, _owner = _freshness_world(tmp_path, stale_after=_HOUR)
+    claim, cited, key = _cited(instance)
+    store = ClaimReobservationStore(instance)
+    assert _verdict(instance, _START + timedelta(hours=3)).verdict == "stale_evidence"
+    contents = [
+        ObservedContent(key.contract_digest, key.observed_content_digest, cited),
+        ObservedContent(key.contract_digest, "sha256:" + "1" * 64, _OTHER),
+    ]
+    # The call's earliest member instant is what freshness reads (ruling 1b).
+    _observe(
+        store,
+        _START + timedelta(hours=2.5),
+        contents,
+        earliest=_START + timedelta(hours=2),
+        latest=_START + timedelta(hours=2.2),
+    )
+    verdict = _verdict(instance, _START + timedelta(hours=2.6))
+    assert (verdict.verdict, verdict.currency) == ("supported", "current")
+    (expiration,) = verdict.freshness_expirations
+    assert expiration.reobserved_at == _START + timedelta(hours=2)
+    assert expiration.reobserved_by == cited
+    # Nothing was recorded per Claim.
+    assert store.history(claim.identity.name) == ()
+    # Recorded after the evaluation instant: not applicable then.
+    assert _verdict(instance, _START + timedelta(hours=2.4)).verdict == "stale_evidence"
+    # The same contents fetched again: one more point, no new body or set row.
+    bodies = sum(1 for path in (instance.root / "cas").rglob("*") if path.is_file())
+    _observe(
+        store,
+        _START + timedelta(hours=4),
+        list(reversed(contents)),
+        earliest=_START + timedelta(hours=3.5),
+        latest=_START + timedelta(hours=3.9),
+    )
+    with store._locked() as conn:  # noqa: SLF001
+        assert conn.execute("SELECT COUNT(*) FROM observed_sets").fetchone()[0] == 2
+        assert conn.execute("SELECT COUNT(*) FROM observation_points").fetchone()[0] == 2
+    added = sum(1 for path in (instance.root / "cas").rglob("*") if path.is_file()) - bodies
+    assert added == 1  # the journal record's own payload; the set body is held
+    later = _verdict(instance, _START + timedelta(hours=4))
+    assert later.freshness_expirations[0].reobserved_at == _START + timedelta(hours=3.5)
+    # Retention counts from the latest instant of the latest call (ruling 1c).
+    reader = ReobservationReader.of(instance)
+    assert reader.latest_observation(
+        key.contract_digest, key.observed_content_digest
+    ) == _START + timedelta(hours=3.9)
+
+
+def test_a_row_observation_refreshes_a_row_whatever_bytes_carried_it(tmp_path: Path) -> None:
+    """Ruling 2026-11-16 (a)-(c): one record per extract step, keyed by its rows.
+
+    New bytes holding the same rows are the same set: a head update, no new
+    set member rows, and a Claim depending on a row reads the later call.
+    """
+
+    from cruxible_core.evidence.claim_reobservations import ReobservationKey, RowMap
+
+    instance, _owner = _freshness_world(tmp_path, stale_after=_HOUR)
+    claim, cited, key = _cited(instance)
+    store = ClaimReobservationStore(instance)
+    row = "sha256:" + "7" * 64
+    other = "sha256:" + "8" * 64
+    hours = lambda value: _START + timedelta(hours=value)  # noqa: E731
+
+    def observe(at, capture, earliest, latest):  # type: ignore[no-untyped-def]
+        instance.recording_clock = lambda: at
+        return store.observe_rows(
+            (
+                RowMap(
+                    capture, "sha256:" + "5" * 64, key.contract_digest, (("/0", row), ("/1", other))
+                ),
+            ),
+            earliest=earliest,
+            latest=latest,
+            run_id="RUN-x",
+            node_id="extract",
+            actor_id="o",
+        )
+
+    observe(hours(2.2), cited, hours(2), hours(2.1))
+    reader = ReobservationReader(instance)
+    assert reader.row_of(cited, "sha256:" + "5" * 64, "/0") == (key.contract_digest, row)
+    depends = (ReobservationKey(cited, key.contract_digest, row),)
+    (evidence,) = reader.latest(claim.identity.name, depends, hours(3)).evidence
+    assert evidence.observed_at == hours(2)
+    with store._locked() as conn:  # noqa: SLF001
+        members = conn.execute("SELECT COUNT(*) FROM observed_sets").fetchone()[0]
+    # The same rows in new bytes (another Capture): the same set, a later call.
+    observe(hours(4.2), _OTHER, hours(4), hours(4.1))
+    with store._locked() as conn:  # noqa: SLF001
+        assert conn.execute("SELECT COUNT(*) FROM observed_sets").fetchone()[0] == members
+        assert conn.execute("SELECT COUNT(*) FROM observation_sets").fetchone()[0] == 1
+    (evidence,) = reader.latest(claim.identity.name, depends, hours(5)).evidence
+    assert evidence.observed_at == hours(4)
+    assert reader.row_of(_OTHER, "sha256:" + "5" * 64, "/1") == (key.contract_digest, other)
+    # Nothing was recorded per Claim.
+    assert store.history(claim.identity.name) == ()
+
+
+def test_an_older_call_recorded_later_never_moves_freshness_back(tmp_path: Path) -> None:
+    """F-003: a key's freshness is the running maximum of its calls' earliest
+    instants, at head, at a historical instant and at a read position."""
+
+    from cruxible_core.storage.read_positions import ReadPositions, reading_at
+
+    instance, _owner = _freshness_world(tmp_path, stale_after=_HOUR)
+    claim, cited, key = _cited(instance)
+    store = ClaimReobservationStore(instance)
+    mine = [ObservedContent(key.contract_digest, key.observed_content_digest, cited)]
+    other = [*mine, ObservedContent(key.contract_digest, "sha256:" + "1" * 64, _OTHER)]
+    hours = lambda value: _START + timedelta(hours=value)  # noqa: E731
+    first = _observe(store, hours(2.2), mine, earliest=hours(2), latest=hours(2.1))
+    # The same set, an older call recorded later.
+    _observe(store, hours(2.4), mine, earliest=hours(1), latest=hours(1.1))
+    # Another set holding the key: a call that started earlier still but ended later.
+    _observe(store, hours(2.6), other, earliest=hours(1.5), latest=hours(2.5))
+    reader = ReobservationReader(instance)
+    keys = (key,)
+    for at in (hours(2.3), hours(2.5), hours(3)):
+        (evidence,) = reader.latest(claim.identity.name, keys, at).evidence
+        assert evidence.observed_at == hours(2), at
+    # Recorded at the first record's position, a read sees that record alone.
+    assert first is not None
+    with reading_at(ReadPositions(landing_log="", landing=0, reobs=first)):
+        (evidence,) = reader.latest(claim.identity.name, keys, hours(3)).evidence
+    assert evidence.observed_at == hours(2)
+    assert _verdict(instance, hours(2.7)).freshness_expirations[0].reobserved_at == hours(2)
+    # Retention counts from the greatest latest instant, whichever call held it.
+    assert reader.latest_observation(key.contract_digest, key.observed_content_digest) == hours(2.5)
+
+
+def _vm_steps(reader: ReobservationReader, call):  # type: ignore[no-untyped-def]
+    """SQLite VM steps one reader call costs (the progress handler at every op)."""
+
+    reader.content_observed()  # connect and catch up first
+    conn = reader._conn  # noqa: SLF001
+    assert conn is not None
+    steps = [0]
+
+    def count() -> int:
+        steps[0] += 1
+        return 0
+
+    conn.set_progress_handler(count, 1)
+    try:
+        call()
+    finally:
+        conn.set_progress_handler(None, 1)
+    return steps[0]
+
+
+def test_freshness_reads_do_not_grow_with_observation_history(tmp_path: Path) -> None:
+    """F-004: head freshness, a historical read, the remembered-verdict sequence
+    and retention do the same SQLite work at 100 and 1,000 unchanged calls."""
+
+    from cruxible_client.contracts.temporal import format_datetime
+
+    costs = {}
+    for size in (100, 1_000):
+        root = tmp_path / str(size)
+        root.mkdir()
+        instance, _owner = _freshness_world(root, stale_after=_HOUR)
+        claim, cited, key = _cited(instance)
+        store = ClaimReobservationStore(instance)
+        mine = [ObservedContent(key.contract_digest, key.observed_content_digest, cited)]
+        sequence = _observe(
+            store, _START, mine, earliest=_START - timedelta(seconds=2), latest=_START
+        )
+        assert sequence is not None
+        with store._locked() as conn:  # noqa: SLF001
+            (set_digest,) = {
+                row[0] for row in conn.execute("SELECT set_digest FROM observation_sets")
+            }
+        # One unrelated call recorded a month after it ended (F-007): its delay
+        # must not widen any deadline read of this key over the whole history.
+        unrelated = [ObservedContent(key.contract_digest, "sha256:" + "9" * 64, _OTHER)]
+        sequence = _observe(
+            store,
+            _START,
+            unrelated,
+            earliest=_START - timedelta(days=31),
+            latest=_START - timedelta(days=30),
+        )
+        assert sequence is not None
+        # The same call's history, projected as unchanged calls would leave it.
+        with store._locked() as conn:  # noqa: SLF001
+            for index in range(1, size):
+                at = _START + timedelta(minutes=index)
+                store._apply_shared(  # noqa: SLF001
+                    conn,
+                    {
+                        "tag": "cruxible-content-observation-v1",
+                        "set_digest": set_digest,
+                        "earliest": format_datetime(at - timedelta(seconds=2)),
+                        "latest": format_datetime(at),
+                        "node_id": "fetch",
+                    },
+                    sequence + index,
+                    at,
+                )
+        reader = ReobservationReader(instance)
+        name = claim.identity.name
+        end = _START + timedelta(days=30)
+        costs[size] = {
+            "latest": _vm_steps(reader, lambda: reader.latest(name, (key,), end)),
+            "sequence": _vm_steps(reader, lambda: reader.sequence(name, (key,))),
+            "retention": _vm_steps(
+                reader,
+                lambda: reader.latest_observation(key.contract_digest, key.observed_content_digest),
+            ),
+            "historical": _vm_steps(
+                reader, lambda: reader.latest(name, (key,), _START + timedelta(minutes=50))
+            ),
+        }
+
+    for name, small in costs[100].items():
+        assert small > 0, (name, costs)
+        assert costs[1_000][name] <= small + 64, (name, costs)
+
+
+def test_a_later_selection_of_the_same_captures_records_maps_its_rows_too(
+    tmp_path: Path,
+) -> None:
+    """Review 2c #4: a runtime ``only_keys`` reads another subset of the same
+    Capture under the same extract spec; both subsets' records resolve."""
+
+    from cruxible_core.evidence.claim_reobservations import RowMap
+
+    instance, _owner = _freshness_world(tmp_path, stale_after=_HOUR)
+    _claim, cited, key = _cited(instance)
+    store = ClaimReobservationStore(instance)
+    spec = "sha256:" + "5" * 64
+    rows = {"/0": "sha256:" + "6" * 64, "/1": "sha256:" + "7" * 64}
+    for index, locator in enumerate(("/0", "/1")):
+        at = _START + timedelta(hours=1 + index)
+        instance.recording_clock = lambda at=at: at
+        store.observe_rows(
+            (RowMap(cited, spec, key.contract_digest, ((locator, rows[locator]),)),),
+            earliest=at - timedelta(minutes=1),
+            latest=at,
+            run_id=f"RUN-{index}",
+            node_id="extract",
+            actor_id="o",
+        )
+    reader = ReobservationReader(instance)
+    for locator, row in rows.items():
+        assert reader.row_of(cited, spec, locator) == (key.contract_digest, row)
+
+
+def test_an_unchanged_extract_step_hashes_no_row_and_follows_by_its_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review 2c #6 and 2d #6: a known extraction is found by one seek, never
+    derived again, whatever the working set (12 or 300 Captures, beyond any
+    fixed cache), and a repeated row set reaches next by its digest."""
+
+    from types import SimpleNamespace
+
+    from cruxible_core.evidence import claim_reobservations
+    from cruxible_core.procedures import execution
+    from cruxible_core.procedures.extract import _Record
+    from cruxible_core.service.procedures.capture_observations import (
+        InstanceCaptureObservations,
+    )
+
+    hashed = [0]
+    original = claim_reobservations.row_digest
+
+    def counted(*args, **kwargs):  # type: ignore[no-untyped-def]
+        hashed[0] += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(claim_reobservations, "row_digest", counted)
+    from cruxible_core.storage.cas import ContentAddressedBodyStore
+
+    stored_bodies = [0]
+    store_body = ContentAddressedBodyStore.store
+
+    def counted_store(self, content, *args, **kwargs):  # type: ignore[no-untyped-def]
+        # Row map, maps and row set bodies (review 2e #4): never stored on a repeat.
+        if b'"tag":"cruxible-row-map' in content or b'"tag":"cruxible-observed-rows' in content:
+            stored_bodies[0] += len(content)
+        return store_body(self, content, *args, **kwargs)
+
+    monkeypatch.setattr(ContentAddressedBodyStore, "store", counted_store)
+    work = {}
+    for size in (12, 300):
+        root = tmp_path / str(size)
+        root.mkdir()
+        instance, _owner = _freshness_world(root, stale_after=_HOUR)
+        _claim, _cited_capture, key = _cited(instance)
+        store = ClaimReobservationStore(instance)
+        port = InstanceCaptureObservations(instance)
+        captures = [f"sha256:{index:064x}" for index in range(size)]
+        state = SimpleNamespace(
+            capture_contracts=dict.fromkeys(captures, key.contract_digest),
+            capture_sources=dict.fromkeys(captures, "source"),
+        )
+        outcomes = {
+            capture: SimpleNamespace(
+                held=[_Record(locator="/0", key={"id": index}, fields={})], typing_key="t"
+            )
+            for index, capture in enumerate(captures)
+        }
+        sequences = []
+        counts = []
+        stored = []
+        for run in range(3):
+            hashed[0] = 0
+            stored_bodies[0] = 0
+            derived = [
+                execution._row_map_of(  # noqa: SLF001
+                    state, capture, "sha256:" + "5" * 64, "*|t", outcomes[capture], port
+                )
+                for capture in captures
+            ]
+            maps = [row_map for row_map, _rows in derived]
+            if run:
+                # The run is handed the one read-only view of each known map.
+                assert all(rows is port.map_rows(row_map.digest) for row_map, rows in derived)
+            counts.append(hashed[0])
+            at = _START + timedelta(hours=1 + run)
+            instance.recording_clock = lambda at=at: at
+            sequences.append(
+                store.observe_rows(
+                    tuple(maps),
+                    earliest=at - timedelta(minutes=1),
+                    latest=at,
+                    run_id=f"RUN-{run}",
+                    node_id="extract",
+                    actor_id="o",
+                )
+            )
+            stored.append(stored_bodies[0])
+        _lineages, keys, sets = store.observed_after(sequences[1])
+        work[size] = (counts[1:], stored[1:], len(keys), len(sets))
+        assert stored[0] > 0
+    assert work[12] == work[300] == ([0, 0], [0, 0], 0, 1), work
+
+
+def test_a_record_two_typings_map_to_different_rows_has_no_row(tmp_path: Path) -> None:
+    """Review 2e #3: two extractions of one Capture and spec under different
+    typings can make one locator two rows. A Claim's row is then unknown (its
+    cited content and its own records carry it), never whichever map sorts
+    first; where every map agrees, that row."""
+
+    from cruxible_core.evidence.claim_reobservations import RowMap
+
+    instance, _owner = _freshness_world(tmp_path, stale_after=_HOUR)
+    _claim, cited, key = _cited(instance)
+    store = ClaimReobservationStore(instance)
+    spec = "sha256:" + "5" * 64
+    first, second = "sha256:" + "6" * 64, "sha256:" + "7" * 64
+    plan = (
+        ("t1", (("/0", first), ("/1", first))),
+        ("t2", (("/0", second), ("/1", first))),
+    )
+    for index, (typing, rows) in enumerate(plan):
+        at = _START + timedelta(hours=1 + index)
+        instance.recording_clock = lambda at=at: at
+        store.observe_rows(
+            (RowMap(cited, spec, key.contract_digest, rows, extraction=typing),),
+            earliest=at - timedelta(minutes=1),
+            latest=at,
+            run_id=f"RUN-{index}",
+            node_id="extract",
+            actor_id="o",
+        )
+    reader = ReobservationReader(instance)
+    assert reader.row_of(cited, spec, "/0") is None
+    assert reader.row_of(cited, spec, "/1") == (key.contract_digest, first)
+
+
+def test_a_later_typing_never_changes_a_row_lookup_before_it(tmp_path: Path) -> None:
+    """Review 2f #2: a row lookup reads only the maps that existed at its read.
+    A's record /0 was row X; bytes B holding X refreshed it at 20. A later
+    typing of A (at 30) makes /0 another row: a read at 25 still finds X's
+    observation at 20; a read after 30 finds the maps disagree and no row."""
+
+    from cruxible_core.evidence.claim_reobservations import ReobservationKey, RowMap
+
+    instance, _owner = _freshness_world(tmp_path, stale_after=_HOUR)
+    claim, cited, key = _cited(instance)
+    store = ClaimReobservationStore(instance)
+    spec = "sha256:" + "5" * 64
+    row_x, row_y = "sha256:" + "6" * 64, "sha256:" + "7" * 64
+
+    def minutes(value: int) -> datetime:
+        return _START + timedelta(hours=1, minutes=value)
+
+    def observe(at: int, capture: str, row: str, typing: str) -> None:
+        instance.recording_clock = lambda: minutes(at)
+        store.observe_rows(
+            (RowMap(capture, spec, key.contract_digest, (("/0", row),), extraction=typing),),
+            earliest=minutes(at),
+            latest=minutes(at),
+            run_id=f"RUN-{at}",
+            node_id="extract",
+            actor_id="o",
+        )
+
+    observe(1, cited, row_x, "t1")
+    observe(20, _OTHER, row_x, "t1")
+    depends = (ReobservationKey(cited, key.contract_digest, row_x, row_record=(cited, spec, "/0")),)
+    reader = ReobservationReader(instance)
+
+    def fresh(at: int) -> datetime | None:
+        evidence = reader.latest(claim.identity.name, depends, minutes(at)).evidence
+        return max((item.observed_at for item in evidence), default=None)
+
+    assert fresh(25) == minutes(20)
+    observe(30, cited, row_y, "t2")
+    assert fresh(25) == minutes(20)  # unchanged: the later map did not exist then
+    assert fresh(40) is None  # from 30 the maps disagree: no row
+    assert reader.row_of(cited, spec, "/0", at_us=None) is None
+    assert reader.row_of(cited, spec, "/0", at_us=int(minutes(25).timestamp() * 1e6)) == (
+        key.contract_digest,
+        row_x,
+    )
+
+
+@pytest.mark.parametrize("order", [(25, 40), (40, 25)])
+def test_a_remembered_verdict_never_spans_a_later_typing_map(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, order: tuple[int, int]
+) -> None:
+    """Review 2g F-002: a later typing map of A (recorded at 30) changes what
+    record /0 is from then on, with no journal change between two reads. The
+    warm verdict memo serves each instant its own side of the map change, in
+    either read order: fresh at 25 (row X observed at 20), not after 30 (the
+    maps disagree: no row)."""
+
+    from cruxible_client.contracts.projection import AcceptedCoordinate
+    from cruxible_core.evidence import claim_reobservations
+    from cruxible_core.evidence.claim_reobservations import ReobservationKey, RowMap
+    from cruxible_core.service.discovery.claim_status import claim_resolution_statuses
+
+    instance, _owner = _freshness_world(tmp_path, stale_after=_HOUR)
+    claim, cited, key = _cited(instance)
+    store = ClaimReobservationStore(instance)
+    spec = "sha256:" + "5" * 64
+    row_x, row_y = "sha256:" + "6" * 64, "sha256:" + "7" * 64
+
+    def minutes(value: int) -> datetime:
+        return _START + timedelta(hours=1, minutes=value)
+
+    def observe(at: int, capture: str, row: str, typing: str) -> None:
+        instance.recording_clock = lambda: minutes(at)
+        store.observe_rows(
+            (RowMap(capture, spec, key.contract_digest, (("/0", row),), extraction=typing),),
+            earliest=minutes(at),
+            latest=minutes(at),
+            run_id=f"RUN-{at}",
+            node_id="extract",
+            actor_id="o",
+        )
+
+    observe(1, cited, row_x, "t1")
+    observe(20, _OTHER, row_x, "t1")
+    observe(30, cited, row_y, "t2")
+    # The Claim depends on its extracted record's row (as ``claim_keys_on``
+    # names it for a Claim produced from an extracted record).
+    depends = (ReobservationKey(cited, key.contract_digest, "", row_record=(cited, spec, "/0")),)
+    monkeypatch.setattr(
+        claim_reobservations, "claim_reobservation_keys", lambda instance, **_kwargs: depends
+    )
+
+    def verdict(at: int) -> str:
+        verdicts: dict[str, object] = {}
+        claim_resolution_statuses(
+            instance,
+            claims=(claim,),
+            at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+            evaluation_time=minutes(at),
+            verdicts_by_identity=verdicts,
+        )
+        return str(verdicts[claim.identity.qualified].verdict)  # type: ignore[attr-defined]
+
+    signature = ReobservationReader.of(instance).sequence(claim.identity.name, depends)
+    answers = {at: verdict(at) for at in order}
+    assert answers[25] == "supported", answers
+    assert answers[40] != "supported", answers
+    # Warm again, both sides still answer their own instant; nothing was recorded.
+    assert {at: verdict(at) for at in order} == answers
+    assert ReobservationReader.of(instance).sequence(claim.identity.name, depends) == signature
+    reading = ReobservationReader.of(instance).latest(claim.identity.name, depends, minutes(40))
+    # The ambiguous read reports the map recordings too, and names the maps.
+    assert reading.evidence == () and minutes(30) in reading.boundaries
+    assert reading.sequence == signature == 3
+
+
+def test_a_journal_from_an_unreleased_transition_build_refuses_with_re_initialise(
+    tmp_path: Path,
+) -> None:
+    """Review 2c #1, ruling 2026-11-16 (3): a transition record only unreleased
+    builds wrote is not migrated; the projection refuses, naming the repair."""
+
+    from cruxible_client.contracts.projection import AcceptedCoordinate
+    from cruxible_core.evidence.claim_reobservations import _FENCE, _PARTITION
+    from cruxible_core.exhaust.writer import ProcedureExhaustWriter
+    from cruxible_core.governance.actor_context import GovernedActorContext
+
+    instance, _owner = _freshness_world(tmp_path, stale_after=_HOUR)
+    store = ClaimReobservationStore(instance)
+    journal = store._journal(create=True)  # noqa: SLF001
+    assert journal is not None
+    head = journal.read_head(store.stream, _PARTITION)
+    journal.activate_writer(store.stream, _PARTITION, fencing_token=_FENCE, expected_head=head)
+    ProcedureExhaustWriter(
+        journal=journal, bodies=instance.body_store(), fencing_token=_FENCE
+    ).append(
+        stream=store.stream,
+        partition_id=_PARTITION,
+        event_kind="claim_reobservation",
+        accepted_coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+        definition_digest=store.stream.identity_digest,
+        actor_context=GovernedActorContext(
+            actor_type="service_account",
+            actor_id="o",
+            org_id=instance.descriptor.instance_id,
+            operation_id="op_test",
+            timestamp=_START,
+        ),
+        recorded_at=_START,
+        payload={"tag": "cruxible-content-transition-v1", "transitions_digest": _OTHER},
+        expected_head=head,
+    )
+    with pytest.raises(ClaimReobservationJournalCorrupt, match="re-initialise"):
+        with store._locked():  # noqa: SLF001
+            pass
+    with pytest.raises(ClaimReobservationJournalCorrupt, match="re-initialise"):
+        store.observed_after(0)
+
+
+def test_a_source_returning_to_a_known_set_names_its_keys_to_next(tmp_path: Path) -> None:
+    """Review 2d #4: B -> A -> B. The return to B is a switch of the source's
+    set: the follower names B's members, so a stale reader subscribed while A
+    held them is reached."""
+
+    from cruxible_core.evidence.claim_reobservations import RowMap
+
+    instance, _owner = _freshness_world(tmp_path, stale_after=_HOUR)
+    _claim, cited, key = _cited(instance)
+    store = ClaimReobservationStore(instance)
+    spec = "sha256:" + "5" * 64
+    row_b = (("/0", "sha256:" + "6" * 64), ("/1", "sha256:" + "8" * 64))
+    row_a = (("/0", "sha256:" + "7" * 64), ("/1", "sha256:" + "8" * 64))
+    sequences = []
+    for index, rows in enumerate((row_b, row_a, row_b)):
+        at = _START + timedelta(hours=1 + index)
+        instance.recording_clock = lambda at=at: at
+        sequences.append(
+            store.observe_rows(
+                (RowMap(cited, spec, key.contract_digest, rows),),
+                earliest=at - timedelta(minutes=1),
+                latest=at,
+                run_id=f"RUN-{index}",
+                node_id="extract",
+                actor_id="o",
+            )
+        )
+    _lineages, keys, _sets = store.observed_after(sequences[1])
+    assert (key.contract_digest, "sha256:" + "8" * 64) in keys
+    assert (key.contract_digest, "sha256:" + "6" * 64) in keys

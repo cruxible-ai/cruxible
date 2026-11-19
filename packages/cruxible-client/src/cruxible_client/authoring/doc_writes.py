@@ -1,0 +1,634 @@
+"""One writer-side observe/submit/CAS seam shared by CLI, MCP and SDK.
+
+Work is bounded by the supplied files/operations and their section bytes. Catalog
+parsing/indexing is cached by revision; nothing inventories instance Claims.
+"""
+
+from __future__ import annotations
+
+import base64
+import shlex
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from cruxible_client._safe_files import ContainmentError, HeldRoot
+from cruxible_client.authoring.files import (
+    FileCatalogEditError,
+    add_catalog_entry,
+    catalog_file,
+    default_catalog_name,
+)
+from cruxible_client.authoring.page_writes import PageWriteError, replace_page_file
+from cruxible_client.authoring.sdk_types import SourceSelectionError
+from cruxible_client.authoring.selectors import (
+    FileSelector,
+    catalog_file_paths,
+    catalogued_path,
+    source_content_for_observation,
+    workspace_files,
+)
+from cruxible_client.contracts.authoring.models import WorkingDigestCoordinate
+from cruxible_client.contracts.declared_blocks import (
+    declares_projection_block,
+    stamped_projection_windows,
+)
+from cruxible_client.contracts.doc_sections import (
+    DocSectionError,
+    SectionEdit,
+    append_section,
+    heading_level,
+    heading_text,
+    parse_sections,
+    replace_section,
+    section_digest,
+)
+from cruxible_client.contracts.errors import WriteRefusalError
+from cruxible_client.contracts.file_catalog import FileCatalogEntry
+from cruxible_client.contracts.get_reads import ReadSurface
+from cruxible_client.contracts.repair_spelling import render_repair
+from cruxible_client.contracts.repairs import RepairOperation
+from cruxible_client.contracts.workspace_layout import workspace_path
+from cruxible_client.contracts.write import (
+    AboutChange,
+    AddChange,
+    AppendSection,
+    CataloguedFile,
+    Change,
+    CreateChange,
+    DocEditObservation,
+    DocOp,
+    DocOutcome,
+    FileEvidence,
+    RebindChange,
+    ReplaceSection,
+    SectionEvidence,
+    SetChange,
+    WriteOutcome,
+    WriteRefusal,
+    WriteRequest,
+)
+
+
+def _path(workspace: Path, file: str) -> Path:
+    candidate = Path(file).expanduser()
+    if not candidate.is_absolute():
+        candidate = workspace / candidate
+    resolved = candidate.resolve()
+    if not resolved.is_relative_to(workspace) or resolved == workspace:
+        raise DocSectionError(
+            "path_outside_workspace",
+            f"{file} is outside the workspace",
+            repair=f"Name a file inside the workspace ({workspace}), by its path from there",
+        )
+    if any(
+        part.casefold() in {".cruxible", ".git"} for part in (*candidate.parts, *resolved.parts)
+    ):
+        raise DocSectionError(
+            "protected_path", "Choose a workspace Markdown path outside .cruxible and .git."
+        )
+    # The reader below opens the agent's path with O_NOFOLLOW, including when
+    # the real name check above followed a final symlink.
+    if candidate.is_symlink():
+        raise DocSectionError("protected_path", "Choose a regular Markdown file, not a symlink.")
+    return resolved
+
+
+def _coordinate(content: bytes) -> WorkingDigestCoordinate:
+    return WorkingDigestCoordinate(
+        source_content_digest=section_digest(content), source_byte_length=len(content)
+    )
+
+
+def _read(held: HeldRoot | None, workspace: Path, path: Path) -> bytes | None:
+    """``path``'s bytes, opened beneath the held workspace descriptor, or None if absent.
+
+    Every parent is walked without following a symbolic link, so a parent
+    swapped for one after ``_path`` checked the name is refused, never read.
+    """
+
+    if held is None:  # no workspace folder yet: nothing in it to read
+        return None
+    try:
+        return held.read(path.relative_to(workspace).as_posix())
+    except FileNotFoundError:
+        return None
+    except ContainmentError as exc:
+        raise DocSectionError(
+            "protected_path",
+            "Choose a regular file inside the workspace, not one under a symbolic link.",
+        ) from exc
+
+
+def _apply(
+    content: bytes | None, op: DocOp, surface: ReadSurface = "cli"
+) -> tuple[SectionEdit, int, int]:
+    document = parse_sections(content or b"", file=op.file)
+    text = op.text
+    if isinstance(op, AppendSection):
+        parent = document.section(op.under)
+        start = end = parent.end if op.under else len(content or b"")
+        if op.heading is not None:
+            level = heading_level(document, under=op.under)
+            text = heading_text(op.heading, op.text, level=level)
+        result = append_section(content, under=op.under, text=text, file=op.file)
+    else:
+        if content is None:
+            raise DocSectionError(
+                "section_not_found",
+                "Replace requires an existing file.",
+                repair="Append the section instead (op append at the root): it creates the file.",
+            )
+        if op.heading is not None:
+            level = heading_level(document, under=op.section, replaces=True)
+            text = heading_text(op.heading, op.text, level=level)
+        result = replace_section(
+            content, section=op.section, text=text, expect=op.expect, file=op.file
+        )
+        target = document.section(op.section if result.changed else result.section)
+        start, end = target.start, target.end
+    overlapping = [
+        w
+        for w in stamped_projection_windows(content or b"")
+        if (start < w.end_byte and end > w.start_byte)
+        or (start == end and w.start_byte <= start < w.end_byte)
+    ]
+    if declares_projection_block(text.encode()) or overlapping:
+        raise DocSectionError(
+            "projection_edit",
+            "A doc write edits prose only; a projection block changes through its backing",
+            repair=(
+                render_repair(
+                    RepairOperation(
+                        operation="cruxible.block.repin",
+                        arguments={"source_id": op.file, "block_id": overlapping[0].block_id},
+                    ),
+                    surface=surface,
+                )
+                if overlapping
+                else "write the section without block markers; declare blocks with block repin"
+            ),
+        )
+    return result, start, end
+
+
+@dataclass
+class _File:
+    path: Path
+    source_id: str
+    original: bytes | None
+    current: bytes | None
+    entry: FileCatalogEntry | None
+    ops: list[DocOp] = field(default_factory=list)
+    edits: list[SectionEdit] = field(default_factory=list)
+    record_indices: list[int] = field(default_factory=list)
+    citations: dict[tuple[str, ...], bytes] = field(default_factory=dict)
+    #: Cited, not catalogued and not edited: the write catalogues it once admitted.
+    catalogue: bool = False
+
+
+def _observe_about(
+    change: AboutChange,
+    *,
+    sections: dict[str, tuple[str, tuple[str, ...]]],
+    load: Callable[[str], _File],
+) -> AboutChange:
+    """Observe an about link's section exactly as section evidence observes it.
+
+    A pure unlink of a section that is gone (or a file no longer on disk)
+    goes without an observation: the note is named by its source and heading
+    path, and unlinking needs no bytes.
+    """
+
+    file, section = change.file, change.section
+    if change.ref is not None:
+        target = sections.get(change.ref)
+        if target is None:
+            raise DocSectionError("section_ref_unknown", f"No doc operation has id {change.ref!r}.")
+        file, section = target
+    state = load(file)
+    observation = None
+    try:
+        if state.current is None:
+            raise DocSectionError(
+                "file_missing", "Read or create the Markdown file before linking it."
+            )
+        selection = FileSelector(state.path, state.source_id, state.current).section(*section)
+        observation = selection.observation()
+        state.citations[section] = observation.selected_content
+    except ValueError:
+        # DocSectionError and the selector's refusals are both ValueErrors.
+        if change.subjects:
+            raise
+    return AboutChange(
+        file=state.source_id,
+        section=section,
+        subjects=change.subjects,
+        unlink=change.unlink,
+        observation=observation,
+    )
+
+
+def _catalogue_cited(
+    request: WriteRequest, outcome: WriteOutcome, workspace: Path, states: Iterable[_File]
+) -> WriteOutcome:
+    """Catalogue each cited workspace file the catalog did not name, once admitted.
+
+    By the code ``files add`` uses (one locked read-modify-write of the
+    catalog), under the name the write sent, which its citation carries. A name
+    another file took meanwhile is never overwritten and never swapped for a
+    free one (the citation would name the wrong file): the entry is refused and
+    the outcome says written=false with the repair. The same file catalogued
+    under that name by a concurrent write counts as catalogued. A dry run
+    reports the files it would catalogue and writes nothing; a refused write
+    catalogues nothing.
+    """
+
+    cited = [state for state in states if state.catalogue and not state.ops]
+    if not cited:
+        return outcome
+    if outcome.status in ("accepted", "awaiting_approval") and not request.dry_run:
+        written = True
+    elif outcome.status in ("would_accept", "would_await_approval"):
+        written = False
+    else:
+        return outcome
+    catalogued: list[CataloguedFile] = []
+    missed: list[str] = []
+    for state in cited:
+        relative = state.path.relative_to(workspace).as_posix()
+        added = written
+        if written:
+            try:
+                catalog_file(workspace, name=state.source_id, path=state.path)
+            except (FileCatalogEditError, OSError) as exc:
+                taken = isinstance(exc, FileCatalogEditError) and exc.reason == "entry_exists"
+                if taken and _catalogued_as(workspace, state.path, state.source_id):
+                    pass  # a concurrent write catalogued this same file under this name
+                else:
+                    # The write landed; only the catalog entry is missing.
+                    added = False
+                    missed.append(
+                        f"{state.source_id} is catalogued for another file; catalogue "
+                        f"{relative} under another name (cruxible files add NAME "
+                        f"{shlex.quote(relative)}) and re-cite it"
+                        if taken
+                        else f"cruxible files add {state.source_id} {shlex.quote(relative)}"
+                    )
+        catalogued.append(CataloguedFile(file=relative, name=state.source_id, written=added))
+    update: dict[str, object] = {"catalogued": tuple(catalogued)}
+    if missed:
+        update["next"] = "; ".join(filter(None, [outcome.next, *missed]))
+    return outcome.model_copy(update=update)
+
+
+def _catalogued_as(workspace: Path, path: Path, name: str) -> bool:
+    try:
+        entries = workspace_files(workspace).entries_for_path(path)
+    except (ValueError, OSError):
+        return False
+    return any(entry.name == name for entry in entries)
+
+
+def write_workspace(
+    request: WriteRequest,
+    *,
+    workspace: Path,
+    submit: Callable[[WriteRequest], WriteOutcome],
+) -> WriteOutcome:
+    """Observe Q, submit without paths, then write Q only after admission.
+
+    A file that moved is rebased once when all target sections and cited own
+    bodies still agree. Conflicts after admission report written=false; accepted
+    Claims retain their basis and the outcome names the repair.
+    """
+    if not request.docs and not any(
+        isinstance(c, AboutChange)
+        or isinstance(getattr(c, "evidence", None), FileEvidence | SectionEvidence)
+        for c in request.changes
+    ):
+        return submit(request)
+    root = workspace.expanduser().resolve()
+    if not root.is_dir():
+        return _write_workspace(request, workspace=root, submit=submit, held=None)
+    with HeldRoot(root) as held:
+        outcome = _write_workspace(request, workspace=root, submit=submit, held=held)
+    return _with_file_paths(outcome, root)
+
+
+def _with_file_paths(outcome: WriteOutcome, workspace: Path) -> WriteOutcome:
+    """The outcome, its text naming a note's (or edited section's) file by workspace path.
+
+    Only an outcome naming a file by catalog name reads the catalog: once,
+    after the write (a notes file it created is catalogued by then).
+    """
+
+    if not any(change.file for change in outcome.changes) and all(doc.file for doc in outcome.docs):
+        return outcome
+    paths = catalog_file_paths(workspace)
+    return outcome.with_file_paths(paths) if paths else outcome
+
+
+def _write_workspace(
+    request: WriteRequest,
+    *,
+    workspace: Path,
+    submit: Callable[[WriteRequest], WriteOutcome],
+    held: HeldRoot | None,
+) -> WriteOutcome:
+    files: dict[Path, _File] = {}
+    records: list[tuple[str, _File, DocEditObservation]] = []
+    catalog = None
+    if any(
+        p.is_file() for p in (workspace_path(workspace, "files.yaml"), workspace / "files.yaml")
+    ):
+        catalog = workspace_files(workspace)
+
+    def load(
+        file: str, *, name: str | None = None, editing: bool = False, citing: bool = False
+    ) -> _File:
+        # A path or a catalog name, as every citation names a file.
+        path = _path(workspace, catalogued_path(workspace, file))
+        if path in files:
+            return files[path]
+        matches = () if catalog is None else catalog.entries_for_path(path)
+        if len(matches) > 1:
+            raise DocSectionError(
+                "catalog_ambiguous", "The file has multiple catalog names; choose one binding."
+            )
+        entry = matches[0] if matches else None
+        if entry is None and not editing and not citing:
+            raise DocSectionError(
+                "file_uncatalogued",
+                "Catalogue the file before linking its existing sections.",
+                repair=f"Catalogue it first: cruxible files add {shlex.quote(file)}",
+            )
+        source_id = entry.name if entry else name or default_catalog_name(workspace, path)
+        if entry is None and catalog is not None:
+            if source_id in catalog._by_name:
+                raise DocSectionError(
+                    "catalog_name_exists",
+                    f"Another file is already catalogued as {source_id}.",
+                    repair=(
+                        f"Catalogue {file} under another name first (cruxible files add "
+                        f"NAME {shlex.quote(file)}), then cite it"
+                        if citing and not editing
+                        else "Choose a distinct name for the new file"
+                    ),
+                )
+        if any(f.source_id == source_id and f.path != path for f in files.values()):
+            raise DocSectionError(
+                "catalog_name_exists", "Choose distinct catalog names for the new files."
+            )
+        content = _read(held, workspace, path)
+        state = _File(path, source_id, content, content, entry)
+        state.catalogue = entry is None and not editing
+        files[path] = state
+        return state
+
+    try:
+        observations: list[DocEditObservation] = []
+        sections: dict[str, tuple[str, tuple[str, ...]]] = {}
+        for op in request.docs:
+            if isinstance(op, DocEditObservation):
+                raise DocSectionError(
+                    "already_observed",
+                    "Supply local doc operations to a workspace adapter, not wire observations.",
+                )
+            state = load(
+                op.file, name=op.name if isinstance(op, AppendSection) else None, editing=True
+            )
+            before = state.current
+            result, start, end = _apply(before, op, request.surface)
+            if op.id is not None:
+                if op.id in sections:
+                    raise DocSectionError("section_ref_ambiguous", f"Duplicate doc id {op.id!r}.")
+                sections[op.id] = (op.file, result.section)
+            observation = DocEditObservation(
+                source_id=state.source_id,
+                op=op.op,
+                section=result.section,
+                before_digest=result.before_digest,
+                before_content_base64=(
+                    base64.b64encode((before or b"")[start:end]).decode()
+                    if isinstance(op, ReplaceSection)
+                    else None
+                ),
+                before_section=(op.section if result.changed else result.section)
+                if isinstance(op, ReplaceSection)
+                else None,
+                after_digest=result.after_digest,
+                content_base64=base64.b64encode(
+                    parse_sections(result.content, file=op.file).subtree(result.section)
+                ).decode(),
+                before_coordinate=None if before is None else _coordinate(before),
+                after_coordinate=_coordinate(result.content),
+                start_byte=start,
+                end_byte=end,
+                source_content_base64=source_content_for_observation(before or b""),
+            )
+            state.current = result.content
+            state.ops.append(op)
+            state.edits.append(result)
+            observations.append(observation)
+            state.record_indices.append(len(records))
+            records.append((op.file, state, observation))
+        changes: list[Change] = []
+        for change in request.changes:
+            if isinstance(change, AboutChange):
+                changes.append(_observe_about(change, sections=sections, load=load))
+                continue
+            evidence = getattr(change, "evidence", None)
+            if isinstance(evidence, SectionEvidence) and evidence.ref is not None:
+                target = sections.get(evidence.ref)
+                if target is None:
+                    raise DocSectionError(
+                        "section_ref_unknown", f"No doc operation has id {evidence.ref!r}."
+                    )
+                evidence = SectionEvidence(
+                    file=target[0], section=target[1], own_words=evidence.own_words
+                )
+            # A rebind's new text is read here too, so one write re-cites every
+            # Claim an edited section drifted (and sees this write's own edits).
+            if isinstance(
+                change, SetChange | AddChange | CreateChange | RebindChange
+            ) and isinstance(evidence, SectionEvidence | FileEvidence):
+                cited = evidence.file if isinstance(evidence, SectionEvidence) else evidence.path
+                state = load(cited, citing=True)
+                if state.current is None:
+                    raise DocSectionError(
+                        "file_missing",
+                        f"No file {cited} in the workspace.",
+                        repair="Cite a file that exists, by its path from the workspace root",
+                    )
+                selector = FileSelector(state.path, state.source_id, state.current)
+                if isinstance(evidence, SectionEvidence):
+                    selection = selector.section(*evidence.section)
+                    authored = any(
+                        (not edit.section and not evidence.section)
+                        or bool(
+                            edit.section and evidence.section[: len(edit.section)] == edit.section
+                        )
+                        for edit in state.edits
+                    )
+                    state.citations[evidence.section] = selection.observation().selected_content
+                    evidence = evidence.model_copy(
+                        update={
+                            "observation": selection.observation(),
+                            "own_words": authored
+                            if evidence.own_words is None
+                            else evidence.own_words,
+                            "file": state.source_id,
+                        }
+                    )
+                else:
+                    try:
+                        selection = selector.anchor(evidence.anchor)
+                    except SourceSelectionError as exc:
+                        raise DocSectionError(
+                            "anchor_not_unique",
+                            f"{evidence.anchor!r} in {cited}: {exc}",
+                            repair="Quote text that occurs exactly once in the file "
+                            "(a longer phrase, or a whole line)",
+                        ) from exc
+                    evidence = evidence.model_copy(update={"observation": selection.observation()})
+                change = change.model_copy(update={"evidence": evidence})
+            changes.append(change)
+    except (ValueError, OSError) as exc:
+        # Each code carries its own repair; a refusal whose message already says
+        # what to do (a protected path, an invalid section) carries none.
+        raise WriteRefusalError(
+            exc.code if isinstance(exc, DocSectionError) else "cruxible.doc.file_unavailable",
+            str(exc).rstrip("."),
+            repair_line=exc.repair if isinstance(exc, DocSectionError) else None,
+        ) from exc
+
+    observed = request.model_copy(
+        update={
+            "changes": tuple(changes),
+            **({"docs": tuple(observations)} if request.docs else {}),
+        }
+    )
+    outcome = submit(observed)
+    outcome = _catalogue_cited(request, outcome, workspace, files.values())
+    if not records:
+        return outcome
+    outcomes = [
+        DocOutcome(
+            file=file,
+            source_id=state.source_id,
+            section=obs.section,
+            before_digest=obs.before_digest,
+            after_digest=obs.after_digest,
+            confirmation=outcome.docs[index].confirmation if index < len(outcome.docs) else None,
+        )
+        for index, (file, state, obs) in enumerate(records)
+    ]
+    if request.dry_run or outcome.status not in ("accepted", "awaiting_approval"):
+        return outcome.model_copy(update={"docs": tuple(outcomes)})
+    confirmations: list[str] = []
+    for state in files.values():
+        if not state.ops:
+            continue
+        failure = None
+        followup = None
+        try:
+            applied = [True] * len(state.ops)
+            _path(workspace, str(state.path))
+            state.path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                replace_page_file(
+                    state.path, expected=state.original, replacement=state.current or b""
+                )
+            except PageWriteError:
+                rebase_original = moved = _read(held, workspace, state.path)
+                for index, (op, previous) in enumerate(zip(state.ops, state.edits, strict=True)):
+                    rebased, _, _ = _apply(moved, op, request.surface)
+                    applied[index] = rebased.changed
+                    if (
+                        isinstance(op, ReplaceSection)
+                        and rebased.changed
+                        and rebased.before_digest != previous.before_digest
+                    ):
+                        raise DocSectionError(
+                            "section_changed",
+                            "The target section changed while the write was admitted.",
+                        )
+                    moved = rebased.content
+                assert moved is not None
+                for section, selected in state.citations.items():
+                    if parse_sections(moved, file=str(state.path)).own_body(section) != selected:
+                        raise DocSectionError(
+                            "section_changed", "Rebase would change cited section bytes."
+                        )
+                replace_page_file(state.path, expected=rebase_original, replacement=moved)
+            confirmations.extend(
+                token
+                for index, changed in zip(state.record_indices, applied, strict=True)
+                if changed and (token := outcomes[index].confirmation) is not None
+            )
+            if state.entry is None:
+                # Refresh by catalog revision after file creation. Retry after a
+                # crash between these steps adds the single missing binding.
+                existing = None
+                if any(
+                    p.is_file()
+                    for p in (workspace_path(workspace, "files.yaml"), workspace / "files.yaml")
+                ):
+                    existing = workspace_files(workspace).entries_for_path(state.path)
+                if not existing:
+                    add_catalog_entry(workspace, name=state.source_id, path=state.path, fields={})
+            elif state.entry.is_document:
+                followup = (
+                    f"cruxible files propose --file {shlex.quote(state.source_id)} "
+                    f"--name doc-revision --root {shlex.quote(str(workspace))}"
+                )
+        except (OSError, ValueError, FileCatalogEditError) as exc:
+            failure = WriteRefusal(
+                code="cruxible.doc.doc_write_conflict",
+                message=str(exc),
+                repair=(
+                    "Re-read this section, revise or re-cite the retained Claim, "
+                    "and retry with its current expect digest"
+                ),
+            )
+        for index in state.record_indices:
+            outcomes[index] = outcomes[index].model_copy(
+                update={"written": failure is None, "refusal": failure, "next": followup}
+            )
+    if confirmations:
+        confirmed = submit(
+            WriteRequest(
+                because=request.because,
+                doc_confirmations=tuple(confirmations),
+                surface=request.surface,
+                full_coordinate=request.full_coordinate,
+            )
+        )
+        if confirmed.status != "accepted":
+            raise WriteRefusalError(
+                "cruxible.doc.history_unconfirmed",
+                "The file was written, but some history confirmations were refused",
+                repair_line=(
+                    confirmed.refusal.repair
+                    if confirmed.refusal is not None
+                    else (
+                        "Inspect each doc_confirmations result, then resend only the "
+                        "tokens still unconfirmed: " + ", ".join(confirmations)
+                    )
+                ),
+                outcome=confirmed,
+            )
+    next_steps = [
+        item.refusal.repair if item.refusal else item.next
+        for item in outcomes
+        if item.refusal or item.next
+    ]
+    return outcome.model_copy(
+        update={
+            "docs": tuple(outcomes),
+            **(
+                {"next": "; ".join(filter(None, [outcome.next, *next_steps]))} if next_steps else {}
+            ),
+        }
+    )

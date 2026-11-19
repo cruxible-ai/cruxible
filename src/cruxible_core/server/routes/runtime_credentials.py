@@ -7,16 +7,24 @@ from typing import cast
 from fastapi import APIRouter
 
 from cruxible_client import contracts
-from cruxible_core.runtime.instance_manager import get_manager
+from cruxible_client.contracts.change_control import ChangeControlRequest
 from cruxible_core.runtime.permissions import PermissionMode, check_permission
 from cruxible_core.server.auth import get_current_auth_context
-from cruxible_core.server.auth_managed_entities import materialize_auth_managed_entities
+from cruxible_core.server.credential_minting import (
+    mint_principal_credential,
+    revoke_runtime_credential,
+    rotate_principal_credential,
+)
 from cruxible_core.server.credentials import (
     RuntimeCredentialRecord,
     get_runtime_credential_store,
 )
-from cruxible_core.server.request_models import RuntimeCredentialCreateRequest
+from cruxible_core.server.request_models import (
+    RuntimeCredentialCreateRequest,
+    RuntimeCredentialRotateRequest,
+)
 from cruxible_core.server.routes import resolve_server_instance_id
+from cruxible_core.service.change_preview import state_change_scope
 
 router = APIRouter(prefix="/api/v1", tags=["runtime-credentials"])
 
@@ -39,6 +47,7 @@ def _record_to_contract(
     return contracts.RuntimeCredentialMetadata(
         credential_id=record.credential_id,
         instance_id=record.instance_id,
+        principal_id=record.principal_id,
         label=record.label,
         permission_mode=_credential_permission_mode(record.permission_mode),
         created_at=record.created_at,
@@ -51,24 +60,32 @@ def _record_to_contract(
     "/{instance_id}/runtime/credentials",
     response_model=contracts.RuntimeCredentialResult,
 )
-async def create_runtime_credential(
+def create_runtime_credential(
     instance_id: str,
     req: RuntimeCredentialCreateRequest,
 ) -> contracts.RuntimeCredentialResult:
     resolved_instance_id = _authorize_runtime_credentials(instance_id)
-    auth_context = get_current_auth_context()
-    store = get_runtime_credential_store()
-    prepared = store.prepare_credential(
-        instance_id=resolved_instance_id,
-        label=req.label,
-        permission_mode=PermissionMode[req.permission_mode.upper()],
-        created_by=auth_context.principal_id if auth_context else None,
-    )
-    materialize_auth_managed_entities(get_manager().get(resolved_instance_id), prepared.record)
-    created = store.commit_prepared_credential(prepared)
+    with state_change_scope(
+        dry_run=req.dry_run,
+        at=req.at,
+        kind="direct",
+        operation="credential.mint",
+        describe=f"minting a credential for {req.principal_id}",
+    ) as change:
+        created = mint_principal_credential(
+            instance_id=resolved_instance_id,
+            principal_id=req.principal_id,
+            permission_mode=PermissionMode[req.permission_mode.upper()],
+            label=req.label,
+            principal_proof=req.principal_proof,
+            auth_context=get_current_auth_context(),
+            observe=change.observe,
+        )
     return contracts.RuntimeCredentialResult(
+        status="would_mint" if change.previewing else "minted",
         credential=_record_to_contract(created.record),
-        token=created.token,
+        token=None if change.previewing else created.token,
+        coordinate=change.coordinate,
     )
 
 
@@ -76,7 +93,7 @@ async def create_runtime_credential(
     "/{instance_id}/runtime/credentials",
     response_model=contracts.RuntimeCredentialListResult,
 )
-async def list_runtime_credentials(
+def list_runtime_credentials(
     instance_id: str,
 ) -> contracts.RuntimeCredentialListResult:
     resolved_instance_id = _authorize_runtime_credentials(instance_id)
@@ -90,17 +107,35 @@ async def list_runtime_credentials(
     "/{instance_id}/runtime/credentials/{credential_id}/revoke",
     response_model=contracts.RuntimeCredentialResult,
 )
-async def revoke_runtime_credential(
+def revoke_runtime_credential_route(
     instance_id: str,
     credential_id: str,
+    req: ChangeControlRequest | None = None,
 ) -> contracts.RuntimeCredentialResult:
+    """Revoke one credential. It cannot be undone: previews unless committed with ``at``.
+
+    Pinned to the credential's own state, so a host with no Cruxible yet (its
+    bootstrap or recovery credential) previews and commits like any other.
+    """
+
     resolved_instance_id = _authorize_runtime_credentials(instance_id)
-    record = get_runtime_credential_store().revoke_credential(
-        instance_id=resolved_instance_id,
-        credential_id=credential_id,
-    )
+    control = req or ChangeControlRequest()
+    with state_change_scope(
+        dry_run=control.dry_run,
+        at=control.at,
+        kind="irreversible",
+        operation="credential.revoke",
+        describe=f"revoking credential {credential_id}",
+    ) as change:
+        record = revoke_runtime_credential(
+            instance_id=resolved_instance_id,
+            credential_id=credential_id,
+            observe=change.observe,
+        )
     return contracts.RuntimeCredentialResult(
+        status="would_revoke" if change.previewing else "revoked",
         credential=_record_to_contract(record),
+        coordinate=change.coordinate,
     )
 
 
@@ -108,28 +143,32 @@ async def revoke_runtime_credential(
     "/{instance_id}/runtime/credentials/{credential_id}/rotate",
     response_model=contracts.RuntimeCredentialResult,
 )
-async def rotate_runtime_credential(
+def rotate_runtime_credential(
     instance_id: str,
     credential_id: str,
+    req: RuntimeCredentialRotateRequest | None = None,
 ) -> contracts.RuntimeCredentialResult:
+    """Replace one credential's token; the old one is revoked, which cannot be undone."""
+
     resolved_instance_id = _authorize_runtime_credentials(instance_id)
-    auth_context = get_current_auth_context()
-    store = get_runtime_credential_store()
-    prepared = store.prepare_rotated_credential(
-        instance_id=resolved_instance_id,
-        credential_id=credential_id,
-        rotated_by=auth_context.principal_id if auth_context else None,
-    )
-    # Materialize before revoking the old token. If the store commit fails after
-    # this update, the auth-managed entity may briefly reference an inactive
-    # credential_id; the next successful mint/rotation overwrites it by label.
-    materialize_auth_managed_entities(get_manager().get(resolved_instance_id), prepared.record)
-    created = store.commit_prepared_rotation(
-        prepared,
-        instance_id=resolved_instance_id,
-        credential_id=credential_id,
-    )
+    request = req or RuntimeCredentialRotateRequest()
+    with state_change_scope(
+        dry_run=request.dry_run,
+        at=request.at,
+        kind="irreversible",
+        operation="credential.rotate",
+        describe=f"rotating credential {credential_id}",
+    ) as change:
+        created = rotate_principal_credential(
+            instance_id=resolved_instance_id,
+            credential_id=credential_id,
+            principal_proof=request.principal_proof,
+            auth_context=get_current_auth_context(),
+            observe=change.observe,
+        )
     return contracts.RuntimeCredentialResult(
+        status="would_rotate" if change.previewing else "rotated",
         credential=_record_to_contract(created.record),
-        token=created.token,
+        token=None if change.previewing else created.token,
+        coordinate=change.coordinate,
     )

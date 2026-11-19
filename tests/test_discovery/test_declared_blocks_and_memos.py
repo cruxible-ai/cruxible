@@ -1,0 +1,940 @@
+"""Held lists, watched queries, block registration, and the two read-path memos.
+
+Four laws meet in this file, and each of them exists because a projection block
+is agent-authored prose held to an explicit list rather than a rendering of one
+governed artifact.
+
+A block HOLDS a list and, at most, WATCHES one query. The held list is what the
+block is accountable for; the query only surfaces candidates for it. Those are
+two different questions, and collapsing them -- either by letting a block watch
+two queries with no rule for reconciling their answers, or by reporting a moved
+query result as a stale member of the list -- tells an author to repair
+something that is not broken.
+
+A block is REGISTERED by the instance that governs its page, on both declaration
+roads. The question `next` and `workspace detach` ask of a marker is whether this
+instance stands behind it, and that was once answered by whether the block id
+happened to begin `pub-` -- a spelling only the retired publication road minted.
+An id an author chooses cannot be interrogated that way, so the answer has to be
+the record the instance keeps.
+
+Finally, both `orient` and `next` are READS, and neither may pay for the same
+derivation twice. The registration fold parses every durable intent event and the
+resolution fold evaluates every live Claim's verdict; at a few hundred Claims the
+second crossed the client's own default timeout, so the first thing an SDK
+session does could fail against a healthy instance.
+"""
+
+from __future__ import annotations
+
+import hashlib
+from collections.abc import Iterator
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from typing import Any
+
+import pytest
+from pydantic import ValidationError
+
+from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.declared_blocks import (
+    ProjectionBacking,
+    ProjectionBlockStampV1,
+    ProjectionClaimBacking,
+    ProjectionQueryBacking,
+    parse_projection_blocks,
+    projection_parameter_digest,
+    render_projection_closing,
+    render_projection_opening,
+)
+from cruxible_core.coverage.contracts import CoverageAccessProfile
+from cruxible_core.errors import ConfigError
+from cruxible_core.evidence.claim_attestation_store import (
+    STORE_DIRECTORY as CLAIM_ATTESTATION_STORE_DIRECTORY,
+)
+from cruxible_core.indexes.projection import AcceptedCoordinate
+from cruxible_core.runtime import host_api
+from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.service.claims.claims import (
+    _claim_from_view,
+    resolve_playbill_claim_group,
+    service_list_playbill_claims,
+)
+from cruxible_core.service.claims.verdict_memo import verdict_input_fingerprint
+from cruxible_core.service.discovery import claim_status as search_service
+from cruxible_core.service.discovery import next as next_service
+from cruxible_core.service.discovery.claim_status import (
+    reset_claim_resolution_memo,
+)
+from cruxible_core.service.discovery.next import (
+    NextRequest,
+    PlaybillNextItemV1,
+    service_playbill_next,
+)
+from cruxible_core.service.discovery.query import build_accepted_query_facts
+from cruxible_core.service.evidence.evidence import service_evaluate_playbill_claim_verdict
+from cruxible_core.service.proposals.publications import (
+    registered_projection_blocks,
+    service_declare_playbill_block,
+    service_depublish_playbill_block,
+)
+from tests.core_support._claim_authoring_support import service_propose_playbill_claim
+from tests.core_support._knowledge_loop_support import (
+    TIMESTAMP,
+    activate,
+    authoring,
+    seed_claims,
+)
+from tests.core_support._subject_kind_support import _is_key
+from tests.core_support._support import initialize_local
+from tests.test_discovery.test_read_latency_memos import _declared_projection_observation
+from tests.test_indexes.test_projection_next import (
+    NOW,
+    _claim_backing,
+    _query_backing,
+    _request,
+)
+from tests.test_query.test_query_execution_service import _instance_with_query
+
+DECLARED_AT = "2026-09-04T12:00:00+00:00"
+STALE_DIGEST = "sha256:" + "f" * 64
+
+
+# --------------------------------------------------------------------------
+# Shared worlds and small adapters over the builders these suites already own.
+# --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class WatchedWorld:
+    """One instance whose watched query gained a row after the block was stamped."""
+
+    instance: PlaybillInstance
+    held: tuple[ProjectionClaimBacking, ...]
+    stamped_query: ProjectionQueryBacking
+    entered: str
+
+
+@pytest.fixture(scope="module")
+def watched_world(tmp_path_factory: pytest.TempPathFactory) -> WatchedWorld:
+    """Stamp a block over the whole query result, then let one more row in.
+
+    The stamp is taken BEFORE the third Claim is accepted, so the recorded
+    semantic result digest is the one a real block would carry: the answer the
+    query gave on the day the author wrote the prose.
+    """
+
+    instance, owner = _instance_with_query(tmp_path_factory.mktemp("watched-world"))
+    held = _claim_backings(instance)
+    stamped_query = _query_backing(instance)
+    before = {backing.identity.qualified for backing in held}
+    activate(
+        instance,
+        owner,
+        service_propose_playbill_claim(
+            instance,
+            authoring=authoring("wi-44", "ready", with_claim_type=False),
+            actor_id="owner",
+            proposal_name="candidate-entering-the-watched-query",
+            timestamp=TIMESTAMP,
+        ),
+    )
+    after = {backing.identity.qualified for backing in _claim_backings(instance)}
+    (entered,) = after - before
+    return WatchedWorld(
+        instance=instance,
+        held=held,
+        stamped_query=stamped_query,
+        entered=entered,
+    )
+
+
+@pytest.fixture(scope="module")
+def registration_world(tmp_path_factory: pytest.TempPathFactory) -> PlaybillInstance:
+    """One instance with accepted Claims, used only to read `next`'s marker rows."""
+
+    instance, _owner = seed_claims(tmp_path_factory.mktemp("registration-world"))
+    return instance
+
+
+@pytest.fixture(scope="module")
+def resolution_world(tmp_path_factory: pytest.TempPathFactory) -> PlaybillInstance:
+    """One instance whose live Claims are the resolution fold's input."""
+
+    instance, _owner = seed_claims(tmp_path_factory.mktemp("resolution-world"))
+    return instance
+
+
+@pytest.fixture(autouse=True)
+def _cold_memos() -> Iterator[None]:
+    """Every law here is about a cold read or a deliberate second one."""
+
+    reset_claim_resolution_memo()
+    yield
+    reset_claim_resolution_memo()
+
+
+def _claim_backings(instance: PlaybillInstance) -> tuple[ProjectionClaimBacking, ...]:
+    """A held-list entry for every stated accepted Claim, in the stamp's own order."""
+
+    facts = build_accepted_query_facts(instance, coordinate=instance.accepted_coordinate())
+    return tuple(
+        sorted(
+            (
+                ProjectionClaimBacking(
+                    identity=row.accepted.claim.identity,
+                    statement_digest=row.accepted.statement_digest,
+                )
+                for row in facts.claims
+                # Not the key Claims core wrote when it created the Subjects.
+                if not _is_key(row.accepted.claim)
+            ),
+            key=lambda item: item.identity.qualified.encode("utf-8"),
+        )
+    )
+
+
+def _rows(
+    instance: PlaybillInstance,
+    request: NextRequest,
+    *,
+    reason: str,
+) -> tuple[PlaybillNextItemV1, ...]:
+    return tuple(
+        item
+        for item in service_playbill_next(instance, request=request).items
+        if item.reason == reason
+    )
+
+
+def _stamp_of(request: NextRequest) -> ProjectionBlockStampV1:
+    observation = request.workspace_observation
+    assert observation is not None
+    assert observation.source_observations is not None
+    return observation.source_observations[0].marker_summaries[0].stamp
+
+
+def _with_block_id(request: NextRequest, block_id: str) -> NextRequest:
+    """Re-address the observed marker without rebuilding the observation."""
+
+    observation = request.workspace_observation
+    assert observation is not None
+    assert observation.source_observations is not None
+    source = observation.source_observations[0]
+    marker = source.marker_summaries[0]
+    return request.model_copy(
+        update={
+            "workspace_observation": observation.model_copy(
+                update={
+                    "source_observations": (
+                        source.model_copy(
+                            update={
+                                "marker_summaries": (
+                                    marker.model_copy(
+                                        update={
+                                            "stamp": marker.stamp.model_copy(
+                                                update={"block_id": block_id}
+                                            )
+                                        }
+                                    ),
+                                )
+                            }
+                        ),
+                    )
+                }
+            )
+        }
+    )
+
+
+def _declare(instance: PlaybillInstance, stamp: ProjectionBlockStampV1) -> None:
+    service_declare_playbill_block(
+        instance,
+        actor_id="owner",
+        stamp=stamp,
+        declared_at=DECLARED_AT,
+    )
+
+
+def _depublish(
+    instance: PlaybillInstance, *, source_id: str, block_id: str, dry_run: bool | None = None
+) -> Any:
+    return service_depublish_playbill_block(
+        instance,
+        source_id=source_id,
+        block_id=block_id,
+        dry_run=dry_run,
+    )
+
+
+def _synthetic_claim_backings(count: int) -> tuple[ProjectionClaimBacking, ...]:
+    """A held list of the declared size, with no ledger behind it.
+
+    The ceiling is a property of the marker, not of accepted state: it decides
+    how many rows one governed table may carry before the author has to cut it
+    somewhere a reader cannot explain.
+    """
+
+    return tuple(
+        ProjectionClaimBacking(
+            identity=ArtifactIdentity(kind="Claim", name=f"CLM-{index:028d}"),
+            statement_digest="sha256:" + f"{index:064x}",
+        )
+        for index in range(count)
+    )
+
+
+def _synthetic_query_backing(name: str) -> ProjectionQueryBacking:
+    return ProjectionQueryBacking(
+        identity=ArtifactIdentity(kind="QueryDefinition", name=name),
+        definition_digest="sha256:" + "1" * 64,
+        canonical_param_digest=projection_parameter_digest(()),
+        declared_evaluation_time=datetime(2026, 9, 4, tzinfo=UTC),
+        semantic_result_digest="sha256:" + "2" * 64,
+    )
+
+
+# --------------------------------------------------------------------------
+# A block holds a list and binds at most one query.
+# --------------------------------------------------------------------------
+
+
+def test_a_block_holds_a_list_and_watches_one_query_through_a_render_and_a_read(
+    watched_world: WatchedWorld,
+) -> None:
+    """A held list is the point of a projection block, so every member must survive.
+
+    A block that holds three governed rows and watches the query they came from
+    carries four backings in one marker, and both halves of the round trip have
+    to keep all four: the base64 opening the author's page actually carries, and
+    the read that decides whether the page is still true. A marker that renders
+    but re-parses to something smaller would silently drop rows from the list the
+    block is accountable for, and a read that walks only the first backing would
+    let every later row go stale unreported -- which is the failure a per-block
+    held list exists to make impossible.
+    """
+
+    instance = watched_world.instance
+    held = _claim_backings(instance)
+    assert len(held) == 3
+    backing: tuple[ProjectionBacking, ...] = (*held, _query_backing(instance))
+
+    request = _request(instance, backing=backing)
+    stamp = _stamp_of(request)
+    assert len(stamp.backing) == 4
+
+    document = (
+        render_projection_opening(stamp)
+        + b"status: ready\n"
+        + render_projection_closing(stamp.block_id)
+    )
+    (parsed,) = parse_projection_blocks(document, source_id=stamp.source_id)
+    assert parsed.stamp == stamp
+
+    # Nothing moved, so a walk of all four backings reports nothing.
+    assert _rows(instance, request, reason="projection_backing_stale") == ()
+
+    # Move the LAST member of the held list. Only a read that walks past the
+    # first backing can see it, and it must name that member and no other.
+    moved = held[-1].model_copy(update={"statement_digest": STALE_DIGEST})
+    (row,) = _rows(
+        instance,
+        _request(instance, backing=(*held[:-1], moved, _query_backing(instance))),
+        reason="projection_backing_stale",
+    )
+    assert row.related_identities == (moved.identity.qualified,)
+    assert row.detail["backing_state"] == "invalid"  # type: ignore[index]
+
+
+def test_a_block_refuses_a_second_watched_query_at_the_model(
+    watched_world: WatchedWorld,
+) -> None:
+    """Two watched queries are two answers to "what belongs here" with no tiebreak.
+
+    A watched query says which governed rows are candidates for this block. One
+    query is an opinion the author can act on; two are a contradiction with no
+    rule for reconciling them, and every consumer downstream -- the candidate
+    delta, the repin that answers it, the prose the author writes against it --
+    would have to invent one. The refusal is at the model so no stamp carrying
+    the contradiction can ever be written to a page.
+    """
+
+    coordinate = AcceptedCoordinate.from_internal(watched_world.instance.accepted_coordinate())
+    one = _synthetic_query_backing("project.first_items")
+    other = _synthetic_query_backing("project.second_items")
+
+    with pytest.raises(ValidationError, match="binds at most one query"):
+        ProjectionBlockStampV1(
+            source_id="corpus.runbook",
+            block_id="held-rows",
+            declared_generation=0,
+            declared_coordinate=coordinate,
+            backing=(one, other),
+            body_digest="sha256:" + "b" * 64,
+        )
+
+    # One query alongside a held list is the shape the block is FOR.
+    assert (
+        len(
+            ProjectionBlockStampV1(
+                source_id="corpus.runbook",
+                block_id="held-rows",
+                declared_generation=0,
+                declared_coordinate=coordinate,
+                backing=(*_synthetic_claim_backings(3), one),
+                body_digest="sha256:" + "b" * 64,
+            ).backing
+        )
+        == 4
+    )
+
+
+def test_a_held_list_is_sized_for_a_real_table_and_still_bounded(
+    watched_world: WatchedWorld,
+) -> None:
+    """A backing list above the old count/marker cap remains a valid declaration."""
+
+    coordinate = AcceptedCoordinate.from_internal(watched_world.instance.accepted_coordinate())
+
+    def stamp(count: int) -> ProjectionBlockStampV1:
+        return ProjectionBlockStampV1(
+            source_id="corpus.runbook",
+            block_id="held-rows",
+            declared_generation=0,
+            declared_coordinate=coordinate,
+            backing=_synthetic_claim_backings(count),
+            body_digest="sha256:" + "b" * 64,
+        )
+
+    full = stamp(1024)
+    assert len(full.backing) == 1024
+    # The ceiling governs the stamp's own bytes, which is what the opening
+    # carries base64-encoded; a full held list must fit inside it with room to
+    # spare, or the two limits could not both be honoured.
+    content = canonical_bytes(full.model_dump(mode="json"))
+    assert len(content) > 128 * 1024
+    document = (
+        render_projection_opening(full)
+        + b"status: ready\n"
+        + render_projection_closing(full.block_id)
+    )
+    (parsed,) = parse_projection_blocks(document, source_id=full.source_id)
+    assert parsed.stamp == full
+
+    assert len(stamp(1025).backing) == 1025
+
+
+# --------------------------------------------------------------------------
+# Both declaration roads register a block, keyed on the pair the page names.
+# --------------------------------------------------------------------------
+
+
+def test_a_repin_declared_block_is_registered_under_the_authors_own_id(
+    registration_world: PlaybillInstance,
+) -> None:
+    """An id an author chooses cannot be recognised by spelling, so it must be recorded.
+
+    A block minted by the retired publication road carried `pub-` in its id and
+    could be identified by the string alone. A block an agent declares picks its
+    own id, so the only honest answer to "does this instance stand behind this
+    marker?" is the record the instance keeps. Without one, every declared block
+    read as an intruder in its own page: `next` reported an unregistered marker
+    the author had just been told to write, and the fold that guards a workspace
+    detachment could not see it at all.
+    """
+
+    instance = registration_world
+    request = _with_block_id(
+        _request(instance, backing=(_claim_backing(instance),)),
+        "held-rows",
+    )
+    stamp = _stamp_of(request)
+    assert not stamp.block_id.startswith("pub-")
+
+    # Before the declaration the instance has never heard of the marker.
+    assert len(_rows(instance, request, reason="unregistered_projection_block")) == 1
+
+    _declare(instance, stamp)
+
+    folded = registered_projection_blocks(instance)
+    assert folded is not None
+    registration = folded[("corpus.runbook", "held-rows")]
+    assert registration.declaration.declared_by == "owner"
+    assert _rows(instance, request, reason="unregistered_projection_block") == ()
+
+
+def test_an_unregistered_marker_is_reported_whatever_its_id_spells(
+    registration_world: PlaybillInstance,
+) -> None:
+    """A marker no record sanctions is unregistered, and its spelling is not evidence.
+
+    The question was asked only of ids beginning `pub-`, so a marker under any
+    other id was never checked against anything: a page could carry a governed
+    block no instance had ever registered and `next` would say nothing. The
+    prefix was never a fact about sanction -- it was a fact about which road
+    minted the block -- so both spellings are asked the same question here, and
+    both answer it from the fold rather than from the string.
+    """
+
+    instance = registration_world
+    base = _request(instance, backing=(_claim_backing(instance),))
+
+    for block_id in ("unheld-rows", "pub-status"):
+        request = _with_block_id(base, block_id)
+        (row,) = _rows(instance, request, reason="unregistered_projection_block")
+        assert row.severity == "warning"
+        assert row.subject_identity == f"corpus.runbook#{block_id}"
+        assert row.detail == {"source_id": "corpus.runbook", "block_id": block_id}
+        assert row.repair.operation == "cruxible.block.repin"
+        assert row.repair.required_change == "remove_or_register_projection_block"
+
+
+def test_depublishing_a_declared_block_releases_it_from_the_fold(tmp_path: Path) -> None:
+    """A registration with no way out is a demand the author cannot satisfy.
+
+    A registration outlived every ruling that could remove the block it names:
+    `next` went on demanding the frame for a marker a later decision had told the
+    author to delete, and the only repair it could name was to put it back. One
+    verb answers both roads because the page names a source and a block and knows
+    nothing about which road registered it -- and a declared block has no intent
+    to abandon, so releasing it is forgetting the declaration.
+    """
+
+    instance, _owner = initialize_local(tmp_path)
+    stamp = ProjectionBlockStampV1(
+        source_id="corpus.runbook",
+        block_id="held-rows",
+        declared_generation=0,
+        declared_coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+        backing=_synthetic_claim_backings(2),
+        body_digest="sha256:" + "b" * 64,
+    )
+    _declare(instance, stamp)
+    folded = registered_projection_blocks(instance)
+    assert folded is not None and ("corpus.runbook", "held-rows") in folded
+
+    # F-006: the preview finds the declaration and releases nothing.
+    from tests.support.store_snapshot import assert_writes_nothing
+
+    previewed = assert_writes_nothing(
+        [tmp_path],
+        lambda: _depublish(
+            instance, source_id="corpus.runbook", block_id="held-rows", dry_run=True
+        ),
+    )
+    assert previewed.outcome == "would_depublish"
+    assert ("corpus.runbook", "held-rows") in (registered_projection_blocks(instance) or {})
+
+    result = _depublish(instance, source_id="corpus.runbook", block_id="held-rows")
+    assert result.outcome == "depublished"
+
+    released = registered_projection_blocks(instance)
+    assert released == {}
+
+
+def test_a_detach_refuses_while_a_repin_declared_block_is_registered(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Detaching under a live registration strands markers with no host to repair them.
+
+    The instance is never told the workspace left, so a detachment that goes
+    through under a live registration leaves a page carrying governed markers no
+    host owns -- the one state with no repair available from inside the
+    workspace. The guard keyed on the `pub-` spelling, so a block an agent had
+    declared was invisible to it, even though such a block is stranded exactly as
+    badly. The refusal names the pair and the verb that releases it, and it stops
+    the moment the instance no longer stands behind the marker.
+    """
+
+    instance, _owner = initialize_local(tmp_path)
+    stamp = ProjectionBlockStampV1(
+        source_id="corpus.runbook",
+        block_id="held-rows",
+        declared_generation=0,
+        declared_coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+        backing=_synthetic_claim_backings(1),
+        body_digest="sha256:" + "b" * 64,
+    )
+    _declare(instance, stamp)
+
+    class _Manager:
+        def get(self, _instance_id: str) -> PlaybillInstance:
+            return instance
+
+    monkeypatch.setattr(host_api, "get_playbill_manager", lambda: _Manager())
+
+    with pytest.raises(ConfigError) as refusal:
+        host_api._refuse_detach_with_registered_blocks("inst_declared_blocks")
+    message = str(refusal.value)
+    assert "corpus.runbook#held-rows" in message
+    assert "cruxible block depublish" in message
+
+    _depublish(instance, source_id="corpus.runbook", block_id="held-rows")
+
+    # Released means released: the detachment now strands nothing.
+    host_api._refuse_detach_with_registered_blocks("inst_declared_blocks")
+
+
+# --------------------------------------------------------------------------
+# One registration fold per `next`.
+# --------------------------------------------------------------------------
+
+
+def test_one_next_folds_the_durable_registration_stream_exactly_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A read that folds the whole durable stream per block does not scale with a page.
+
+    The registration fold reads and parses every durable intent event, which on a
+    worked instance is a large stream. One `next` used to reach it from three
+    places and once more for every syncable block, so the cost of asking "which
+    blocks does this instance register?" grew with the size of the page being
+    asked about -- and the retirement release, which needs the same answer,
+    folded it yet again. One fold answers all of them: the queue folds once and
+    hands the result to every reader that needs it.
+    """
+
+    instance, _owner = seed_claims(tmp_path)
+    observation = _declared_projection_observation(instance)
+    assert observation.source_observations is not None
+    source = observation.source_observations[0]
+    first = source.marker_summaries[0]
+    second = first.model_copy(
+        update={
+            "stamp": first.stamp.model_copy(update={"block_id": "second"}),
+            "start_byte": 200,
+            "end_byte": 300,
+        }
+    )
+    observation = observation.model_copy(
+        update={
+            "source_observations": (
+                source.model_copy(update={"marker_summaries": (second, first)}),
+            )
+        }
+    )
+
+    reads = 0
+    original_fold = next_service._registered_blocks
+
+    def counting_fold(instance_: PlaybillInstance) -> Any:
+        nonlocal reads
+        reads += 1
+        return original_fold(instance_)
+
+    monkeypatch.setattr(next_service, "_registered_blocks", counting_fold)
+
+    service_playbill_next(
+        instance,
+        request=NextRequest(
+            at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+            evaluation_time=NOW,
+            access_profile=_request(instance, backing=(_claim_backing(instance),)).access_profile,
+            workspace_observation=observation,
+        ),
+    )
+
+    # Two observed blocks, one fold: the answer does not get re-derived per block.
+    assert reads == 1
+
+
+# --------------------------------------------------------------------------
+# The per-process resolution memo.
+# --------------------------------------------------------------------------
+
+
+def _resolution_inputs(
+    instance: PlaybillInstance,
+    *,
+    at: AcceptedCoordinate | None = None,
+) -> tuple[Any, ...]:
+    coordinate = at or AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    listed = service_list_playbill_claims(instance, at=coordinate, include_retired=True)
+    return tuple(_claim_from_view(view) for view in listed.claims)
+
+
+def _count_group_resolutions(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Count the real per-slot verdict work the resolution fold does.
+
+    The group resolution is where a Claim's verdict is actually derived, so it is
+    the only honest measure of whether a second read paid again.
+    """
+
+    counted = [0]
+
+    def counting(*args: Any, **values: Any) -> Any:
+        counted[0] += 1
+        return resolve_playbill_claim_group(*args, **values)
+
+    monkeypatch.setattr(search_service, "resolve_playbill_claim_group", counting)
+    return counted
+
+
+def _verdict_boundaries(instance: PlaybillInstance) -> set[datetime]:
+    """Every instant a verdict at this coordinate compares against.
+
+    The same set the memo derives its invariance interval from, collected here
+    through the service so the test names a real breakpoint rather than a
+    number that happens to be far away.
+    """
+
+    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    boundaries: set[datetime] = set()
+    for row in build_accepted_query_facts(
+        instance, coordinate=instance.accepted_coordinate()
+    ).claims:
+        service_evaluate_playbill_claim_verdict(
+            instance,
+            claim_identity=row.accepted.claim.identity.qualified,
+            evaluation_time=datetime.now(UTC),
+            at=coordinate,
+            time_boundaries=boundaries,
+        )
+    return boundaries
+
+
+def _orient(
+    instance: PlaybillInstance,
+    *,
+    at: AcceptedCoordinate | None = None,
+    evaluation_time: datetime | None = None,
+) -> Any:
+    """One real `orient`, stamped the way the served route stamps it.
+
+    Its Claim status counts fold every accepted Claim's resolution status.
+    """
+
+    from cruxible_core.service.discovery.orient import service_playbill_orient
+
+    return service_playbill_orient(
+        instance,
+        at=at,
+        # The served route calls `utc_now()` per request. A test that pinned
+        # one instant here would prove nothing about the surface.
+        evaluation_time=evaluation_time or datetime.now(UTC),
+    )
+
+
+def _next(instance: PlaybillInstance) -> Any:
+    """One real `next`, over an observation that reaches the resolution fold."""
+
+    return service_playbill_next(
+        instance,
+        request=NextRequest(
+            at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+            evaluation_time=datetime.now(UTC),
+            access_profile=CoverageAccessProfile(
+                profile_id="resolution-memo",
+                permitted_access_classes=("instance", "public"),
+            ),
+            workspace_observation=_declared_projection_observation(instance),
+        ),
+    )
+
+
+def test_the_resolution_memo_hits_on_the_surfaces_and_misses_when_its_inputs_move(
+    resolution_world: PlaybillInstance,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The memo has to hit through `orient` and `next`, or it is not a cache.
+
+    Both surfaces stamp a fresh `utc_now()` per request, so a memo keyed on the
+    evaluation instant could never serve a second read and the whole item would
+    be a no-op nobody noticed. Time is not ignored, though: a verdict is a step
+    function whose breakpoints are the instants it compares against, so the
+    entry carries the interval its answer holds over, and an instant outside
+    that interval evaluates again. So do a moved CAS and a second accepted
+    coordinate. Pending attestations are not inputs to this derivation.
+    """
+
+    instance = resolution_world
+    reset_claim_resolution_memo()
+    counted = _count_group_resolutions(monkeypatch)
+
+    first = _orient(instance)
+    assert counted[0] > 0
+    evaluated = counted[0]
+
+    # A second `orient` at real wall-clock time evaluates nothing and answers
+    # identically -- a memo that changed the answer would be accepted state by
+    # the back door.
+    second = _orient(instance)
+    assert counted[0] == evaluated
+    assert second.artifacts.claims == first.artifacts.claims
+
+    # `next` reads the same derivation, so the warm entry serves it too, and a
+    # second `next` likewise evaluates nothing.
+    _next(instance)
+    assert counted[0] == evaluated
+    _next(instance)
+    assert counted[0] == evaluated
+
+    # Crossing a boundary evaluates again: the clock is out of the key, not out
+    # of the law. Everything the verdicts here compare against is already in the
+    # past at `now`, so the answer genuinely holds forward forever -- the
+    # interval is exercised from BELOW the earliest breakpoint.
+    boundaries = _verdict_boundaries(instance)
+    assert boundaries
+    boundary = min(boundaries)
+    reset_claim_resolution_memo()
+    evaluated = counted[0]
+
+    _orient(instance, evaluation_time=boundary - timedelta(microseconds=1))
+    assert counted[0] > evaluated
+    evaluated = counted[0]
+    # Another instant inside the same interval is the same answer.
+    _orient(instance, evaluation_time=boundary - timedelta(days=1))
+    assert counted[0] == evaluated
+    # The boundary itself is the other side of it.
+    _orient(instance, evaluation_time=boundary)
+    assert counted[0] > evaluated
+    evaluated = counted[0]
+
+    # Pre-create the shard: adding a new shard once moved the old shard
+    # fingerprint's parent directory and hid this regression.
+    body = b"a body no verdict has seen yet\n"
+    prefix = hashlib.sha256(body).hexdigest()[:2]
+    seed = next(
+        value
+        for n in range(10000)
+        if hashlib.sha256(value := f"seed-{n}".encode()).hexdigest().startswith(prefix)
+    )
+    instance.body_store().store(seed)
+    reset_claim_resolution_memo()
+    _orient(instance)
+    evaluated = counted[0]
+
+    # CAS churn that no verdict reads moves the evidence generation, so the
+    # whole-derivation memo misses; but each remembered slot re-checks only its
+    # own captures' availability, so nothing is derived again. (A slot whose own
+    # retained evidence disappears is re-derived: test_slot_verdict_reuse.)
+    before = verdict_input_fingerprint(instance)
+    stored = instance.body_store().store(body)
+    assert verdict_input_fingerprint(instance) != before
+    _orient(instance)
+    assert counted[0] == evaluated
+
+    # A body removed outside the store moves no generation: only a body some
+    # verdict read can matter, and its recorded identity (absence included)
+    # catches that. Storing it again is an arrival.
+    path = instance.body_store()._path(stored.digest)
+    before = verdict_input_fingerprint(instance)
+    path.unlink()
+    assert verdict_input_fingerprint(instance) == before
+    _orient(instance)
+    assert counted[0] == evaluated
+    instance.body_store().store(body)
+    assert verdict_input_fingerprint(instance) != before
+    _orient(instance)
+    assert counted[0] == evaluated
+
+    # A journal record's payload is not an evidence input: it moves nothing.
+    before = verdict_input_fingerprint(instance)
+    instance.body_store().store(b"a journal payload\n", journal_payload=True)
+    assert verdict_input_fingerprint(instance) == before
+
+    # Pending door attestations are not consumed. Changing their store must
+    # neither scan its contents nor invalidate the accepted-state verdict.
+    attestation_root = (
+        instance.root / instance.descriptor.storage.exhaust / CLAIM_ATTESTATION_STORE_DIRECTORY
+    )
+    attestation_root.mkdir(parents=True, exist_ok=True)
+    (attestation_root / "partition-0000.json").write_bytes(b"{}\n")
+    _orient(instance)
+    assert counted[0] == evaluated
+
+    # Repeated failures to observe the CAS are not a stable revision. Each
+    # request derives fresh results rather than caching an "unreadable" key.
+    monkeypatch.setattr(search_service, "verdict_input_fingerprint", lambda _: None)
+    for _ in range(2):
+        _orient(instance)
+        assert counted[0] > evaluated
+        evaluated = counted[0]
+
+
+def test_two_accepted_coordinates_do_not_share_a_resolution_entry(
+    watched_world: WatchedWorld,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A resolution is an answer AT a coordinate, so two coordinates are two answers.
+
+    Which Claim holds a slot is decided by everything accepted at the coordinate
+    being read: a generation that admits a rival, retires a contender or migrates
+    a ClaimType can change the answer for Claims whose own artifacts never moved.
+    A memo that keyed on the Claim set alone would serve one generation's verdict
+    at another's coordinate, which is the single failure that would make this
+    cache into a lie rather than an optimization.
+    """
+
+    instance = watched_world.instance
+    history = instance.accepted_history()
+    assert len(history) >= 2
+    earlier = AcceptedCoordinate.from_internal(instance.coordinate_for_oid(history[-2].oid))
+    latest = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    assert earlier != latest
+
+    reset_claim_resolution_memo()
+    counted = _count_group_resolutions(monkeypatch)
+
+    _orient(instance, at=earlier)
+    evaluated = counted[0]
+    assert evaluated > 0
+    _orient(instance, at=earlier)
+    assert counted[0] == evaluated
+
+    _orient(instance, at=latest)
+    assert counted[0] > evaluated
+    latest_evaluated = counted[0]
+
+    # And the earlier coordinate keeps its own entry rather than being displaced.
+    _orient(instance, at=earlier)
+    assert counted[0] == latest_evaluated
+
+
+def test_a_head_accepted_before_the_release_refuses_a_pinned_depublish(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F-002: a pinned depublish confirms the live head where it releases."""
+
+    from cruxible_core.errors import ChangeRefusedError
+    from cruxible_core.service.proposals import publications
+    from tests.core_support._head_mover import move_head
+
+    instance, owner = initialize_local(tmp_path)
+    stamp = ProjectionBlockStampV1(
+        source_id="corpus.runbook",
+        block_id="held-rows",
+        declared_generation=0,
+        declared_coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+        backing=_synthetic_claim_backings(2),
+        body_digest="sha256:" + "b" * 64,
+    )
+    _declare(instance, stamp)
+    at = _depublish(
+        instance, source_id="corpus.runbook", block_id="held-rows", dry_run=True
+    ).coordinate.git_oid
+    original = publications.projection_block_declarations
+    moved: list[str] = []
+
+    def read_then_move(current):  # type: ignore[no-untyped-def]
+        found = original(current)
+        if not moved:
+            moved.append(move_head(current, owner, "moved-under-depublish"))
+        return found
+
+    monkeypatch.setattr(publications, "projection_block_declarations", read_then_move)
+    with pytest.raises(ChangeRefusedError) as refused:
+        publications.service_depublish_playbill_block(
+            instance,
+            source_id="corpus.runbook",
+            block_id="held-rows",
+            dry_run=False,
+            at=at,
+        )
+    assert moved and refused.value.error_code == "cruxible.preview.state_moved"
+    monkeypatch.setattr(publications, "projection_block_declarations", original)
+    assert ("corpus.runbook", "held-rows") in (registered_projection_blocks(instance) or {})

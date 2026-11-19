@@ -1,0 +1,533 @@
+"""Typed accepted citation relationships; exact envelopes remain authoritative.
+
+No conflict results or CAS availability are stored here. Group reads feed the
+frozen relation computation, and callers retain only their request's results.
+"""
+
+from __future__ import annotations
+
+import sqlite3
+from collections.abc import Callable, Iterable, Mapping
+from datetime import UTC, datetime
+from typing import Any, Literal
+
+from cruxible_client.contracts.captures import (
+    CaptureEnvelopeAny,
+    capture_digest,
+    observed_content,
+    parse_capture_envelope,
+)
+from cruxible_client.contracts.cas_contracts import BodyAccessContext, BodyProjectionProtocol
+from cruxible_client.contracts.claims import claim_citation_references, parse_claim
+from cruxible_client.contracts.errors import ProjectionFormatError
+from cruxible_client.contracts.projection_extensions import ProjectionFact
+from cruxible_client.contracts.source_references import (
+    CasSourceReference,
+    ExternalSourceReference,
+    LedgerSourceReference,
+)
+from cruxible_core.evidence.citation_relations import (
+    _conflict_group_facts,
+    _digest_identity,
+    _same_version_span_key,
+    external_source_relation_subject,
+)
+from cruxible_core.indexes.sql_batch import (
+    execute_in,
+    replace_owned_rows,
+    select_in,
+)
+from cruxible_core.storage.capture_metadata import capture_envelope
+
+OwnerKind = Literal["Claim", "attestation"]
+OwnerExists = Callable[[str, str], bool]
+_ACCESS = BodyAccessContext(principal_id="playbill-citation-relation", can_read_body=True)
+_MAX_SQL_INTEGER = (1 << 63) - 1
+
+SCHEMA_SQL = """
+CREATE TABLE source_references (
+ source_ref_key TEXT PRIMARY KEY, kind TEXT NOT NULL CHECK(kind IN ('external','ledger','cas')),
+ source_identity TEXT, producer_binding_digest TEXT, coordinate_type TEXT,
+ source_version_key TEXT, selector_type TEXT, start_byte INTEGER, end_byte INTEGER,
+ start_byte_decimal TEXT, end_byte_decimal TEXT,
+ ledger_git_oid TEXT, ledger_semantic_root TEXT, ledger_generation_root TEXT,
+ ledger_compiler_digest TEXT, ledger_path TEXT, cas_content_digest TEXT, replayability TEXT,
+ CHECK ((start_byte IS NULL AND end_byte IS NULL) OR
+        (start_byte IS NOT NULL AND end_byte IS NOT NULL
+         AND 0 <= start_byte AND start_byte < end_byte)),
+ CHECK ((start_byte_decimal IS NULL AND end_byte_decimal IS NULL) OR
+        (start_byte IS NULL AND end_byte IS NULL
+         AND start_byte_decimal IS NOT NULL AND end_byte_decimal IS NOT NULL))
+) STRICT;
+CREATE INDEX source_spans_by_version ON source_references
+ (source_version_key,start_byte,end_byte,source_ref_key) WHERE source_version_key IS NOT NULL;
+CREATE TABLE captures (
+ capture_digest TEXT PRIMARY KEY, contract_digest TEXT NOT NULL,
+ evidence_commitment_digest TEXT NOT NULL, commitment_byte_length_decimal TEXT,
+ logical_source_id TEXT,
+ source_ref_key TEXT NOT NULL REFERENCES source_references(source_ref_key),
+ producer_identity TEXT NOT NULL, observed_at_us INTEGER NOT NULL,
+ commitment_digest_kind TEXT NOT NULL,
+ observed_content_digest TEXT NOT NULL
+) STRICT;
+CREATE INDEX captures_by_commitment ON captures(evidence_commitment_digest,capture_digest);
+CREATE INDEX captures_by_observed_content ON captures(observed_content_digest,capture_digest);
+CREATE INDEX captures_by_logical_source ON captures(logical_source_id,capture_digest);
+CREATE INDEX captures_by_source_ref ON captures(source_ref_key,capture_digest);
+CREATE TABLE capture_count (
+ singleton INTEGER PRIMARY KEY CHECK(singleton=1), amount INTEGER NOT NULL CHECK(amount>0)
+) STRICT;
+CREATE TRIGGER capture_count_insert AFTER INSERT ON captures BEGIN
+ INSERT INTO capture_count VALUES (1,1) ON CONFLICT(singleton) DO UPDATE SET amount=amount+1;
+END;
+CREATE TRIGGER capture_count_delete AFTER DELETE ON captures BEGIN
+ DELETE FROM capture_count WHERE singleton=1 AND amount=1;
+ UPDATE capture_count SET amount=amount-1 WHERE singleton=1;
+END;
+CREATE TABLE citation_uses (
+ owner_kind TEXT NOT NULL CHECK(owner_kind IN ('Claim','attestation')),
+ owner_key TEXT NOT NULL, use_key TEXT NOT NULL,
+ capture_digest TEXT NOT NULL REFERENCES captures(capture_digest), origin TEXT, role TEXT,
+ PRIMARY KEY(owner_kind,owner_key,use_key),
+ CHECK ((owner_kind='Claim' AND origin IS NOT NULL AND role IS NOT NULL) OR
+        (owner_kind='attestation' AND origin IS NULL AND role IS NULL AND use_key=capture_digest))
+) STRICT;
+CREATE INDEX citations_by_capture ON citation_uses(capture_digest,owner_kind,owner_key,use_key);
+CREATE TABLE citation_group_members (
+ group_kind TEXT NOT NULL CHECK(group_kind IN ('capture','exact_external','same_version_span')),
+ group_key TEXT NOT NULL, claim_identity TEXT NOT NULL, citation_id TEXT NOT NULL,
+ PRIMARY KEY(group_kind,group_key,claim_identity,citation_id)
+) STRICT;
+CREATE INDEX citation_groups_by_use ON citation_group_members
+ (claim_identity,citation_id,group_kind,group_key);
+"""
+
+
+def _insert_capture(
+    connection: sqlite3.Connection, digest: str, bodies: BodyProjectionProtocol
+) -> CaptureEnvelopeAny:
+    envelope = parse_capture_envelope(bodies.read(digest, access=_ACCESS))
+    if capture_digest(envelope).tagged != digest:
+        raise ProjectionFormatError("citation Capture digest differs from its exact envelope")
+    source = envelope.source
+    # Source locators commit the full source contract. Conflict grouping keeps
+    # its original narrower derivation, including its producer-binding exclusion.
+    key = _digest_identity("source-reference", source.model_dump(mode="json"))
+    span = _same_version_span_key({"source": source.model_dump(mode="json")})
+    version, start, end = span if span is not None else (None, None, None)
+    start_decimal = end_decimal = None
+    if end is not None and end > _MAX_SQL_INTEGER:
+        # Canonical source extensions allow arbitrary exact integers. Retain the
+        # exact decimal offsets and version. INTEGER columns only accelerate
+        # candidate selection; accepted conflict findings do not depend on CAS.
+        start_decimal, end_decimal = str(start), str(end)
+        start = end = None
+    external = source if isinstance(source, ExternalSourceReference) else None
+    ledger = source if isinstance(source, LedgerSourceReference) else None
+    cas = source if isinstance(source, CasSourceReference) else None
+    connection.execute(
+        "INSERT OR IGNORE INTO source_references VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            key,
+            source.kind,
+            external.source_identity if external else None,
+            external.producer_binding_digest if external else None,
+            external.coordinate_type if external else None,
+            version,
+            external.selector_type if external else None,
+            start,
+            end,
+            start_decimal,
+            end_decimal,
+            ledger.coordinate.git_oid if ledger else None,
+            ledger.coordinate.semantic_root if ledger else None,
+            ledger.coordinate.generation_root if ledger else None,
+            ledger.coordinate.compiler_digest if ledger else None,
+            ledger.address.artifact_path if ledger else None,
+            cas.content_digest if cas else None,
+            external.replayability if external else None,
+        ),
+    )
+    elapsed = envelope.observed_at.astimezone(UTC) - datetime(1970, 1, 1, tzinfo=UTC)
+    observed_us = (elapsed.days * 86400 + elapsed.seconds) * 1000000 + elapsed.microseconds
+    connection.execute(
+        "INSERT OR IGNORE INTO captures VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (
+            digest,
+            envelope.capture_contract_digest,
+            envelope.commitment.digest,
+            None
+            if envelope.commitment.byte_length is None
+            else str(envelope.commitment.byte_length),
+            external.source_identity
+            if external
+            else (ledger.address.artifact_path if ledger else None),
+            key,
+            envelope.producer.qualified,
+            observed_us,
+            # Access is never stored: it is the Capture's exact kind version's,
+            # resolved per read (service/evidence/body_access.py, C14). The
+            # commitment kind lets a withheld row be described without its envelope.
+            envelope.commitment.digest_kind,
+            observed_content(envelope).digest,
+        ),
+    )
+    return envelope
+
+
+def _cleanup_captures(connection: sqlite3.Connection, captures: Iterable[str]) -> None:
+    # Only removed uses can orphan a Capture. Resolve the selected orphan set
+    # before deleting it, then clean its source references once per source.
+    orphaned = select_in(
+        connection,
+        "SELECT capture_digest,source_ref_key FROM captures WHERE capture_digest IN ({}) "
+        "AND NOT EXISTS (SELECT 1 FROM citation_uses u "
+        "WHERE u.capture_digest=captures.capture_digest)",
+        list(set(captures)),
+    )
+    execute_in(
+        connection, "DELETE FROM captures WHERE capture_digest IN ({})", [r[0] for r in orphaned]
+    )
+    execute_in(
+        connection,
+        "DELETE FROM source_references WHERE source_ref_key IN ({}) AND NOT EXISTS "
+        "(SELECT 1 FROM captures c WHERE c.source_ref_key=source_references.source_ref_key)",
+        [r[1] for r in orphaned],
+    )
+
+
+def remove_owner_citations(
+    connection: sqlite3.Connection, owners: Iterable[tuple[str, str]]
+) -> None:
+    """Remove selected owner relationships inside the caller's publication transaction."""
+    selected: dict[str, list[str]] = {"Claim": [], "attestation": []}
+    for kind, key in owners:
+        if kind not in selected:
+            raise ProjectionFormatError("unknown citation owner kind")
+        selected[kind].append(key)
+    connection.execute("SAVEPOINT remove_citations")
+    try:
+        captures: list[str] = []
+        for kind, keys in selected.items():
+            captures.extend(
+                r[0]
+                for r in select_in(
+                    connection,
+                    "SELECT capture_digest FROM citation_uses "
+                    "WHERE owner_kind=? AND owner_key IN ({})",
+                    keys,
+                    prefix=(kind,),
+                )
+            )
+            execute_in(
+                connection,
+                "DELETE FROM citation_uses WHERE owner_kind=? AND owner_key IN ({})",
+                keys,
+                prefix=(kind,),
+            )
+        execute_in(
+            connection,
+            "DELETE FROM citation_group_members WHERE claim_identity IN ({})",
+            selected["Claim"],
+        )
+        _cleanup_captures(connection, captures)
+        connection.execute("RELEASE remove_citations")
+    except BaseException:
+        connection.execute("ROLLBACK TO remove_citations")
+        connection.execute("RELEASE remove_citations")
+        raise
+
+
+def populate_citations(
+    connection: sqlite3.Connection,
+    sources: Mapping[str, bytes],
+    *,
+    bodies: BodyProjectionProtocol,
+    owner_exists: OwnerExists,
+) -> None:
+    """Replace changed Claim owners after typed owner publication, with exact source IDs."""
+    # SAVEPOINT composes with a larger transaction and rolls back a partial owner
+    # replacement on failed/missing CAS reads without committing caller writes.
+    connection.execute("SAVEPOINT populate_citations")
+    # One Capture cited by many changed owners is read, verified and inserted
+    # once per call, and its citation groups derived once. A row inserted here
+    # keeps the citation use inserted right after it, so no owner's cleanup in
+    # this call can remove it before a later owner cites it again.
+    envelopes: dict[str, CaptureEnvelopeAny] = {}
+    groups_of: dict[str, list[tuple[str, str]]] = {}
+    claims: list[tuple[str, Any]] = []
+
+    def insert_capture(digest: str) -> CaptureEnvelopeAny:
+        envelope = envelopes.get(digest)
+        if envelope is None:
+            envelope = _insert_capture(connection, digest, bodies)
+            envelopes[digest] = envelope
+        return envelope
+
+    try:
+        for path, content in sorted(sources.items()):
+            if path.startswith("attestations/"):
+                from cruxible_client.contracts.accepted_attestations import (
+                    parse_accepted_attestation,
+                )
+                from cruxible_client.contracts.claim_attestations import (
+                    claim_attestation_v2_envelope_digest,
+                )
+
+                value = parse_accepted_attestation(content, path=path)
+                key = claim_attestation_v2_envelope_digest(value)
+                if not owner_exists("attestation", key):
+                    raise ProjectionFormatError("citation attestation owner is not published")
+                remove_owner_citations(connection, (("attestation", key),))
+                for digest in value.statement.cited_capture_digests:
+                    insert_capture(digest)
+                    connection.execute(
+                        "INSERT INTO citation_uses VALUES ('attestation',?,?,?,NULL,NULL)",
+                        (key, digest, digest),
+                    )
+                continue
+            if not path.startswith("claims/"):
+                continue
+            claim = parse_claim(content, path=path)
+            identity = claim.identity.qualified
+            if not owner_exists("Claim", identity):
+                raise ProjectionFormatError("citation Claim owner is not published")
+            claims.append((identity, claim))
+        # Preserve inherited citations and groups. Their identities commit their
+        # exact values; only relationships removed or added by this batch change.
+        owned = [identity for identity, _claim in claims]
+        uses: list[tuple[object, ...]] = []
+        members: list[tuple[object, ...]] = []
+        for identity, claim in claims:
+            for reference in claim_citation_references(claim):
+                digest = reference.capture_digest
+                envelope = insert_capture(digest)
+                uses.append(
+                    (
+                        "Claim",
+                        identity,
+                        reference.citation_id,
+                        digest,
+                        reference.origin,
+                        reference.role,
+                    )
+                )
+                groups = groups_of.get(digest)
+                if groups is None:
+                    groups = [("capture", digest)]
+                    if isinstance(envelope.source, ExternalSourceReference):
+                        groups.append(
+                            ("exact_external", external_source_relation_subject(envelope.source))
+                        )
+                        span = _same_version_span_key(
+                            {"source": envelope.source.model_dump(mode="json")}
+                        )
+                        if span is not None:
+                            groups.append(("same_version_span", span[0]))
+                    groups_of[digest] = groups
+                members.extend((kind, key, identity, reference.citation_id) for kind, key in groups)
+        removed = replace_owned_rows(
+            connection,
+            "citation_uses",
+            uses,
+            owner_column="owner_key",
+            owners=owned,
+            key_columns=("owner_kind", "owner_key", "use_key"),
+            predicate="owner_kind='Claim'",
+        )
+        replace_owned_rows(
+            connection,
+            "citation_group_members",
+            members,
+            owner_column="claim_identity",
+            owners=owned,
+            key_columns=("group_kind", "group_key", "claim_identity", "citation_id"),
+        )
+        _cleanup_captures(connection, [row[3] for row in removed])
+        connection.execute("RELEASE populate_citations")
+    except BaseException:
+        connection.execute("ROLLBACK TO populate_citations")
+        connection.execute("RELEASE populate_citations")
+        raise
+
+
+def _decimal_integer(value: object) -> int:
+    if not isinstance(value, str) or not value.isascii() or not value.isdecimal():
+        raise ProjectionFormatError("citation metadata requires an exact nonnegative integer")
+    if len(value) > 1 and value.startswith("0"):
+        raise ProjectionFormatError("citation integer metadata is not canonical")
+    return int(value)
+
+
+def _span_integer(row: Mapping[str, object], column: str) -> int:
+    value = row[column]
+    return value if type(value) is int else _decimal_integer(row[f"{column}_decimal"])
+
+
+class CitationReader:
+    """Read one bound SQLite publication; never establish acceptance or cache bodies."""
+
+    def __init__(
+        self, connection: sqlite3.Connection, exact_source: Callable[[str], bytes]
+    ) -> None:
+        self.connection = connection
+        self.exact_source = exact_source
+
+    def capture_contract_path(self, digest: str) -> str | None:
+        row = self.connection.execute(
+            "SELECT path FROM capture_contracts WHERE artifact_digest=?", (digest,)
+        ).fetchone()
+        return None if row is None else str(row[0])
+
+    def owner_uses(self, kind: OwnerKind, key: str) -> tuple[dict[str, object], ...]:
+        """SQL locator order; signed order belongs to the exact typed owner contract."""
+        return self._rows(
+            "SELECT owner_kind,owner_key,use_key,capture_digest,origin,role FROM citation_uses "
+            "WHERE owner_kind=? AND owner_key=? ORDER BY use_key",
+            (kind, key),
+        )
+
+    def _rows(self, sql: str, values: tuple[object, ...] = ()) -> tuple[dict[str, object], ...]:
+        cursor = self.connection.execute(sql, values)
+        names = tuple(column[0] for column in cursor.description)
+        return tuple(dict(zip(names, row, strict=True)) for row in cursor)
+
+    @staticmethod
+    def _envelope(
+        digest: str,
+        bodies: BodyProjectionProtocol,
+        envelopes: dict[str, CaptureEnvelopeAny],
+        *,
+        access: BodyAccessContext = _ACCESS,
+    ) -> CaptureEnvelopeAny:
+        envelope = envelopes.get(digest)
+        if envelope is None:
+            envelope = capture_envelope(bodies, digest, access=access)
+            if capture_digest(envelope).tagged != digest:
+                raise ProjectionFormatError("citation Capture differs from its exact envelope")
+            envelopes[digest] = envelope
+        return envelope
+
+    def source_claim_uses(
+        self,
+        source_id: str,
+        *,
+        lifecycle: Literal["live", "retired"] | None = None,
+    ) -> tuple[dict[str, object], ...]:
+        """Return selected owner metadata without rereading immutable source bodies."""
+        return self._rows(
+            "SELECT u.*,c.path,c.artifact_digest,c.lifecycle,p.evidence_commitment_digest,"
+            "p.commitment_byte_length_decimal,s.source_identity,s.coordinate_type,s.selector_type "
+            "FROM captures p "
+            "JOIN source_references s USING(source_ref_key) "
+            "JOIN citation_uses u USING(capture_digest) JOIN claims c ON c.identity=u.owner_key "
+            "WHERE p.logical_source_id=? AND s.kind='external' AND u.owner_kind='Claim' "
+            + ("AND c.lifecycle=? " if lifecycle is not None else "")
+            + "ORDER BY c.path,u.use_key",
+            (source_id,) if lifecycle is None else (source_id, lifecycle),
+        )
+
+    def conflicts(
+        self,
+        *,
+        claim_identities: Iterable[str] | None = None,
+    ) -> tuple[ProjectionFact, ...]:
+        """Compute conflicts and witnesses together over complete relevant groups.
+
+        Selected Claim queries read every group of each target, so capture
+        precedence cannot hide an unvisited stronger conflict. A global worklist
+        selects groups shared by live and retired Claims, not every Claim blob.
+        """
+        targets = None if claim_identities is None else set(claim_identities)
+        groups: set[tuple[str, str]] = set()
+        if targets is None:
+            # Start at retired owners, then deduplicate before the live-member
+            # probe. Probing before DISTINCT repeats a group scan for every
+            # retired use and can make one large group quadratic.
+            group_rows = self.connection.execute(
+                "WITH retired_groups AS MATERIALIZED ("
+                "SELECT DISTINCT r.group_kind,r.group_key "
+                "FROM claims c INDEXED BY claims_by_lifecycle "
+                "CROSS JOIN citation_group_members r ON r.claim_identity=c.identity "
+                "WHERE c.lifecycle='retired') "
+                "SELECT g.group_kind,g.group_key FROM retired_groups g "
+                "WHERE EXISTS (SELECT 1 FROM citation_group_members l "
+                "JOIN claims live ON live.identity=l.claim_identity "
+                "WHERE l.group_kind=g.group_kind "
+                "AND l.group_key=g.group_key AND live.lifecycle='live')"
+            )
+            groups.update((row[0], row[1]) for row in group_rows)
+        else:
+            for identity in sorted(targets):
+                groups.update(
+                    (row[0], row[1])
+                    for row in self.connection.execute(
+                        "SELECT group_kind,group_key FROM citation_group_members "
+                        "WHERE claim_identity=?",
+                        (identity,),
+                    )
+                )
+        facts: list[ProjectionFact] = []
+        for kind, key in sorted(groups):
+            rows = self._rows(
+                "SELECT u.*,c.path,c.artifact_digest,c.lifecycle,s.start_byte,s.end_byte,"
+                "s.start_byte_decimal,s.end_byte_decimal FROM citation_group_members g "
+                "JOIN citation_uses u ON u.owner_kind='Claim' AND u.owner_key=g.claim_identity "
+                "AND u.use_key=g.citation_id JOIN claims c ON c.identity=g.claim_identity "
+                "JOIN captures p USING(capture_digest) "
+                "JOIN source_references s USING(source_ref_key) "
+                "WHERE g.group_kind=? AND g.group_key=? ORDER BY c.path,u.use_key",
+                (kind, key),
+            )
+            uses = [
+                {
+                    "capture_digest": {"$digest": row["capture_digest"]},
+                    "citation_id": row["use_key"],
+                    "claim_identity": row["owner_key"],
+                    "claim_lifecycle": row["lifecycle"],
+                    "claim_artifact_digest": {"$digest": row["artifact_digest"]},
+                }
+                for row in rows
+            ]
+            spans = (
+                [
+                    (_span_integer(row, "start_byte"), _span_integer(row, "end_byte"), use)
+                    for row, use in zip(rows, uses, strict=True)
+                ]
+                if kind == "same_version_span"
+                else []
+            )
+            facts.extend(
+                _conflict_group_facts(
+                    {key: uses} if kind == "capture" else {},
+                    {key: uses} if kind == "exact_external" else {},
+                    {key: spans} if kind == "same_version_span" else {},
+                )
+            )
+        valued = [(fact, fact.value) for fact in facts if isinstance(fact.value, dict)]
+        if targets is not None:
+            valued = [
+                (fact, value) for fact, value in valued if value["live_claim_identity"] in targets
+            ]
+        capture_precedence = {
+            value["live_claim_identity"]
+            for _, value in valued
+            if value["relation_kind"] == "capture"
+        }
+        return tuple(
+            sorted(
+                (
+                    fact
+                    for fact, value in valued
+                    if (
+                        value["relation_kind"] == "capture"
+                        or value["live_claim_identity"] not in capture_precedence
+                    )
+                ),
+                key=lambda fact: fact.fact_key,
+            )
+        )
+
+
+#: How many Captures accepted Claims cite: the one counter row their inserts and deletes keep.
+CAPTURE_COUNT_SQL = "SELECT amount FROM capture_count WHERE singleton=1"

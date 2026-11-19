@@ -1,0 +1,1 @@
+{"event_digest":null,"instance_id":"inst_test","partition_map_digest":"sha256:62eab38e0e53441fe5f6ba36d80f4778dab52fb72fb43e5c17570f167552f660","previous_published_root_digest":null,"root_digest":"sha256:e7d0743bcdb14e911c2244429a69b4452100e2a348c537729402adc6581d1393","sequence":0,"tag":"playbill-claim-attestation-published-root-v1"}

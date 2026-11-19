@@ -1,0 +1,270 @@
+"""Provider-v2 mirror, implementation identity, and succession laws."""
+
+from __future__ import annotations
+
+import json
+from datetime import UTC, datetime
+
+import pytest
+from pydantic import ValidationError
+
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
+from cruxible_client.contracts.provider_operations import OperationRefusal
+from cruxible_client.contracts.provider_registration import ProviderDeclares
+from cruxible_client.contracts.providers import (
+    AcceptedProvider,
+    ProviderDistributionRef,
+    ProviderImplementationManifest,
+    ProviderLocalDistributionPin,
+    ProviderLocalEnvBackendPin,
+    ProviderRuntimeArtifactPayloadV1,
+    ProviderRuntimeManifest,
+    ProviderSigningKey,
+    ProviderV1,
+    ProviderV2,
+    evaluate_provider_law,
+    parse_provider,
+    provider_digest,
+    provider_expected_implementation_records,
+    provider_implementation_digest,
+    provider_manifest_digest,
+    provider_path,
+    render_provider,
+)
+from cruxible_client.contracts.shapes import Contract, ContractRef, contract_digest
+from tests.support.operation_world import VALUE, operation
+
+
+def _bare_v2() -> ProviderV2:
+    """A bare ProviderV2 (not a build/named build): this file's whole subject.
+
+    The runtime artifact payload ``ProviderRuntimeArtifactPayloadV1`` carries
+    the one (schema 2) manifest, with one ``compute`` operation layered on top
+    the way B2 adds operations to ProviderV2 -- the shared ``provider_v2()``
+    fixture builds a ``NamedProviderBuild`` directly, which this file's dict
+    round-trip tests cannot validate back through the bare field type.
+    """
+
+    manifest = ProviderRuntimeManifest(
+        provider_id="demo-provider",
+        distribution=ProviderDistributionRef(name="demo-provider", version="1.0.0"),
+        supported_protocol_majors=(2,),
+        implementations=(
+            ProviderImplementationManifest(
+                entrypoint="demo.runtime:Provider",
+                backends=("local_env",),
+                requires_extras=("engine",),
+                deterministic=True,
+            ),
+        ),
+    )
+    payload = ProviderRuntimeArtifactPayloadV1(
+        provider_id="demo-provider",
+        status="accepted",
+        manifest=manifest,
+        manifest_digest=provider_manifest_digest(manifest),
+        distribution=ProviderLocalDistributionPin(
+            name="demo-provider",
+            version="1.0.0",
+            filename="demo_provider-1.0.0-py3-none-any.whl",
+            sha256="sha256:" + "a" * 64,
+        ),
+        local_env=ProviderLocalEnvBackendPin(
+            lock_sha256="sha256:" + "b" * 64,
+            materialization_digests={"linux-cp311+engine": "sha256:" + "c" * 64},
+        ),
+    )
+    return ProviderV2(
+        identity=ArtifactIdentity(kind="Provider", name="demo-provider"),
+        control_domain="demo-provider",
+        signing_keys=(
+            ProviderSigningKey(
+                key_id="demo-key",
+                public_key="d" * 64,
+                valid_from=datetime(2026, 1, 1, tzinfo=UTC),
+            ),
+        ),
+        capture_contract_digests=(),
+        runtime_artifact=payload,
+        implementations=provider_expected_implementation_records(payload),
+        operations=(
+            operation(entrypoint="demo.runtime:Provider").model_copy(
+                update={
+                    "in_": ContractRef(
+                        name=VALUE.name, version=VALUE.version, digest=contract_digest(VALUE).tagged
+                    ),
+                    "out": ContractRef(
+                        name=VALUE.name, version=VALUE.version, digest=contract_digest(VALUE).tagged
+                    ),
+                }
+            ),
+        ),
+        declares=ProviderDeclares(contracts=(VALUE,)),
+    )
+
+
+def test_provider_v2_round_trip_external_digests_and_filtered_materializations() -> None:
+    provider = _bare_v2()
+
+    # The manifest/implementation digests reproduce from content (not a
+    # fixture-specific golden byte string, which changed under this rewrite).
+    assert provider.runtime_artifact.manifest_digest == provider_manifest_digest(
+        provider.runtime_artifact.manifest
+    )
+    implementation = provider.implementations[0]
+    assert implementation.implementation_digest == provider_implementation_digest(
+        entrypoint=implementation.entrypoint,
+        distribution_sha256=provider.runtime_artifact.distribution.sha256,
+    )
+    assert tuple(
+        reference.environment_pin_key
+        for reference in implementation.materialization_references
+        if reference.kind == "local_env"
+    ) == ("linux-cp311+engine",)
+
+    content = render_provider(provider)
+    assert parse_provider(content, path=provider_path("demo-provider")) == provider
+    assert provider_digest(provider).tagged.startswith("sha256:")
+
+
+def test_implementation_digest_is_backend_invariant_and_two_field_exact() -> None:
+    provider = _bare_v2()
+    row = provider.implementations[0]
+    manifest = provider.runtime_artifact.manifest.implementations[0]
+
+    assert row.implementation_digest == provider_implementation_digest(
+        entrypoint=manifest.entrypoint,
+        distribution_sha256=provider.runtime_artifact.distribution.sha256,
+    )
+    assert row.implementation_digest != provider_implementation_digest(
+        entrypoint="demo.runtime:OtherProvider",
+        distribution_sha256=provider.runtime_artifact.distribution.sha256,
+    )
+    assert row.implementation_digest != provider_implementation_digest(
+        entrypoint=manifest.entrypoint,
+        distribution_sha256="sha256:" + "e" * 64,
+    )
+
+
+def test_provider_v2_refuses_manifest_and_normalized_table_divergence() -> None:
+    provider = _bare_v2()
+    payload = provider.model_dump(mode="json")
+    payload["runtime_artifact"]["manifest_digest"] = f"sha256:{'0' * 64}"
+    with pytest.raises(ValidationError, match="manifest_divergence"):
+        ProviderV2.model_validate(payload)
+
+    payload = provider.model_dump(mode="json")
+    payload["runtime_artifact"]["local_env"] = None
+    with pytest.raises(ValidationError, match="backend_pin_missing: local_env"):
+        ProviderV2.model_validate(payload)
+
+    payload = provider.model_dump(mode="json")
+    payload["implementations"][0]["implementation_digest"] = f"sha256:{'1' * 64}"
+    with pytest.raises(ValidationError, match="implementation_digest_mismatch"):
+        ProviderV2.model_validate(payload)
+
+
+def test_provider_runtime_mirror_rejects_unknown_endpoint_forms() -> None:
+    payload = _bare_v2().runtime_artifact.manifest.implementations[0].model_dump(mode="json")
+    payload["declared_endpoints"] = ["dynamic:not-a-runtime-form"]
+
+    with pytest.raises(ValidationError, match="unknown dynamic endpoint form"):
+        ProviderImplementationManifest.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    "pin_key",
+    (
+        "linux-cp311+other+engine",
+        "linux-cp311+engine+engine",
+        "Linux-cp311+engine",
+        "linux-cp311+",
+    ),
+)
+def test_provider_local_environment_pin_key_grammar_is_governed(pin_key: str) -> None:
+    payload = _bare_v2().model_dump(mode="json")
+    local_env = payload["runtime_artifact"]["local_env"]
+    local_env["materialization_digests"] = {pin_key: "sha256:" + "c" * 64}
+
+    with pytest.raises(ValidationError, match="environment pin key"):
+        ProviderV2.model_validate(payload)
+
+
+def test_provider_v1_bytes_remain_version_discriminated() -> None:
+    provider = _bare_v2()
+    payload = provider.model_dump(mode="json")
+    payload.pop("runtime_artifact")
+    payload.pop("implementations")
+    payload.pop("operations", None)
+    payload.pop("declares", None)
+    payload["artifact_format"] = "playbill-provider-v1"
+    historical = ProviderV1.model_validate(payload)
+    content = render_provider(historical)
+
+    assert json.loads(content)["artifact_format"] == "playbill-provider-v1"
+    assert parse_provider(content, path=provider_path("demo-provider")) == historical
+    assert provider_digest(historical) != provider_digest(provider)
+
+
+def test_provider_v1_to_v2_succession_and_reserved_refusal_codes() -> None:
+    provider = _bare_v2()
+    historical_payload = provider.model_dump(mode="json")
+    historical_payload.pop("runtime_artifact")
+    historical_payload.pop("implementations")
+    historical_payload.pop("operations", None)
+    historical_payload.pop("declares", None)
+    historical_payload["artifact_format"] = "playbill-provider-v1"
+    historical = ProviderV1.model_validate(historical_payload)
+    predecessor = AcceptedProvider(
+        path=provider_path("demo-provider"),
+        provider=historical,
+        artifact_digest=provider_digest(historical).tagged,
+    )
+    successor = provider.model_copy(
+        update={"lifecycle": ArtifactLifecycle(predecessor_digest=predecessor.artifact_digest)}
+    )
+    # The install law resolves each operation's pinned Contracts inside the
+    # copies the build carries, never in the instance.
+    assert (
+        evaluate_provider_law(
+            successor,
+            path=predecessor.path,
+            predecessor=predecessor,
+        ).verdict
+        == "accepted"
+    )
+
+    # An operation's effect is its one declaration; the manifest repeats none.
+    # A refusal code the runtime reserves is not an operation's to declare.
+    reserved = successor.model_copy(
+        update={
+            "operations": (
+                successor.operations[0].model_copy(
+                    update={
+                        "refusals": {
+                            "budget_wall_clock": OperationRefusal(
+                                contract=successor.operations[0].in_
+                            )
+                        }
+                    }
+                ),
+            )
+        }
+    )
+    refused = evaluate_provider_law(
+        reserved,
+        path=predecessor.path,
+        predecessor=predecessor,
+        reserved_refusal_codes=frozenset({"budget_wall_clock"}),
+    )
+    assert refused.diagnostics[0].code == "cruxible.provider.operation_refusal_reserved"
+
+    # ProviderInterface pinning (the old "interface_pin_missing" refusal) is
+    # removed (C12); there is no surviving equivalent to probe here.
+    other = Contract.model_validate({"name": "test.other", "version": 1, "fields": {}})
+    unresolved = evaluate_provider_law(
+        successor.model_copy(update={"declares": ProviderDeclares(contracts=(other,))}),
+        path=predecessor.path,
+        predecessor=predecessor,
+    )
+    assert unresolved.diagnostics[0].code == "cruxible.provider.declared_contract_missing"

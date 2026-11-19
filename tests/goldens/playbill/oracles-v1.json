@@ -1,0 +1,13 @@
+{
+  "format": "playbill-oracles-v1",
+  "family_1": {
+    "branch": "playbill",
+    "commit": "e3fe35b360d098f14a5d59bf770ffee401224f0c",
+    "preserves": "PB-A through PB-E behavior and frozen goldens"
+  },
+  "procedure_graph_program": {
+    "branch": "dev/0.4",
+    "commit": "986307d56649eb51747ca227228fbe19f73e3895",
+    "preserves": "procedure graph-program behavior and deterministic goldens"
+  }
+}

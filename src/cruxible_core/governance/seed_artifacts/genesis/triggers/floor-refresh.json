@@ -1,0 +1,18 @@
+{
+  "artifact_format": "cruxible-trigger-v2",
+  "identity": {
+    "kind": "Trigger",
+    "name": "floor-refresh"
+  },
+  "lifecycle": {
+    "predecessor_digest": null,
+    "state": "live"
+  },
+  "schedule": {
+    "kind": "generation_accepted"
+  },
+  "target": {
+    "action": "floor.refresh",
+    "kind": "action"
+  }
+}

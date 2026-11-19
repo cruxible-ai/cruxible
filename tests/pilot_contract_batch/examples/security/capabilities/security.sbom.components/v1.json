@@ -1,0 +1,17 @@
+{
+  "artifact_format": "cruxible-capability-v1",
+  "description": "Reads one CycloneDX JSON SBOM and returns one document naming the inventory it describes and each distinct component by purl, with its scope. A component with no purl is counted but never listed, so the count marks the listing incomplete and absence retires nothing.",
+  "effect": "pure",
+  "in": {
+    "digest": "sha256:c9e026cdd5674f13c9b9932cc879f45ab43021ab9658feeb247bf8bb9e1a2b0e",
+    "name": "security.sbom.components.request",
+    "version": 1
+  },
+  "name": "security.sbom.components",
+  "out": {
+    "digest": "sha256:7527d0e020bbcbf128be1cf41182a9df5c59783b2d38eab09f1ed959ebd9b1c8",
+    "name": "security.sbom.components.result",
+    "version": 1
+  },
+  "version": 1
+}

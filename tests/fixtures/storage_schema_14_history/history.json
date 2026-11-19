@@ -1,0 +1,64 @@
+{
+ "built_by": "31c8a913edb343b165b9a198f40d5c96441bbe3a",
+ "genesis": {
+  "compiler": {
+   "implementation": "python-reference",
+   "rule_digest": "sha256:8bacc463a71bc42019d973362174e6eae9b3d3c5e97fd86429a889f18e36f9e7",
+   "schema_version": 1,
+   "tag": "playbill-compiler-v1"
+  },
+  "generation_root": "sha256:73a98a93527f6dc7028fe1dc9fec59bbe5beb76f1d45ca05f7c9c023957b7e5f",
+  "git_object_format": "sha256",
+  "git_oid": "de1a1f7857c6bd0c6ddc32d3cd80f0d0ed9faa800a190d22fae91eac2eb0abbb",
+  "instance_id": "inst_playbill_test",
+  "repository_path": "/Users/robertmalone/tmp-workspaces/coordinator-scratch/eb/gen14/world/managed-sha256/ledger.git",
+  "semantic_root": "sha256:46ec6536332a878b57c1e77192a92356723ec688e2c7f37f6e489b36ff74c34e"
+ },
+ "head": {
+  "compiler": {
+   "implementation": "python-reference",
+   "rule_digest": "sha256:8bacc463a71bc42019d973362174e6eae9b3d3c5e97fd86429a889f18e36f9e7",
+   "schema_version": 1,
+   "tag": "playbill-compiler-v1"
+  },
+  "generation_root": "sha256:97239bcc5e7ec470792331b5d7192b5e44fd19bbb10012b5f4dac620c25774e2",
+  "git_object_format": "sha256",
+  "git_oid": "9a380237baaa57e0df960c003b6bf7fc2f3aeca6c37bf1ab4a6660808b7ca754",
+  "instance_id": "inst_playbill_test",
+  "repository_path": "/Users/robertmalone/tmp-workspaces/coordinator-scratch/eb/gen14/world/managed-sha256/ledger.git",
+  "semantic_root": "sha256:09c5acc900924a501fbdf6a04a710a9a8882182bd4f2befe11056efd0c3caf54"
+ },
+ "instance_root": "managed-sha256",
+ "storage_schema_version": 14,
+ "trust_root": {
+  "daemon_public_key": "c56ae7e026c4ed31dc1793e1c1fafaa7311fb4d8bd85257373b51b2e7117a140",
+  "instance_id": "inst_playbill_test",
+  "principals": [
+   {
+    "algorithm": "ed25519-v1",
+    "kind": "daemon",
+    "principal_id": "daemon",
+    "public_key": "c56ae7e026c4ed31dc1793e1c1fafaa7311fb4d8bd85257373b51b2e7117a140",
+    "status": "active",
+    "tag": "playbill-principal-v1"
+   },
+   {
+    "algorithm": "ed25519-v1",
+    "kind": "ordinary",
+    "principal_id": "owner",
+    "public_key": "00d1ced1b1d45e008d6169995756a8b8645d83a0bd7cd42d89b104aa2009705c",
+    "status": "active",
+    "tag": "playbill-principal-v1"
+   },
+   {
+    "algorithm": "ed25519-v1",
+    "kind": "ordinary",
+    "principal_id": "reviewer",
+    "public_key": "db491709f41f000c8b6a775b2bc8a2bbb880f92191ffa3ad926a26a155baef17",
+    "status": "active",
+    "tag": "playbill-principal-v1"
+   }
+  ],
+  "tag": "playbill-trust-root-v1"
+ }
+}

@@ -1,0 +1,218 @@
+"""PB-E file-catalog CLI keeps paths local and submits frozen bytes."""
+
+from __future__ import annotations
+
+import base64
+import json
+from pathlib import Path
+from typing import Any
+
+from click.testing import CliRunner
+
+from cruxible_client import contracts
+from cruxible_client.contracts.file_catalog import FileCompilationBundle
+from cruxible_core.cli.main import cli
+from cruxible_core.indexes.projection import AcceptedCoordinate
+from tests.test_service.test_playbill_documents import _instance
+
+
+def test_cli_compile_and_propose_never_send_a_client_path(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    instance, _owner, _reviewer = _instance(tmp_path)
+    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    repository = tmp_path / "authoring"
+    source = repository / "specs" / "design.md"
+    source.parent.mkdir(parents=True)
+    original = b"# Cruxible from a declared source\n"
+    source.write_bytes(original)
+    catalog = tmp_path / "playbill-files.yaml"
+    catalog.write_text(
+        """\
+tag: playbill-source-catalog-v1
+catalog_kind: portable
+entries:
+  - name: playbill-design
+    locator: specs/design.md
+    document_id: design
+    document_kind: design
+    title: Cruxible design
+    media_type: text/markdown
+    governance_scope: [project:playbill]
+"""
+    )
+    bundle_path = tmp_path / "compiled.json"
+    submitted: list[dict[str, Any]] = []
+
+    class StubClient:
+        def file_context(self, instance_id: str) -> contracts.FileContext:
+            assert instance_id == "inst_cli"
+            return contracts.FileContext(
+                accepted_coordinate=contracts.AcceptedCoordinate.model_validate(
+                    coordinate.model_dump(mode="json")
+                ),
+                documents=[],
+            )
+
+        def propose_file_bundle(
+            self,
+            instance_id: str,
+            *,
+            bundle: dict[str, Any],
+            file: str,
+            proposal_name: str,
+            dry_run: bool | None = None,
+            at: str | None = None,
+            accept: str = "if_allowed",
+        ) -> contracts.ProposalInspection:
+            assert instance_id == "inst_cli"
+            assert file == "playbill-design"
+            assert proposal_name == "compiled-design"
+            submitted.append(bundle)
+            return contracts.ProposalInspection(
+                proposal={"admission": {"proposal_id": "sha256:" + "1" * 64}},
+                accepted_coordinate=contracts.AcceptedCoordinate.model_validate(
+                    coordinate.model_dump(mode="json")
+                ),
+            )
+
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands._common._get_client",
+        lambda: StubClient(),
+    )
+    runner = CliRunner()
+    compiled = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "https://playbill.invalid",
+            "--instance-id",
+            "inst_cli",
+            "files",
+            "compile",
+            "--catalog",
+            str(catalog),
+            "--root",
+            str(repository),
+            "--output",
+            str(bundle_path),
+            "--json",
+        ],
+    )
+    assert compiled.exit_code == 0, compiled.output
+    frozen = FileCompilationBundle.model_validate_json(bundle_path.read_bytes())
+    assert base64.b64decode(frozen.documents[0].body_base64) == original
+    assert "locator" not in frozen.model_dump_json()
+    assert str(repository) not in frozen.model_dump_json()
+
+    source.write_bytes(b"# Changed after compilation\n")
+    proposed = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "https://playbill.invalid",
+            "--instance-id",
+            "inst_cli",
+            "files",
+            "propose",
+            "--bundle",
+            str(bundle_path),
+            "--file",
+            "playbill-design",
+            "--name",
+            "compiled-design",
+            "--json",
+        ],
+    )
+    assert proposed.exit_code == 0, proposed.output
+    assert len(submitted) == 1
+    transmitted = json.dumps(submitted[0])
+    assert str(source) not in transmitted
+    assert "specs/design.md" not in transmitted
+    assert base64.b64decode(submitted[0]["documents"][0]["body_base64"]) == original
+
+
+def test_cli_sources_discover_the_workspace_catalog_and_propose_by_name(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """No --catalog or --bundle: the catalog is discovered and compiled in place."""
+
+    coordinate = contracts.AcceptedCoordinate(
+        git_oid="1" * 40,
+        semantic_root="sha256:" + "2" * 64,
+        generation_root="sha256:" + "3" * 64,
+        compiler_digest="sha256:" + "4" * 64,
+    )
+    workspace = tmp_path / "workspace"
+    (workspace / "specs").mkdir(parents=True)
+    (workspace / "specs" / "design.md").write_bytes(b"# Design\n")
+    (workspace / "notes.md").write_bytes(b"notes\n")
+    (workspace / ".cruxible").mkdir()
+    (workspace / ".cruxible" / "files.yaml").write_text(
+        """\
+tag: playbill-source-catalog-v1
+catalog_kind: portable
+entries:
+  - name: design
+    locator: specs/design.md
+    document_id: design
+    document_kind: design
+    title: Design
+    media_type: text/markdown
+    governance_scope: [project:playbill]
+  - name: notes
+    locator: notes.md
+"""
+    )
+    monkeypatch.chdir(workspace)
+    proposed: list[str] = []
+
+    class StubClient:
+        def file_context(self, instance_id: str) -> contracts.FileContext:
+            return contracts.FileContext(accepted_coordinate=coordinate, documents=[])
+
+        def check_file_bundle(
+            self, instance_id: str, *, bundle: dict[str, Any]
+        ) -> contracts.FileCheckResult:
+            return contracts.FileCheckResult(
+                compilation_digest=bundle["manifest"]["compilation_digest"],
+                accepted_coordinate=coordinate,
+                alignments=[
+                    {"name": item["source"]["name"], "state": "untracked"}
+                    for item in bundle["documents"]
+                ],
+            )
+
+        def propose_file_bundle(
+            self, instance_id: str, *, file: str, **_: Any
+        ) -> contracts.ProposalInspection:
+            proposed.append(file)
+            return contracts.ProposalInspection(
+                proposal={"admission": {"proposal_id": "sha256:" + "1" * 64}},
+                accepted_coordinate=coordinate,
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    base = ["--server-url", "https://playbill.invalid", "--instance-id", "inst_cli", "files"]
+    runner = CliRunner()
+
+    checked = runner.invoke(cli, [*base, "check", "--root", str(workspace)])
+    assert checked.exit_code == 0, checked.output
+    # The evidence-only entry compiles to nothing, so only the Document is checked.
+    assert checked.stdout == "design: untracked\n"
+
+    named = runner.invoke(
+        cli, [*base, "propose", "--file", "design", "--name", "revise-design", "--root", "."]
+    )
+    assert named.exit_code == 0, named.output
+    assert proposed == ["design"]
+    assert "Proposal: sha256:" in named.stdout
+
+    evidence_only = runner.invoke(
+        cli, [*base, "propose", "--file", "notes", "--name", "revise-notes"]
+    )
+    assert evidence_only.exit_code != 0
+    assert "evidence-only" in evidence_only.output
+    assert proposed == ["design"]

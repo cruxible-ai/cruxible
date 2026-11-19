@@ -1,0 +1,17 @@
+{
+  "artifact_format": "cruxible-capability-v1",
+  "description": "Reads one search response and returns its results in the shared form: one record per result URL with its title, rank and snippet. A response it cannot read is refused, never returned as no results.",
+  "effect": "pure",
+  "in": {
+    "digest": "sha256:9bc90ac7dc6588126a79a8e0febed107cb65004c897e8723c637c8ca7b072b7c",
+    "name": "web.search.results.request",
+    "version": 1
+  },
+  "name": "web.search.results",
+  "out": {
+    "digest": "sha256:9fdc95b768e0e175f3d4b58f33482df7b49a7c0b2a53e11e14277b07a931eb8b",
+    "name": "web.search.results.result",
+    "version": 1
+  },
+  "version": 1
+}

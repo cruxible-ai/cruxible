@@ -1,0 +1,91 @@
+{
+  "artifact_format": "cruxible-contract-v1",
+  "description": "web.fetch's request, sent as pages: the values of the query parameter page_param are split, in order, across as few requests as keep each built URL within max_url_chars (default 8192), and every other parameter is repeated on each page. The split is a function of the request alone; every value is sent on exactly one page. The page_param parameter may have no values: then no request is sent and captures is empty.",
+  "fields": {
+    "credential_header": {
+      "optional": true,
+      "type": {
+        "kind": "string",
+        "pattern": "^[!#$%&'*+.^_`|~0-9A-Za-z-]+$"
+      }
+    },
+    "credential_ref": {
+      "optional": true,
+      "type": {
+        "kind": "string"
+      }
+    },
+    "expected_format": {
+      "optional": true,
+      "type": {
+        "kind": "enum",
+        "members": [
+          "auto",
+          "bytes",
+          "csv",
+          "html",
+          "json",
+          "text"
+        ]
+      }
+    },
+    "logical_source": {
+      "optional": true,
+      "type": {
+        "kind": "string",
+        "pattern": "^[a-z][a-z0-9_.-]{0,255}$"
+      }
+    },
+    "max_bytes": {
+      "optional": true,
+      "type": {
+        "kind": "int",
+        "max": 33554432,
+        "min": 1
+      }
+    },
+    "max_url_chars": {
+      "optional": true,
+      "type": {
+        "kind": "int",
+        "max": 8192,
+        "min": 1
+      }
+    },
+    "paced": {
+      "optional": true,
+      "type": {
+        "kind": "bool"
+      }
+    },
+    "page_param": {
+      "type": {
+        "kind": "string",
+        "min_len": 1
+      }
+    },
+    "query": {
+      "optional": true,
+      "type": {
+        "item": {
+          "contract": {
+            "digest": "sha256:2f01ed6821337f937c6c77bba4910e06a10fb65a57232a1119d858fa672ecb3a",
+            "name": "web.fetch.query_param",
+            "version": 1
+          },
+          "kind": "contract"
+        },
+        "kind": "list",
+        "max_items": 64
+      }
+    },
+    "url": {
+      "type": {
+        "kind": "string",
+        "pattern": "^[Hh][Tt][Tt][Pp][Ss]?://\\S+$"
+      }
+    }
+  },
+  "name": "web.fetch.pages.request",
+  "version": 1
+}

@@ -1,0 +1,19 @@
+{
+  "artifact_format": "cruxible-trigger-v2",
+  "identity": {
+    "kind": "Trigger",
+    "name": "evidence-sweep"
+  },
+  "lifecycle": {
+    "predecessor_digest": null,
+    "state": "live"
+  },
+  "schedule": {
+    "interval_seconds": 86400,
+    "kind": "cadence"
+  },
+  "target": {
+    "action": "evidence.sweep",
+    "kind": "action"
+  }
+}

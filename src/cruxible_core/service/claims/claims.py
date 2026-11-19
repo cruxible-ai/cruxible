@@ -1,0 +1,1232 @@
+"""Canonical service contract for first-class Cruxible Claims."""
+
+from __future__ import annotations
+
+from collections.abc import Mapping, MutableMapping, MutableSet
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Annotated, Literal
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from cruxible_client.contracts import ClaimViewRecord as ClientClaimViewV2
+from cruxible_client.contracts.accepted_attestations import (
+    AcceptedClaimAttestationEvidence,
+    ClaimAttestationEvidence,
+)
+from cruxible_client.contracts.capture_reads import BodyRestricted
+from cruxible_client.contracts.captures import (
+    AcceptedCaptureContract,
+)
+from cruxible_client.contracts.claim_types import (
+    ClaimType,
+    claim_type_path,
+    parse_claim_type,
+)
+from cruxible_client.contracts.claim_verdicts import (
+    ClaimVerdictResult,
+)
+from cruxible_client.contracts.claims import (
+    ClaimArtifact,
+    ClaimCitation,
+    ClaimFormatError,
+    ClaimLawEvidence,
+    ClaimStatementCard,
+    ClaimUnsupportedFormatError,
+    capture_citation_eligible,
+    claim_citation_references,
+    claim_path,
+    claim_statement_address,
+    claim_statement_card,
+    evaluate_capture_evidence_admissions,
+    parse_claim_law_evidence,
+)
+from cruxible_client.contracts.codes import CurrentCode
+from cruxible_client.contracts.errors import (
+    CasError,
+    ClaimNotFoundError,
+    ProjectionIntegrityError,
+    ProposalIntegrityError,
+)
+from cruxible_client.contracts.get_reads import AttestationCountReason
+from cruxible_client.contracts.policies import (
+    ClaimVerdict,
+    ResolutionContender,
+    resolve_claim_contenders,
+)
+from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.source_references import (
+    CoverageDescriptor,
+    ExternalSourceReference,
+    OpenSourceRequest,
+    SourceDereferenceResult,
+    SourceHandle,
+)
+from cruxible_core.authoring.id_prefixes import resolve_id_prefix
+from cruxible_core.indexes.claims.projection_claims import ClaimProjectionView
+from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
+from cruxible_core.query.dereference import (
+    ExternalSelectionReaderProtocol,
+    dereference_source_handle,
+)
+from cruxible_core.runtime.instance import PlaybillInstance, accepted_coordinate_at
+from cruxible_core.service.claims.retirement_context import (
+    ClaimRetirementContextV1,
+    claim_retirement_context,
+)
+from cruxible_core.storage.capture_metadata import capture_envelope
+from cruxible_core.storage.cas import BodyAccessContext
+from cruxible_core.storage.read_positions import PositionedBodies, positioned_read, read_body
+
+if TYPE_CHECKING:
+    from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext
+    from cruxible_core.storage.cas import ContentAddressedBodyStore
+
+
+class _StrictClaimServiceModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class PlaybillClaimView(_StrictClaimServiceModel):
+    tag: Literal["playbill-claim-read-v1"] = "playbill-claim-read-v1"
+    coordinate_kind: Literal["canonical"] = "canonical"
+    coordinate: AcceptedCoordinate
+    envelope: dict[str, object]
+    facts: tuple[dict[str, object], ...]
+
+
+class CaptureEvidenceAdmissionV1(_StrictClaimServiceModel):
+    tag: Literal["cruxible-capture-evidence-admission-v2"] = (
+        "cruxible-capture-evidence-admission-v2"
+    )
+    status: Literal["admitted", "not_admitted"]
+    rule_id: str | None = None
+    admission: Literal["origin_only", "direct", "derivational"] | None = None
+    refusal_code: str | None = None
+    closest_rule_id: str | None = None
+
+
+class CaptureAdmissionAccountV1(_StrictClaimServiceModel):
+    tag: Literal["cruxible-capture-admission-account-v2"] = "cruxible-capture-admission-account-v2"
+    citation_id: str
+    capture_digest: str
+    citation_role: Literal["evidence", "copy", "legacy"]
+    citation_origin: Literal["independent", "self_source", "legacy"]
+    capture_contract_identity: str
+    capture_contract_digest: str
+    status: Literal["admitted", "not_admitted", "not_evidence"]
+    decision: CaptureEvidenceAdmissionV1 | None = None
+
+
+class ClaimAttestationAccountV1(_StrictClaimServiceModel):
+    """One attestation of this exact Claim version, and whether it counts.
+
+    ``record`` says where it lives: an accepted attestation artifact the verdict
+    reads, or an event the attestation door recorded (``claim attest``). An
+    accepted one counts when it is current and cites Captures this Claim
+    admits; either counts when the ClaimType's consequence policy has a rule
+    for its stance. ``counts_reason`` says which, or why not.
+    """
+
+    tag: Literal["cruxible-claim-attestation-account-v1"] = "cruxible-claim-attestation-account-v1"
+    record: Literal["accepted", "event"]
+    attestation_digest: str
+    event_digest: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    basis: Literal["examined_existing", "new_capture", "legacy"]
+    stance: Literal["support", "contradict", "unsure"]
+    principal: str
+    attested_at: datetime
+    valid_until: datetime | None = Field(default=None, exclude_if=lambda value: value is None)
+    cited_capture_digests: tuple[str, ...] = ()
+    current: bool
+    counts: bool
+    counts_reason: AttestationCountReason
+    rule_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
+
+
+class ClaimViewRecord(_StrictClaimServiceModel):
+    tag: Literal["playbill-claim-read-v2"] = "playbill-claim-read-v2"
+    coordinate_kind: Literal["canonical"] = "canonical"
+    coordinate: AcceptedCoordinate
+    envelope: dict[str, object]
+    facts: tuple[dict[str, object], ...]
+    admission_evaluation_time: datetime
+    admission_accounts: tuple[CaptureAdmissionAccountV1, ...]
+    statement: ClaimStatementCard
+
+    @field_validator("admission_evaluation_time")
+    @classmethod
+    def _evaluation_time(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("admission evaluation time must be timezone-aware")
+        return value
+
+    @model_validator(mode="after")
+    def _ordered_accounts(self) -> "ClaimViewRecord":
+        ids = tuple(item.citation_id for item in self.admission_accounts)
+        if ids != tuple(sorted(set(ids), key=lambda item: item.encode("ascii"))):
+            raise ValueError("admission accounts must be sorted and unique")
+        return self
+
+
+class PlaybillClaimList(_StrictClaimServiceModel):
+    tag: Literal["playbill-claim-list-v1"] = "playbill-claim-list-v1"
+    coordinate: AcceptedCoordinate
+    claims: tuple[PlaybillClaimView, ...]
+
+
+@dataclass(frozen=True)
+class PlaybillClaimGroupResolution:
+    """One resolved (Subject, predicate) slot, carried without its wire envelope."""
+
+    subject: SemanticAddress
+    predicate: str
+    cardinality: Literal["one", "many"]
+    status: Literal["resolved", "unresolved", "refused"]
+    selected_claim_identities: tuple[str, ...]
+    contender_claim_identities: tuple[str, ...]
+    claims: tuple[ClaimArtifact, ...]
+    verdicts: tuple[ClaimVerdictResult, ...]
+
+
+class EvidenceRecaptureOperationV1(_StrictClaimServiceModel):
+    tag: Literal["playbill-evidence-recapture-operation-v1"] = (
+        "playbill-evidence-recapture-operation-v1"
+    )
+    operation: Annotated[Literal["cruxible.authoring.bind"], CurrentCode] = (
+        "cruxible.authoring.bind"
+    )
+    claim_identity: str
+    capture_contract_identity: str
+    logical_source: str
+
+
+class ClaimEvidenceFreshnessLineV1(_StrictClaimServiceModel):
+    tag: Literal["playbill-claim-evidence-freshness-line-v1"] = (
+        "playbill-claim-evidence-freshness-line-v1"
+    )
+    capture_digest: str
+    citation_ids: tuple[str, ...]
+    capture_contract_identity: str
+    logical_source: str
+    observed_at: datetime
+    expires_at: datetime
+    state: Literal["current", "expiring", "expired"]
+    recapture_operation: EvidenceRecaptureOperationV1
+
+
+class PlaybillClaimExplanation(_StrictClaimServiceModel):
+    """Why one accepted Claim holds, horizon-free or horizon-bearing alike.
+
+    ``freshness`` lists each admitted Capture's expiration when the ClaimType
+    ages evidence, and is empty when it does not.
+    """
+
+    tag: Literal["cruxible-claim-explanation-v4"] = "cruxible-claim-explanation-v4"
+    coordinate: AcceptedCoordinate
+    evaluation_time: datetime
+    claim: PlaybillClaimView
+    law_evidence: ClaimLawEvidence
+    verdict: ClaimVerdictResult
+    exact_attestations: tuple[ClaimAttestationEvidence, ...]
+    approval_coverage: Literal["containing_change_set"] = "containing_change_set"
+    source_handles: tuple[SourceHandle, ...]
+    #: C14: the cited Captures of restricted kinds whose source handles (source
+    #: selectors and cited spans) were withheld from this reader. The Claim's
+    #: own accepted value is never withheld.
+    withheld: BodyRestricted | None = Field(default=None, exclude_if=lambda value: value is None)
+    coverage: CoverageDescriptor
+    admission_evaluation_time: datetime
+    admission_accounts: tuple[CaptureAdmissionAccountV1, ...]
+    freshness: tuple[ClaimEvidenceFreshnessLineV1, ...] = ()
+    # Every attestation of this exact version, accepted or door-recorded, and
+    # whether it counts. Absent when there is none.
+    attestation_accounts: tuple[ClaimAttestationAccountV1, ...] = Field(
+        default=(), exclude_if=lambda value: not value
+    )
+    # Review context, not work: what this Claim shares with retired Claims.
+    # Absent when it shares nothing.
+    retirement_context: ClaimRetirementContextV1 | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+
+
+def _public_claim(view: ClaimProjectionView) -> PlaybillClaimView:
+    if view.coordinate_kind != "canonical" or not isinstance(
+        view.coordinate, AcceptedProjectionCoordinate
+    ):
+        raise ProposalIntegrityError("canonical Claim service received a provisional view")
+    return PlaybillClaimView(
+        coordinate=AcceptedCoordinate.from_internal(view.coordinate),
+        envelope=view.envelope.model_dump(mode="json"),
+        facts=tuple(fact.model_dump(mode="json") for fact in view.facts),
+    )
+
+
+def _claim_from_view(
+    view: PlaybillClaimView | ClaimViewRecord | ClientClaimViewV2,
+) -> ClaimArtifact:
+    path = view.envelope.get("path")
+    if not isinstance(path, str):
+        raise ProposalIntegrityError("Claim projection envelope has no path")
+    statement = next(
+        (
+            fact.get("value")
+            for fact in view.facts
+            if fact.get("schema_id") == "cruxible.claim.statement"
+        ),
+        None,
+    )
+    backing = next(
+        (
+            fact.get("value")
+            for fact in view.facts
+            if fact.get("schema_id") == "cruxible.claim.backing"
+        ),
+        None,
+    )
+    lifecycle = next(
+        (
+            fact.get("value")
+            for fact in view.facts
+            if fact.get("schema_id") == "cruxible.claim.lifecycle"
+        ),
+        None,
+    )
+    identity = view.envelope.get("identity")
+    if not (
+        isinstance(identity, str)
+        and isinstance(statement, dict)
+        and isinstance(backing, dict)
+        and isinstance(lifecycle, dict)
+    ):
+        raise ProposalIntegrityError("Claim projection lacks its complete canonical artifact")
+    artifact_format = view.envelope.get("format_tag")
+    if artifact_format != ClaimArtifact.model_fields["artifact_format"].default:
+        raise ClaimUnsupportedFormatError(
+            f"{ClaimUnsupportedFormatError.error_code}: {artifact_format!r}"
+        )
+    return ClaimArtifact.model_validate(
+        {
+            "artifact_format": artifact_format,
+            "identity": {
+                "kind": "Claim",
+                "name": identity.removeprefix("Claim:"),
+            },
+            "statement": statement,
+            "backing": backing,
+            "pins": lifecycle.get("pins"),
+            "lifecycle": lifecycle.get("lifecycle"),
+            **(
+                {"retirement": lifecycle["retirement"]}
+                if lifecycle.get("retirement") is not None
+                else {}
+            ),
+        }
+    )
+
+
+def _resolved_claim_id(
+    instance: PlaybillInstance,
+    identity: str,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+) -> str:
+    """Accept a unique CLM- prefix where a full Claim id is expected."""
+
+    bare = identity.removeprefix("Claim:")
+    try:
+        claim_path(bare)
+    except ClaimFormatError:
+        pass
+    else:
+        return bare
+    return resolve_id_prefix(
+        bare,
+        _accepted_claim_ids(instance, coordinate=coordinate),
+        marker="CLM-",
+        label="Claim",
+    )
+
+
+def _accepted_claim_ids(
+    instance: PlaybillInstance,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+) -> tuple[str, ...]:
+    with instance.accepted_history_reader(
+        at=AcceptedCoordinate.from_internal(coordinate)
+    ) as history:
+        if history.sequence == 0:
+            return ()
+    with instance.bind_accepted_projection(coordinate) as projection:
+        rows = projection.typed.envelopes(kind="claim")
+        return tuple(row.identity.removeprefix("Claim:") for row in rows)
+
+
+@positioned_read
+def service_get_playbill_claim(
+    instance: PlaybillInstance,
+    *,
+    identity: str,
+    at: AcceptedCoordinate | None = None,
+    evaluation_time: datetime | None = None,
+) -> ClaimViewRecord:
+    expected = "Claim:CLM-<32 lowercase hex> or CLM-<32 lowercase hex>"
+    coordinate = accepted_coordinate_at(instance, at)
+    bare = _resolved_claim_id(instance, identity, coordinate=coordinate)
+    try:
+        path = claim_path(bare)
+    except ClaimFormatError as exc:
+        raise ClaimNotFoundError(
+            f"Claim not found; expected {expected}; received {identity!r}"
+        ) from exc
+    qualified = f"Claim:{bare}"
+    with instance.accepted_history_reader(
+        at=AcceptedCoordinate.from_internal(coordinate)
+    ) as history:
+        if history.sequence == 0:
+            raise ClaimNotFoundError(f"Claim not found; expected {expected}; received {identity!r}")
+    with instance.bind_accepted_projection(coordinate) as projection:
+        claim = projection.claim(qualified)
+        from cruxible_core.service.evidence.evidence import _claim_read_history_index
+
+        claim_history = _claim_read_history_index(
+            instance, coordinate=coordinate, records=projection.typed.records
+        )
+    if claim is None:
+        raise ClaimNotFoundError(f"Claim not found; expected {expected}; received {identity!r}")
+    public = _public_claim(claim)
+    if public.envelope.get("path") != path:
+        raise ProposalIntegrityError("Claim projection path differs from normalized identity")
+    return materialize_playbill_claim_view(
+        instance,
+        public=public,
+        coordinate=coordinate,
+        evaluation_time=evaluation_time or _accepted_generation_time(instance, coordinate),
+        law=claim_history.law_evidence.get(path),
+    )
+
+
+def materialize_playbill_claim_view(
+    instance: PlaybillInstance,
+    *,
+    public: PlaybillClaimView,
+    coordinate: AcceptedProjectionCoordinate,
+    evaluation_time: datetime,
+    law: ClaimLawEvidence | None,
+    admission_tree: dict[str, bytes] | None = None,
+    bodies: ContentAddressedBodyStore | None = None,
+) -> ClaimViewRecord:
+    """Shared single/batch admission semantics; binding and selection happen upstream."""
+    if law is None:
+        raise ProposalIntegrityError("accepted Claim has no reproducible Claim law evidence")
+    parsed = _claim_from_view(public)
+    return ClaimViewRecord(
+        coordinate=public.coordinate,
+        envelope=public.envelope,
+        facts=public.facts,
+        admission_evaluation_time=evaluation_time,
+        admission_accounts=_claim_admission_accounts(
+            instance,
+            claim=parsed,
+            tree=(
+                admission_tree
+                if admission_tree is not None
+                else _claim_admission_tree(instance, claim=parsed, coordinate=coordinate)
+            ),
+            law=law,
+            bodies=bodies,
+            coordinate=coordinate,
+        ),
+        statement=claim_statement_card(parsed),
+    )
+
+
+@positioned_read
+def service_list_playbill_claims(
+    instance: PlaybillInstance,
+    *,
+    at: AcceptedCoordinate | None = None,
+    subject: SemanticAddress | None = None,
+    predicate: str | None = None,
+    include_retired: bool = False,
+    subject_kind: str | None = None,
+) -> PlaybillClaimList:
+    coordinate = accepted_coordinate_at(instance, at)
+    with instance.bind_accepted_projection(coordinate) as projection:
+        claims = tuple(
+            _public_claim(item)
+            for item in projection.list_claims(
+                subject=subject,
+                predicate=predicate,
+                include_retired=include_retired,
+                subject_kind=subject_kind,
+            )
+        )
+    return PlaybillClaimList(
+        coordinate=AcceptedCoordinate.from_internal(coordinate),
+        claims=claims,
+    )
+
+
+def _claim_law_evidence(
+    instance: PlaybillInstance,
+    *,
+    path: str,
+    at: AcceptedProjectionCoordinate,
+) -> ClaimLawEvidence:
+    from cruxible_core.service.evidence.evidence import _claim_read_history_index
+
+    # A one-Claim read needs one account, not a copy of the whole index.
+    found = _claim_read_history_index(instance, coordinate=at).law_evidence.get(path)
+    if found is None:
+        raise ProposalIntegrityError("accepted Claim has no reproducible Claim law evidence")
+    return found
+
+
+def _claim_law_evidence_by_artifact_index(
+    instance: PlaybillInstance,
+    *,
+    at: AcceptedProjectionCoordinate,
+) -> dict[tuple[str, str], ClaimLawEvidence]:
+    """Index every accepted Claim law account in one bounded history pass."""
+
+    found: dict[tuple[str, str], ClaimLawEvidence] = {}
+    records = instance.retained_record_reader()
+    with instance.accepted_history_reader(at=AcceptedCoordinate.from_internal(at)) as history:
+        for location in history.claim_law_locations():
+            history.read_member(location, records)
+            law = records.law_evidence(history.generation(location.sequence), location.member_path)
+            if len(law) != 1:
+                raise ProjectionIntegrityError(
+                    "accepted Claim law evidence is missing or ambiguous"
+                )
+            (evidence,) = law
+            raw = evidence.result.get("claim_evidence")
+            if raw is not None:
+                parsed = parse_claim_law_evidence(raw)
+                found.setdefault((evidence.path, parsed.artifact_digest), parsed)
+    return found
+
+
+def claim_law_evidence_by_artifact_for_path(
+    instance: PlaybillInstance,
+    *,
+    at: AcceptedProjectionCoordinate,
+    path: str,
+) -> dict[tuple[str, str], ClaimLawEvidence]:
+    """One Claim path's law accounts by artifact: ``_claim_law_evidence_by_artifact_index``
+    for a single lineage, read through the path index instead of every law record."""
+
+    found: dict[tuple[str, str], ClaimLawEvidence] = {}
+    records = instance.retained_record_reader()
+    with instance.accepted_history_reader(at=AcceptedCoordinate.from_internal(at)) as history:
+        for location in history.claim_law_locations(path=path):
+            history.read_member(location, records)
+            law = records.law_evidence(history.generation(location.sequence), location.member_path)
+            if len(law) != 1:
+                raise ProjectionIntegrityError(
+                    "accepted Claim law evidence is missing or ambiguous"
+                )
+            (evidence,) = law
+            raw = evidence.result.get("claim_evidence")
+            if raw is not None:
+                parsed = parse_claim_law_evidence(raw)
+                found.setdefault((evidence.path, parsed.artifact_digest), parsed)
+    return found
+
+
+def _accepted_generation_time(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+) -> datetime:
+    with instance.accepted_history_reader(
+        at=AcceptedCoordinate.from_internal(coordinate)
+    ) as history:
+        facts = history.read_generation_facts(history.sequence, instance.retained_record_reader())
+    return datetime.fromisoformat(facts.timestamp.replace("Z", "+00:00"))
+
+
+def _claim_admission_tree(
+    instance: PlaybillInstance,
+    *,
+    claim: ClaimArtifact,
+    coordinate: AcceptedProjectionCoordinate,
+) -> dict[str, bytes]:
+    """Read the ClaimType and CaptureContracts cited by this exact accepted Claim."""
+    wanted = [claim_type_path(claim.statement.predicate)]
+    with instance.bind_accepted_projection(coordinate) as projection:
+        wanted.extend(
+            row[0]
+            for row in projection.typed.connection.execute(
+                "SELECT DISTINCT t.path FROM citation_uses u "
+                "JOIN captures c ON c.capture_digest=u.capture_digest "
+                "JOIN capture_contracts t ON t.artifact_digest=c.contract_digest "
+                "WHERE u.owner_kind='Claim' AND u.owner_key=? ORDER BY t.path",
+                (claim.identity.qualified,),
+            )
+        )
+        return {path: projection.typed.member_bytes(path) for path in wanted}
+
+
+def _superseded_contract(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate | None,
+    digest: str,
+) -> AcceptedCaptureContract | None:
+    """A CaptureContract version a successor replaced, read from accepted history.
+
+    A Claim keeps the contract version its evidence was captured under, while
+    the tree holds only the current version of each contract identity.
+    """
+
+    if coordinate is None:
+        return None
+    return instance.accepted_capture_contract_version(
+        AcceptedCoordinate.from_internal(coordinate), digest
+    )
+
+
+def _claim_admission_accounts(
+    instance: PlaybillInstance,
+    *,
+    claim: ClaimArtifact,
+    tree: Mapping[str, bytes],
+    law: ClaimLawEvidence,
+    bodies: ContentAddressedBodyStore | None = None,
+    coordinate: AcceptedProjectionCoordinate | None = None,
+) -> tuple[CaptureAdmissionAccountV1, ...]:
+    from cruxible_core.evidence.attestation_verification import _capture_contracts
+
+    claim_type_path_value = claim_type_path(claim.statement.predicate)
+    claim_type = parse_claim_type(tree[claim_type_path_value], path=claim_type_path_value)
+    contracts = _capture_contracts(tree)
+    accounts: list[CaptureAdmissionAccountV1] = []
+    # A batch resolves the confined body store once and passes it down.
+    bodies = instance.body_store() if bodies is None else bodies
+    for citation in claim_citation_references(claim):
+        try:
+            envelope = capture_envelope(
+                bodies,
+                citation.capture_digest,
+                access=BodyAccessContext(principal_id="playbill-service", can_read_body=True),
+            )
+        except CasError:
+            # The accepted citation remains; its missing metadata supplies no
+            # admission account. The verdict reports replay unavailability.
+            continue
+        contract = contracts.get(envelope.capture_contract_digest) or _superseded_contract(
+            instance, coordinate, envelope.capture_contract_digest
+        )
+        if contract is None:
+            raise ProposalIntegrityError("accepted Claim CaptureContract no longer resolves")
+        # The verdict's own gate: a copy its rule admits is evidence like any other.
+        eligible = capture_citation_eligible(
+            claim,
+            claim_type=claim_type,
+            capture_contract=contract,
+            capture_digest=citation.capture_digest,
+            envelope=envelope,
+            historical_capture_contract=lambda digest: (
+                contracts.get(digest) or _superseded_contract(instance, coordinate, digest)
+            ),
+        )
+        if isinstance(citation, ClaimCitation) and citation.role == "copy" and not eligible:
+            accounts.append(
+                CaptureAdmissionAccountV1(
+                    citation_id=citation.citation_id,
+                    capture_digest=citation.capture_digest,
+                    citation_role=citation.role,
+                    citation_origin=citation.origin,
+                    capture_contract_identity=contract.contract.identity.qualified,
+                    capture_contract_digest=contract.artifact_digest,
+                    status="not_evidence",
+                )
+            )
+            continue
+        traces = evaluate_capture_evidence_admissions(
+            claim,
+            claim_type=claim_type,
+            capture_digest=citation.capture_digest,
+            capture_contract=contract,
+            envelope=envelope,
+            verified_attestations=law.verified_attestations,
+            historical_capture_contract=lambda digest: (
+                contracts.get(digest) or _superseded_contract(instance, coordinate, digest)
+            ),
+        )
+        decisions = tuple(
+            CaptureEvidenceAdmissionV1(
+                status="admitted" if item.trace.result.verdict == "eligible" else "not_admitted",
+                rule_id=item.trace.result.rule_id,
+                admission=item.trace.result.admission,
+                refusal_code=item.trace.result.refusal_code,
+                closest_rule_id=item.trace.closest_rule_id,
+            )
+            for item in traces
+        )
+        accounts.append(
+            CaptureAdmissionAccountV1(
+                citation_id=citation.citation_id,
+                capture_digest=citation.capture_digest,
+                citation_role=(citation.role if isinstance(citation, ClaimCitation) else "legacy"),
+                citation_origin=(
+                    citation.origin if isinstance(citation, ClaimCitation) else "legacy"
+                ),
+                capture_contract_identity=contract.contract.identity.qualified,
+                capture_contract_digest=contract.artifact_digest,
+                status=(
+                    "admitted"
+                    if eligible and any(item.status == "admitted" for item in decisions)
+                    else "not_admitted"
+                ),
+                decision=(
+                    max(
+                        decisions,
+                        key=lambda item: (
+                            item.status == "admitted",
+                            {"derivational": 2, "direct": 1}.get(item.admission or "", 0),
+                        ),
+                    )
+                    if decisions
+                    else None
+                ),
+            )
+        )
+    return tuple(accounts)
+
+
+def resolve_playbill_claim_group(
+    instance: PlaybillInstance,
+    *,
+    subject: SemanticAddress,
+    predicate: str,
+    coordinate: AcceptedProjectionCoordinate,
+    evaluated_at: datetime,
+    claims: tuple[ClaimArtifact, ...],
+    verdicts_by_identity: MutableMapping[str, ClaimVerdictResult] | None = None,
+    time_boundaries: MutableSet[datetime] | None = None,
+    read_context: ClaimVerdictReadContext | None = None,
+) -> PlaybillClaimGroupResolution:
+    """Resolve one already-listed (Subject, predicate) slot without re-listing.
+
+    Callers that fold every slot at a coordinate list the projection once and
+    group in memory; the whole-projection listing used to be repeated inside
+    every group, which made the fold quadratic in Claims. A caller that
+    evaluates the same Claims elsewhere in the same request may pass a shared
+    verdict map, valid only for this exact coordinate and evaluation time.
+    ``time_boundaries`` collects the instants each verdict could change at, for
+    a caller that memoizes the whole fold over an interval rather than an
+    instant.
+    """
+
+    from cruxible_core.service.evidence.evidence import (
+        service_evaluate_playbill_claim_verdict,
+    )
+
+    if read_context is not None and (
+        read_context.instance is not instance or read_context.coordinate != coordinate
+    ):
+        raise ProposalIntegrityError("Claim group read context differs from accepted state")
+    type_path = claim_type_path(predicate)
+    if read_context is None:
+        content = instance.blob_at(coordinate.git_oid, type_path)
+        if content is None:
+            raise ClaimNotFoundError(f"ClaimType:{predicate}")
+        claim_type = parse_claim_type(content, path=type_path)
+    else:
+        try:
+            claim_type = read_context.claim_type(type_path)
+        except ClaimNotFoundError as exc:
+            raise ClaimNotFoundError(f"ClaimType:{predicate}") from exc
+    contenders: list[ResolutionContender] = []
+    verdicts: list[ClaimVerdictResult] = []
+    public_coordinate = AcceptedCoordinate.from_internal(coordinate)
+    for claim in claims:
+        shared = (
+            None
+            if verdicts_by_identity is None
+            else verdicts_by_identity.get(claim.identity.qualified)
+        )
+        if shared is None:
+            shared = service_evaluate_playbill_claim_verdict(
+                instance,
+                claim_identity=claim.identity.qualified,
+                evaluation_time=evaluated_at,
+                at=public_coordinate,
+                time_boundaries=time_boundaries,
+                read_context=read_context,
+            ).verdict
+            if verdicts_by_identity is not None:
+                verdicts_by_identity[claim.identity.qualified] = shared
+        evaluated_verdict = shared
+        verdicts.append(evaluated_verdict)
+        value: object
+        if claim.statement.object.kind == "literal":
+            value = claim.statement.object.value
+        else:
+            value = claim.statement.object.model_dump(mode="json")
+        contender_verdict: ClaimVerdict = (
+            "stale" if evaluated_verdict.verdict == "stale_evidence" else evaluated_verdict.verdict
+        )
+        contenders.append(
+            ResolutionContender(
+                claim_identity=claim.identity.name,
+                object_value=value,
+                verdict=contender_verdict,
+                basis_kinds=evaluated_verdict.basis_kinds,
+                # `require_current` filters on this: a stale contender never
+                # resolves, even where `eligible_verdicts` admits `stale`.
+                current=evaluated_verdict.currency != "stale",
+            )
+        )
+    resolution = resolve_claim_contenders(
+        claim_type.resolution_policy,
+        tuple(contenders),
+    )
+    return PlaybillClaimGroupResolution(
+        subject=subject,
+        predicate=predicate,
+        cardinality=claim_type.cardinality,
+        status=resolution.status,
+        selected_claim_identities=tuple(
+            f"Claim:{item}" for item in resolution.selected_claim_identities
+        ),
+        contender_claim_identities=tuple(
+            f"Claim:{item}" for item in resolution.contender_claim_identities
+        ),
+        claims=claims,
+        verdicts=tuple(verdicts),
+    )
+
+
+def _attestation_count(
+    *,
+    record: Literal["accepted", "event"],
+    stance: str,
+    basis: str,
+    cited: tuple[str, ...],
+    current: bool,
+    admitted: frozenset[str],
+    policy_rules: Mapping[str, str],
+) -> tuple[bool, AttestationCountReason, str | None]:
+    """The verdict law's reading of one attestation, with the reason in one word.
+
+    The verdict reads accepted attestations only, and of those a current one
+    whose cited Captures this Claim all admits. A consequence policy reads a
+    current examined attestation, accepted or recorded, of a stance it has a
+    rule for. Nothing else counts: a recorded event is resurfaced, not read.
+    """
+
+    if not current:
+        return False, "not_current", None
+    if record == "accepted" and cited and admitted.issuperset(cited):
+        return True, "cites_admitted_capture", None
+    rule_id = policy_rules.get(stance) if basis == "examined_existing" else None
+    if rule_id is not None:
+        return True, "consequence_policy", rule_id
+    if not cited:
+        return False, "cites_no_capture", None
+    return False, ("capture_not_admitted" if record == "accepted" else "not_accepted"), None
+
+
+def claim_attestation_accounts(
+    instance: PlaybillInstance,
+    *,
+    claim: ClaimArtifact,
+    claim_type: ClaimType,
+    exact_attestations: tuple[ClaimAttestationEvidence, ...],
+    admission_accounts: tuple[CaptureAdmissionAccountV1, ...],
+    evaluation_time: datetime,
+) -> tuple[ClaimAttestationAccountV1, ...]:
+    """Account for every attestation of this exact Claim version: accepted, then recorded.
+
+    The recorded ones are the attestation door's events of this version's own
+    partition (read from that partition, never by walking the door): each
+    principal's latest word stands, as the threshold and the holds read it.
+    """
+
+    from cruxible_client.contracts.claim_attestation_store import (
+        claim_attestation_partition_digest,
+    )
+    from cruxible_client.contracts.claims import claim_artifact_digest
+
+    admitted = frozenset(
+        item.capture_digest for item in admission_accounts if item.status == "admitted"
+    )
+    policy = claim_type.attestation_consequence_policy
+    policy_rules: dict[str, str] = {}
+    for rule in () if policy is None else policy.rules:
+        if rule.minimum_independent_control_components > 0:
+            policy_rules.setdefault(rule.stance, rule.rule_id)
+
+    def in_window(at: datetime, until: datetime | None) -> bool:
+        return at <= evaluation_time and (until is None or evaluation_time < until)
+
+    accounts: list[ClaimAttestationAccountV1] = []
+    for item in exact_attestations:
+        statement = item.statement
+        if isinstance(item, AcceptedClaimAttestationEvidence):
+            basis: Literal["examined_existing", "new_capture", "legacy"] = (
+                item.envelope.statement.attestation_basis
+            )
+        else:
+            basis = "legacy"
+        cited = tuple(statement.capture_digests)
+        current = item.current and in_window(statement.observed_at, statement.valid_until)
+        counts, reason, rule_id = _attestation_count(
+            record="accepted",
+            stance=statement.stance,
+            basis=basis,
+            cited=cited,
+            current=current,
+            admitted=admitted,
+            policy_rules=policy_rules,
+        )
+        accounts.append(
+            ClaimAttestationAccountV1(
+                record="accepted",
+                attestation_digest=item.attestation_digest,
+                basis=basis,
+                stance=statement.stance,
+                principal=statement.provider_or_principal.name,
+                attested_at=statement.observed_at,
+                valid_until=statement.valid_until,
+                cited_capture_digests=cited,
+                current=current,
+                counts=counts,
+                counts_reason=reason,
+                rule_id=rule_id,
+            )
+        )
+    events = instance.claim_attestation_evidence_store().events(
+        partition_digest=claim_attestation_partition_digest(
+            instance_id=instance.descriptor.instance_id,
+            claim_identity=claim.identity,
+            claim_artifact_digest=claim_artifact_digest(claim).tagged,
+        )
+    )
+    latest: dict[str, int] = {}
+    for event, payload in events:
+        principal = payload.attesting_principal_id
+        latest[principal] = max(latest.get(principal, 0), event.sequence)
+    for event, payload in events:
+        signed = payload.attestation.statement
+        cited = tuple(signed.cited_capture_digests)
+        current = (
+            payload.current_at_append
+            and latest[payload.attesting_principal_id] == event.sequence
+            and in_window(signed.attested_at, signed.valid_until)
+        )
+        counts, reason, rule_id = _attestation_count(
+            record="event",
+            stance=signed.stance,
+            basis=signed.attestation_basis,
+            cited=cited,
+            current=current,
+            admitted=admitted,
+            policy_rules=policy_rules,
+        )
+        accounts.append(
+            ClaimAttestationAccountV1(
+                record="event",
+                attestation_digest=payload.envelope_digest,
+                event_digest=event.event_digest,
+                basis=signed.attestation_basis,
+                stance=signed.stance,
+                principal=payload.attesting_principal_id,
+                attested_at=signed.attested_at,
+                valid_until=signed.valid_until,
+                cited_capture_digests=cited,
+                current=current,
+                counts=counts,
+                counts_reason=reason,
+                rule_id=rule_id,
+            )
+        )
+    return tuple(accounts)
+
+
+@positioned_read
+def service_explain_playbill_claim(
+    instance: PlaybillInstance,
+    *,
+    identity: str,
+    at: AcceptedCoordinate | None = None,
+    evaluation_time: datetime | None = None,
+    access: BodyAccessContext | None = None,
+) -> PlaybillClaimExplanation:
+    """Why one Claim holds; ``access`` decides whether restricted sources are shown (C14).
+
+    A cited Capture of a restricted kind contributes no source handle (its
+    selectors and spans) to a reader without ``can_read_restricted``; it is
+    named in ``withheld`` instead. ``None`` reads as no restricted access.
+    """
+
+    from cruxible_core.indexes.sql_batch import select_in
+    from cruxible_core.service.evidence.body_access import (
+        NO_RESTRICTED_ACCESS,
+        capture_access_resolver,
+    )
+    from cruxible_core.service.evidence.evidence import (
+        ClaimVerdictReadContext,
+        accepted_claim_attestations,
+        service_evaluate_playbill_claim_verdict,
+    )
+
+    coordinate = accepted_coordinate_at(instance, at)
+    evaluated_at = evaluation_time or datetime.now(UTC)
+    read = service_get_playbill_claim(
+        instance,
+        identity=identity,
+        at=AcceptedCoordinate.from_internal(coordinate),
+        evaluation_time=evaluated_at,
+    )
+    view = PlaybillClaimView(
+        coordinate=read.coordinate,
+        envelope=read.envelope,
+        facts=read.facts,
+    )
+    claim = _claim_from_view(view)
+    law = _claim_law_evidence(
+        instance,
+        path=claim_path(claim.identity.name),
+        at=coordinate,
+    )
+    verdict = service_evaluate_playbill_claim_verdict(
+        instance,
+        claim_identity=claim.identity.qualified,
+        evaluation_time=evaluated_at,
+        at=AcceptedCoordinate.from_internal(coordinate),
+    )
+    handles: list[SourceHandle] = []
+    capture_context: dict[str, tuple[tuple[str, ...], str, str]] = {}
+    citations_by_capture: dict[str, list[str]] = {}
+    for citation in claim_citation_references(claim):
+        citations_by_capture.setdefault(citation.capture_digest, []).append(citation.citation_id)
+    from cruxible_core.evidence.attestation_verification import _capture_contracts
+
+    contracts = _capture_contracts(
+        _claim_admission_tree(instance, claim=claim, coordinate=coordinate)
+    )
+    resolver = capture_access_resolver(instance, coordinate)
+    withheld, withheld_notice = resolver.withheld(
+        claim.backing.capture_digests,
+        access or NO_RESTRICTED_ACCESS,
+    )
+    citations_of = {
+        digest: tuple(
+            sorted(citations_by_capture.get(digest, ()), key=lambda item: item.encode("ascii"))
+        )
+        for digest in claim.backing.capture_digests
+    }
+    if withheld:
+        # C14: a withheld Capture's kind and logical source come from the
+        # accepted citation index; its envelope is never read for this reader.
+        with instance.bind_accepted_projection(coordinate) as projection:
+            indexed = {
+                str(row[0]): (str(row[1]), row[2], str(row[3]))
+                for row in select_in(
+                    projection.typed.connection,
+                    "SELECT p.capture_digest,s.kind,s.source_identity,p.producer_identity "
+                    "FROM captures p JOIN source_references s USING(source_ref_key) "
+                    "WHERE p.capture_digest IN ({})",
+                    sorted(withheld),
+                )
+            }
+        for digest, item in withheld.items():
+            row = indexed.get(digest)
+            if row is None or item.kind_identity is None:
+                continue
+            kind, source_identity, producer = row
+            capture_context[digest] = (
+                citations_of[digest],
+                item.kind_identity,
+                str(source_identity) if kind == "external" else producer,
+            )
+    for digest in claim.backing.capture_digests:
+        if digest in withheld:
+            continue
+        try:
+            envelope = capture_envelope(
+                instance.body_store(),
+                digest,
+                access=BodyAccessContext(principal_id="playbill-service", can_read_body=True),
+            )
+        except CasError:
+            continue
+        spans = tuple(
+            span
+            for mapping in claim.backing.source_mappings
+            for span in mapping.spans
+            if span.content_digest == envelope.commitment.digest
+        )
+        handles.append(
+            SourceHandle(
+                subject=claim_statement_address(claim_path(claim.identity.name)),
+                at=AcceptedCoordinate.from_internal(coordinate),
+                source=envelope.source,
+                commitment=envelope.commitment,
+                media_type=(
+                    "application/json" if envelope.commitment.digest_kind != "exact_bytes" else None
+                ),
+                exact_spans=spans,
+                access_class="restricted" if resolver.capture(digest).restricted else "instance",
+            )
+        )
+        contract = contracts.get(envelope.capture_contract_digest) or _superseded_contract(
+            instance, coordinate, envelope.capture_contract_digest
+        )
+        if contract is None:
+            raise ProposalIntegrityError("accepted Claim CaptureContract no longer resolves")
+        logical_source = getattr(envelope.source, "source_identity", None)
+        if logical_source is None:
+            logical_source = envelope.producer.qualified
+        capture_context[digest] = (
+            citations_of[digest],
+            contract.contract.identity.qualified,
+            logical_source,
+        )
+    public_coordinate = AcceptedCoordinate.from_internal(coordinate)
+    retirement_context = claim_retirement_context(
+        instance,
+        coordinate=coordinate,
+        claim_identity=claim.identity.qualified,
+    )
+    coverage = CoverageDescriptor(
+        requested_facets=("governance", "provenance", "sources"),
+        available_facets=("governance", "provenance", "sources"),
+    )
+    claim_tree = ClaimVerdictReadContext(instance, coordinate).tree
+    exact_attestations = accepted_claim_attestations(
+        instance,
+        coordinate=coordinate,
+        tree=claim_tree,
+        claim=claim,
+    )
+    type_path = claim_type_path(claim.statement.predicate)
+    attestation_accounts = claim_attestation_accounts(
+        instance,
+        claim=claim,
+        claim_type=parse_claim_type(claim_tree[type_path], path=type_path),
+        exact_attestations=exact_attestations,
+        admission_accounts=read.admission_accounts,
+        evaluation_time=evaluated_at,
+    )
+    freshness: list[ClaimEvidenceFreshnessLineV1] = []
+    for expiration in verdict.verdict.freshness_expirations:
+        context = capture_context.get(expiration.capture_digest)
+        if context is None:
+            raise ProposalIntegrityError(
+                "cruxible.claim.evidence_freshness_invalid: expiration has no Claim citation"
+            )
+        citation_ids, contract_identity, logical_source = context
+        freshness.append(
+            ClaimEvidenceFreshnessLineV1(
+                capture_digest=expiration.capture_digest,
+                citation_ids=citation_ids,
+                capture_contract_identity=contract_identity,
+                logical_source=logical_source,
+                observed_at=expiration.observed_at,
+                expires_at=expiration.expires_at,
+                state="expired" if evaluated_at >= expiration.expires_at else "current",
+                recapture_operation=EvidenceRecaptureOperationV1(
+                    claim_identity=claim.identity.qualified,
+                    capture_contract_identity=contract_identity,
+                    logical_source=logical_source,
+                ),
+            )
+        )
+    return PlaybillClaimExplanation(
+        coordinate=public_coordinate,
+        evaluation_time=evaluated_at,
+        claim=view,
+        law_evidence=law,
+        verdict=verdict.verdict,
+        exact_attestations=exact_attestations,
+        source_handles=tuple(handles),
+        withheld=withheld_notice,
+        coverage=coverage,
+        admission_evaluation_time=evaluated_at,
+        admission_accounts=read.admission_accounts,
+        freshness=tuple(sorted(freshness, key=lambda item: item.capture_digest.encode("ascii"))),
+        attestation_accounts=attestation_accounts,
+        retirement_context=retirement_context,
+    )
+
+
+class _InstanceSourceMaterialResolver:
+    """Bind the shared dereference engine to one accepted coordinate's retained bytes."""
+
+    def __init__(
+        self,
+        instance: PlaybillInstance,
+        *,
+        coordinate: AcceptedProjectionCoordinate,
+        external_reader: ExternalSelectionReaderProtocol | None,
+    ) -> None:
+        self._instance = instance
+        self._coordinate = coordinate
+        self._external_reader = external_reader
+
+    def read_ledger(self, artifact_path: str) -> bytes | None:
+        return self._instance.blob_at(self._coordinate.git_oid, artifact_path)
+
+    def read_cas(self, content_digest: str, *, access: BodyAccessContext) -> bytes | None:
+        if not PositionedBodies(self._instance.body_store()).verify(content_digest):
+            return None
+        try:
+            return read_body(self._instance.body_store(), content_digest, access=access)
+        except CasError:
+            return None
+
+    def read_external(self, source: ExternalSourceReference) -> object | None:
+        if self._external_reader is None:
+            return None
+        return self._external_reader.read_external_selection(source)
+
+
+def service_open_playbill_source(
+    instance: PlaybillInstance,
+    *,
+    request: OpenSourceRequest,
+    access: BodyAccessContext,
+    at: AcceptedCoordinate | None = None,
+    external_reader: ExternalSelectionReaderProtocol | None = None,
+) -> SourceDereferenceResult:
+    """Dereference only the coordinate-bound handle; never mutate or refresh a source.
+
+    Ledger, CAS, and external selections all resolve through one engine, so the
+    coverage, budget, and access laws cannot drift apart by source kind.
+    """
+
+    coordinate = accepted_coordinate_at(instance, at)
+    return dereference_source_handle(
+        request,
+        access=access,
+        resolver=_InstanceSourceMaterialResolver(
+            instance,
+            coordinate=coordinate,
+            external_reader=external_reader,
+        ),
+    )
+
+
+__all__ = [
+    "CaptureAdmissionAccountV1",
+    "CaptureEvidenceAdmissionV1",
+    "ClaimAttestationAccountV1",
+    "ClaimEvidenceFreshnessLineV1",
+    "PlaybillClaimExplanation",
+    "PlaybillClaimGroupResolution",
+    "PlaybillClaimList",
+    "PlaybillClaimView",
+    "ClaimViewRecord",
+    "claim_attestation_accounts",
+    "resolve_playbill_claim_group",
+    "service_explain_playbill_claim",
+    "service_get_playbill_claim",
+    "service_list_playbill_claims",
+    "service_open_playbill_source",
+]

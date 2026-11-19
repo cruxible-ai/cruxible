@@ -25,7 +25,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     CRUXIBLE_HOST=0.0.0.0 \
     CRUXIBLE_PORT=8100 \
     CRUXIBLE_SERVER_AUTH=true \
-    CRUXIBLE_SERVER_STATE_DIR=/var/lib/cruxible/server
+    CRUXIBLE_STATE_ROOT=/var/lib/cruxible
 
 RUN groupadd --system cruxible \
     && useradd \
@@ -35,7 +35,7 @@ RUN groupadd --system cruxible \
         --create-home \
         --shell /usr/sbin/nologin \
         cruxible \
-    && mkdir -p /app /var/lib/cruxible/server \
+    && mkdir -p /app /var/lib/cruxible \
     && chown -R cruxible:cruxible /app /var/lib/cruxible
 
 WORKDIR /app

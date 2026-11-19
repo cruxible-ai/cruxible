@@ -1,0 +1,2154 @@
+{
+  "security.credential-acquire.json": {
+    "activation_policy": "snapshot",
+    "artifact_format": "cruxible-procedure-v4",
+    "definition": {
+      "contract_in": {
+        "target": {
+          "kind": "Contract",
+          "name": "security-path-input/v1"
+        }
+      },
+      "contract_out": {
+        "target": {
+          "kind": "Contract",
+          "name": "security-file-evidence/v1"
+        }
+      },
+      "description": "Read one credential's key state from the attached workspace (input.relative_path): {issuer, name, read: receipt|state_read, keys: [{key_id, state: active|inactive|revoked|deleted, created_at, revoked_at, last_used_at, created_by}]} and nothing else (optionally complete: true when a state_read lists every key, every page): key ids or fp: fingerprints, never a secret. Retained under security.credential-state-v1; security.credential-import reads it when it lands. A receipt is what the issuer returned to the rotating agent; a state_read is a later, separate listing. Who acquires it is a convention the kit cannot check (the acquiring run's actor is on its ProcedureRun): let someone other than the rotator acquire it.",
+      "hard_caps": {
+        "max_capture_bytes": 1048576,
+        "max_items": 1,
+        "max_provider_calls": 1,
+        "max_repeat_attempts": 1,
+        "max_wall_clock": {
+          "microseconds": 120000000
+        }
+      },
+      "name": "security.credential-acquire",
+      "nodes": [
+        {
+          "captures": {
+            "capture": {
+              "target": {
+                "kind": "CaptureContract",
+                "name": "security.credential-state-v1"
+              }
+            }
+          },
+          "id": "credential",
+          "input": {
+            "coordinate": {
+              "revision": "working"
+            },
+            "coordinate_type": "http-response-v1",
+            "logical_source": "security.credential-state",
+            "relative_path": "$input.relative_path",
+            "replayability": "exact",
+            "selector": {
+              "whole": true
+            },
+            "selector_type": "whole-response-v1",
+            "tag": "playbill-workspace-file-source-request-v2"
+          },
+          "kind": "call",
+          "slot": "credential"
+        },
+        {
+          "fields": {
+            "byte_length": "$steps.credential.source.byte_length",
+            "bytes_digest": "$steps.credential.source.bytes_digest"
+          },
+          "id": "summary",
+          "kind": "project"
+        }
+      ],
+      "returns": "summary",
+      "slots": {
+        "credential": {
+          "capability": {
+            "name": "fixture.workspace.file",
+            "version": 1
+          }
+        }
+      },
+      "terminal_capability": 1
+    },
+    "definition_digest": "sha256:1fb0540aab6702ed04ce3739dac7eb6aa9c784341114a73eb184f90463d3b8e6",
+    "identity": {
+      "kind": "Procedure",
+      "name": "security.credential-acquire"
+    }
+  },
+  "security.credential-import.json": {
+    "activation_policy": "drain",
+    "artifact_format": "cruxible-procedure-v4",
+    "definition": {
+      "contract_in": {
+        "target": {
+          "kind": "Contract",
+          "name": "security-empty-input/v1"
+        }
+      },
+      "contract_out": {
+        "target": {
+          "kind": "Contract",
+          "name": "security-credential-state-summary/v1"
+        }
+      },
+      "description": "Read the credential-state Capture that triggered the Line (security.credential-state-v1) and propose what changed: the credential's current key_id, issued_at and issued_by from a receipt or a state read; revoked_key and a rotation's verification only from a state read (verified: the rotation's revokes_key is listed revoked or deleted, or absent from a listing that says complete, and an active key was issued after the incident's window_start; failed: claimed completed while revokes_key is still listed). A body outside the allow-list, or a key id, issuer, name or principal shaped like a secret, proposes nothing and is posted (secret_shape, with a fixed message: nothing from the body is echoed). Runs as a Line with trigger_input credential.",
+      "hard_caps": {
+        "max_capture_bytes": 1048576,
+        "max_items": 500,
+        "max_provider_calls": 2,
+        "max_repeat_attempts": 1,
+        "max_wall_clock": {
+          "microseconds": 120000000
+        }
+      },
+      "name": "security.credential-import",
+      "nodes": [
+        {
+          "captures": {
+            "capture": {
+              "target": {
+                "kind": "CaptureContract",
+                "name": "security.credential-state-v1"
+              }
+            }
+          },
+          "id": "credential",
+          "input": {
+            "coordinate": {
+              "revision": "working"
+            },
+            "coordinate_type": "http-response-v1",
+            "logical_source": "security.credential-state",
+            "relative_path": "credential.json",
+            "replayability": "exact",
+            "selector": {
+              "whole": true
+            },
+            "selector_type": "whole-response-v1",
+            "tag": "playbill-workspace-file-source-request-v2"
+          },
+          "kind": "call",
+          "slot": "credential"
+        },
+        {
+          "id": "held",
+          "kind": "read",
+          "query": {
+            "target": {
+              "kind": "QueryDefinition",
+              "name": "security.rotation_work"
+            }
+          }
+        },
+        {
+          "id": "parse",
+          "input": {
+            "held": "$steps.held.result.rows",
+            "state_text": "$steps.credential.content.text",
+            "truncated": "$steps.held.truncated"
+          },
+          "kind": "call",
+          "slot": "parse"
+        },
+        {
+          "fields": {
+            "added": "$steps.parse.added",
+            "changed": "$steps.parse.changed",
+            "credential": "$steps.parse.credential",
+            "failed": "$steps.parse.failed",
+            "keys": "$steps.parse.keys",
+            "posted": "$steps.parse.posted",
+            "read": "$steps.parse.read",
+            "revised": "$steps.parse.revised",
+            "unproven": "$steps.parse.unproven",
+            "verified": "$steps.parse.verified"
+          },
+          "id": "summary",
+          "kind": "project"
+        },
+        {
+          "id": "allowed",
+          "kind": "guard",
+          "on_false": "post",
+          "predicate": {
+            "left": {
+              "$ref": "step",
+              "path": [
+                "posted"
+              ],
+              "step": "parse"
+            },
+            "op": "eq",
+            "right": {
+              "literal": 0
+            }
+          }
+        },
+        {
+          "id": "changed",
+          "kind": "guard",
+          "on_false": "nochange",
+          "predicate": {
+            "left": {
+              "$ref": "step",
+              "path": [
+                "changed"
+              ],
+              "step": "parse"
+            },
+            "op": "gt",
+            "right": {
+              "literal": 0
+            }
+          }
+        },
+        {
+          "id": "propose",
+          "kind": "halt"
+        },
+        {
+          "contract": {
+            "name": "security.inbox-item",
+            "version": 1
+          },
+          "fields": {
+            "item": "$item"
+          },
+          "for_each": "$steps.parse.inbox",
+          "id": "post",
+          "kind": "post_inbox",
+          "max_items": 10
+        },
+        {
+          "id": "nochange",
+          "kind": "halt",
+          "reason": "no_change"
+        }
+      ],
+      "returns": "summary",
+      "slots": {
+        "credential": {
+          "capability": {
+            "name": "fixture.workspace.file",
+            "version": 1
+          }
+        },
+        "parse": {
+          "capability": {
+            "name": "fixture.security.credential-state",
+            "version": 1
+          }
+        }
+      },
+      "terminal_capability": 1
+    },
+    "definition_digest": "sha256:2deb558f280b47fa2d0afdc04cefc4ab82d0926b3330bc0e748bc97a60af567f",
+    "identity": {
+      "kind": "Procedure",
+      "name": "security.credential-import"
+    }
+  },
+  "security.cve-applicability.json": {
+    "activation_policy": "drain",
+    "artifact_format": "cruxible-procedure-v4",
+    "definition": {
+      "contract_in": {
+        "target": {
+          "kind": "Contract",
+          "name": "security-empty-input/v1"
+        }
+      },
+      "contract_out": {
+        "target": {
+          "kind": "Contract",
+          "name": "security-cve-applicability-summary/v1"
+        }
+      },
+      "description": "Read the CVE record Capture that triggered the Line (security.cve-record-http-v1) and propose an assessment for every release an affected entry names by data: its collectionURL + packageName (the kit's collectionURL map, carried here) as a component's full namespace and name, its repo as the release's source repository, its CPEs, packageName or vendor/product as a product alias an analyst stated (security.release.product_alias), or its product as the release's product name (with the supplier): affected / not_affected by the record's version ranges, inconclusive when the ranges or the vendor are ambiguous; no partial match. A release OSV answered for, of a CVE OSV knows, is OSV's. States the record's title for the CVE and the products it names as affected (vulnerability.affected_product: a matched release's product, else the entry's product or packageName). Propose-only. Runs as a Line with trigger_input record.",
+      "hard_caps": {
+        "max_capture_bytes": 16777216,
+        "max_items": 5000,
+        "max_provider_calls": 2,
+        "max_repeat_attempts": 1,
+        "max_wall_clock": {
+          "microseconds": 300000000
+        }
+      },
+      "name": "security.cve-applicability",
+      "nodes": [
+        {
+          "captures": {
+            "capture": {
+              "target": {
+                "kind": "CaptureContract",
+                "name": "security.cve-record-http-v1"
+              }
+            }
+          },
+          "id": "record",
+          "input": {
+            "expected_format": "json",
+            "extract": false,
+            "logical_source": "cve.record",
+            "max_bytes": 1048576,
+            "render": false,
+            "url": "https://cveawg.mitre.org/api/cve/"
+          },
+          "kind": "call",
+          "slot": "record"
+        },
+        {
+          "id": "releases",
+          "kind": "read",
+          "query": {
+            "target": {
+              "kind": "QueryDefinition",
+              "name": "security.release_inventory"
+            }
+          }
+        },
+        {
+          "id": "sources",
+          "kind": "read",
+          "query": {
+            "target": {
+              "kind": "QueryDefinition",
+              "name": "security.release_sources"
+            }
+          }
+        },
+        {
+          "id": "watched",
+          "kind": "read",
+          "query": {
+            "target": {
+              "kind": "QueryDefinition",
+              "name": "security.watched_vulnerabilities"
+            }
+          }
+        },
+        {
+          "id": "assessments",
+          "kind": "read",
+          "query": {
+            "target": {
+              "kind": "QueryDefinition",
+              "name": "security.assessment_index"
+            }
+          }
+        },
+        {
+          "id": "decide",
+          "input": {
+            "assessments": "$steps.assessments.result.rows",
+            "collections": {
+              "collections": {
+                "https://anaconda.org": {
+                  "type": "conda"
+                },
+                "https://bitbucket.org": {
+                  "repository": true,
+                  "type": "bitbucket"
+                },
+                "https://brew.sh": {
+                  "type": "brew"
+                },
+                "https://cocoapods.org": {
+                  "type": "cocoapods"
+                },
+                "https://cran.r-project.org/web/packages": {
+                  "type": "cran"
+                },
+                "https://crates.io": {
+                  "type": "cargo"
+                },
+                "https://formulae.brew.sh": {
+                  "type": "brew"
+                },
+                "https://github.com": {
+                  "repository": true,
+                  "type": "github"
+                },
+                "https://gitlab.com": {
+                  "repository": true,
+                  "type": "gitlab"
+                },
+                "https://golang.org/pkg": {
+                  "type": "golang"
+                },
+                "https://hackage.haskell.org": {
+                  "type": "hackage"
+                },
+                "https://hex.pm": {
+                  "type": "hex"
+                },
+                "https://hub.docker.com": {
+                  "type": "docker"
+                },
+                "https://luarocks.org": {
+                  "type": "luarocks"
+                },
+                "https://nuget.org/packages": {
+                  "type": "nuget"
+                },
+                "https://packages.debian.org": {
+                  "namespace": "debian",
+                  "type": "deb"
+                },
+                "https://packages.ubuntu.com": {
+                  "namespace": "ubuntu",
+                  "type": "deb"
+                },
+                "https://packagist.org": {
+                  "type": "composer"
+                },
+                "https://pkg.go.dev": {
+                  "type": "golang"
+                },
+                "https://proxy.golang.org": {
+                  "type": "golang"
+                },
+                "https://pub.dev/packages": {
+                  "type": "pub"
+                },
+                "https://pypi.org": {
+                  "type": "pypi"
+                },
+                "https://pypi.python.org": {
+                  "type": "pypi"
+                },
+                "https://registry.npmjs.org": {
+                  "type": "npm"
+                },
+                "https://repo.maven.apache.org/maven2": {
+                  "name_separator": ":",
+                  "type": "maven"
+                },
+                "https://repo1.maven.org/maven2": {
+                  "name_separator": ":",
+                  "type": "maven"
+                },
+                "https://rubygems.org": {
+                  "type": "gem"
+                },
+                "https://www.npmjs.com": {
+                  "type": "npm"
+                },
+                "https://www.nuget.org/packages": {
+                  "type": "nuget"
+                }
+              },
+              "sources": [
+                "https://cveproject.github.io/cve-schema/schema/docs/ (CVE JSON 5.1: affected[].collectionURL, packageName, repo, cpes; the collectionURL examples)",
+                "https://github.com/package-url/purl-spec/blob/main/PURL-TYPES.rst (purl types, their namespaces and name forms)"
+              ]
+            },
+            "record_base64": "$steps.record.retrieved.body_base64",
+            "releases": "$steps.releases.result.rows",
+            "sources": "$steps.sources.result.rows",
+            "watched": "$steps.watched.result.rows"
+          },
+          "kind": "call",
+          "slot": "decide"
+        },
+        {
+          "fields": {
+            "affected": "$steps.decide.affected",
+            "changed": "$steps.decide.changed",
+            "cve_id": "$steps.decide.cve_id",
+            "inconclusive": "$steps.decide.inconclusive",
+            "judged": "$steps.decide.judged",
+            "not_affected": "$steps.decide.not_affected",
+            "unchanged": "$steps.decide.unchanged"
+          },
+          "id": "summary",
+          "kind": "project"
+        },
+        {
+          "id": "changed",
+          "kind": "guard",
+          "on_false": "nochange",
+          "predicate": {
+            "left": {
+              "$ref": "step",
+              "path": [
+                "changed"
+              ],
+              "step": "decide"
+            },
+            "op": "gt",
+            "right": {
+              "literal": 0
+            }
+          }
+        },
+        {
+          "id": "propose",
+          "kind": "halt"
+        },
+        {
+          "id": "nochange",
+          "kind": "halt",
+          "reason": "no_change"
+        }
+      ],
+      "returns": "summary",
+      "slots": {
+        "decide": {
+          "capability": {
+            "name": "fixture.security.cve-applicability",
+            "version": 1
+          }
+        },
+        "record": {
+          "capability": {
+            "name": "fixture.web.fetch",
+            "version": 1
+          }
+        }
+      },
+      "terminal_capability": 1
+    },
+    "definition_digest": "sha256:95d5a7b003ff172a3e51080c4b4ea0b6c8436eff2eaa79669df0855177123c56",
+    "identity": {
+      "kind": "Procedure",
+      "name": "security.cve-applicability"
+    }
+  },
+  "security.epss-triage.json": {
+    "activation_policy": "drain",
+    "artifact_format": "cruxible-procedure-v4",
+    "definition": {
+      "contract_in": {
+        "target": {
+          "kind": "Contract",
+          "name": "security-empty-input/v1"
+        }
+      },
+      "contract_out": {
+        "target": {
+          "kind": "Contract",
+          "name": "security-epss-summary/v1"
+        }
+      },
+      "description": "Read the EPSS daily file Capture that triggered the Line (security.epss-daily-v1) and the watched vulnerabilities, and settle epss_score and epss_percentile for each watched CVE whose scores changed, exactly as the file states them (or propose them under a propose cap). Halts no_change when nothing changed. Runs as a Line with trigger_input epss.",
+      "hard_caps": {
+        "max_capture_bytes": 33554432,
+        "max_items": 5000,
+        "max_provider_calls": 2,
+        "max_repeat_attempts": 1,
+        "max_wall_clock": {
+          "microseconds": 300000000
+        }
+      },
+      "name": "security.epss-triage",
+      "nodes": [
+        {
+          "captures": {
+            "capture": {
+              "target": {
+                "kind": "CaptureContract",
+                "name": "security.epss-daily-v1"
+              }
+            }
+          },
+          "id": "epss",
+          "input": {},
+          "kind": "call",
+          "slot": "epss"
+        },
+        {
+          "id": "watched",
+          "kind": "read",
+          "query": {
+            "target": {
+              "kind": "QueryDefinition",
+              "name": "security.watched_vulnerabilities"
+            }
+          }
+        },
+        {
+          "id": "parse",
+          "input": {
+            "daily_base64": "$steps.epss.retrieved.body_base64",
+            "watched": "$steps.watched.result.rows"
+          },
+          "kind": "call",
+          "slot": "parse"
+        },
+        {
+          "fields": {
+            "changed": "$steps.parse.changed",
+            "model_version": "$steps.parse.model_version",
+            "score_date": "$steps.parse.score_date",
+            "scored": "$steps.parse.scored",
+            "watched": "$steps.parse.watched"
+          },
+          "id": "summary",
+          "kind": "project"
+        },
+        {
+          "id": "changed",
+          "kind": "guard",
+          "on_false": "nochange",
+          "predicate": {
+            "left": {
+              "$ref": "step",
+              "path": [
+                "changed"
+              ],
+              "step": "parse"
+            },
+            "op": "gt",
+            "right": {
+              "literal": 0
+            }
+          }
+        },
+        {
+          "id": "settle",
+          "kind": "halt"
+        },
+        {
+          "id": "nochange",
+          "kind": "halt",
+          "reason": "no_change"
+        }
+      ],
+      "returns": "summary",
+      "slots": {
+        "epss": {
+          "capability": {
+            "name": "fixture.security.epss-daily",
+            "version": 1
+          }
+        },
+        "parse": {
+          "capability": {
+            "name": "fixture.security.epss-scores",
+            "version": 1
+          }
+        }
+      },
+      "terminal_capability": 1
+    },
+    "definition_digest": "sha256:b7abeb3e10ba6846f20f04301dc40e923b58f70570fd562969b025790a5f7979",
+    "identity": {
+      "kind": "Procedure",
+      "name": "security.epss-triage"
+    }
+  },
+  "security.evidence-acquire.json": {
+    "activation_policy": "snapshot",
+    "artifact_format": "cruxible-procedure-v4",
+    "definition": {
+      "contract_in": {
+        "target": {
+          "kind": "Contract",
+          "name": "security-path-input/v1"
+        }
+      },
+      "contract_out": {
+        "target": {
+          "kind": "Contract",
+          "name": "security-file-evidence/v1"
+        }
+      },
+      "description": "Read one workspace file an analyst cites for a judgment (input.relative_path: code, a config, an analysis note) and retain it under security.workspace-evidence-v1; cite the Capture with `cruxible set ... --capture CAP-...`. At most 1 MiB (the built-in workspace.file's limit).",
+      "hard_caps": {
+        "max_capture_bytes": 1048576,
+        "max_items": 1,
+        "max_provider_calls": 1,
+        "max_repeat_attempts": 1,
+        "max_wall_clock": {
+          "microseconds": 120000000
+        }
+      },
+      "name": "security.evidence-acquire",
+      "nodes": [
+        {
+          "captures": {
+            "capture": {
+              "target": {
+                "kind": "CaptureContract",
+                "name": "security.workspace-evidence-v1"
+              }
+            }
+          },
+          "id": "evidence",
+          "input": {
+            "coordinate": {
+              "revision": "working"
+            },
+            "coordinate_type": "http-response-v1",
+            "logical_source": "security.analysis.evidence",
+            "relative_path": "$input.relative_path",
+            "replayability": "exact",
+            "selector": {
+              "whole": true
+            },
+            "selector_type": "whole-response-v1",
+            "tag": "playbill-workspace-file-source-request-v2"
+          },
+          "kind": "call",
+          "slot": "evidence"
+        },
+        {
+          "fields": {
+            "byte_length": "$steps.evidence.source.byte_length",
+            "bytes_digest": "$steps.evidence.source.bytes_digest"
+          },
+          "id": "summary",
+          "kind": "project"
+        }
+      ],
+      "returns": "summary",
+      "slots": {
+        "evidence": {
+          "capability": {
+            "name": "fixture.workspace.file",
+            "version": 1
+          }
+        }
+      },
+      "terminal_capability": 1
+    },
+    "definition_digest": "sha256:37b9c7a02b612e9919c2b6615b6f2b0da3bea8cd927cad78e93beefe07e723af",
+    "identity": {
+      "kind": "Procedure",
+      "name": "security.evidence-acquire"
+    }
+  },
+  "security.inventory-acquire.json": {
+    "activation_policy": "snapshot",
+    "artifact_format": "cruxible-procedure-v4",
+    "definition": {
+      "contract_in": {
+        "target": {
+          "kind": "Contract",
+          "name": "security-path-input/v1"
+        }
+      },
+      "contract_out": {
+        "target": {
+          "kind": "Contract",
+          "name": "security-file-evidence/v1"
+        }
+      },
+      "description": "Read one runtime-inventory scan from the attached workspace (input.relative_path, at most 1 MiB) and retain it under security.runtime-inventory-v1; the scope's security.inventory-import Line reads it when it lands. Either the kit's tool-neutral body {scope, looked_for, coverage: full|partial, assets: [{hostname, runs: [purl@version]}]} with no timestamps (an unchanged fleet is the same bytes), or a CycloneDX JSON SBOM of one asset (Syft, Trivy) annotated with metadata properties cruxible.scope and cruxible.asset.",
+      "hard_caps": {
+        "max_capture_bytes": 1048576,
+        "max_items": 1,
+        "max_provider_calls": 1,
+        "max_repeat_attempts": 1,
+        "max_wall_clock": {
+          "microseconds": 120000000
+        }
+      },
+      "name": "security.inventory-acquire",
+      "nodes": [
+        {
+          "captures": {
+            "capture": {
+              "target": {
+                "kind": "CaptureContract",
+                "name": "security.runtime-inventory-v1"
+              }
+            }
+          },
+          "id": "inventory",
+          "input": {
+            "coordinate": {
+              "revision": "working"
+            },
+            "coordinate_type": "http-response-v1",
+            "logical_source": "security.inventory",
+            "relative_path": "$input.relative_path",
+            "replayability": "exact",
+            "selector": {
+              "whole": true
+            },
+            "selector_type": "whole-response-v1",
+            "tag": "playbill-workspace-file-source-request-v2"
+          },
+          "kind": "call",
+          "slot": "inventory"
+        },
+        {
+          "fields": {
+            "byte_length": "$steps.inventory.source.byte_length",
+            "bytes_digest": "$steps.inventory.source.bytes_digest"
+          },
+          "id": "summary",
+          "kind": "project"
+        }
+      ],
+      "returns": "summary",
+      "slots": {
+        "inventory": {
+          "capability": {
+            "name": "fixture.workspace.file",
+            "version": 1
+          }
+        }
+      },
+      "terminal_capability": 1
+    },
+    "definition_digest": "sha256:6942db1400869631fe28766cc57698de9a4e86e061018cab7bf0383536ae2e64",
+    "identity": {
+      "kind": "Procedure",
+      "name": "security.inventory-acquire"
+    }
+  },
+  "security.inventory-import.json": {
+    "activation_policy": "drain",
+    "artifact_format": "cruxible-procedure-v4",
+    "definition": {
+      "contract_in": {
+        "target": {
+          "kind": "Contract",
+          "name": "security-inventory-import-input/v1"
+        }
+      },
+      "contract_out": {
+        "target": {
+          "kind": "Contract",
+          "name": "security-runtime-inventory-summary/v1"
+        }
+      },
+      "description": "Read the runtime-inventory Capture that triggered the Line (security.runtime-inventory-v1) for the Line's scope (parameter scope) and propose what changed: each asset by key and asset.scanned_in the scope's coverage, each release it runs (by product name, the purl's whole namespace and name, and version, with its purl as release.component) as asset.runs; a full scan retires runs it no longer sees (of the products it looked for) and restates the coverage revision (an unchanged scan re-observes it: freshness moves, nothing is proposed). A complete read states each asset's nones (asset.runs inverses): every product it named in looked_for that the asset does not run, and under * every product the asset ran before and no longer does (the run retires in the same change: a flip) or declares installing and does not run; a held none is restated (refreshed), retired when the product runs again or the scan no longer looks for it. For each open patch of a scanned asset: verification verified when a full scan shows the affected release no longer running, failed when it is claimed completed and a scan still shows it. A CycloneDX SBOM of one asset (metadata properties cruxible.scope, cruxible.asset) reads as that asset's complete run set, never as the scope's coverage, and only while every component is identified (a purl with a version, an OS component too): one that isn't could be any product, so the SBOM then only adds (unidentified counts them). Two ecosystems' packages of one name and version are one release with both purls as components. Halts other_scope for another scope's scan, no_change when nothing changed. Runs as a Line with trigger_input inventory.",
+      "hard_caps": {
+        "max_capture_bytes": 1048576,
+        "max_items": 5000,
+        "max_provider_calls": 2,
+        "max_repeat_attempts": 1,
+        "max_wall_clock": {
+          "microseconds": 300000000
+        }
+      },
+      "name": "security.inventory-import",
+      "nodes": [
+        {
+          "captures": {
+            "capture": {
+              "target": {
+                "kind": "CaptureContract",
+                "name": "security.runtime-inventory-v1"
+              }
+            }
+          },
+          "id": "inventory",
+          "input": {
+            "coordinate": {
+              "revision": "working"
+            },
+            "coordinate_type": "http-response-v1",
+            "logical_source": "security.inventory",
+            "relative_path": "inventory.json",
+            "replayability": "exact",
+            "selector": {
+              "whole": true
+            },
+            "selector_type": "whole-response-v1",
+            "tag": "playbill-workspace-file-source-request-v2"
+          },
+          "kind": "call",
+          "slot": "inventory"
+        },
+        {
+          "id": "held",
+          "kind": "read",
+          "parameters": {
+            "scope": "$input.scope"
+          },
+          "query": {
+            "target": {
+              "kind": "QueryDefinition",
+              "name": "security.inventory_index"
+            }
+          }
+        },
+        {
+          "id": "runs",
+          "kind": "read",
+          "parameters": {
+            "scope": "$input.scope"
+          },
+          "query": {
+            "target": {
+              "kind": "QueryDefinition",
+              "name": "security.inventory_runs"
+            }
+          }
+        },
+        {
+          "id": "patches",
+          "kind": "read",
+          "parameters": {
+            "scope": "$input.scope"
+          },
+          "query": {
+            "target": {
+              "kind": "QueryDefinition",
+              "name": "security.inventory_patches"
+            }
+          }
+        },
+        {
+          "id": "parse",
+          "input": {
+            "held": "$steps.held.result.rows",
+            "inventory_text": "$steps.inventory.content.text",
+            "patches": "$steps.patches.result.rows",
+            "runs": "$steps.runs.result.rows",
+            "scope": "$input.scope",
+            "truncated": {
+              "held": "$steps.held.truncated",
+              "patches": "$steps.patches.truncated",
+              "runs": "$steps.runs.truncated"
+            }
+          },
+          "kind": "call",
+          "slot": "parse"
+        },
+        {
+          "fields": {
+            "added": "$steps.parse.added",
+            "assets": "$steps.parse.assets",
+            "changed": "$steps.parse.changed",
+            "coverage": "$steps.parse.coverage",
+            "failed": "$steps.parse.failed",
+            "format": "$steps.parse.format",
+            "mine": "$steps.parse.mine",
+            "nones": "$steps.parse.nones",
+            "proposes": "$steps.parse.proposes",
+            "regressions": "$steps.parse.regressions",
+            "restated": "$steps.parse.restated",
+            "retired": "$steps.parse.retired",
+            "revised": "$steps.parse.revised",
+            "revision": "$steps.parse.revision",
+            "runs": "$steps.parse.runs",
+            "scope": "$steps.parse.scope",
+            "unidentified": "$steps.parse.unidentified",
+            "verified": "$steps.parse.verified"
+          },
+          "id": "summary",
+          "kind": "project"
+        },
+        {
+          "id": "mine",
+          "kind": "guard",
+          "on_false": "other",
+          "predicate": {
+            "left": {
+              "$ref": "step",
+              "path": [
+                "mine"
+              ],
+              "step": "parse"
+            },
+            "op": "gt",
+            "right": {
+              "literal": 0
+            }
+          }
+        },
+        {
+          "id": "changed",
+          "kind": "guard",
+          "on_false": "nochange",
+          "predicate": {
+            "left": {
+              "$ref": "step",
+              "path": [
+                "proposes"
+              ],
+              "step": "parse"
+            },
+            "op": "gt",
+            "right": {
+              "literal": 0
+            }
+          }
+        },
+        {
+          "id": "propose",
+          "kind": "halt"
+        },
+        {
+          "id": "other",
+          "kind": "halt",
+          "reason": "other_scope"
+        },
+        {
+          "id": "nochange",
+          "kind": "halt",
+          "reason": "no_change"
+        }
+      ],
+      "returns": "summary",
+      "slots": {
+        "inventory": {
+          "capability": {
+            "name": "fixture.workspace.file",
+            "version": 1
+          }
+        },
+        "parse": {
+          "capability": {
+            "name": "fixture.security.runtime-inventory",
+            "version": 1
+          }
+        }
+      },
+      "terminal_capability": 1
+    },
+    "definition_digest": "sha256:f88ff11803f937897db5231b6e148bdbcc26e700eb2add4bdd82f6609cf64d90",
+    "identity": {
+      "kind": "Procedure",
+      "name": "security.inventory-import"
+    }
+  },
+  "security.kev-attention.json": {
+    "activation_policy": "drain",
+    "artifact_format": "cruxible-procedure-v4",
+    "definition": {
+      "contract_in": {
+        "target": {
+          "kind": "Contract",
+          "name": "security-empty-input/v1"
+        }
+      },
+      "contract_out": {
+        "target": {
+          "kind": "Contract",
+          "name": "security-kev-attention-summary/v1"
+        }
+      },
+      "description": "Read the KEV catalog Capture that triggered the Line and post one inbox item per CVE added in the catalog's last 7 days whose vendor/product matches a release in inventory that nobody watches the CVE for or nobody has assessed: possibly exposed, nobody has looked. Never changes accepted state. Runs as a Line with trigger_input catalog.",
+      "hard_caps": {
+        "max_capture_bytes": 16777216,
+        "max_items": 1000,
+        "max_provider_calls": 2,
+        "max_repeat_attempts": 1,
+        "max_wall_clock": {
+          "microseconds": 300000000
+        }
+      },
+      "name": "security.kev-attention",
+      "nodes": [
+        {
+          "captures": {
+            "capture": {
+              "target": {
+                "kind": "CaptureContract",
+                "name": "security.kev-http-v1"
+              }
+            }
+          },
+          "id": "catalog",
+          "input": {
+            "expected_format": "json",
+            "extract": false,
+            "logical_source": "cisa.kev.catalog",
+            "max_bytes": 4194304,
+            "render": false,
+            "url": "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
+          },
+          "kind": "call",
+          "slot": "catalog"
+        },
+        {
+          "id": "releases",
+          "kind": "read",
+          "query": {
+            "target": {
+              "kind": "QueryDefinition",
+              "name": "security.release_inventory"
+            }
+          }
+        },
+        {
+          "id": "watched",
+          "kind": "read",
+          "query": {
+            "target": {
+              "kind": "QueryDefinition",
+              "name": "security.watched_vulnerabilities"
+            }
+          }
+        },
+        {
+          "id": "assessments",
+          "kind": "read",
+          "query": {
+            "target": {
+              "kind": "QueryDefinition",
+              "name": "security.assessment_index"
+            }
+          }
+        },
+        {
+          "id": "match",
+          "input": {
+            "assessments": "$steps.assessments.result.rows",
+            "catalog_base64": "$steps.catalog.retrieved.body_base64",
+            "releases": "$steps.releases.result.rows",
+            "watched": "$steps.watched.result.rows"
+          },
+          "kind": "call",
+          "slot": "match"
+        },
+        {
+          "fields": {
+            "catalog_version": "$steps.match.catalog_version",
+            "newly_listed": "$steps.match.newly_listed",
+            "posted": "$steps.match.posted"
+          },
+          "id": "summary",
+          "kind": "project"
+        },
+        {
+          "id": "posted",
+          "kind": "guard",
+          "on_false": "quiet",
+          "predicate": {
+            "left": {
+              "$ref": "step",
+              "path": [
+                "posted"
+              ],
+              "step": "match"
+            },
+            "op": "gt",
+            "right": {
+              "literal": 0
+            }
+          }
+        },
+        {
+          "contract": {
+            "name": "security.inbox-item",
+            "version": 1
+          },
+          "fields": {
+            "item": "$item"
+          },
+          "for_each": "$steps.match.items",
+          "id": "post",
+          "kind": "post_inbox",
+          "max_items": 1000
+        },
+        {
+          "id": "quiet",
+          "kind": "halt",
+          "reason": "nothing_to_post"
+        }
+      ],
+      "returns": "summary",
+      "slots": {
+        "catalog": {
+          "capability": {
+            "name": "fixture.web.fetch",
+            "version": 1
+          }
+        },
+        "match": {
+          "capability": {
+            "name": "fixture.security.kev-attention",
+            "version": 1
+          }
+        }
+      },
+      "terminal_capability": 1
+    },
+    "definition_digest": "sha256:c4dee23c4c35473b58fe568603eb1a6d264d9b453f4ca378f46f0e7b57512a95",
+    "identity": {
+      "kind": "Procedure",
+      "name": "security.kev-attention"
+    }
+  },
+  "security.kev-triage.json": {
+    "activation_policy": "drain",
+    "artifact_format": "cruxible-procedure-v4",
+    "definition": {
+      "contract_in": {
+        "target": {
+          "kind": "Contract",
+          "name": "security-empty-input/v1"
+        }
+      },
+      "contract_out": {
+        "target": {
+          "kind": "Contract",
+          "name": "security-kev-triage-summary/v1"
+        }
+      },
+      "description": "Read the KEV catalog Capture that triggered the Line (security.kev-http-v1) and the watched vulnerabilities, and settle one observation Claim per KEV field that changed (kev_listed, kev_date_added, kev_due_date, kev_ransomware_use) under a settle mandate, or propose it under a propose cap. Halts no_change when nothing changed. Runs as a Line with trigger_input catalog.",
+      "hard_caps": {
+        "max_capture_bytes": 16777216,
+        "max_items": 5000,
+        "max_provider_calls": 2,
+        "max_repeat_attempts": 1,
+        "max_wall_clock": {
+          "microseconds": 300000000
+        }
+      },
+      "measurements": [
+        {
+          "check_after": {
+            "microseconds": 259200000000
+          },
+          "expires_after": {
+            "microseconds": 864000000000
+          },
+          "measurement": {
+            "expect": {
+              "max_count": 0
+            },
+            "kind": "accepted_query",
+            "query": {
+              "artifact_digest": "sha256:b7899d5b548385fc1cd8485f0737923cf36f3c53bc9a87e11928828412624ec2",
+              "role": "query",
+              "target": {
+                "kind": "QueryDefinition",
+                "name": "security.kev_triage_backlog"
+              }
+            }
+          },
+          "name": "kev-backlog-cleared",
+          "review_when": [
+            {
+              "metric": "satisfied_rate",
+              "min_readings": 5,
+              "name": "satisfied-rate-low",
+              "operator": "lt",
+              "threshold": {
+                "$decimal": "0.8"
+              }
+            }
+          ],
+          "subject_grain": "procedure_unit"
+        }
+      ],
+      "name": "security.kev-triage",
+      "nodes": [
+        {
+          "captures": {
+            "capture": {
+              "target": {
+                "kind": "CaptureContract",
+                "name": "security.kev-http-v1"
+              }
+            }
+          },
+          "id": "catalog",
+          "input": {
+            "expected_format": "json",
+            "extract": false,
+            "logical_source": "cisa.kev.catalog",
+            "max_bytes": 4194304,
+            "render": false,
+            "url": "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
+          },
+          "kind": "call",
+          "slot": "catalog"
+        },
+        {
+          "id": "watched",
+          "kind": "read",
+          "query": {
+            "target": {
+              "kind": "QueryDefinition",
+              "name": "security.watched_vulnerabilities"
+            }
+          }
+        },
+        {
+          "id": "parse",
+          "input": {
+            "catalog_base64": "$steps.catalog.retrieved.body_base64",
+            "watched": "$steps.watched.result.rows"
+          },
+          "kind": "call",
+          "slot": "parse"
+        },
+        {
+          "fields": {
+            "catalog_version": "$steps.parse.catalog_version",
+            "changed": "$steps.parse.changed",
+            "listed": "$steps.parse.listed",
+            "watched": "$steps.parse.watched"
+          },
+          "id": "summary",
+          "kind": "project"
+        },
+        {
+          "id": "changed",
+          "kind": "guard",
+          "on_false": "nochange",
+          "predicate": {
+            "left": {
+              "$ref": "step",
+              "path": [
+                "changed"
+              ],
+              "step": "parse"
+            },
+            "op": "gt",
+            "right": {
+              "literal": 0
+            }
+          }
+        },
+        {
+          "id": "settle",
+          "kind": "halt"
+        },
+        {
+          "id": "nochange",
+          "kind": "halt",
+          "reason": "no_change"
+        }
+      ],
+      "returns": "summary",
+      "slots": {
+        "catalog": {
+          "capability": {
+            "name": "fixture.web.fetch",
+            "version": 1
+          }
+        },
+        "parse": {
+          "capability": {
+            "name": "fixture.security.kev-catalog",
+            "version": 1
+          }
+        }
+      },
+      "terminal_capability": 1
+    },
+    "definition_digest": "sha256:c62028f1a4f5d698cf4ee1804fc53e537df77fd60a5fb8d94ce11e3219bbd2b6",
+    "identity": {
+      "kind": "Procedure",
+      "name": "security.kev-triage"
+    }
+  },
+  "security.log-acquire.json": {
+    "activation_policy": "snapshot",
+    "artifact_format": "cruxible-procedure-v4",
+    "definition": {
+      "contract_in": {
+        "target": {
+          "kind": "Contract",
+          "name": "security-path-input/v1"
+        }
+      },
+      "contract_out": {
+        "target": {
+          "kind": "Contract",
+          "name": "security-file-evidence/v1"
+        }
+      },
+      "description": "Read one log read from the attached workspace (input.relative_path, at most 1 MiB): {audit: {incident, service}, source, query, from, to, complete, records_scanned, matches: [{at, summary}]}, written by the agent from its own log tool's answer, match summaries redacted. Retained under security.log-read-v1; the incident's security.log-import Line reads it when it lands. complete means every record in [from, to] was searched: no sampling, no result cap, retention reaching from.",
+      "hard_caps": {
+        "max_capture_bytes": 1048576,
+        "max_items": 1,
+        "max_provider_calls": 1,
+        "max_repeat_attempts": 1,
+        "max_wall_clock": {
+          "microseconds": 120000000
+        }
+      },
+      "name": "security.log-acquire",
+      "nodes": [
+        {
+          "captures": {
+            "capture": {
+              "target": {
+                "kind": "CaptureContract",
+                "name": "security.log-read-v1"
+              }
+            }
+          },
+          "id": "log",
+          "input": {
+            "coordinate": {
+              "revision": "working"
+            },
+            "coordinate_type": "http-response-v1",
+            "logical_source": "security.log-read",
+            "relative_path": "$input.relative_path",
+            "replayability": "exact",
+            "selector": {
+              "whole": true
+            },
+            "selector_type": "whole-response-v1",
+            "tag": "playbill-workspace-file-source-request-v2"
+          },
+          "kind": "call",
+          "slot": "log"
+        },
+        {
+          "fields": {
+            "byte_length": "$steps.log.source.byte_length",
+            "bytes_digest": "$steps.log.source.bytes_digest"
+          },
+          "id": "summary",
+          "kind": "project"
+        }
+      ],
+      "returns": "summary",
+      "slots": {
+        "log": {
+          "capability": {
+            "name": "fixture.workspace.file",
+            "version": 1
+          }
+        }
+      },
+      "terminal_capability": 1
+    },
+    "definition_digest": "sha256:3cf02dfb703d1b156bf49f1a39d548ecdec1d084b65868c333a72ab069550339",
+    "identity": {
+      "kind": "Procedure",
+      "name": "security.log-acquire"
+    }
+  },
+  "security.log-import.json": {
+    "activation_policy": "drain",
+    "artifact_format": "cruxible-procedure-v4",
+    "definition": {
+      "contract_in": {
+        "target": {
+          "kind": "Contract",
+          "name": "security-log-import-input/v1"
+        }
+      },
+      "contract_out": {
+        "target": {
+          "kind": "Contract",
+          "name": "security-log-read-summary/v1"
+        }
+      },
+      "description": "Read the log-read Capture that triggered the Line (security.log-read-v1) for the Line's incident (parameter incident, its name) and propose the audit by key (incident, service) with its twins and one security.audit.read (SOURCE FROM/TO) for a complete read. An incomplete read is posted (read_incomplete) and never becomes a read: it is a finding about the logs, not about the attacker. Never a result. Halts other_incident for another incident's read. Runs as a Line with trigger_input log.",
+      "hard_caps": {
+        "max_capture_bytes": 1048576,
+        "max_items": 100,
+        "max_provider_calls": 2,
+        "max_repeat_attempts": 1,
+        "max_wall_clock": {
+          "microseconds": 120000000
+        }
+      },
+      "name": "security.log-import",
+      "nodes": [
+        {
+          "captures": {
+            "capture": {
+              "target": {
+                "kind": "CaptureContract",
+                "name": "security.log-read-v1"
+              }
+            }
+          },
+          "id": "log",
+          "input": {
+            "coordinate": {
+              "revision": "working"
+            },
+            "coordinate_type": "http-response-v1",
+            "logical_source": "security.log-read",
+            "relative_path": "log-read.json",
+            "replayability": "exact",
+            "selector": {
+              "whole": true
+            },
+            "selector_type": "whole-response-v1",
+            "tag": "playbill-workspace-file-source-request-v2"
+          },
+          "kind": "call",
+          "slot": "log"
+        },
+        {
+          "id": "held",
+          "kind": "read",
+          "parameters": {
+            "incident": "$input.incident"
+          },
+          "query": {
+            "target": {
+              "kind": "QueryDefinition",
+              "name": "security.audit_status"
+            }
+          }
+        },
+        {
+          "id": "parse",
+          "input": {
+            "held": "$steps.held.result.rows",
+            "incident": "$input.incident",
+            "read_text": "$steps.log.content.text",
+            "truncated": "$steps.held.truncated"
+          },
+          "kind": "call",
+          "slot": "parse"
+        },
+        {
+          "fields": {
+            "added": "$steps.parse.added",
+            "changed": "$steps.parse.changed",
+            "incident": "$steps.parse.incident",
+            "matches": "$steps.parse.matches",
+            "mine": "$steps.parse.mine",
+            "posted": "$steps.parse.posted",
+            "read": "$steps.parse.read",
+            "recordable": "$steps.parse.recordable",
+            "service": "$steps.parse.service",
+            "source": "$steps.parse.source"
+          },
+          "id": "summary",
+          "kind": "project"
+        },
+        {
+          "id": "mine",
+          "kind": "guard",
+          "on_false": "other",
+          "predicate": {
+            "left": {
+              "$ref": "step",
+              "path": [
+                "mine"
+              ],
+              "step": "parse"
+            },
+            "op": "gt",
+            "right": {
+              "literal": 0
+            }
+          }
+        },
+        {
+          "id": "recordable",
+          "kind": "guard",
+          "on_false": "post",
+          "predicate": {
+            "left": {
+              "$ref": "step",
+              "path": [
+                "recordable"
+              ],
+              "step": "parse"
+            },
+            "op": "gt",
+            "right": {
+              "literal": 0
+            }
+          }
+        },
+        {
+          "id": "changed",
+          "kind": "guard",
+          "on_false": "nochange",
+          "predicate": {
+            "left": {
+              "$ref": "step",
+              "path": [
+                "changed"
+              ],
+              "step": "parse"
+            },
+            "op": "gt",
+            "right": {
+              "literal": 0
+            }
+          }
+        },
+        {
+          "id": "propose",
+          "kind": "halt"
+        },
+        {
+          "contract": {
+            "name": "security.inbox-item",
+            "version": 1
+          },
+          "fields": {
+            "item": "$item"
+          },
+          "for_each": "$steps.parse.inbox",
+          "id": "post",
+          "kind": "post_inbox",
+          "max_items": 10
+        },
+        {
+          "id": "other",
+          "kind": "halt",
+          "reason": "other_incident"
+        },
+        {
+          "id": "nochange",
+          "kind": "halt",
+          "reason": "no_change"
+        }
+      ],
+      "returns": "summary",
+      "slots": {
+        "log": {
+          "capability": {
+            "name": "fixture.workspace.file",
+            "version": 1
+          }
+        },
+        "parse": {
+          "capability": {
+            "name": "fixture.security.log-reads",
+            "version": 1
+          }
+        }
+      },
+      "terminal_capability": 1
+    },
+    "definition_digest": "sha256:9fe80f8798f22f75e607c69596e70801c2aa870ffccc4d63b9222e20fa530ea6",
+    "identity": {
+      "kind": "Procedure",
+      "name": "security.log-import"
+    }
+  },
+  "security.registry-parse.json": {
+    "activation_policy": "drain",
+    "artifact_format": "cruxible-procedure-v4",
+    "definition": {
+      "contract_in": {
+        "target": {
+          "kind": "Contract",
+          "name": "security-registry-parse-input/v1"
+        }
+      },
+      "contract_out": {
+        "target": {
+          "kind": "Contract",
+          "name": "security-registry-parse-summary/v1"
+        }
+      },
+      "description": "Read the PyPI release Capture that triggered the Line (security.pypi-release-v1) for the Line's project (parameters: source pypi/PROJECT, project, versions) and propose what changed: each served file as an artifact with its digest, release, and (from provenance) the workflow at the commit that published it, its environment and the commit; the target's source repository; the coverage restated. Halts other_source for another project. Runs as a Line with trigger_input registry.",
+      "hard_caps": {
+        "max_capture_bytes": 16777216,
+        "max_items": 5000,
+        "max_provider_calls": 2,
+        "max_repeat_attempts": 1,
+        "max_wall_clock": {
+          "microseconds": 300000000
+        }
+      },
+      "name": "security.registry-parse",
+      "nodes": [
+        {
+          "captures": {
+            "capture": {
+              "target": {
+                "kind": "CaptureContract",
+                "name": "security.pypi-release-v1"
+              }
+            }
+          },
+          "id": "registry",
+          "input": {
+            "project": "$input.project",
+            "versions": "$input.versions"
+          },
+          "kind": "call",
+          "slot": "registry"
+        },
+        {
+          "id": "mine",
+          "kind": "guard",
+          "on_false": "other",
+          "predicate": {
+            "left": {
+              "$ref": "step",
+              "path": [
+                "project"
+              ],
+              "step": "registry"
+            },
+            "op": "eq",
+            "right": {
+              "$ref": "input",
+              "path": [
+                "project"
+              ]
+            }
+          }
+        },
+        {
+          "id": "coverage",
+          "kind": "read",
+          "parameters": {
+            "scope": "registry.files",
+            "source": "$input.source"
+          },
+          "query": {
+            "target": {
+              "kind": "QueryDefinition",
+              "name": "security.coverage_index"
+            }
+          }
+        },
+        {
+          "id": "held",
+          "kind": "read",
+          "parameters": {
+            "name": "$input.project",
+            "registry": "pypi"
+          },
+          "query": {
+            "target": {
+              "kind": "QueryDefinition",
+              "name": "security.registry_facts"
+            }
+          }
+        },
+        {
+          "id": "parse",
+          "input": {
+            "coverage": "$steps.coverage.result.rows",
+            "held": "$steps.held.result.rows",
+            "release": "$steps.registry"
+          },
+          "kind": "call",
+          "slot": "parse"
+        },
+        {
+          "fields": {
+            "added": "$steps.parse.added",
+            "changed": "$steps.parse.changed",
+            "files": "$steps.parse.files",
+            "locator": "$steps.parse.locator",
+            "restated": "$steps.parse.restated",
+            "retired": "$steps.parse.retired",
+            "revised": "$steps.parse.revised",
+            "revision": "$steps.parse.revision"
+          },
+          "id": "summary",
+          "kind": "project"
+        },
+        {
+          "id": "propose",
+          "kind": "halt"
+        },
+        {
+          "id": "other",
+          "kind": "halt",
+          "reason": "other_source"
+        }
+      ],
+      "returns": "summary",
+      "slots": {
+        "parse": {
+          "capability": {
+            "name": "fixture.security.registry-facts",
+            "version": 1
+          }
+        },
+        "registry": {
+          "capability": {
+            "name": "fixture.security.pypi-release",
+            "version": 1
+          }
+        }
+      },
+      "terminal_capability": 1
+    },
+    "definition_digest": "sha256:c058db0da4535a44393e420e9dd3f117788a4fcf90cd24a27af4326ec7fc303a",
+    "identity": {
+      "kind": "Procedure",
+      "name": "security.registry-parse"
+    }
+  },
+  "security.reproduction-acquire.json": {
+    "activation_policy": "snapshot",
+    "artifact_format": "cruxible-procedure-v4",
+    "definition": {
+      "contract_in": {
+        "target": {
+          "kind": "Contract",
+          "name": "security-path-input/v1"
+        }
+      },
+      "contract_out": {
+        "target": {
+          "kind": "Contract",
+          "name": "security-file-evidence/v1"
+        }
+      },
+      "description": "Read one proof-of-concept run's report from the attached workspace (input.relative_path: a JUnit XML or a test log) and retain it under security.reproduction-v1; cite the Capture for security.finding.verdict (confirmed: the PoC fails while vulnerable) or verification (fixed: it passes).",
+      "hard_caps": {
+        "max_capture_bytes": 1048576,
+        "max_items": 1,
+        "max_provider_calls": 1,
+        "max_repeat_attempts": 1,
+        "max_wall_clock": {
+          "microseconds": 120000000
+        }
+      },
+      "name": "security.reproduction-acquire",
+      "nodes": [
+        {
+          "captures": {
+            "capture": {
+              "target": {
+                "kind": "CaptureContract",
+                "name": "security.reproduction-v1"
+              }
+            }
+          },
+          "id": "reproduction",
+          "input": {
+            "coordinate": {
+              "revision": "working"
+            },
+            "coordinate_type": "http-response-v1",
+            "logical_source": "security.reproduction",
+            "relative_path": "$input.relative_path",
+            "replayability": "exact",
+            "selector": {
+              "whole": true
+            },
+            "selector_type": "whole-response-v1",
+            "tag": "playbill-workspace-file-source-request-v2"
+          },
+          "kind": "call",
+          "slot": "reproduction"
+        },
+        {
+          "fields": {
+            "byte_length": "$steps.reproduction.source.byte_length",
+            "bytes_digest": "$steps.reproduction.source.bytes_digest"
+          },
+          "id": "summary",
+          "kind": "project"
+        }
+      ],
+      "returns": "summary",
+      "slots": {
+        "reproduction": {
+          "capability": {
+            "name": "fixture.workspace.file",
+            "version": 1
+          }
+        }
+      },
+      "terminal_capability": 1
+    },
+    "definition_digest": "sha256:1011177894b7f7db16858c543f322d1a93b349899f8389d25f2ba19c30202cfe",
+    "identity": {
+      "kind": "Procedure",
+      "name": "security.reproduction-acquire"
+    }
+  },
+  "security.sarif-acquire.json": {
+    "activation_policy": "snapshot",
+    "artifact_format": "cruxible-procedure-v4",
+    "definition": {
+      "contract_in": {
+        "target": {
+          "kind": "Contract",
+          "name": "security-path-input/v1"
+        }
+      },
+      "contract_out": {
+        "target": {
+          "kind": "Contract",
+          "name": "security-file-evidence/v1"
+        }
+      },
+      "description": "Read one SARIF 2.1.0 scan log from the attached workspace (input.relative_path) and retain it under security.sarif-v1; the repository's security.sarif-import Line reads it when it lands. Annotate each run first: versionControlProvenance (repositoryUri, revisionId) and properties[\"cruxible.coverage\"] (full or partial).",
+      "hard_caps": {
+        "max_capture_bytes": 1048576,
+        "max_items": 1,
+        "max_provider_calls": 1,
+        "max_repeat_attempts": 1,
+        "max_wall_clock": {
+          "microseconds": 120000000
+        }
+      },
+      "name": "security.sarif-acquire",
+      "nodes": [
+        {
+          "captures": {
+            "capture": {
+              "target": {
+                "kind": "CaptureContract",
+                "name": "security.sarif-v1"
+              }
+            }
+          },
+          "id": "sarif",
+          "input": {
+            "coordinate": {
+              "revision": "working"
+            },
+            "coordinate_type": "http-response-v1",
+            "logical_source": "sarif.log",
+            "relative_path": "$input.relative_path",
+            "replayability": "exact",
+            "selector": {
+              "whole": true
+            },
+            "selector_type": "whole-response-v1",
+            "tag": "playbill-workspace-file-source-request-v2"
+          },
+          "kind": "call",
+          "slot": "sarif"
+        },
+        {
+          "fields": {
+            "byte_length": "$steps.sarif.source.byte_length",
+            "bytes_digest": "$steps.sarif.source.bytes_digest"
+          },
+          "id": "summary",
+          "kind": "project"
+        }
+      ],
+      "returns": "summary",
+      "slots": {
+        "sarif": {
+          "capability": {
+            "name": "fixture.workspace.file",
+            "version": 1
+          }
+        }
+      },
+      "terminal_capability": 1
+    },
+    "definition_digest": "sha256:ac9b2983be48cf47c13e2163fe3d4aa539e8998cafe983a6bb39c65b2e02aa02",
+    "identity": {
+      "kind": "Procedure",
+      "name": "security.sarif-acquire"
+    }
+  },
+  "security.sbom-acquire.json": {
+    "activation_policy": "snapshot",
+    "artifact_format": "cruxible-procedure-v4",
+    "definition": {
+      "contract_in": {
+        "target": {
+          "kind": "Contract",
+          "name": "security-path-input/v1"
+        }
+      },
+      "contract_out": {
+        "target": {
+          "kind": "Contract",
+          "name": "security-file-evidence/v1"
+        }
+      },
+      "description": "Read one CycloneDX JSON SBOM from the attached workspace (input.relative_path) and retain it under security.cyclonedx-sbom-v1; security.sbom-import reads it when it lands. At most 1 MiB (the built-in workspace.file's limit).",
+      "hard_caps": {
+        "max_capture_bytes": 1048576,
+        "max_items": 1,
+        "max_provider_calls": 1,
+        "max_repeat_attempts": 1,
+        "max_wall_clock": {
+          "microseconds": 120000000
+        }
+      },
+      "name": "security.sbom-acquire",
+      "nodes": [
+        {
+          "captures": {
+            "capture": {
+              "target": {
+                "kind": "CaptureContract",
+                "name": "security.cyclonedx-sbom-v1"
+              }
+            }
+          },
+          "id": "sbom",
+          "input": {
+            "coordinate": {
+              "revision": "working"
+            },
+            "coordinate_type": "http-response-v1",
+            "logical_source": "cyclonedx.sbom",
+            "relative_path": "$input.relative_path",
+            "replayability": "exact",
+            "selector": {
+              "whole": true
+            },
+            "selector_type": "whole-response-v1",
+            "tag": "playbill-workspace-file-source-request-v2"
+          },
+          "kind": "call",
+          "slot": "sbom"
+        },
+        {
+          "fields": {
+            "byte_length": "$steps.sbom.source.byte_length",
+            "bytes_digest": "$steps.sbom.source.bytes_digest"
+          },
+          "id": "summary",
+          "kind": "project"
+        }
+      ],
+      "returns": "summary",
+      "slots": {
+        "sbom": {
+          "capability": {
+            "name": "fixture.workspace.file",
+            "version": 1
+          }
+        }
+      },
+      "terminal_capability": 1
+    },
+    "definition_digest": "sha256:6164ea338b3bcd2c8a742c6eaecd3aa783d39713d16fc086130cb8518ae93e20",
+    "identity": {
+      "kind": "Procedure",
+      "name": "security.sbom-acquire"
+    }
+  },
+  "security.sbom-import.json": {
+    "activation_policy": "drain",
+    "artifact_format": "cruxible-procedure-v4",
+    "definition": {
+      "contract_in": {
+        "target": {
+          "kind": "Contract",
+          "name": "security-empty-input/v1"
+        }
+      },
+      "contract_out": {
+        "target": {
+          "kind": "Contract",
+          "name": "security-sbom-summary/v1"
+        }
+      },
+      "description": "Read the CycloneDX SBOM Capture that triggered the Line (security.cyclonedx-sbom-v1) and propose its product and release (created by key, or the held ones), the release's product link, supplier, and one security.release.component observation per component purl the release does not hold yet. Propose-only. Runs as a Line with trigger_input sbom.",
+      "hard_caps": {
+        "max_capture_bytes": 16777216,
+        "max_items": 5000,
+        "max_provider_calls": 2,
+        "max_repeat_attempts": 1,
+        "max_wall_clock": {
+          "microseconds": 300000000
+        }
+      },
+      "name": "security.sbom-import",
+      "nodes": [
+        {
+          "captures": {
+            "capture": {
+              "target": {
+                "kind": "CaptureContract",
+                "name": "security.cyclonedx-sbom-v1"
+              }
+            }
+          },
+          "id": "sbom",
+          "input": {
+            "coordinate": {
+              "revision": "working"
+            },
+            "coordinate_type": "http-response-v1",
+            "logical_source": "cyclonedx.sbom",
+            "relative_path": "sbom.cdx.json",
+            "replayability": "exact",
+            "selector": {
+              "whole": true
+            },
+            "selector_type": "whole-response-v1",
+            "tag": "playbill-workspace-file-source-request-v2"
+          },
+          "kind": "call",
+          "slot": "sbom"
+        },
+        {
+          "id": "releases",
+          "kind": "read",
+          "query": {
+            "target": {
+              "kind": "QueryDefinition",
+              "name": "security.release_inventory"
+            }
+          }
+        },
+        {
+          "id": "parse",
+          "input": {
+            "releases": "$steps.releases.result.rows",
+            "sbom_text": "$steps.sbom.content.text"
+          },
+          "kind": "call",
+          "slot": "parse"
+        },
+        {
+          "fields": {
+            "added": "$steps.parse.added",
+            "changed": "$steps.parse.changed",
+            "components": "$steps.parse.components",
+            "product": "$steps.parse.product",
+            "skipped": "$steps.parse.skipped",
+            "version": "$steps.parse.version"
+          },
+          "id": "summary",
+          "kind": "project"
+        },
+        {
+          "id": "changed",
+          "kind": "guard",
+          "on_false": "nochange",
+          "predicate": {
+            "left": {
+              "$ref": "step",
+              "path": [
+                "changed"
+              ],
+              "step": "parse"
+            },
+            "op": "gt",
+            "right": {
+              "literal": 0
+            }
+          }
+        },
+        {
+          "id": "propose",
+          "kind": "halt"
+        },
+        {
+          "id": "nochange",
+          "kind": "halt",
+          "reason": "no_change"
+        }
+      ],
+      "returns": "summary",
+      "slots": {
+        "parse": {
+          "capability": {
+            "name": "fixture.security.cyclonedx-components",
+            "version": 1
+          }
+        },
+        "sbom": {
+          "capability": {
+            "name": "fixture.workspace.file",
+            "version": 1
+          }
+        }
+      },
+      "terminal_capability": 1
+    },
+    "definition_digest": "sha256:82bf347ca808b6f3a31585c181f77101e75341a69f246d5a08b00ec1db7e4677",
+    "identity": {
+      "kind": "Procedure",
+      "name": "security.sbom-import"
+    }
+  }
+}

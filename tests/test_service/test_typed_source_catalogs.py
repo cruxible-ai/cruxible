@@ -1,0 +1,376 @@
+"""Served source catalogs select only their typed owners and exact source members."""
+
+from __future__ import annotations
+
+import hashlib
+from contextlib import contextmanager
+from datetime import timedelta
+from pathlib import Path
+
+import pytest
+
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
+from cruxible_client.contracts.captures import (
+    capture_contract_digest,
+    capture_contract_path,
+    render_capture_contract,
+)
+from cruxible_client.contracts.errors import ExecutionError
+from cruxible_client.contracts.procedure_mandates import (
+    procedure_mandate_digest,
+    procedure_mandate_path,
+    render_procedure_mandate,
+)
+from cruxible_client.contracts.procedures.line_specs import (
+    line_identity_digest,
+    line_spec_digest,
+    line_spec_path,
+    render_line_spec,
+)
+from cruxible_client.contracts.providers import provider_digest, provider_path, render_provider
+from cruxible_core.compiler.assembler import ProjectionAssembler
+from cruxible_core.indexes.sqlite import bind_projection
+from cruxible_core.indexes.typed_state import TypedStateReader
+from cruxible_core.procedures.reference_binding import authored_procedure
+from cruxible_core.service.evidence.evidence import accepted_claim_providers
+from cruxible_core.service.procedures.procedure_runs import (
+    LineRunNotAccepted,
+    _accepted_capture_contracts,
+    _accepted_line_by_reference,
+    _accepted_line_mandates,
+    _assert_line_closure_complete,
+    _line_catalogs,
+)
+from tests.core_support._p2b1_support import accepted_provider
+from tests.core_support._pc_c_support import capture_contract, provider
+from tests.core_support._projection_support import MemoryLedger, accepted_coordinate
+from tests.core_support._support import initialize_local
+from tests.support.procedures import procedure_members  # noqa: E402
+from tests.test_procedures.test_line_specs import _line
+from tests.test_procedures.test_procedure_run_surface import (
+    READ_TIME,
+    _line_mandate,
+    _slotless_procedure,
+)
+
+
+def _published_sources(tmp_path, tree, monkeypatch, *, instance=None):
+    if instance is None:
+        instance, _owner = initialize_local(tmp_path)
+    repository = MemoryLedger(tmp_path / "catalog-repository", tree)
+    # Source bindings use actual Git blob object IDs. The older MemoryLedger
+    # helper also keeps its synthetic entry IDs for its frozen projection tests.
+    repository._blob_by_oid.update(
+        {
+            hashlib.sha256(f"blob {len(raw)}\0".encode() + raw).hexdigest(): raw
+            for raw in tree.values()
+        }
+    )
+    coordinate = accepted_coordinate(repository).model_copy(
+        update={"compiler": instance.accepted_coordinate().compiler}
+    )
+    publication = tmp_path / "catalog-projection"
+    publication.mkdir()
+    assembler = ProjectionAssembler(
+        repository,
+        accepted=coordinate,
+        publication_directory=publication,
+        bodies=instance.body_store(),
+    )
+    result = assembler.assemble(
+        assembler.request(output_staging_directory=publication / ".stage-catalog")
+    )
+
+    @contextmanager
+    def bind(expected):
+        assert expected == coordinate
+        with bind_projection(Path(result.manifest_path), expected=coordinate) as projection:
+            yield projection.attach_sources(repository, bodies=instance.body_store(), history=None)
+
+    def no_tree(*_args, **_kwargs):
+        pytest.fail("served typed catalogs must not scan accepted tree members")
+
+    reads = []
+    member_bytes = TypedStateReader.member_bytes
+
+    def counted(reader, path):
+        reads.append(path)
+        return member_bytes(reader, path)
+
+    monkeypatch.setattr(TypedStateReader, "member_bytes", counted)
+    monkeypatch.setattr(instance, "bind_accepted_projection", bind)
+    monkeypatch.setattr(instance, "tree_at", no_tree)
+    monkeypatch.setattr(instance, "immutable_tree_at", no_tree)
+    return instance, coordinate, reads
+
+
+@pytest.mark.parametrize("unrelated", (2, 17))
+def test_provider_grading_reads_only_its_selected_closure(tmp_path, monkeypatch, unrelated):
+    contract = capture_contract()
+    root = provider(contract, name="root")
+    leaf = provider(contract, name="leaf").model_copy(
+        update={"upstream_provenance": (root.identity,)}
+    )
+    owners = [root, leaf, *(provider(contract, name=f"unused-{i}") for i in range(unrelated))]
+    tree = {
+        capture_contract_path(contract.identity.name): render_capture_contract(contract),
+        **{provider_path(item.identity.name): render_provider(item) for item in owners},
+    }
+    instance, coordinate, reads = _published_sources(tmp_path, tree, monkeypatch)
+    providers = accepted_claim_providers(instance, coordinate=coordinate)
+    assert reads == []
+    assert providers[leaf.identity.qualified] == leaf
+    assert providers[root.identity.qualified] == root
+    assert providers[leaf.identity.qualified] == leaf
+    assert reads == [provider_path("leaf"), provider_path("root")]
+    assert providers.get("Provider:absent") is None
+    assert set(providers) == {item.identity.qualified for item in owners}
+    assert len(providers) == unrelated + 2
+    assert reads == [provider_path("leaf"), provider_path("root")]
+
+
+@pytest.mark.parametrize("unrelated", (2, 17))
+def test_line_catalogs_read_only_live_exact_pins(tmp_path, monkeypatch, unrelated):
+    live = accepted_provider()
+    contract = capture_contract()
+    retired = provider(contract, name="retired-provider").model_copy(
+        update={"lifecycle": ArtifactLifecycle(state="retired")}
+    )
+    unused = [provider(contract, name=f"unused-{i}") for i in range(unrelated)]
+    tree = {
+        live.path: render_provider(live.provider),
+        provider_path(retired.identity.name): render_provider(retired),
+        **{provider_path(item.identity.name): render_provider(item) for item in unused},
+    }
+    instance, coordinate, reads = _published_sources(tmp_path, tree, monkeypatch)
+    # _line_catalogs now returns one dict of live providers by exact digest;
+    # there is no separate provider-interface catalog (ProviderInterface is
+    # gone, B2 noun removal) and a non-Provider-kind pin is simply skipped.
+    providers = _line_catalogs(
+        instance,
+        coordinate,
+        (
+            ArtifactPin(
+                role="provider", target=live.provider.identity, artifact_digest=live.artifact_digest
+            ),
+            ArtifactPin(
+                role="provider",
+                target=retired.identity,
+                artifact_digest=provider_digest(retired).tagged,
+            ),
+            ArtifactPin(
+                role="provider", target=unused[0].identity, artifact_digest="sha256:" + "bc" * 32
+            ),
+        ),
+    )
+    assert providers == {live.artifact_digest: live}
+    assert reads == [live.path]
+
+
+@pytest.mark.parametrize("unrelated", (2, 17))
+def test_mandates_select_exact_line_lifecycle_and_half_open_time(tmp_path, monkeypatch, unrelated):
+    # A Mandate pins an exact Line (ruling C3), not a Procedure: the lookup is
+    # keyed by Line identity + exact Line digest, not Procedure digest.
+    accepted = _slotless_procedure("mandate-procedure")
+    template = _line()[0]
+    pin = ArtifactPin(
+        role="procedure",
+        target=accepted.procedure.identity,
+        artifact_digest=accepted.artifact_digest,
+    )
+    line = template.model_copy(update={"procedure": pin, "pins": (pin,)})
+    other_line = line.model_copy(
+        update={"identity": ArtifactIdentity(kind="Line", name="other-line")}
+    )
+    exact = _line_mandate(
+        accepted, line, valid_from=READ_TIME, expires_at=READ_TIME + timedelta(microseconds=1)
+    )
+    excluded = [
+        _line_mandate(accepted, other_line),
+        _line_mandate(accepted, line, state="retired"),
+        _line_mandate(accepted, line, valid_from=READ_TIME + timedelta(microseconds=1)),
+        _line_mandate(accepted, line, expires_at=READ_TIME),
+        *(_line_mandate(accepted, other_line) for _ in range(unrelated)),
+    ]
+    owners = [
+        exact,
+        *(
+            item.model_copy(
+                update={"identity": ArtifactIdentity(kind="ProcedureMandate", name=f"other-{i}")}
+            )
+            for i, item in enumerate(excluded)
+        ),
+    ]
+    tree = {
+        **procedure_members(authored_procedure(accepted)),
+        line_spec_path(line.identity.name): render_line_spec(line),
+        line_spec_path(other_line.identity.name): render_line_spec(other_line),
+        **{
+            procedure_mandate_path(item.identity.name): render_procedure_mandate(item)
+            for item in owners
+        },
+    }
+    instance, coordinate, reads = _published_sources(tmp_path, tree, monkeypatch)
+    actual = _accepted_line_mandates(
+        instance,
+        line.identity,
+        line_spec_digest(line).tagged,
+        coordinate=coordinate,
+        evaluation_time=READ_TIME,
+    )
+    assert actual == ((procedure_mandate_digest(exact).tagged, exact),)
+    assert reads == [procedure_mandate_path(exact.identity.name)]
+
+
+@pytest.mark.parametrize("unrelated", (2, 17))
+def test_line_identity_and_closure_select_only_bound_sources(tmp_path, monkeypatch, unrelated):
+    procedure = _slotless_procedure("selected-procedure")
+    template = _line()[0]
+    pin = ArtifactPin(
+        role="procedure",
+        target=procedure.procedure.identity,
+        artifact_digest=procedure.artifact_digest,
+    )
+    selected = template.model_copy(update={"procedure": pin, "pins": (pin,)})
+    others = [
+        selected.model_copy(update={"identity": ArtifactIdentity(kind="Line", name=f"other-{i}")})
+        for i in range(unrelated)
+    ]
+    tree = {
+        **procedure_members(authored_procedure(procedure)),
+        **{
+            line_spec_path(item.identity.name): render_line_spec(item)
+            for item in [selected, *others]
+        },
+    }
+    instance, coordinate, reads = _published_sources(tmp_path, tree, monkeypatch)
+    accepted = _accepted_line_by_reference(
+        instance, coordinate=coordinate, reference=line_identity_digest(selected.identity)
+    )
+    assert accepted.line == selected
+    assert reads == [line_spec_path(selected.identity.name)]
+    for reference in (selected.identity.name, selected.identity.qualified):
+        reads.clear()
+        assert (
+            _accepted_line_by_reference(instance, coordinate=coordinate, reference=reference)
+            == accepted
+        )
+        assert reads == [line_spec_path(selected.identity.name)]
+    reads.clear()
+    _assert_line_closure_complete(instance, accepted, coordinate)
+    assert reads == [procedure.path]
+    reads.clear()
+    with pytest.raises(LineRunNotAccepted):
+        _accepted_line_by_reference(
+            instance, coordinate=coordinate, reference="sha256:" + "ab" * 32
+        )
+    assert reads == []
+
+
+def test_a_lines_closure_catches_a_procedure_digest_that_no_longer_reproduces(
+    tmp_path, monkeypatch
+):
+    procedure = _slotless_procedure("selected-procedure-2")
+    template = _line()[0]
+    pin = ArtifactPin(
+        role="procedure",
+        target=procedure.procedure.identity,
+        artifact_digest=procedure.artifact_digest,
+    )
+    selected = template.model_copy(
+        update={"identity": ArtifactIdentity(kind="Line", name="selected-2")}
+    ).model_copy(update={"procedure": pin, "pins": (pin,)})
+    tree = {
+        **procedure_members(authored_procedure(procedure)),
+        line_spec_path(selected.identity.name): render_line_spec(selected),
+    }
+    instance, coordinate, _reads = _published_sources(tmp_path, tree, monkeypatch)
+    accepted = _accepted_line_by_reference(
+        instance, coordinate=coordinate, reference=line_identity_digest(selected.identity)
+    )
+    wrong_pin = pin.model_copy(update={"artifact_digest": "sha256:" + "ab" * 32})
+    # LineSpec.pins is a derived @property (procedure + every bound build);
+    # setting "pins" via model_copy is a no-op, so the drifted digest has to
+    # go on "procedure" itself, which pins derives from.
+    wrong = accepted.model_copy(
+        update={"line": selected.model_copy(update={"procedure": wrong_pin})}
+    )
+    with pytest.raises(ExecutionError, match="does not reproduce"):
+        _assert_line_closure_complete(instance, wrong, coordinate)
+
+
+@pytest.mark.parametrize("unrelated", (2, 17))
+def test_source_catalogs_select_exact_contract_pins(tmp_path, monkeypatch, unrelated):
+    # Acquisition is inline Procedure/Line data now (LineAcquisitionRule/
+    # AcquisitionRule), never a separately pinned-and-looked-up artifact
+    # (SourceAcquisitionPolicy is gone, B2 noun removal) -- only the
+    # capture-contract pin lookup from the original test survives.
+    contract = capture_contract()
+    contracts = [contract, *(capture_contract(name=f"other-{i}") for i in range(unrelated))]
+    tree = {
+        capture_contract_path(item.identity.name): render_capture_contract(item)
+        for item in contracts
+    }
+    instance, coordinate, reads = _published_sources(tmp_path, tree, monkeypatch)
+    capture_pin = ArtifactPin(
+        role="capture-contract",
+        target=contract.identity,
+        artifact_digest=capture_contract_digest(contract).tagged,
+    )
+    assert _accepted_capture_contracts(instance, coordinate, (capture_pin,)) == {
+        capture_pin.artifact_digest: contract
+    }
+    assert reads == [capture_contract_path(contract.identity.name)]
+
+
+@pytest.mark.parametrize("unrelated", (2, 31))
+def test_claim_type_policy_and_query_readers_skip_unrelated_owners(
+    tmp_path, monkeypatch, unrelated
+):
+    from types import SimpleNamespace
+
+    from cruxible_client.contracts.claim_types import claim_type_path, render_claim_type
+    from cruxible_client.contracts.query.definitions import (
+        query_definition_digest,
+        query_definition_path,
+        render_query_definition,
+    )
+    from cruxible_core.proposals.proposals import _accepted_query
+    from cruxible_core.service.claims.claim_types import service_get_playbill_claim_type
+    from cruxible_core.service.claims.policies import service_playbill_policies_in_force
+    from cruxible_core.service.evidence.file_catalog import service_playbill_file_context
+    from tests.test_query.test_query_definitions import active_work_query, claim_type
+
+    contract = capture_contract()
+    definition = claim_type("project.work_item.status")
+    query = active_work_query()
+    type_path = claim_type_path(definition.predicate)
+    query_path = query_definition_path(query.identity.name)
+    tree = {
+        type_path: render_claim_type(definition),
+        query_path: render_query_definition(query),
+        capture_contract_path(contract.identity.name): render_capture_contract(contract),
+        **{
+            provider_path(f"unused-{i}"): render_provider(provider(contract, name=f"unused-{i}"))
+            for i in range(unrelated)
+        },
+    }
+    instance, coordinate, reads = _published_sources(tmp_path, tree, monkeypatch)
+    monkeypatch.setattr(instance, "accepted_coordinate", lambda: coordinate)
+    listed = service_get_playbill_claim_type(instance, predicate=definition.predicate)
+    assert listed.identity == definition.identity.qualified
+    assert reads == [type_path]
+    reads.clear()
+    policies = service_playbill_policies_in_force(instance)
+    assert any(row.policy_kind == "claim_admission_policy" for row in policies.policies)
+    assert set(reads) == {type_path, query_path, capture_contract_path(contract.identity.name)}
+    reads.clear()
+    assert service_playbill_file_context(instance).documents == ()
+    assert reads == []
+    source = SimpleNamespace(_accepted_reader=lambda: instance.bind_accepted_projection(coordinate))
+    found = _accepted_query(source, query_definition_digest(query).tagged)
+    assert found is not None and found.query == query
+    assert reads == [query_path]
+    reads.clear()
+    assert _accepted_query(source, "sha256:" + "0" * 64) is None
+    assert reads == []

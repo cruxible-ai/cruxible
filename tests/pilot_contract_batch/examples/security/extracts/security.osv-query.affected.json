@@ -1,0 +1,9 @@
+{
+  "capture": "$steps.matched.document",
+  "header": [
+    "queried"
+  ],
+  "id": "affected",
+  "kind": "extract",
+  "records": "affected"
+}

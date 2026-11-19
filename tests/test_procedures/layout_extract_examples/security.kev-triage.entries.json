@@ -1,0 +1,9 @@
+{
+  "capture": "$steps.catalog.capture",
+  "header": [
+    "catalog_version"
+  ],
+  "id": "entries",
+  "kind": "extract",
+  "records": "vulnerabilities"
+}

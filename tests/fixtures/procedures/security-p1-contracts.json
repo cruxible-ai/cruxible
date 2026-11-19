@@ -1,0 +1,505 @@
+{
+  "security-credential-state-summary": {
+    "artifact_format": "cruxible-contract-v1",
+    "fields": {
+      "added": {
+        "type": {
+          "kind": "int"
+        }
+      },
+      "changed": {
+        "type": {
+          "kind": "int"
+        }
+      },
+      "credential": {
+        "type": {
+          "kind": "string"
+        }
+      },
+      "failed": {
+        "type": {
+          "kind": "int"
+        }
+      },
+      "keys": {
+        "type": {
+          "kind": "int"
+        }
+      },
+      "posted": {
+        "type": {
+          "kind": "int"
+        }
+      },
+      "read": {
+        "type": {
+          "kind": "string"
+        }
+      },
+      "revised": {
+        "type": {
+          "kind": "int"
+        }
+      },
+      "unproven": {
+        "type": {
+          "kind": "int"
+        }
+      },
+      "verified": {
+        "type": {
+          "kind": "int"
+        }
+      }
+    },
+    "name": "security-credential-state-summary",
+    "version": 1
+  },
+  "security-cve-applicability-summary": {
+    "artifact_format": "cruxible-contract-v1",
+    "fields": {
+      "affected": {
+        "type": {
+          "kind": "int"
+        }
+      },
+      "changed": {
+        "type": {
+          "kind": "int"
+        }
+      },
+      "cve_id": {
+        "type": {
+          "kind": "string"
+        }
+      },
+      "inconclusive": {
+        "type": {
+          "kind": "int"
+        }
+      },
+      "judged": {
+        "type": {
+          "kind": "int"
+        }
+      },
+      "not_affected": {
+        "type": {
+          "kind": "int"
+        }
+      },
+      "unchanged": {
+        "type": {
+          "kind": "int"
+        }
+      }
+    },
+    "name": "security-cve-applicability-summary",
+    "version": 1
+  },
+  "security-empty-input": {
+    "artifact_format": "cruxible-contract-v1",
+    "fields": {},
+    "name": "security-empty-input",
+    "version": 1
+  },
+  "security-epss-summary": {
+    "artifact_format": "cruxible-contract-v1",
+    "fields": {
+      "changed": {
+        "type": {
+          "kind": "int"
+        }
+      },
+      "model_version": {
+        "type": {
+          "kind": "string"
+        }
+      },
+      "score_date": {
+        "type": {
+          "kind": "string"
+        }
+      },
+      "scored": {
+        "type": {
+          "kind": "int"
+        }
+      },
+      "watched": {
+        "type": {
+          "kind": "int"
+        }
+      }
+    },
+    "name": "security-epss-summary",
+    "version": 1
+  },
+  "security-file-evidence": {
+    "artifact_format": "cruxible-contract-v1",
+    "fields": {
+      "byte_length": {
+        "type": {
+          "kind": "int"
+        }
+      },
+      "bytes_digest": {
+        "type": {
+          "kind": "string"
+        }
+      }
+    },
+    "name": "security-file-evidence",
+    "version": 1
+  },
+  "security-inventory-import-input": {
+    "artifact_format": "cruxible-contract-v1",
+    "fields": {
+      "scope": {
+        "type": {
+          "kind": "string"
+        }
+      }
+    },
+    "name": "security-inventory-import-input",
+    "version": 1
+  },
+  "security-kev-attention-summary": {
+    "artifact_format": "cruxible-contract-v1",
+    "fields": {
+      "catalog_version": {
+        "type": {
+          "kind": "string"
+        }
+      },
+      "newly_listed": {
+        "type": {
+          "kind": "int"
+        }
+      },
+      "posted": {
+        "type": {
+          "kind": "int"
+        }
+      }
+    },
+    "name": "security-kev-attention-summary",
+    "version": 1
+  },
+  "security-kev-triage-summary": {
+    "artifact_format": "cruxible-contract-v1",
+    "fields": {
+      "catalog_version": {
+        "type": {
+          "kind": "string"
+        }
+      },
+      "changed": {
+        "type": {
+          "kind": "int"
+        }
+      },
+      "listed": {
+        "type": {
+          "kind": "int"
+        }
+      },
+      "watched": {
+        "type": {
+          "kind": "int"
+        }
+      }
+    },
+    "name": "security-kev-triage-summary",
+    "version": 1
+  },
+  "security-log-import-input": {
+    "artifact_format": "cruxible-contract-v1",
+    "fields": {
+      "incident": {
+        "type": {
+          "kind": "string"
+        }
+      }
+    },
+    "name": "security-log-import-input",
+    "version": 1
+  },
+  "security-log-read-summary": {
+    "artifact_format": "cruxible-contract-v1",
+    "fields": {
+      "added": {
+        "type": {
+          "kind": "int"
+        }
+      },
+      "changed": {
+        "type": {
+          "kind": "int"
+        }
+      },
+      "incident": {
+        "type": {
+          "kind": "string"
+        }
+      },
+      "matches": {
+        "type": {
+          "kind": "int"
+        }
+      },
+      "mine": {
+        "type": {
+          "kind": "int"
+        }
+      },
+      "posted": {
+        "type": {
+          "kind": "int"
+        }
+      },
+      "read": {
+        "type": {
+          "kind": "string"
+        }
+      },
+      "recordable": {
+        "type": {
+          "kind": "int"
+        }
+      },
+      "service": {
+        "type": {
+          "kind": "string"
+        }
+      },
+      "source": {
+        "type": {
+          "kind": "string"
+        }
+      }
+    },
+    "name": "security-log-read-summary",
+    "version": 1
+  },
+  "security-path-input": {
+    "artifact_format": "cruxible-contract-v1",
+    "fields": {
+      "relative_path": {
+        "type": {
+          "kind": "string"
+        }
+      }
+    },
+    "name": "security-path-input",
+    "version": 1
+  },
+  "security-registry-parse-input": {
+    "artifact_format": "cruxible-contract-v1",
+    "fields": {
+      "project": {
+        "type": {
+          "kind": "string"
+        }
+      },
+      "source": {
+        "type": {
+          "kind": "string"
+        }
+      },
+      "versions": {
+        "type": {
+          "kind": "int"
+        }
+      }
+    },
+    "name": "security-registry-parse-input",
+    "version": 1
+  },
+  "security-registry-parse-summary": {
+    "artifact_format": "cruxible-contract-v1",
+    "fields": {
+      "added": {
+        "type": {
+          "kind": "int"
+        }
+      },
+      "changed": {
+        "type": {
+          "kind": "int"
+        }
+      },
+      "files": {
+        "type": {
+          "kind": "int"
+        }
+      },
+      "locator": {
+        "type": {
+          "kind": "string"
+        }
+      },
+      "restated": {
+        "type": {
+          "kind": "int"
+        }
+      },
+      "retired": {
+        "type": {
+          "kind": "int"
+        }
+      },
+      "revised": {
+        "type": {
+          "kind": "int"
+        }
+      },
+      "revision": {
+        "type": {
+          "kind": "string"
+        }
+      }
+    },
+    "name": "security-registry-parse-summary",
+    "version": 1
+  },
+  "security-runtime-inventory-summary": {
+    "artifact_format": "cruxible-contract-v1",
+    "fields": {
+      "added": {
+        "type": {
+          "kind": "int"
+        }
+      },
+      "assets": {
+        "type": {
+          "kind": "int"
+        }
+      },
+      "changed": {
+        "type": {
+          "kind": "int"
+        }
+      },
+      "coverage": {
+        "type": {
+          "kind": "string"
+        }
+      },
+      "failed": {
+        "type": {
+          "kind": "int"
+        }
+      },
+      "format": {
+        "type": {
+          "kind": "string"
+        }
+      },
+      "mine": {
+        "type": {
+          "kind": "int"
+        }
+      },
+      "nones": {
+        "type": {
+          "kind": "int"
+        }
+      },
+      "proposes": {
+        "type": {
+          "kind": "int"
+        }
+      },
+      "regressions": {
+        "type": {
+          "item": {
+            "kind": "string"
+          },
+          "kind": "list",
+          "max_items": 1000
+        }
+      },
+      "restated": {
+        "type": {
+          "kind": "int"
+        }
+      },
+      "retired": {
+        "type": {
+          "kind": "int"
+        }
+      },
+      "revised": {
+        "type": {
+          "kind": "int"
+        }
+      },
+      "revision": {
+        "type": {
+          "kind": "string"
+        }
+      },
+      "runs": {
+        "type": {
+          "kind": "int"
+        }
+      },
+      "scope": {
+        "type": {
+          "kind": "string"
+        }
+      },
+      "unidentified": {
+        "type": {
+          "kind": "int"
+        }
+      },
+      "verified": {
+        "type": {
+          "kind": "int"
+        }
+      }
+    },
+    "name": "security-runtime-inventory-summary",
+    "version": 1
+  },
+  "security-sbom-summary": {
+    "artifact_format": "cruxible-contract-v1",
+    "fields": {
+      "added": {
+        "type": {
+          "kind": "int"
+        }
+      },
+      "changed": {
+        "type": {
+          "kind": "int"
+        }
+      },
+      "components": {
+        "type": {
+          "kind": "int"
+        }
+      },
+      "product": {
+        "type": {
+          "kind": "string"
+        }
+      },
+      "skipped": {
+        "type": {
+          "kind": "int"
+        }
+      },
+      "version": {
+        "type": {
+          "kind": "string"
+        }
+      }
+    },
+    "name": "security-sbom-summary",
+    "version": 1
+  }
+}

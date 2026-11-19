@@ -1,0 +1,107 @@
+"""Named query drafts use the coordinator and share declarative input semantics."""
+
+from pathlib import Path
+
+import pytest
+from pydantic import TypeAdapter
+
+from cruxible_client.authoring.examples import (
+    query_claims_by_type_example,
+    query_ontology_example,
+    query_procedures_example,
+)
+from cruxible_client.authoring.sdk import Cruxible
+from cruxible_client.authoring.sdk_types import ClaimTypeRef, PendingClaimTypeRef
+from cruxible_client.contracts.authoring.inputs import (
+    AuthoringInput,
+    lower_authoring_input,
+)
+from cruxible_client.contracts.shapes import parse_type
+from tests.test_client.test_playbill_sdk import _Client, _workspace
+
+
+@pytest.mark.parametrize(
+    "example", [query_claims_by_type_example, query_ontology_example, query_procedures_example]
+)
+def test_typed_and_declarative_query_drafts_prepare_through_coordinator(tmp_path: Path, example):
+    _workspace(tmp_path)
+    client = _Client()
+    pb = Cruxible._from_client(client, instance_id="inst_test", workspace=tmp_path)
+    definition = example()
+    draft = pb.query_definition(definition=definition)
+    assert draft.payload == lower_authoring_input(
+        TypeAdapter(AuthoringInput).validate_json(definition.model_dump_json())
+    )
+    assert draft.payload.query_definition.pins == ()
+    intent = draft.prepare()
+    assert intent.intent_id.startswith("AIT-")
+    assert client.compiled["payload"] == draft.payload.model_dump(mode="json")
+    changes = pb.changes(rationale="Define a reusable query")
+    changes.query_definition(definition)
+    assert changes._compiled().payload.members == (draft.payload,)
+
+
+def test_query_refs_preserve_staleness_expectations_and_allow_same_set_refs(tmp_path):
+    _workspace(tmp_path)
+    pb = Cruxible._from_client(_Client(), instance_id="inst_test", workspace=tmp_path)
+    definition = query_claims_by_type_example()
+    ref = ClaimTypeRef("project.work_item.status", pb.coordinate)
+    draft = pb.query_definition(definition=definition, vocabulary=(ref,))
+    assert (
+        draft.reference_expectations[0].payload_path
+        == "query_definition.projection.fields[1].value.predicate"
+    )
+    assert draft.reference_expectations[0].minted_coordinate == pb.coordinate
+    pending = PendingClaimTypeRef(
+        ref.address, ref.coordinate, value_type=parse_type("string{max_len: 256}")
+    )
+    assert (
+        pb.query_definition(definition=definition, vocabulary=(pending,)).reference_expectations
+        == ()
+    )
+    with pytest.raises(ValueError, match="not used"):
+        pb.query_definition(
+            definition=definition, vocabulary=(ClaimTypeRef("other.unused", pb.coordinate),)
+        )
+
+
+def test_artifact_definition_rows_refuse_a_misbound_digest():
+    from cruxible_client.contracts.claim_types import claim_type_digest, claim_type_path
+    from cruxible_client.contracts.query.results import QueryArtifactDefinition
+    from tests.test_authoring.test_authoring_change_set_intents import _predicate_type
+
+    claim_type = _predicate_type("security.asset.owner")
+    artifact = {
+        "identity": claim_type.identity.qualified,
+        "path": claim_type_path(claim_type.predicate),
+        "artifact_digest": claim_type_digest(claim_type).tagged,
+        "definition": claim_type.model_dump(mode="json"),
+    }
+    assert QueryArtifactDefinition.model_validate(artifact).definition == claim_type
+    with pytest.raises(ValueError):
+        QueryArtifactDefinition.model_validate(
+            {**artifact, "artifact_digest": "sha256:" + "0" * 64}
+        )
+
+
+def test_authored_query_drafts_use_the_shared_coordinator(tmp_path: Path):
+    from cruxible_client.contracts.authoring.inputs import QueryDefinitionInput
+    from cruxible_client.contracts.query.authored import QuerySpecInput
+
+    _workspace(tmp_path)
+    client = _Client()
+    pb = Cruxible._from_client(client, instance_id="inst_test", workspace=tmp_path)
+    spec = QuerySpecInput.model_validate(
+        {
+            "query": "project.ready",
+            "from": {"item": "project.work_item"},
+            "where": 'item.status == "ready"',
+            "fields": ["item", "item.status"],
+        }
+    )
+    definition = QueryDefinitionInput(kind="query_definition", query_definition=spec)
+    draft = pb.query_definition(definition=definition)
+    assert draft.payload.query_definition == spec
+    assert draft.prepare().intent_id.startswith("AIT-")
+    assert client.compiled["payload"]["query_definition"]["from"] == {"item": "project.work_item"}
+    pb.changes(rationale="Save the ready query").query_definition(definition)

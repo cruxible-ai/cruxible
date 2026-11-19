@@ -1,0 +1,39 @@
+{
+  "artifact_format": "cruxible-contract-v1",
+  "description": "One component sbom.components read from an SBOM, with its scope.",
+  "fields": {
+    "name": {
+      "optional": true,
+      "type": {
+        "kind": "string",
+        "max_len": 256
+      }
+    },
+    "named_by": {
+      "type": {
+        "kind": "enum",
+        "members": [
+          "metadata_component",
+          "file_path"
+        ]
+      }
+    },
+    "scope": {
+      "type": {
+        "claim_type": "security.occurrence.scope",
+        "kind": "enum_of"
+      }
+    },
+    "warning": {
+      "optional": true,
+      "type": {
+        "kind": "enum",
+        "members": [
+          "sbom_unnamed"
+        ]
+      }
+    }
+  },
+  "name": "security.sbom-component",
+  "version": 1
+}

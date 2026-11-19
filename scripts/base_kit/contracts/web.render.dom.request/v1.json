@@ -1,0 +1,29 @@
+{
+  "artifact_format": "cruxible-contract-v1",
+  "description": "One page to assemble in a browser: the browser navigates to url, runs the page's scripts and pulls its subresources, and the serialized DOM is the Capture.",
+  "fields": {
+    "logical_source": {
+      "optional": true,
+      "type": {
+        "kind": "string",
+        "pattern": "^[a-z][a-z0-9_.-]{0,255}$"
+      }
+    },
+    "max_bytes": {
+      "optional": true,
+      "type": {
+        "kind": "int",
+        "max": 33554432,
+        "min": 1
+      }
+    },
+    "url": {
+      "type": {
+        "kind": "string",
+        "pattern": "^[Hh][Tt][Tt][Pp][Ss]?://\\S+$"
+      }
+    }
+  },
+  "name": "web.render.dom.request",
+  "version": 1
+}

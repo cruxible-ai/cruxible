@@ -1,0 +1,470 @@
+{
+  "schema_version": 3,
+  "manifest": {
+    "path": "manifest.yaml",
+    "digest": "sha256:1870f8dc8d44db8f1aedf6b8b5874f902415ad7cfedb16fb6367ed1e5b4c5eaf"
+  },
+  "operations": [
+    {
+      "name": "osv.match",
+      "description": "Matches OSV responses to the queried components and lists, per (component, CVE) pair, the versions OSV names as fixed for the component's package.",
+      "source": {
+        "path": "kits/security/source/providers/security-osv-provider/src/security_osv_provider/osv.py",
+        "repository": "https://github.com/cruxible-ai/cruxible-kits"
+      },
+      "serves": [
+        "security.osv.match"
+      ],
+      "in": "security.osv.match.request@1",
+      "out": "security.osv.match.result@1",
+      "effect": "pure",
+      "refusals": {
+        "provider_declined": {
+          "contract": "osv.match.refusal.provider_declined@1",
+          "absorbable": false
+        }
+      },
+      "entrypoint": "security_osv_provider.osv:OsvMatch"
+    },
+    {
+      "name": "osv.query",
+      "description": "Queries OSV.dev's batch API for the components (1000 a request) and fetches every advisory a batch names; returns each response verbatim.",
+      "source": {
+        "path": "kits/security/source/providers/security-osv-provider/src/security_osv_provider/osv.py",
+        "repository": "https://github.com/cruxible-ai/cruxible-kits"
+      },
+      "serves": [
+        "security.osv.query"
+      ],
+      "in": "security.osv.query.request@1",
+      "out": "security.osv.query.result@1",
+      "effect": "external_read",
+      "refusals": {
+        "provider_declined": {
+          "contract": "osv.query.refusal.provider_declined@1",
+          "absorbable": false
+        }
+      },
+      "entrypoint": "security_osv_provider.osv:OsvQuery"
+    },
+    {
+      "name": "sbom.components",
+      "description": "Reads a CycloneDX JSON SBOM (any Capture) into the inventory it describes and its components by purl, nested components flattened, with scope.",
+      "source": {
+        "path": "kits/security/source/providers/security-osv-provider/src/security_osv_provider/sbom.py",
+        "repository": "https://github.com/cruxible-ai/cruxible-kits"
+      },
+      "serves": [
+        "security.sbom.components"
+      ],
+      "in": "sbom.components.request@1",
+      "out": "security.sbom.components.result@1",
+      "effect": "pure",
+      "refusals": {
+        "provider_declined": {
+          "contract": "sbom.components.refusal.provider_declined@1",
+          "absorbable": false
+        }
+      },
+      "entrypoint": "security_osv_provider.sbom:SbomComponents"
+    }
+  ],
+  "declares": {
+    "contracts": [
+      {
+        "artifact_format": "cruxible-contract-v1",
+        "name": "osv.match.refusal.provider_declined",
+        "version": 1,
+        "description": "Detail of a provider_declined refusal (too many advisories, or unreadable input).",
+        "fields": {}
+      },
+      {
+        "artifact_format": "cruxible-contract-v1",
+        "name": "osv.query.refusal.provider_declined",
+        "version": 1,
+        "description": "Detail of a provider_declined refusal (too many advisories, or unreadable input).",
+        "fields": {}
+      },
+      {
+        "artifact_format": "cruxible-contract-v1",
+        "name": "sbom.components.refusal.provider_declined",
+        "version": 1,
+        "description": "Detail of a provider_declined refusal (the bytes are not a CycloneDX JSON SBOM, or list too many components).",
+        "fields": {}
+      },
+      {
+        "artifact_format": "cruxible-contract-v1",
+        "name": "sbom.components.request",
+        "version": 1,
+        "description": "One CycloneDX JSON SBOM this run read (its Capture bytes, passed by core), its workspace path (the inventory's name when the SBOM has no metadata.component purl) and the logical source the derived document is stated under.",
+        "fields": {
+          "logical_source": {
+            "type": {
+              "kind": "string",
+              "pattern": "^[a-z][a-z0-9_.-]{0,255}$"
+            }
+          },
+          "relative_path": {
+            "type": {
+              "kind": "string",
+              "max_len": 256
+            }
+          },
+          "sbom": {
+            "type": {
+              "kind": "capture",
+              "capture_kind": "*"
+            }
+          }
+        }
+      },
+      {
+        "artifact_format": "cruxible-contract-v1",
+        "name": "security.osv-affected",
+        "version": 1,
+        "description": "One (component, CVE) pair osv.match found, with its advisory (the versions OSV lists as fixed stay in the cited document).",
+        "fields": {
+          "osv_id": {
+            "type": {
+              "kind": "string",
+              "max_len": 128
+            }
+          }
+        }
+      },
+      {
+        "artifact_format": "cruxible-contract-v1",
+        "name": "security.osv-not-checked",
+        "version": 1,
+        "description": "One component the OSV match left unchecked, and why: a distro package whose source name OSV cannot be asked by, a component with no version, a batch that failed or was truncated, an advisory that could not be read, or a component never asked.",
+        "fields": {
+          "reason": {
+            "type": {
+              "kind": "enum",
+              "members": [
+                "advisory_unreadable",
+                "batch_failed",
+                "distro_source_name_unknown",
+                "no_version",
+                "not_asked",
+                "truncated"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "artifact_format": "cruxible-contract-v1",
+        "name": "security.osv.match.request",
+        "version": 1,
+        "description": "This run's OSV responses (their Capture bytes, passed by core), the components the run asked about, and the logical source the derived document is stated under.",
+        "fields": {
+          "components": {
+            "type": {
+              "kind": "list",
+              "item": {
+                "kind": "string",
+                "max_len": 256
+              },
+              "max_items": 20000
+            }
+          },
+          "logical_source": {
+            "type": {
+              "kind": "string",
+              "pattern": "^[a-z][a-z0-9_.-]{0,255}$"
+            }
+          },
+          "responses": {
+            "type": {
+              "kind": "list",
+              "item": {
+                "kind": "capture",
+                "capture_kind": "security.osv-response"
+              },
+              "max_items": 1020
+            }
+          }
+        }
+      },
+      {
+        "artifact_format": "cruxible-contract-v1",
+        "name": "security.osv.match.result",
+        "version": 1,
+        "description": "One derived JSON document of (component, CVE) matches, in the layout of CaptureKind security.osv-matches: queried (the components OSV answered in full), not_checked (each with why), affected (purl, cve_id, osv_id, and the versions OSV lists as fixed), count, and unkeyed (advisories with no CVE alias).",
+        "fields": {
+          "document": {
+            "type": {
+              "kind": "capture",
+              "capture_kind": "security.osv-matches"
+            }
+          }
+        }
+      },
+      {
+        "artifact_format": "cruxible-contract-v1",
+        "name": "security.osv.query.request",
+        "version": 1,
+        "description": "The components to ask OSV about, as purl@version, and the logical source the responses are stated under. Distro packages (purl types deb, rpm, apk) are never asked and never in queried: OSV keys distro ecosystems by source package name, which an SBOM's binary packages do not give; they read not checked.",
+        "fields": {
+          "components": {
+            "type": {
+              "kind": "list",
+              "item": {
+                "kind": "string",
+                "max_len": 256
+              },
+              "max_items": 20000
+            }
+          },
+          "logical_source": {
+            "type": {
+              "kind": "string",
+              "pattern": "^[a-z][a-z0-9_.-]{0,255}$"
+            }
+          }
+        }
+      },
+      {
+        "artifact_format": "cruxible-contract-v1",
+        "name": "security.osv.query.result",
+        "version": 1,
+        "description": "OSV's responses, verbatim, one Capture each: every POST /v1/querybatch (at most 1000 components) and every GET /v1/vulns/{id} a batch names. A request that got no response at all is left out and the call is marked incomplete; a response with an error status is still a member.",
+        "fields": {
+          "responses": {
+            "type": {
+              "kind": "list",
+              "item": {
+                "kind": "capture",
+                "capture_kind": "security.osv-response"
+              },
+              "max_items": 1020
+            }
+          }
+        }
+      },
+      {
+        "artifact_format": "cruxible-contract-v1",
+        "name": "security.sbom-component",
+        "version": 1,
+        "description": "One component sbom.components read from an SBOM, with its scope.",
+        "fields": {
+          "name": {
+            "type": {
+              "kind": "string",
+              "max_len": 256
+            },
+            "optional": true
+          },
+          "named_by": {
+            "type": {
+              "kind": "enum",
+              "members": [
+                "metadata_component",
+                "file_path"
+              ]
+            }
+          },
+          "scope": {
+            "type": {
+              "kind": "enum_of",
+              "claim_type": "security.occurrence.scope"
+            }
+          },
+          "warning": {
+            "type": {
+              "kind": "enum",
+              "members": [
+                "sbom_unnamed"
+              ]
+            },
+            "optional": true
+          }
+        }
+      },
+      {
+        "artifact_format": "cruxible-contract-v1",
+        "name": "security.sbom.components.result",
+        "version": 1,
+        "description": "One derived JSON document in the layout of CaptureKind security.sbom-components: the inventory the SBOM describes, how it was named, and one record per distinct purl with its scope; count is every component the SBOM lists, unidentified ones included.",
+        "fields": {
+          "document": {
+            "type": {
+              "kind": "capture",
+              "capture_kind": "security.sbom-components"
+            }
+          }
+        }
+      }
+    ],
+    "capture_kinds": [
+      {
+        "name": "security.osv-matches",
+        "decoding": {
+          "format": "json",
+          "encoding": "identity",
+          "limits": {
+            "decoded_bytes": 4194304,
+            "depth": 16,
+            "records": 100000
+          }
+        },
+        "layout": {
+          "header": {
+            "queried": {
+              "at": "/queried",
+              "type": "list<string{max_len: 256}>{max_items: 20000}"
+            }
+          },
+          "records": {
+            "affected": {
+              "at": "/affected/*",
+              "key": {
+                "cve_id": {
+                  "at": "cve_id",
+                  "type": "key_part<security.vulnerability:cve_id>"
+                },
+                "purl": {
+                  "at": "purl",
+                  "type": "key_part<security.component:purl>"
+                }
+              },
+              "row": {
+                "name": "security.osv-affected",
+                "version": 1,
+                "digest": "sha256:78e3bcd86138b59ec55cdac71ea154aaf3e26bebdaca1896679c46ba9b39bc35"
+              },
+              "fields": {
+                "osv_id": {
+                  "at": "osv_id"
+                }
+              },
+              "count_at": "/count"
+            },
+            "not_checked": {
+              "at": "/not_checked/*",
+              "key": {
+                "purl": {
+                  "at": "purl",
+                  "type": "key_part<security.component:purl>"
+                }
+              },
+              "row": {
+                "name": "security.osv-not-checked",
+                "version": 1,
+                "digest": "sha256:547d75c18258a54d5c6f5de344c905efbf3e81b265a920dfb557ddf3d00fc963"
+              },
+              "fields": {
+                "reason": {
+                  "at": "reason"
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "name": "security.osv-response",
+        "decoding": {
+          "format": "json",
+          "encoding": "identity",
+          "limits": {
+            "decoded_bytes": 4194304,
+            "depth": 32,
+            "records": 100000
+          }
+        }
+      },
+      {
+        "name": "security.sbom-components",
+        "decoding": {
+          "format": "json",
+          "encoding": "identity",
+          "limits": {
+            "decoded_bytes": 4194304,
+            "depth": 8,
+            "records": 20000
+          }
+        },
+        "layout": {
+          "header": {
+            "inventory": {
+              "at": "/inventory",
+              "type": "string{min_len: 1, max_len: 256}"
+            }
+          },
+          "records": {
+            "components": {
+              "at": "/components/*",
+              "key": {
+                "purl": {
+                  "at": "purl",
+                  "type": "key_part<security.component:purl>"
+                }
+              },
+              "row": {
+                "name": "security.sbom-component",
+                "version": 1,
+                "digest": "sha256:f8b48814c88ac2cdeadc62e9c4f9c65ee0e8b62ccbd118a3af5cfa1ea2076532"
+              },
+              "fields": {
+                "name": {
+                  "at": "name",
+                  "presence": "optional"
+                },
+                "named_by": {
+                  "at": "named_by"
+                },
+                "scope": {
+                  "at": "scope",
+                  "canonicalize": "claim_type"
+                },
+                "warning": {
+                  "at": "warning",
+                  "presence": "optional"
+                }
+              },
+              "count_at": "/count"
+            }
+          }
+        }
+      }
+    ],
+    "built_against": [
+      {
+        "kind": "Capability",
+        "name": "security.osv.match",
+        "version": 1,
+        "digest": "sha256:ab2f0583ea0b382f04ed2facbe70bad173d377f3f58beab2f46e3adf3df6f619"
+      },
+      {
+        "kind": "Capability",
+        "name": "security.osv.query",
+        "version": 1,
+        "digest": "sha256:f42da97587e9cdb1395e1b29bfb6d71c5c41ec0fd01439353a08a3b930199619"
+      },
+      {
+        "kind": "Capability",
+        "name": "security.sbom.components",
+        "version": 1,
+        "digest": "sha256:8ba61aa6486cb5584135d6498c30940346d9dfef225202d2499e289314b90820"
+      },
+      {
+        "kind": "CaptureKind",
+        "name": "security.osv-matches",
+        "digest": "sha256:f57af1f39ef99fdc4b95878633b597b67d52dc4234ef9bb11db08f214cdde059"
+      },
+      {
+        "kind": "CaptureKind",
+        "name": "security.osv-response",
+        "digest": "sha256:c2a495dad58f29915ac2fda30d5a4d267a5c7beb905754337a531e99c8915292"
+      },
+      {
+        "kind": "CaptureKind",
+        "name": "security.sbom-components",
+        "digest": "sha256:f1930d43df71ba059191224600bdb3334d5665b1a948b6ec91d4987f86922148"
+      }
+    ]
+  },
+  "runtime_requirements": []
+}

@@ -1,0 +1,591 @@
+"""Compiler-owned governance, provenance, coverage, and proof-reference facts."""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from copy import deepcopy
+from dataclasses import dataclass
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Literal, Protocol
+
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+
+from cruxible_client.contracts.attestations import approval_digest
+from cruxible_client.contracts.canonical import (
+    CandidateDigest,
+    ChangeSetDigest,
+    Sha256Value,
+    normalize_ledger_path,
+)
+from cruxible_client.contracts.content_memo import (
+    ValueMemo,
+    is_sealed,
+    request_derive,
+    seal,
+    sealed_derive,
+)
+from cruxible_client.contracts.governance import governance_identifier
+from cruxible_client.contracts.projection_extensions import (
+    ProjectionFact,
+    _NormalizedProjectionValue,
+    normalize_projection_value,
+    normalized_projection_value,
+)
+
+if TYPE_CHECKING:
+    from cruxible_client.contracts.candidates import CandidateMemberLawEvidence
+    from cruxible_client.contracts.claim_attestations import VerifiedClaimAttestationV1
+    from cruxible_core.proposals.settlement import ChangeSetRecord
+
+AttestationCoverage = Literal[
+    "exact_subject",
+    "containing_artifact",
+    "containing_change_set",
+]
+BasisRelationKind = Literal[
+    "authority_ruled",
+    "cryptographically_committed",
+    "replay_verified",
+]
+
+
+class ProjectionCoordinateContext(Protocol):
+    @property
+    def instance_id(self) -> str: ...
+
+    @property
+    def git_object_format(self) -> str: ...
+
+    @property
+    def git_oid(self) -> str: ...
+
+    @property
+    def semantic_root(self) -> str: ...
+
+    @property
+    def generation_root(self) -> str: ...
+
+    @property
+    def compiler_digest(self) -> str: ...
+
+
+class AcceptedGenerationCoordinate(Protocol):
+    """The generation coordinate that accepted one change-set record."""
+
+    @property
+    def git_oid(self) -> str: ...
+
+    @property
+    def semantic_root(self) -> str: ...
+
+    @property
+    def generation_root(self) -> str: ...
+
+    @property
+    def compiler_digest(self) -> str: ...
+
+
+@dataclass(frozen=True)
+class _AcceptingCoordinate:
+    """The accepting generation, placed in the reading instance's identity."""
+
+    instance_id: str
+    git_object_format: str
+    git_oid: str
+    semantic_root: str
+    generation_root: str
+    compiler_digest: str
+
+
+class _StrictExplanationModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class LedgerProofReference(_StrictExplanationModel):
+    """Exact accepted record sufficient for later independent verification."""
+
+    change_set_path: str
+    changeset_digest: str
+    candidate_digest: str
+
+    @field_validator("change_set_path")
+    @classmethod
+    def _path(cls, value: str) -> str:
+        if normalize_ledger_path(value) != value or not value.startswith("changesets/"):
+            raise ValueError("ledger proof reference must name a canonical change-set path")
+        return value
+
+    @field_validator("changeset_digest")
+    @classmethod
+    def _changeset_digest(cls, value: str) -> str:
+        ChangeSetDigest.from_tagged(value)
+        return value
+
+    @field_validator("candidate_digest")
+    @classmethod
+    def _candidate_digest(cls, value: str) -> str:
+        CandidateDigest.from_tagged(value)
+        return value
+
+    def projection_value(self, coordinate: ProjectionCoordinateContext) -> dict[str, object]:
+        return {
+            "accepted_coordinate": {
+                "compiler_digest": {"$digest": coordinate.compiler_digest},
+                "generation_root": {"$digest": coordinate.generation_root},
+                "git_object_format": coordinate.git_object_format,
+                "git_oid": coordinate.git_oid,
+                "instance_id": coordinate.instance_id,
+                "semantic_root": {"$digest": coordinate.semantic_root},
+            },
+            "candidate_digest": {"$digest": self.candidate_digest},
+            "change_set_path": {"$path": self.change_set_path},
+            "changeset_digest": {"$digest": self.changeset_digest},
+        }
+
+
+class BasisRelation(_StrictExplanationModel):
+    """One registry-governed mechanism supporting a projected fact."""
+
+    kind: BasisRelationKind
+    proof_ref: LedgerProofReference
+    law_identifier: str | None = None
+    law_digest: str | None = None
+    attestation_digest: str | None = None
+
+    @field_validator("law_identifier")
+    @classmethod
+    def _law_identifier(cls, value: str | None) -> str | None:
+        if value is not None:
+            return governance_identifier(value, label="basis law identifier")
+        return value
+
+    @field_validator("law_digest", "attestation_digest")
+    @classmethod
+    def _digest(cls, value: str | None) -> str | None:
+        if value is not None:
+            Sha256Value.from_tagged(value)
+        return value
+
+    @model_validator(mode="after")
+    def _kind_shape(self) -> "BasisRelation":
+        if self.kind == "authority_ruled":
+            if self.law_identifier is None or self.law_digest is None:
+                raise ValueError("authority_ruled basis requires its exact law coordinate")
+            if self.attestation_digest is not None:
+                raise ValueError("authority_ruled basis cannot carry an attestation digest")
+        elif self.kind == "cryptographically_committed":
+            if self.attestation_digest is None:
+                raise ValueError("cryptographically_committed basis requires an attestation digest")
+            if self.law_identifier is not None or self.law_digest is not None:
+                raise ValueError("cryptographic basis cannot claim law authority")
+        elif any(
+            value is not None
+            for value in (self.law_identifier, self.law_digest, self.attestation_digest)
+        ):
+            raise ValueError("replay_verified basis carries only its proof reference")
+        return self
+
+    def projection_value(self, coordinate: ProjectionCoordinateContext) -> dict[str, object]:
+        value: dict[str, object] = {
+            "kind": self.kind,
+            "proof_ref": self.proof_ref.projection_value(coordinate),
+        }
+        if self.law_identifier is not None:
+            value["law_identifier"] = self.law_identifier
+        if self.law_digest is not None:
+            value["law_digest"] = {"$digest": self.law_digest}
+        if self.attestation_digest is not None:
+            value["attestation_digest"] = {"$digest": self.attestation_digest}
+        return value
+
+
+class CoverageBinding(_StrictExplanationModel):
+    """Evidence-relative scope of one approval; never a trust-strength label."""
+
+    coverage: AttestationCoverage
+    subject_path: str
+    signed_payload_digest: str
+    proof_ref: LedgerProofReference
+
+    @field_validator("subject_path")
+    @classmethod
+    def _subject_path(cls, value: str) -> str:
+        return normalize_ledger_path(value)
+
+    @field_validator("signed_payload_digest")
+    @classmethod
+    def _signed_payload_digest(cls, value: str) -> str:
+        CandidateDigest.from_tagged(value)
+        return value
+
+    @model_validator(mode="after")
+    def _v1_candidate_coverage(self) -> "CoverageBinding":
+        if self.coverage != "containing_change_set":
+            raise ValueError("v1 C_s approval can cover only its containing change set")
+        if self.signed_payload_digest != self.proof_ref.candidate_digest:
+            raise ValueError("coverage signed payload differs from its proof reference")
+        return self
+
+    def projection_value(self, coordinate: ProjectionCoordinateContext) -> dict[str, object]:
+        return {
+            "coverage": self.coverage,
+            "proof_ref": self.proof_ref.projection_value(coordinate),
+            "signed_payload_digest": {"$digest": self.signed_payload_digest},
+            "subject_path": {"$path": self.subject_path},
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class _SharedExplanation:
+    proof: LedgerProofReference
+    proof_value: object
+    replay_value: object
+    governance_value: object
+    common_basis: tuple[object, ...]
+    attestations: tuple[object, ...]
+    cryptographic_basis: tuple[object, ...]
+
+
+def _shared_explanation(
+    record: ChangeSetRecord,
+    *,
+    record_path: str,
+    law_identifier: str,
+    coordinate: ProjectionCoordinateContext,
+) -> _SharedExplanation:
+    """One record/law/accepting-coordinate fact set, shared by its members."""
+
+    def derive() -> _SharedExplanation:
+        law_digest = record.law_digests[law_identifier]
+        proof = LedgerProofReference(
+            change_set_path=record_path,
+            changeset_digest=record.changeset_digest,
+            candidate_digest=record.candidate_digest,
+        )
+        authority = BasisRelation(
+            kind="authority_ruled",
+            proof_ref=proof,
+            law_identifier=law_identifier,
+            law_digest=law_digest,
+        )
+        replay = BasisRelation(kind="replay_verified", proof_ref=proof)
+        proof_value = normalized_projection_value(proof.projection_value(coordinate))
+        authority_raw = authority.projection_value(coordinate)
+        authority_raw["proof_ref"] = proof_value
+        replay_raw = replay.projection_value(coordinate)
+        replay_raw["proof_ref"] = proof_value
+        authority_value = normalized_projection_value(authority_raw)
+        replay_value = normalized_projection_value(replay_raw)
+        common_basis = (authority_value, replay_value)
+        attestations: list[object] = []
+        cryptographic_basis: list[object] = []
+        for submission in record.approvals:
+            digest = approval_digest(submission.attestation).tagged
+            attestations.append(
+                normalized_projection_value(
+                    {
+                        "attestation_digest": {"$digest": digest},
+                        "key_history_ref": {
+                            "principal_path": {
+                                "$path": f"principals/{submission.attestation.signer_id}.json"
+                            },
+                            "semantic_root": {
+                                "$digest": submission.attestation.signing_semantic_root
+                            },
+                        },
+                        "signer_id": submission.attestation.signer_id,
+                        "submitted_by": submission.submitted_by,
+                    }
+                )
+            )
+            raw = BasisRelation(
+                kind="cryptographically_committed",
+                proof_ref=proof,
+                attestation_digest=digest,
+            ).projection_value(coordinate)
+            raw["proof_ref"] = proof_value
+            cryptographic_basis.append(normalized_projection_value(raw))
+        governance_value = normalized_projection_value(
+            {
+                "activation_policy": record.activation_policy,
+                "approval_requirements": [
+                    item.model_dump(mode="json") for item in record.approval_requirements
+                ],
+                "basis": list(common_basis),
+                "law_digest": {"$digest": law_digest},
+                "law_identifier": law_identifier,
+                "required_tier": record.required_tier,
+            }
+        )
+        seal(proof)
+        return _SharedExplanation(
+            proof,
+            proof_value,
+            replay_value,
+            governance_value,
+            common_basis,
+            tuple(attestations),
+            tuple(cryptographic_basis),
+        )
+
+    # The record itself owns its complete immutable inputs. Copies and mutable
+    # records take the cold path; every coordinate field joins the key.
+    if not is_sealed(record):
+        return derive()
+    return request_derive(
+        (
+            "query.explanation.shared",
+            record.changeset_digest,
+            record_path,
+            law_identifier,
+            coordinate.instance_id,
+            coordinate.git_object_format,
+            coordinate.git_oid,
+            coordinate.semantic_root,
+            coordinate.generation_root,
+            coordinate.compiler_digest,
+        ),
+        derive,
+    )
+
+
+def _record_members(
+    record: ChangeSetRecord,
+) -> Mapping[str, tuple[CandidateMemberLawEvidence, ...]]:
+    """Index one immutable generation's changed members once, including duplicates.
+
+    This cold derivation grows with the record's change, not the instance.
+    Each later Claim explanation seeks its path instead of scanning its run's
+    entire change set. Unsealed oracle inputs are deliberately derived afresh.
+    """
+
+    def build() -> Mapping[str, tuple[CandidateMemberLawEvidence, ...]]:
+        grouped: dict[str, list[CandidateMemberLawEvidence]] = {}
+        for member in record.members:
+            grouped.setdefault(member.path, []).append(member)
+        return MappingProxyType({path: tuple(members) for path, members in grouped.items()})
+
+    return sealed_derive(record, ("query.explanation.record-members",), build)
+
+
+def _record_for_current_artifact(
+    records: tuple[tuple[str, ChangeSetRecord], ...],
+    *,
+    path: str,
+    artifact_digest: str,
+) -> tuple[str, ChangeSetRecord] | None:
+    matching_records = [
+        (record_path, record)
+        for record_path, record in records
+        if any(
+            member.candidate_artifact_digest == artifact_digest
+            for member in _record_members(record).get(path, ())
+        )
+    ]
+    return max(matching_records, key=lambda item: item[1].sequence) if matching_records else None
+
+
+_HISTORY_VALUES: ValueMemo[_NormalizedProjectionValue] = ValueMemo(capacity=1024)
+
+
+def _history_value(path: str, record: ChangeSetRecord) -> _NormalizedProjectionValue:
+    # A generation's history entry is identical for every member it touched,
+    # and is inherited verbatim by later revisions. Key every projected field.
+    key = (path, record.candidate_digest, record.changeset_digest, record.sequence)
+    return _HISTORY_VALUES.derive(
+        key,
+        lambda: normalized_projection_value(
+            {
+                "candidate_digest": {"$digest": record.candidate_digest},
+                "change_set_path": {"$path": path},
+                "changeset_digest": {"$digest": record.changeset_digest},
+                "sequence": record.sequence,
+            }
+        ),
+    )
+
+
+def accepted_artifact_explanation_facts(
+    *,
+    artifact_family: str,
+    subject_identity: str,
+    artifact_path: str,
+    input_digest: str,
+    artifact_digest: str,
+    predecessor_digest: str | None,
+    records: tuple[tuple[str, ChangeSetRecord], ...],
+    coordinate: ProjectionCoordinateContext,
+    accepted_coordinates: Mapping[int, AcceptedGenerationCoordinate],
+    claim_attestations: tuple[VerifiedClaimAttestationV1, ...] | None = None,
+    carry_values: bool = False,
+) -> tuple[ProjectionFact, ...]:
+    """Compile explanation facts only when a stored change set binds exact bytes.
+
+    Every proof reference names the generation that accepted the record, not the
+    coordinate being read, so an artifact version's explanation is the same at
+    every later coordinate. A reader that cannot resolve that generation (an
+    explicit standalone reader without verified history) compiles none.
+    """
+
+    current = _record_for_current_artifact(
+        records,
+        path=artifact_path,
+        artifact_digest=artifact_digest,
+    )
+    if current is None:
+        return ()
+    record_path, record = current
+    accepting = accepted_coordinates.get(record.sequence)
+    if accepting is None:
+        return ()
+    coordinate = _AcceptingCoordinate(
+        instance_id=coordinate.instance_id,
+        git_object_format=coordinate.git_object_format,
+        git_oid=accepting.git_oid,
+        semantic_root=accepting.semantic_root,
+        generation_root=accepting.generation_root,
+        compiler_digest=accepting.compiler_digest,
+    )
+    member = _record_members(record)[artifact_path][0]
+    shared = _shared_explanation(
+        record,
+        record_path=record_path,
+        law_identifier=member.law_identifier,
+        coordinate=coordinate,
+    )
+    if carry_values:
+        # The selected member path and candidate are already validated. The
+        # final ProjectionFact validates their normalized projection shape;
+        # avoid a throwaway coverage contract on the compiler-owned path.
+        coverage_value = {
+            "coverage": "containing_change_set",
+            "proof_ref": shared.proof_value,
+            "signed_payload_digest": {"$digest": record.candidate_digest},
+            "subject_path": {"$path": normalize_ledger_path(artifact_path)},
+        }
+    else:
+        coverage = CoverageBinding(
+            coverage="containing_change_set",
+            subject_path=artifact_path,
+            signed_payload_digest=record.candidate_digest,
+            proof_ref=shared.proof,
+        )
+        coverage_value = coverage.projection_value(coordinate)
+
+    def fact_value(value: object) -> object:
+        # Read adapters promise caller-owned mutable JSON. Detach values before
+        # constructing their one final fact; compiler-owned rows keep the
+        # normalized subtrees. Only the explicit cold/read path walks them.
+        return value if carry_values else deepcopy(normalize_projection_value(value))
+
+    history = [
+        _history_value(path, item)
+        for path, item in records
+        if artifact_path in _record_members(item)
+    ]
+    return (
+        ProjectionFact(
+            schema_id=f"cruxible.{artifact_family}.governance",
+            schema_version=1,
+            subject_identity=subject_identity,
+            fact_key="accepted_governance",
+            value=fact_value(shared.governance_value),
+        ),
+        ProjectionFact(
+            schema_id=f"cruxible.{artifact_family}.provenance",
+            schema_version=1,
+            subject_identity=subject_identity,
+            fact_key="accepted_source",
+            value=fact_value(
+                {
+                    "actor_id": record.actor_binding.actor_id,
+                    "artifact_digest": {"$digest": artifact_digest},
+                    "basis": [shared.replay_value],
+                    "input_digest": {"$digest": input_digest},
+                    "source_compilation_digest": (
+                        {"$digest": record.actor_binding.source_compilation_digest}
+                        if record.actor_binding.source_compilation_digest is not None
+                        else None
+                    ),
+                }
+            ),
+        ),
+        ProjectionFact(
+            schema_id=f"cruxible.{artifact_family}.attestation_coverage",
+            schema_version=1,
+            subject_identity=subject_identity,
+            fact_key="accepted_approvals",
+            value=fact_value(
+                {
+                    "attestations": list(shared.attestations),
+                    "basis": [*shared.common_basis, *shared.cryptographic_basis],
+                    "coverage_binding": coverage_value,
+                    **(
+                        {
+                            "claim_attestations": [
+                                item.model_dump(mode="json") for item in claim_attestations
+                            ]
+                        }
+                        if claim_attestations is not None
+                        else {}
+                    ),
+                }
+            ),
+        ),
+        ProjectionFact(
+            schema_id=f"cruxible.{artifact_family}.history",
+            schema_version=1,
+            subject_identity=subject_identity,
+            fact_key="ledger_history",
+            value=fact_value(
+                {
+                    "basis": [shared.replay_value],
+                    "history": history,
+                    "predecessor_digest": (
+                        {"$digest": predecessor_digest} if predecessor_digest is not None else None
+                    ),
+                    "proof_ref": shared.proof_value,
+                }
+            ),
+        ),
+    )
+
+
+def accepted_document_explanation_facts(
+    *,
+    document_identity: str,
+    document_path: str,
+    input_digest: str,
+    artifact_digest: str,
+    predecessor_digest: str | None,
+    records: tuple[tuple[str, ChangeSetRecord], ...],
+    coordinate: ProjectionCoordinateContext,
+    accepted_coordinates: Mapping[int, AcceptedGenerationCoordinate],
+    carry_values: bool = False,
+) -> tuple[ProjectionFact, ...]:
+    """Retain the frozen Family-1 Document projection shape through an adapter."""
+
+    return accepted_artifact_explanation_facts(
+        artifact_family="document",
+        subject_identity=document_identity,
+        artifact_path=document_path,
+        input_digest=input_digest,
+        artifact_digest=artifact_digest,
+        predecessor_digest=predecessor_digest,
+        records=records,
+        coordinate=coordinate,
+        accepted_coordinates=accepted_coordinates,
+        carry_values=carry_values,
+    )
+
+
+__all__ = [
+    "AttestationCoverage",
+    "BasisRelation",
+    "BasisRelationKind",
+    "CoverageBinding",
+    "LedgerProofReference",
+    "ProjectionCoordinateContext",
+    "accepted_artifact_explanation_facts",
+    "accepted_document_explanation_facts",
+]

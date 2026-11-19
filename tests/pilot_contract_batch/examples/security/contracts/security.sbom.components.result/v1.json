@@ -1,0 +1,14 @@
+{
+  "artifact_format": "cruxible-contract-v1",
+  "description": "One derived JSON document in the layout of CaptureKind security.sbom-components: the inventory the SBOM describes, how it was named, and one record per distinct purl with its scope; count is every component the SBOM lists, unidentified ones included.",
+  "fields": {
+    "document": {
+      "type": {
+        "capture_kind": "security.sbom-components",
+        "kind": "capture"
+      }
+    }
+  },
+  "name": "security.sbom.components.result",
+  "version": 1
+}

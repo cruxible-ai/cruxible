@@ -1,0 +1,315 @@
+"""Review-bound approval conveniences; authority remains with the served verifier."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+from pydantic import TypeAdapter
+
+from cruxible_client import contracts as api
+from cruxible_client.authoring.sdk_types import SdkError
+from cruxible_client.authoring.signing import ApprovalSigner
+from cruxible_client.contracts.attestations import (
+    ApprovalAttestation,
+    ApprovalStatement,
+    approval_digest,
+    approval_statement_bytes,
+)
+from cruxible_client.contracts.candidates import (
+    CandidateMemberLawEvidence,
+    CandidateRecord,
+    candidate_digest,
+)
+from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.errors import ReviewedCandidateChanged, SigningKeyError
+from cruxible_client.contracts.repair_spelling import render_repair
+from cruxible_client.contracts.types import PrincipalRecord
+
+if TYPE_CHECKING:
+    from cruxible_client.authoring.sdk import Cruxible
+
+_CANDIDATE: TypeAdapter[CandidateRecord] = TypeAdapter(CandidateRecord)
+
+
+class ApprovalReviewMismatch(SdkError):
+    """A local approval binding failed; no replacement candidate is auto-reviewed."""
+
+    code = "cruxible.sdk.approval_review_mismatch"
+    repair = (
+        "Review this proposal again and explicitly approve that review with the configured signer."
+    )
+
+    def __init__(self, message: str) -> None:
+        super().__init__(f"{message}. Repair: {self.repair}")
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewedProposal:
+    """Immutable review snapshot bound to its originating SDK session and instance.
+
+    Inspect ``details`` before approval. Each access returns a detached public
+    contract; editing that copy cannot change the candidate this token identifies.
+    """
+
+    _owner: Cruxible = field(repr=False, compare=False)
+    _instance_id: str = field(repr=False)
+    _snapshot: bytes = field(repr=False)
+    proposal_id: str
+    candidate_digest: str
+    _summary: bytes = field(default=b"", repr=False, compare=False)
+
+    @property
+    def details(self) -> api.ProposalReview:
+        return api.ProposalReview.model_validate_json(self._snapshot)
+
+    @property
+    def summary(self) -> api.ProposalReviewSummary:
+        """The reviewer's view of this same candidate: value changes, what they cite,
+        definitions (its first page), as ``cruxible proposal review`` prints it."""
+
+        return api.ProposalReviewSummary.model_validate_json(self._summary)
+
+    def __str__(self) -> str:
+        """The review as ``cruxible proposal review`` prints it; no request is made.
+
+        A cited file reads as its path in the connection's workspace catalog.
+        """
+
+        from cruxible_client.contracts.text_display import render_review_summary
+
+        return render_review_summary(self.summary, file_paths=self._owner._display_file_paths())
+
+    def __repr__(self) -> str:
+        """The first line of what the CLI prints (S1); ``details`` is the whole review."""
+
+        from cruxible_client.contracts.text_display import one_line_repr
+
+        return one_line_repr(self)
+
+
+def _checked_review(review: api.ProposalReview, proposal_id: str) -> None:
+    candidate = _CANDIDATE.validate_python(review.candidate)
+    if (
+        review.proposal_id != proposal_id
+        or review.candidate_digest != candidate.candidate_digest
+        or review.candidate_digest != candidate_digest(candidate.candidate).tagged
+        or review.parent_semantic_root != candidate.candidate.parent_semantic_root
+        or review.settlement_base.semantic_root != review.parent_semantic_root
+        or review.base_oid != review.settlement_base.git_oid
+        or canonical_bytes(review.complete_members)
+        != canonical_bytes([member.model_dump(mode="json") for member in candidate.members])
+    ):
+        raise ApprovalReviewMismatch("Review candidate, member roll, or settlement base differs")
+    if [member.path for member in review.members] != [member.path for member in candidate.members]:
+        raise ApprovalReviewMismatch("Review omits or duplicates candidate members")
+    candidate_members: tuple[CandidateMemberLawEvidence, ...] = candidate.members
+    for rendered, member in zip(review.members, candidate_members, strict=True):
+        expected_digest = member.candidate_artifact_digest
+        if (
+            rendered.artifact_kind != member.artifact_kind
+            or rendered.disposition != member.disposition
+            or rendered.candidate_artifact_digest != expected_digest
+        ):
+            raise ApprovalReviewMismatch("Rendered member differs from candidate member")
+    if [document.get("path") for document in review.documents] != [
+        member.path for member in candidate.members if member.artifact_kind == "document"
+    ]:
+        raise ApprovalReviewMismatch("Review omits or duplicates candidate Documents")
+    if review.redactions:
+        raise ApprovalReviewMismatch("This approval helper requires a complete, unredacted review")
+
+
+def review_proposal(cx: Cruxible, proposal_id: str) -> ReviewedProposal:
+    raw = cx._client.review_proposal(cx._instance_id, proposal_id, include_body=True, detail=True)
+    review = api.ProposalReview.model_validate(raw.model_dump(mode="json"))
+    try:
+        _checked_review(review, proposal_id)
+    except ValueError as exc:
+        raise ApprovalReviewMismatch("Daemon returned an inconsistent review") from exc
+    summary = cx._client.review_proposal(cx._instance_id, proposal_id, groups=False)
+    if (
+        not isinstance(summary, api.ProposalReviewSummary)
+        or summary.candidate_digest != review.candidate_digest
+    ):
+        raise ApprovalReviewMismatch("Review summary names a different candidate")
+    return ReviewedProposal(
+        cx,
+        cx._instance_id,
+        canonical_bytes(review.model_dump(mode="json")),
+        review.proposal_id,
+        review.candidate_digest,
+        summary.model_dump_json().encode("utf-8"),
+    )
+
+
+def _candidate_changed(
+    proposal_id: str,
+    reviewed: ReviewedProposal,
+    *,
+    current_proposal_id: str,
+    current_candidate_digest: str,
+    members_identical: bool | None = None,
+) -> ReviewedCandidateChanged:
+    """The daemon's own refusal, raised here when a reply names another candidate."""
+
+    refusal = ReviewedCandidateChanged(
+        proposal_id,
+        reviewed_candidate_digest=reviewed.candidate_digest,
+        current_proposal_id=current_proposal_id,
+        current_candidate_digest=current_candidate_digest,
+        members_identical=members_identical,
+    )
+    refusal.add_note(f"Repair: {render_repair(refusal.repair, surface='sdk')}")
+    return refusal
+
+
+def approve_reviewed(
+    cx: Cruxible,
+    proposal_id: str,
+    *,
+    signer: ApprovalSigner,
+    reviewed: ReviewedProposal,
+    hold: bool = False,
+) -> api.ProposalApprovalResult:
+    if (
+        not isinstance(reviewed, ReviewedProposal)
+        or reviewed._owner is not cx
+        or reviewed._instance_id != cx._instance_id
+        or reviewed.proposal_id != proposal_id
+    ):
+        raise ApprovalReviewMismatch(
+            "Review belongs to a different SDK session, instance, or proposal"
+        )
+    review = reviewed.details
+    if review.candidate_digest != reviewed.candidate_digest:
+        raise ApprovalReviewMismatch("Review token advertises a different candidate digest")
+    signer_id, public_key = signer.signer_id, signer.public_key
+    # Bound to the reviewed candidate: a proposal the daemon proposed again at
+    # the head (its base predates the signer, or accepted state moved) is
+    # refused there, naming the successor to review.
+    raw = cx._client.prepare_approval(
+        cx._instance_id,
+        proposal_id,
+        signer_id=signer_id,
+        include_body=True,
+        reviewed_candidate_digest=reviewed.candidate_digest,
+    )
+    if raw.proposal_id != proposal_id:
+        landed_digest = str(raw.statement.get("payload_digest"))
+        if landed_digest == reviewed.candidate_digest:
+            raise ApprovalReviewMismatch("Challenge names a different proposal")
+        raise _candidate_changed(
+            proposal_id,
+            reviewed,
+            current_proposal_id=raw.proposal_id,
+            current_candidate_digest=landed_digest,
+        )
+    try:
+        challenge = api.ApprovalChallenge.model_validate(raw.model_dump(mode="json"))
+        _checked_review(review, proposal_id)
+        _checked_review(challenge.review, proposal_id)
+        # Coverage and projection advice are live observations, not candidate identity.
+        for name in (
+            "candidate",
+            "candidate_digest",
+            "parent_semantic_root",
+            "settlement_base",
+            "base_oid",
+            "complete_members",
+            "members",
+            "governance",
+            "provenance",
+            "documents",
+        ):
+            if getattr(review, name) != getattr(challenge.review, name):
+                raise ApprovalReviewMismatch(f"Fresh challenge changed reviewed {name}")
+        statement = ApprovalStatement.model_validate(challenge.statement)
+        held = challenge.signer_principal
+        if held.get("principal_id") == signer_id and held.get("public_key") != public_key:
+            # A signer opened from its key file alone (cx.signer) is checked here,
+            # against the record the challenge carries: no registry read opens it.
+            raise SigningKeyError(
+                f"the signer's local key is not the key this instance holds for principal "
+                f"{signer_id}; nothing was signed. Repair: open the signer with that "
+                f"principal's own key (cx.signer({signer_id!r}, key=FILE))"
+            )
+        principal = PrincipalRecord.model_validate(challenge.signer_principal)
+        history_ref = f"principals/{signer_id}.json@{review.parent_semantic_root}"
+        if (
+            challenge.proposal_id != proposal_id
+            or statement.payload_digest != review.candidate_digest
+            or statement.signing_semantic_root != review.parent_semantic_root
+            or statement.signer_id != signer_id
+            or principal.principal_id != signer_id
+            or principal.public_key != public_key
+            or principal.status != "active"
+            or principal.kind == "daemon"
+            or challenge.signer_key_history_ref != history_ref
+        ):
+            raise ApprovalReviewMismatch(
+                "Challenge statement or signer identity differs from review"
+            )
+        if principal.kind == "recovery" and not all(
+            member.get("artifact_kind") == "principal-lifecycle"
+            for member in review.complete_members
+        ):
+            raise ApprovalReviewMismatch("Recovery signer cannot approve an ordinary candidate")
+        expected = approval_statement_bytes(statement)
+    except ValueError as exc:
+        raise ApprovalReviewMismatch(
+            "Fresh approval challenge does not match this review and signer"
+        ) from exc
+    # Capture immutable expectations before invoking arbitrary caller-owned code.
+    signed = signer.sign(statement)
+    try:
+        attestation = ApprovalAttestation.model_validate(signed.model_dump(mode="json"))
+        if approval_statement_bytes(attestation.statement) != expected:
+            raise ApprovalReviewMismatch("Signer returned a different approval statement")
+        Ed25519PublicKey.from_public_bytes(bytes.fromhex(public_key)).verify(
+            bytes.fromhex(attestation.sig), expected
+        )
+    except (ValueError, InvalidSignature, AttributeError) as exc:
+        raise ApprovalReviewMismatch("Signer returned an invalid or substituted approval") from exc
+    expected_digest = approval_digest(attestation).tagged
+    raw_receipt = cx._client.submit_approval(
+        cx._instance_id,
+        proposal_id,
+        attestation=attestation.model_dump(mode="json"),
+        hold=hold,
+        reviewed_candidate_digest=reviewed.candidate_digest,
+    )
+    if isinstance(raw_receipt, api.ProposalRecompiled):
+        if raw_receipt.source_proposal_id != proposal_id:
+            raise ApprovalReviewMismatch("Recompilation receipt names a different source")
+        if raw_receipt.proposal_id is not None and raw_receipt.candidate_digest is not None:
+            # A successor: the daemon refuses this itself for a bound approval.
+            raise _candidate_changed(
+                proposal_id,
+                reviewed,
+                current_proposal_id=raw_receipt.proposal_id,
+                current_candidate_digest=raw_receipt.candidate_digest,
+                members_identical=raw_receipt.members_identical,
+            )
+        # Already live at the head: nothing is left to sign.
+        return raw_receipt
+    if isinstance(raw_receipt, api.ActivationReceipt):
+        # A stale candidate that recompiles without approval requirements lands
+        # without recording the old signature against the new candidate.
+        return raw_receipt
+    receipt = api.ApprovalReceipt.model_validate(raw_receipt.model_dump(mode="json"))
+    if (
+        receipt.proposal_id != proposal_id
+        or receipt.candidate_digest != review.candidate_digest
+        or receipt.signer_id != signer_id
+        or receipt.signing_semantic_root != review.parent_semantic_root
+        or receipt.attestation_digest != expected_digest
+        or receipt.key_history_ref != history_ref
+    ):
+        raise ApprovalReviewMismatch(
+            "Approval was submitted but receipt identity differs; "
+            "inspect proposal status before retrying"
+        )
+    return receipt

@@ -2,15 +2,33 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+from pathlib import Path
+from typing import cast
+
 import click
 
+from cruxible_client.authoring.folder_identity import FolderIdentityRefused
 from cruxible_core.cli.commands._common import (
     _clear_persisted_cli_context,
     _emit_json,
+    _get_client,
     _load_persisted_cli_context,
     _persist_cli_context,
+    _root_ctx_obj,
+)
+from cruxible_core.cli.context import (
+    CliContextState,
+    normalized_transport,
+    principal_binding,
+    save_cli_context,
 )
 from cruxible_core.cli.main import handle_errors
+from cruxible_core.cli.principal_settings import (
+    default_key_dir,
+    principal_settings_path,
+    read_principal_settings,
+)
 from cruxible_core.server.config import resolve_server_settings
 
 
@@ -23,27 +41,125 @@ def connect_group() -> None:
 @click.option("--json", "output_json", is_flag=True, default=False, help="Output as JSON.")
 @handle_errors
 def context_show(output_json: bool) -> None:
-    """Show the remembered CLI context."""
-    state = _load_persisted_cli_context()
+    """Show the resolved workspace-aware CLI context and each value's source."""
+    obj = _root_ctx_obj()
+    registration: dict[str, object] = {
+        "tag": "playbill-daemon-host-registration-status-v1",
+        "instance_id": obj.get("instance_id"),
+        "status": "unavailable",
+        "workspace_path": None,
+        "reason": "no_instance",
+    }
+    identity_refusal: dict[str, object] | None = None
+    if obj.get("instance_id"):
+        # A diagnostic read never starts a daemon.
+        obj["no_autostart_here"] = True
+        try:
+            client = _get_client()
+            if client is None:
+                raise RuntimeError("server transport is not configured")
+            observed = client.host_workspace_registration(str(obj["instance_id"]))
+            registration = {
+                "tag": "playbill-daemon-host-registration-status-v1",
+                **observed.model_dump(mode="json", exclude={"tag"}),
+                "reason": None,
+            }
+        except FolderIdentityRefused as refused:
+            # The folder record this CLI acts by cannot be used: say why and how to repair.
+            registration["reason"] = f"registration_unavailable: {refused}"
+            identity_refusal = {
+                "code": refused.error_code,
+                "record_path": refused.path,
+                "detail": refused.detail,
+                "repair_commands": list(refused.repair_commands),
+            }
+        except Exception as exc:  # noqa: BLE001 - context diagnostics remain locally readable
+            registration["reason"] = f"registration_unavailable: {exc}"
+
+    config_attachment = {
+        "tag": "playbill-workspace-config-attachment-status-v1",
+        "status": "attached" if obj.get("workspace_attached") else "not_attached",
+        "workspace_path": obj.get("playbill_workspace"),
+        "config_path": obj.get("workspace_binding_path"),
+    }
+    disagreement: dict[str, str] | None = None
+    if obj.get("server_socket"):
+        registered = registration["status"] == "registered"
+        configured = bool(obj.get("workspace_attached"))
+        registered_path = registration.get("workspace_path")
+        workspace_path = obj.get("playbill_workspace")
+        if configured and not registered and registration["status"] != "unavailable":
+            disagreement = {
+                "tag": "playbill-workspace-attachment-disagreement-v1",
+                "code": "daemon_registration_missing",
+                "detail": "workspace config is attached but the daemon host is not registered",
+            }
+        elif configured and registered and registered_path is not None and workspace_path:
+            if Path(str(registered_path)).resolve() != Path(str(workspace_path)).resolve():
+                disagreement = {
+                    "tag": "playbill-workspace-attachment-disagreement-v1",
+                    "code": "daemon_workspace_differs",
+                    "detail": "daemon registration names a different local workspace",
+                }
+        elif not configured and registered and registered_path is not None and workspace_path:
+            if Path(str(registered_path)).resolve() == Path(str(workspace_path)).resolve():
+                disagreement = {
+                    "tag": "playbill-workspace-attachment-disagreement-v1",
+                    "code": "workspace_config_missing",
+                    "detail": "daemon host is registered here but the workspace config is absent",
+                    "repair": (f"cruxible workspace attach --instance-id {obj.get('instance_id')}"),
+                }
+    payload = {
+        "server_url": obj.get("server_url"),
+        "server_socket": obj.get("server_socket"),
+        "instance_id": obj.get("instance_id"),
+        "transport_source": obj.get("target_transport_source", "local"),
+        "instance_source": obj.get("target_instance_source", "local"),
+        "workspace": obj.get("playbill_workspace"),
+        "workspace_source": obj.get("workspace_source", "local"),
+        "workspace_binding_path": obj.get("workspace_binding_path"),
+        "workspace_attached": bool(obj.get("workspace_attached")),
+        "workspace_config_attachment": config_attachment,
+        "daemon_host_registration": registration,
+        "attachment_disagreement": disagreement,
+        "remembered_instance_ignored": obj.get("context_instance_transport_mismatch"),
+        "principal_id": obj.get("principal_id"),
+        "principal_source": obj.get("principal_source"),
+        "principal_settings": obj.get("principal_settings"),
+        "folder_identity_refusal": identity_refusal,
+    }
     if output_json:
-        _emit_json(state.as_json())
+        _emit_json(payload)
         return
-    if (
-        not state.server_url
-        and not state.server_socket
-        and not state.instance_id
-        and state.working_set is None
-    ):
-        click.echo("No remembered CLI context.")
-        return
-    if state.server_url:
-        click.echo(f"Server URL: {state.server_url}")
-    if state.server_socket:
-        click.echo(f"Server socket: {state.server_socket}")
-    if state.instance_id:
-        click.echo(f"Instance ID: {state.instance_id}")
-    if state.working_set is not None:
-        click.echo(f"Working-set capture: {'enabled' if state.working_set else 'disabled'}")
+    transport_source = payload["transport_source"]
+    instance_source = payload["instance_source"]
+    if payload["server_url"]:
+        click.echo(f"Server URL: {payload['server_url']} ({transport_source})")
+    elif payload["server_socket"]:
+        click.echo(f"Server socket: {payload['server_socket']} ({transport_source})")
+    else:
+        click.echo(f"Server: local ({transport_source})")
+    click.echo(f"Instance ID: {payload['instance_id'] or '<none>'} ({instance_source})")
+    if payload["remembered_instance_ignored"]:
+        click.echo(f"Remembered instance ignored: {payload['remembered_instance_ignored']}")
+    if payload["principal_id"]:
+        where = f", {payload['principal_settings']}" if payload["principal_settings"] else ""
+        click.echo(f"Principal: {payload['principal_id']} ({payload['principal_source']}{where})")
+    else:
+        click.echo("Principal: <none>")
+    if identity_refusal is not None:
+        click.echo(f"Folder identity: refused ({identity_refusal['code']})")
+        click.echo(f"  Why: {identity_refusal['record_path']}: {identity_refusal['detail']}")
+        for command in cast(list[str], identity_refusal["repair_commands"]):
+            click.echo(f"Repair: {command}")
+    attachment = "attached" if payload["workspace_attached"] else "not attached"
+    click.echo(f"Workspace: {payload['workspace']} ({payload['workspace_source']}, {attachment})")
+    click.echo(f"Workspace config: {config_attachment['status']}")
+    click.echo(f"Daemon host registration: {registration['status']}")
+    if disagreement is not None:
+        click.echo(f"Attachment disagreement: {disagreement['code']}")
+        if disagreement.get("repair"):
+            click.echo(f"Repair: {disagreement['repair']}")
 
 
 @connect_group.command("connect")
@@ -60,7 +176,11 @@ def context_connect(
     existing = _load_persisted_cli_context()
     if server_url is not None or server_socket is not None:
         resolved_url = server_url
-        resolved_socket = server_socket
+        # Store the realpath: resolution compares realpaths, so an unresolved
+        # alias (macOS /tmp -> /private/tmp) would orphan the remembered instance.
+        resolved_socket = (
+            None if server_socket is None else str(Path(server_socket).expanduser().resolve())
+        )
     else:
         resolved_url = existing.server_url
         resolved_socket = existing.server_socket
@@ -77,14 +197,22 @@ def context_connect(
     )
     if instance_id is not None:
         resolved_instance_id = instance_id
+        resolved_instance_transport = (
+            settings.server_url.rstrip("/")
+            if settings.server_url
+            else f"unix://{settings.server_socket}"
+        )
     elif transport_changed:
         resolved_instance_id = None
+        resolved_instance_transport = None
     else:
         resolved_instance_id = existing.instance_id
+        resolved_instance_transport = existing.bound_instance_transport()
     _persist_cli_context(
         server_url=settings.server_url,
         server_socket=settings.server_socket,
         instance_id=resolved_instance_id,
+        instance_transport=resolved_instance_transport,
     )
     click.echo("Remembered governed CLI context.")
     if settings.server_url:
@@ -96,19 +224,94 @@ def context_connect(
 
 
 @connect_group.command("use")
-@click.argument("instance_id")
+@click.argument("instance_id", required=False)
+@click.option(
+    "--principal",
+    "principal_id",
+    default=None,
+    help=(
+        "Act as this principal on the instance: the CLI loads the settings `cruxible init` "
+        "or `cruxible principal add` wrote for it."
+    ),
+)
 @handle_errors
-def context_use(instance_id: str) -> None:
-    """Set the active governed instance ID."""
+def context_use(instance_id: str | None, principal_id: str | None) -> None:
+    """Set the active governed instance ID, the principal the CLI acts as, or both.
+
+    The CLI loads the active principal's settings (key, and with daemon auth its
+    credential) itself. A process that sets its own principal (--principal-id,
+    CRUXIBLE_PRINCIPAL_ID, CRUXIBLE_PRINCIPAL_KEY or a bearer token) keeps it.
+    """
+    if instance_id is None and principal_id is None:
+        raise click.UsageError("Name an INSTANCE_ID, --principal ID, or both")
     existing = _load_persisted_cli_context()
     if not existing.server_url and not existing.server_socket:
         raise click.UsageError("Set a remembered server first with 'cruxible context connect'")
-    _persist_cli_context(
-        server_url=existing.server_url,
-        server_socket=existing.server_socket,
-        instance_id=instance_id,
+    state = existing
+    if instance_id is not None:
+        state = replace(
+            state,
+            instance_id=instance_id,
+            instance_transport=existing.bound_instance_transport(),
+        )
+    binding: str | None = None
+    if principal_id is not None:
+        target = state.instance_id
+        transport = normalized_transport(state.server_url, state.server_socket)
+        if target is None or transport is None:
+            raise click.UsageError(
+                "No active instance to act on; repair: `cruxible context use INSTANCE_ID "
+                f"--principal {principal_id}`"
+            )
+        binding = principal_binding(transport, target)
+        state = _with_principal(state, binding, target, transport, principal_id)
+    save_cli_context(state)
+    if instance_id is not None:
+        click.echo(f"Active instance: {instance_id}")
+    if principal_id is not None and binding is not None:
+        settings = state.principals[binding].settings[principal_id]
+        click.echo(f"Active principal: {principal_id} (settings {settings})")
+
+
+def _with_principal(
+    state: CliContextState,
+    binding: str,
+    instance_id: str,
+    transport: str,
+    principal_id: str,
+) -> CliContextState:
+    """``state`` acting as ``principal_id``: a remembered one, or one at the default key dir.
+
+    A file found at the default key dir is adopted only when it was written for
+    this instance on this daemon endpoint.
+    """
+
+    known = state.principals.get(binding)
+    if known is not None and principal_id in known.settings:
+        return state.select_principal(binding, principal_id)
+    default = principal_settings_path(default_key_dir(instance_id, principal_id))
+    if default.is_file():
+        try:
+            found = read_principal_settings(default)
+        except (OSError, ValueError) as exc:
+            raise click.UsageError(f"Cannot read {default}: {exc}") from exc
+        if (found.instance_id, found.principal_id, found.transport) != (
+            instance_id,
+            principal_id,
+            transport,
+        ):
+            raise click.UsageError(
+                f"{default} was written for {found.principal_id} of {found.instance_id} at "
+                f"{found.transport}, not {principal_id} of {instance_id} at {transport}"
+            )
+        return state.remember_principal(binding, principal_id, default, activate=True)
+    remembered = ", ".join(sorted(known.settings)) if known is not None else ""
+    raise click.UsageError(
+        f"No settings are remembered for principal {principal_id} on {instance_id} "
+        f"(remembered: {remembered or 'none'}), and none are at {default}. Settings are "
+        "written by `cruxible init` and `cruxible principal add`; a principal set up "
+        "elsewhere loads its file with: set -a; . DIR/cruxible.env; set +a"
     )
-    click.echo(f"Active instance: {instance_id}")
 
 
 @connect_group.command("clear")

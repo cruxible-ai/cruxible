@@ -1,0 +1,473 @@
+"""What flowed through one Procedure node: a typed, constant-size run summary.
+
+Each ``node_fired`` record of a node that succeeded carries one summary, by the
+node's kind, so a run view can say "1,247 records -> 12 watched -> 3 changed"
+and which way a guard went without reading the Procedure or any body. A
+summary holds counts, booleans, Capture digests and reason codes only: never
+values, rows or samples. Every list in it is bounded, so its bytes are bounded
+whatever the run read.
+"""
+
+from __future__ import annotations
+
+from collections import Counter
+from collections.abc import Iterable
+from typing import Annotated, Literal, TypeAlias
+
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
+
+from cruxible_client.contracts.claim_evidence import (
+    ClaimsDiagnostic,
+    CompletenessReason,
+    FindingKind,
+    RunCompleteness,
+)
+from cruxible_client.contracts.procedures.nodes import TransformKind
+from cruxible_client.contracts.shapes import ComparisonOp
+
+#: Capture digests a call's summary names, at most; ``captures`` counts them all.
+NODE_SUMMARY_CAPTURE_DIGESTS_MAX = 8
+#: Guard comparisons a guard's summary keeps, at most.
+NODE_SUMMARY_GUARD_OPERANDS_MAX = 8
+#: Every integer a summary carries is within this magnitude (exact in JSON
+#: readers that use doubles); a source integer past it is left out, marked.
+NODE_SUMMARY_INT_MAX = 2**53 - 1
+#: Code points of authored text a summary carries (a ``count_at`` path, a halt
+#: reason), at most; longer text is cut, marked.
+NODE_SUMMARY_TEXT_MAX = 64
+#: Canonical bytes of one summary, at most (the payload byte bound per node).
+#: Every field above is bounded, so each kind's worst case is below this.
+NODE_SUMMARY_MAX_BYTES = 2048
+
+#: A count: a nonnegative integer within the summary bound.
+SummaryCount: TypeAlias = Annotated[int, Field(ge=0, le=NODE_SUMMARY_INT_MAX)]
+#: A signed integer within the summary bound.
+SummaryInt: TypeAlias = Annotated[int, Field(ge=-NODE_SUMMARY_INT_MAX, le=NODE_SUMMARY_INT_MAX)]
+#: Authored text, cut to the summary bound.
+SummaryText: TypeAlias = Annotated[str, Field(max_length=NODE_SUMMARY_TEXT_MAX)]
+#: A Capture digest.
+CaptureDigest: TypeAlias = Annotated[str, Field(pattern=r"^sha256:[0-9a-f]{64}$")]
+
+
+class _NodeSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+def _omit_none(value: object) -> bool:
+    return value is None
+
+
+class ExtractCompleteWhen(_NodeSummary):
+    """An extract's declared count check, bounded for a summary.
+
+    ``count_at`` is the declared path, cut to ``NODE_SUMMARY_TEXT_MAX`` code
+    points (``count_at_truncated`` then says so). ``expected`` is absent when
+    the source enumerated no count; a count past ``NODE_SUMMARY_INT_MAX`` is
+    left out and ``out_of_range`` says so.
+    """
+
+    count_at: SummaryText
+    count_at_truncated: bool = Field(default=False, exclude_if=lambda value: not value)
+    #: As the source stated it: a source may state any integer, a negative one too.
+    expected: SummaryInt | None = Field(default=None, exclude_if=_omit_none)
+    observed: SummaryCount | None = Field(default=None, exclude_if=_omit_none)
+    out_of_range: bool = Field(default=False, exclude_if=lambda value: not value)
+    held: bool
+
+
+class ExtractRunSummary(_NodeSummary):
+    """One extract: the records it read, and what its completeness rests on.
+
+    ``records`` counts every record read, ``invalid_records`` and
+    ``duplicates`` those among them that were invalid or a refused duplicate;
+    ``invalid_fields`` counts the invalid field results of valid records.
+    ``complete_when`` is the declared count check's result, when one is declared.
+    """
+
+    kind: Literal["extract"] = "extract"
+    records: SummaryCount
+    invalid_records: SummaryCount
+    duplicates: SummaryCount
+    invalid_fields: SummaryCount
+    complete: bool
+    complete_when: ExtractCompleteWhen | None = Field(default=None, exclude_if=_omit_none)
+
+
+class TransformRunSummary(_NodeSummary):
+    """One closed transform: the records it read and the records it produced.
+
+    ``rows_in`` sums every records input (a join's left and right, a union's
+    parts); ``rows_out`` is absent for a transform that produces one value
+    (``aggregate``, ``derive``), and ``rows_in`` for one that reads none.
+    """
+
+    kind: Literal["transform"] = "transform"
+    transform_kind: TransformKind
+    rows_in: SummaryCount | None = Field(default=None, exclude_if=_omit_none)
+    rows_out: SummaryCount | None = Field(default=None, exclude_if=_omit_none)
+
+
+class ReadRunSummary(_NodeSummary):
+    """One accepted-state read: the rows it admitted."""
+
+    kind: Literal["read"] = "read"
+    rows: SummaryCount
+
+
+class CallRunSummary(_NodeSummary):
+    """One call: how many Captures it made or was admitted, and the first of them."""
+
+    kind: Literal["call"] = "call"
+    captures: SummaryCount
+    capture_digests: tuple[CaptureDigest, ...] = Field(
+        default=(), max_length=NODE_SUMMARY_CAPTURE_DIGESTS_MAX, exclude_if=lambda value: not value
+    )
+
+
+#: A guard operand the summary may carry: a bounded number or a boolean, never a string.
+GuardOperandValue: TypeAlias = bool | SummaryInt
+#: Every operator a guard predicate compares with.
+GuardOperator: TypeAlias = ComparisonOp | Literal["in", "not_in", "present", "absent"]
+
+
+class GuardOperand(_NodeSummary):
+    """One comparison a guard evaluated: its operator, and its numeric or bool operands.
+
+    An operand that is anything else (a string, a list, a record) is left out;
+    so is the whole comparison when neither operand is a number or a boolean.
+    A number past ``NODE_SUMMARY_INT_MAX`` is left out too, and ``out_of_range``
+    says so. ``present`` and ``absent`` carry whether the reference resolved as
+    ``left``.
+    """
+
+    operator: GuardOperator
+    left: GuardOperandValue | None = Field(default=None, exclude_if=_omit_none)
+    right: GuardOperandValue | None = Field(default=None, exclude_if=_omit_none)
+    out_of_range: bool = Field(default=False, exclude_if=lambda value: not value)
+
+
+class GuardRunSummary(_NodeSummary):
+    """One guard: the branch it took, and the numeric and bool operands it compared."""
+
+    kind: Literal["guard"] = "guard"
+    branch: Literal["then", "else"]
+    operands: tuple[GuardOperand, ...] = Field(
+        default=(), max_length=NODE_SUMMARY_GUARD_OPERANDS_MAX, exclude_if=lambda value: not value
+    )
+    #: Comparisons with a numeric or bool operand past the bound.
+    operands_truncated: SummaryCount = Field(default=0, exclude_if=lambda value: value == 0)
+
+
+#: Why a re-observation an unchanged claims item made was not recorded, so the
+#: Claim's cited content was not observed again: the re-observing Capture is
+#: not daemon-admitted evidence at the head (``capture_not_admitted``), the
+#: Claim is absent or no longer live there, it already cites that Capture,
+#: the extraction does not prove the same value and key, an absence witness's
+#: Captures do not stand, the Capture observed no content the Claim cites,
+#: accepted state moved during the record (``head_moved``), or the Capture was
+#: observed after the recording instant.
+ReobservationRefusalReason: TypeAlias = Literal[
+    "capture_not_admitted",
+    "claim_absent",
+    "claim_not_live",
+    "capture_already_cited",
+    "extraction_differs",
+    "absence_witness_unverified",
+    "content_not_cited",
+    "head_moved",
+    "observed_after_recording",
+]
+
+
+#: How a claims terminal's change was delivered: ``settled`` under its
+#: mandate, ``proposed`` for review, ``still_current`` when it equals its
+#: Line's open proposal, ``unchanged`` when every item restated accepted
+#: state, ``empty`` when it had no item to emit.
+#: ``delivered`` when the receipt does not say which.
+ClaimsDelivery: TypeAlias = Literal[
+    "settled", "proposed", "still_current", "unchanged", "empty", "delivered"
+]
+
+
+class ClaimsRunSummary(_NodeSummary):
+    """One claims terminal: what it wrote, kept, retired, surfaced and skipped.
+
+    ``written`` and ``revised`` count new and revising Claims, ``inverse_written``
+    the declared-inverse Claims (written or revising) apart from them, and
+    ``subjects_created`` the Subjects created by key. ``re_observed`` counts
+    held Claims a new Capture re-confirmed and whose re-observation was
+    recorded; ``reobservations_refused`` counts, by reason, the ones whose
+    re-observation the record refused (the Claim is unchanged, but its content
+    was not observed again). ``no_op`` counts restatements that changed
+    nothing at all. ``downgraded`` counts values written as the ClaimType's
+    unknown member over incomplete input. ``surfaced`` counts held Claims a
+    source no longer contains that were reported instead of retired;
+    ``skipped`` counts the other findings, by kind (an item not written, or an
+    incomplete source). ``delivery`` is how the change landed.
+    """
+
+    kind: Literal["claims"] = "claims"
+    written: SummaryCount
+    revised: SummaryCount
+    inverse_written: SummaryCount
+    subjects_created: SummaryCount
+    re_observed: SummaryCount
+    reobservations_refused: dict[ReobservationRefusalReason, SummaryCount] = Field(
+        default_factory=dict, exclude_if=lambda value: not value
+    )
+    no_op: SummaryCount
+    retired: SummaryCount
+    surfaced: SummaryCount
+    downgraded: SummaryCount
+    skipped: dict[FindingKind, SummaryCount] = Field(
+        default_factory=dict, exclude_if=lambda value: not value
+    )
+    delivery: ClaimsDelivery
+
+
+class EgressRunSummary(_NodeSummary):
+    """One ``emit_capture`` or ``post_inbox`` terminal: the items it emitted.
+
+    ``unposted`` counts the items a post's inbox cap left out.
+    """
+
+    kind: Literal["emit_capture", "post_inbox"]
+    emitted: SummaryCount
+    unposted: SummaryCount = Field(default=0, exclude_if=lambda value: value == 0)
+
+
+class HaltRunSummary(_NodeSummary):
+    """One halt: the reason code it declares, when it declares one, cut to the text bound."""
+
+    kind: Literal["halt"] = "halt"
+    reason: SummaryText | None = Field(default=None, exclude_if=_omit_none)
+    reason_truncated: bool = Field(default=False, exclude_if=lambda value: not value)
+
+
+class RepeatRunSummary(_NodeSummary):
+    """One repeat: the attempts it used."""
+
+    kind: Literal["repeat"] = "repeat"
+    attempts: SummaryCount
+
+
+NodeRunSummary: TypeAlias = Annotated[
+    ExtractRunSummary
+    | TransformRunSummary
+    | ReadRunSummary
+    | CallRunSummary
+    | GuardRunSummary
+    | ClaimsRunSummary
+    | EgressRunSummary
+    | HaltRunSummary
+    | RepeatRunSummary,
+    Field(discriminator="kind"),
+]
+
+NODE_RUN_SUMMARY_ADAPTER: TypeAdapter[NodeRunSummary] = TypeAdapter(NodeRunSummary)
+
+#: Refusal codes a run's counts name, at most (the most frequent first).
+RUN_COUNTS_TOP_REFUSALS_MAX = 3
+
+
+class RunRefusalCount(_NodeSummary):
+    """One refusal code and how many of the run's findings carried it.
+
+    ``code`` is the finding kind, with its problem when it names one
+    (``extract_refused.value_invalid``).
+    """
+
+    code: str
+    count: SummaryCount
+
+
+class RunCounts(_NodeSummary):
+    """What one Line run did, in counts: the line a reader checks before "succeeded".
+
+    ``status`` says the run finished; this says what it achieved. ``written``
+    counts new, revising and inverse Claims across the run's claims terminals;
+    ``settled`` and ``proposed`` split them by how each terminal delivered
+    (``proposed`` includes a change still waiting on the Line's open proposal).
+    ``unchanged`` counts re-observed and no-op restatements (a re-observation
+    whose record was refused included), ``retired`` the
+    retirements. ``refused`` counts the items not written (every finding but
+    an incomplete source), with ``top_refusals`` naming the most frequent codes
+    among the findings the run kept. ``inbox`` counts the items this run posted
+    to its Line's inbox; when the inbox could not be read it is the count the
+    run's journaled ``post_inbox`` summaries prove, or ``None`` when they prove
+    none (findings routed to the inbox are not journaled). It splits into
+    ``inbox_new``, the postings that made a new item, and ``inbox_seen_again``,
+    the re-sightings of an item already there (which keep its status and
+    decision); both are ``None`` when the split is unknown (the inbox could
+    not be read, or the counts were recorded before the split existed).
+    ``inbox_unposted`` counts the items an inbox cap left out of this run's
+    posts. ``complete`` is false when the run recorded incompleteness, with
+    ``incomplete_reasons`` naming each node and kind. ``needs_attention`` is
+    true when the run was incomplete, refused an item, posted a new inbox item,
+    left items out under an inbox cap (they may be new: nothing posted them),
+    or posted to the inbox without a known split: an unreadable count never
+    reads as nothing new. A run whose posts were all re-sightings does not
+    need attention for them.
+    """
+
+    tag: Literal["cruxible-run-counts-v1"] = "cruxible-run-counts-v1"
+    complete: bool
+    incomplete_reasons: tuple[CompletenessReason, ...] = Field(
+        default=(), max_length=20, exclude_if=lambda value: not value
+    )
+    written: SummaryCount = 0
+    settled: SummaryCount = 0
+    proposed: SummaryCount = 0
+    unchanged: SummaryCount = 0
+    retired: SummaryCount = 0
+    refused: SummaryCount = 0
+    top_refusals: tuple[RunRefusalCount, ...] = Field(
+        default=(), max_length=RUN_COUNTS_TOP_REFUSALS_MAX, exclude_if=lambda value: not value
+    )
+    inbox: SummaryCount | None = 0
+    inbox_new: SummaryCount | None = None
+    inbox_seen_again: SummaryCount | None = None
+    inbox_unposted: SummaryCount = Field(default=0, exclude_if=lambda value: value == 0)
+    needs_attention: bool
+
+    @model_validator(mode="after")
+    def _attention(self) -> RunCounts:
+        new, again = self.inbox_new, self.inbox_seen_again
+        if (new is None) != (again is None):
+            raise ValueError("inbox_new and inbox_seen_again are known together or not at all")
+        if new is not None and again is not None and new + again != self.inbox:
+            raise ValueError("inbox_new and inbox_seen_again split the inbox count")
+        if self.needs_attention != _needs_attention(
+            complete=self.complete,
+            refused=self.refused,
+            inbox=self.inbox,
+            inbox_new=new,
+            unposted=self.inbox_unposted,
+        ):
+            raise ValueError(
+                "needs_attention is true exactly when the run was incomplete, refused an "
+                "item, posted a new inbox item, left items out under an inbox cap, or "
+                "posted to the inbox without a known split"
+            )
+        return self
+
+
+def _needs_attention(
+    *, complete: bool, refused: int, inbox: int | None, inbox_new: int | None, unposted: int
+) -> bool:
+    if not complete or refused > 0 or unposted > 0:
+        return True
+    if inbox_new is None:
+        # Unknown split: any post (or an unreadable count) may be new.
+        return inbox != 0
+    return inbox_new > 0
+
+
+def run_counts(
+    summaries: Iterable[NodeRunSummary | None],
+    *,
+    findings: Iterable[ClaimsDiagnostic] = (),
+    completeness: RunCompleteness | None = None,
+    inbox: int | None = 0,
+    inbox_new: int | None = None,
+) -> RunCounts:
+    """Fold a run's node summaries, kept findings and completeness into one RunCounts.
+
+    ``inbox`` is the run's inbox postings and ``inbox_new`` how many of them
+    made a new item, as the inbox recorded when each was posted (``None``:
+    not known). Constant work per node: it reads the summaries the run
+    journaled, never a body.
+    """
+
+    written = settled = proposed = unchanged = retired = refused = posted = unposted = 0
+    for summary in summaries:
+        if isinstance(summary, EgressRunSummary) and summary.kind == "post_inbox":
+            posted += summary.emitted
+            unposted += summary.unposted
+        if isinstance(summary, ClaimsRunSummary):
+            changed = summary.written + summary.revised + summary.inverse_written
+            written += changed
+            if summary.delivery == "settled":
+                settled += changed
+            elif summary.delivery in {"proposed", "still_current"}:
+                proposed += changed
+            unchanged += (
+                summary.re_observed + summary.no_op + sum(summary.reobservations_refused.values())
+            )
+            retired += summary.retired
+            refused += sum(
+                count for kind, count in summary.skipped.items() if kind != "incomplete_source"
+            )
+    codes = Counter(
+        item.kind if not item.problem else f"{item.kind}.{item.problem}"
+        for item in findings
+        if item.kind != "incomplete_source"
+    )
+    complete = completeness is None or completeness.complete
+    if inbox is None:
+        # The inbox could not be read: the journal still proves these posts,
+        # but not which of them were new.
+        inbox, inbox_new = (posted or None), None
+    elif inbox == 0:
+        inbox_new = 0
+    return RunCounts(
+        complete=complete,
+        incomplete_reasons=() if completeness is None else completeness.reasons,
+        written=written,
+        settled=settled,
+        proposed=proposed,
+        unchanged=unchanged,
+        retired=retired,
+        refused=refused,
+        top_refusals=tuple(
+            RunRefusalCount(code=code, count=count)
+            for code, count in sorted(codes.items(), key=lambda item: (-item[1], item[0]))[
+                :RUN_COUNTS_TOP_REFUSALS_MAX
+            ]
+        ),
+        inbox=inbox,
+        inbox_new=inbox_new,
+        inbox_seen_again=None if inbox is None or inbox_new is None else inbox - inbox_new,
+        inbox_unposted=unposted,
+        needs_attention=_needs_attention(
+            complete=complete,
+            refused=refused,
+            inbox=inbox,
+            inbox_new=inbox_new,
+            unposted=unposted,
+        ),
+    )
+
+
+__all__ = [
+    "NODE_RUN_SUMMARY_ADAPTER",
+    "NODE_SUMMARY_CAPTURE_DIGESTS_MAX",
+    "NODE_SUMMARY_GUARD_OPERANDS_MAX",
+    "NODE_SUMMARY_INT_MAX",
+    "NODE_SUMMARY_MAX_BYTES",
+    "NODE_SUMMARY_TEXT_MAX",
+    "CallRunSummary",
+    "CaptureDigest",
+    "ClaimsDelivery",
+    "ClaimsRunSummary",
+    "EgressRunSummary",
+    "ExtractCompleteWhen",
+    "ExtractRunSummary",
+    "GuardOperand",
+    "GuardOperandValue",
+    "GuardOperator",
+    "GuardRunSummary",
+    "HaltRunSummary",
+    "NodeRunSummary",
+    "ReadRunSummary",
+    "ReobservationRefusalReason",
+    "RUN_COUNTS_TOP_REFUSALS_MAX",
+    "RepeatRunSummary",
+    "RunRefusalCount",
+    "RunCounts",
+    "SummaryCount",
+    "SummaryInt",
+    "SummaryText",
+    "TransformRunSummary",
+    "run_counts",
+]

@@ -1,0 +1,37 @@
+{
+  "activation": "abort",
+  "description": "List governed work item ids through the accepted query.",
+  "hard_caps": {
+    "capture_bytes": 0,
+    "items": 200,
+    "provider_calls": 0,
+    "repeat_attempts": 1,
+    "wall_clock": "PT2S"
+  },
+  "input": {},
+  "kind": "procedure",
+  "output": {
+    "item_ids": "list<string>{max_items: 50}"
+  },
+  "procedure": "project.work_item.digest",
+  "returns": {
+    "fields": {
+      "item_ids": {
+        "$ref": "step",
+        "path": [
+          "rows",
+          "[*]",
+          "item_id"
+        ],
+        "step": "query"
+      }
+    }
+  },
+  "steps": [
+    {
+      "id": "read",
+      "query": "project.work_items",
+      "read": "query"
+    }
+  ]
+}

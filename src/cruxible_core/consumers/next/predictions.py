@@ -1,0 +1,1047 @@
+"""Prediction settlement within the next consumer.
+
+A ResolutionContract tests its hypothesis over a bound observation window. A
+fixed window is bound when the contract is accepted. An event window is bound
+once per landed Capture its selector matches, and each bound window is its own
+contract instance with its own resolution journal. Once a window closes with
+no current answer in that journal, the prediction is settleable. It stays so
+until a settlement lands, and is settleable again if that answer is overturned.
+
+The worker follows four logs: accepted generations, for contracts accepted,
+revised, or retired; the capture landing index, for event anchors; and the
+resolution journal, for settlements and overturns; and the trigger journal,
+for anchor retries. Reads apply each window's end to their evaluation instant.
+On a new instance it reads every live contract and every retained
+Capture each selector matches, because a prediction made before the worker ran
+is still owed. An anchor whose material is gone cannot bind a window, and that
+is a finding, never a silent skip.
+
+The findings are a disposable projection of those logs: deleting them costs
+only a rebuild. Nothing here is governed, so the worker needs no authority and
+a restart resumes from its cursors.
+"""
+
+from __future__ import annotations
+
+import json
+import sqlite3
+from collections.abc import Iterable
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING, Any
+from uuid import uuid4
+
+from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.procedures.windows import (
+    BoundObservationWindow,
+    CaptureEventWindow,
+    TriggerEventReference,
+)
+from cruxible_client.contracts.projection import AcceptedCoordinate
+from cruxible_client.contracts.resolution_contracts import (
+    InvestigationBinding,
+    ResolutionContract,
+    ResolutionContractReference,
+)
+from cruxible_client.contracts.temporal import format_datetime, parse_datetime
+from cruxible_client.contracts.triggers import INTERNAL_ACTIONS
+from cruxible_core.consumers.protocol import (
+    ConsumerHealth,
+    ConsumerRepair,
+    ConsumerWork,
+)
+from cruxible_core.consumers.state import DisposableState
+from cruxible_core.service.procedures.resolution_contracts import capture_contract_name
+from cruxible_core.triggers.journal import trigger_events
+
+#: The internal action this part performs; its registry entry names this part.
+ACTION = INTERNAL_ACTIONS["prediction.anchor_retry"]
+
+if TYPE_CHECKING:
+    from cruxible_core.procedures.resolution import ResolutionContractActivationV3
+
+#: Generations one matching pass reads before yielding.
+GENERATION_BATCH = 64
+#: Resolution journal records one matching pass reads before yielding.
+EVENT_BATCH = 1024
+#: Contracts one unit of work loads, or scans the capture index for.
+CONTRACT_BATCH = 64
+#: Landed Captures one contract's scan binds per page.
+CAPTURE_PAGE = 256
+#: Bound windows one unit of work checks against their resolution journals.
+CHECK_BATCH = 256
+
+_PREFIX = "resolutions:"
+
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS progress (
+ singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+ generation INTEGER NOT NULL, backfill_after TEXT, index_generation TEXT,
+ capture_head INTEGER NOT NULL DEFAULT 0, resolution_ordinal INTEGER NOT NULL DEFAULT 0,
+ trigger_sequence INTEGER NOT NULL DEFAULT 0,
+ retry_completed_sequence INTEGER NOT NULL DEFAULT 0,
+ last_error TEXT, last_error_at TEXT
+) STRICT;
+CREATE TABLE IF NOT EXISTS pending (identity TEXT PRIMARY KEY, generation INTEGER NOT NULL) STRICT;
+CREATE TABLE IF NOT EXISTS contracts (
+ identity TEXT PRIMARY KEY, artifact_digest TEXT NOT NULL, hypothesis TEXT NOT NULL,
+ reference TEXT NOT NULL, contract TEXT NOT NULL, accepted_at TEXT NOT NULL,
+ selector_digest TEXT, capture_generation TEXT, capture_ordinal INTEGER NOT NULL DEFAULT 0,
+ scan_through INTEGER, scan_cursor TEXT
+) STRICT;
+CREATE INDEX IF NOT EXISTS contracts_by_capture
+ ON contracts(capture_ordinal) WHERE selector_digest IS NOT NULL;
+CREATE INDEX IF NOT EXISTS contracts_unscanned
+ ON contracts(identity) WHERE selector_digest IS NOT NULL AND capture_generation IS NULL;
+CREATE INDEX IF NOT EXISTS contracts_scanning ON contracts(identity) WHERE scan_cursor IS NOT NULL;
+CREATE TABLE IF NOT EXISTS windows (
+ contract_id TEXT PRIMARY KEY, identity TEXT NOT NULL, window TEXT NOT NULL,
+ ends_at_us INTEGER NOT NULL,
+ status TEXT NOT NULL CHECK(status IN ('open','resolved')),
+ dirty TEXT, checked_at TEXT
+) STRICT;
+CREATE INDEX IF NOT EXISTS windows_by_status ON windows(status,ends_at_us);
+CREATE INDEX IF NOT EXISTS windows_by_identity ON windows(identity);
+CREATE INDEX IF NOT EXISTS windows_dirty ON windows(contract_id) WHERE dirty IS NOT NULL;
+CREATE TABLE IF NOT EXISTS unbindable (
+ identity TEXT NOT NULL, record_digest TEXT NOT NULL, event TEXT NOT NULL,
+ code TEXT NOT NULL, checked_at TEXT NOT NULL, missing_body TEXT,
+ PRIMARY KEY(identity, record_digest)
+) STRICT;
+CREATE INDEX IF NOT EXISTS unbindable_by_missing_body
+ ON unbindable(missing_body) WHERE missing_body IS NOT NULL;
+CREATE TABLE IF NOT EXISTS retries (
+ identity TEXT NOT NULL, record_digest TEXT NOT NULL, dirty TEXT NOT NULL,
+ PRIMARY KEY(identity,record_digest)
+) STRICT;
+CREATE TABLE IF NOT EXISTS tally (name TEXT PRIMARY KEY, value INTEGER NOT NULL) STRICT;
+INSERT OR IGNORE INTO tally VALUES
+ ('pending',0),('contracts',0),('unbindable',0),('retries',0),('open',0),('resolved',0);
+CREATE TRIGGER IF NOT EXISTS pending_added AFTER INSERT ON pending
+ BEGIN UPDATE tally SET value=value+1 WHERE name='pending'; END;
+CREATE TRIGGER IF NOT EXISTS pending_removed AFTER DELETE ON pending
+ BEGIN UPDATE tally SET value=value-1 WHERE name='pending'; END;
+CREATE TRIGGER IF NOT EXISTS contract_added AFTER INSERT ON contracts
+ BEGIN UPDATE tally SET value=value+1 WHERE name='contracts'; END;
+CREATE TRIGGER IF NOT EXISTS contract_removed AFTER DELETE ON contracts
+ BEGIN UPDATE tally SET value=value-1 WHERE name='contracts'; END;
+CREATE TRIGGER IF NOT EXISTS anchor_added AFTER INSERT ON unbindable
+ BEGIN UPDATE tally SET value=value+1 WHERE name='unbindable'; END;
+CREATE TRIGGER IF NOT EXISTS anchor_removed AFTER DELETE ON unbindable
+ BEGIN UPDATE tally SET value=value-1 WHERE name='unbindable'; END;
+CREATE TRIGGER IF NOT EXISTS retry_added AFTER INSERT ON retries
+ BEGIN UPDATE tally SET value=value+1 WHERE name='retries'; END;
+CREATE TRIGGER IF NOT EXISTS retry_removed AFTER DELETE ON retries
+ BEGIN UPDATE tally SET value=value-1 WHERE name='retries'; END;
+CREATE TRIGGER IF NOT EXISTS window_added AFTER INSERT ON windows
+ BEGIN UPDATE tally SET value=value+1 WHERE name=NEW.status; END;
+CREATE TRIGGER IF NOT EXISTS window_removed AFTER DELETE ON windows
+ BEGIN UPDATE tally SET value=value-1 WHERE name=OLD.status; END;
+CREATE TRIGGER IF NOT EXISTS window_moved AFTER UPDATE OF status ON windows
+ WHEN OLD.status<>NEW.status BEGIN
+ UPDATE tally SET value=value-1 WHERE name=OLD.status;
+ UPDATE tally SET value=value+1 WHERE name=NEW.status;
+ END;
+"""
+_STATE = DisposableState("next/predictions", _SCHEMA)
+
+
+@dataclass(frozen=True)
+class SettleableWindow:
+    """A closed bound window whose resolution journal holds no current answer."""
+
+    contract: ResolutionContractReference
+    hypothesis: str
+    bound_contract_id: str
+    window: BoundObservationWindow
+    checked_at: datetime
+
+
+@dataclass(frozen=True)
+class UnbindableAnchor:
+    """A matching landed Capture whose retained material no longer binds a window."""
+
+    contract: ResolutionContractReference
+    hypothesis: str
+    event: TriggerEventReference
+    code: str
+    checked_at: datetime
+
+
+@dataclass(frozen=True)
+class _Contract:
+    identity: str
+    reference: ResolutionContractReference
+    contract: ResolutionContract
+    accepted_at: datetime
+
+
+def _instant(value: str) -> datetime:
+    parsed = parse_datetime(value)
+    assert parsed is not None
+    return parsed
+
+
+def retry_covered_sequence(instance: Any, *, timeout: float | None = None) -> int:
+    """The trigger fire sequence through which ``prediction.anchor_retry`` has completed.
+
+    ``timeout``, when given, bounds the read to that many seconds and raises
+    ``StateBusyError`` rather than waiting on a worker's own transaction.
+    """
+
+    with _STATE.open(instance, create=False, timeout=timeout) as connection:
+        if connection is None:
+            return 0
+        row = connection.execute("SELECT retry_completed_sequence FROM progress").fetchone()
+        return 0 if row is None else int(row[0])
+
+
+def _microseconds(value: datetime) -> int:
+    from cruxible_core.indexes.typed_state import utc_microseconds
+
+    micros = utc_microseconds(value)
+    assert micros is not None
+    return micros
+
+
+def _contract_row(row: tuple[Any, ...]) -> _Contract:
+    identity, reference, contract, accepted_at = row
+    return _Contract(
+        identity=identity,
+        reference=ResolutionContractReference.model_validate_json(reference),
+        contract=ResolutionContract.model_validate_json(contract),
+        accepted_at=_instant(accepted_at),
+    )
+
+
+def _activation(
+    contract: _Contract, window: BoundObservationWindow
+) -> ResolutionContractActivationV3:
+    """The exact activation a settlement of this bound window journals under."""
+
+    from cruxible_core.procedures.resolution import build_independent_activation
+
+    return build_independent_activation(
+        contract.contract,
+        InvestigationBinding(
+            contract=contract.reference, hypothesis=contract.contract.hypothesis, window=window
+        ),
+        activated_at=contract.accepted_at,
+    )
+
+
+def _window_row(contract: _Contract, window: BoundObservationWindow) -> tuple[Any, ...] | None:
+    # Settlement needs an observation after acceptance and inside the window,
+    # so a window that closed before its contract was accepted can never be
+    # settled: it is no prediction at all, not an owed one.
+    if window.ends_at <= contract.accepted_at:
+        return None
+    return (
+        _activation(contract, window).contract_id,
+        contract.identity,
+        window.model_dump_json(),
+        _microseconds(window.ends_at),
+    )
+
+
+@dataclass(frozen=True)
+class _Unbound:
+    """Why an anchor binds no window, and the one body whose arrival could change that."""
+
+    code: str
+    #: The anchor record's payload digest when that body is what is missing: a
+    #: later landing that stores the same bytes restores it. None when nothing a
+    #: landing stores can (a lost record, an invalid or mismatched payload).
+    missing_body: str | None
+
+
+def _bind(
+    instance: Any, contract: _Contract, event: TriggerEventReference
+) -> BoundObservationWindow | _Unbound | None:
+    """The event's bound window; why it is unbindable; None to retry later."""
+
+    from cruxible_core.service.procedures.procedure_runs import _stream
+    from cruxible_core.service.procedures.resolution_contracts import (
+        TriggerCaptureRefused,
+        bind_window,
+    )
+
+    journal, _captures, _resolutions = _journals(instance)
+    records = journal.select_records(
+        _stream(instance),
+        partition_id=event.partition_id,
+        first_sequence=event.sequence,
+        last_sequence=event.sequence,
+    )
+    observed_at = records[0].record.recorded_at if records else contract.accepted_at
+    try:
+        return bind_window(instance, contract.contract.window, event, now=observed_at)
+    except TriggerCaptureRefused as exc:
+        if exc.retryable:
+            return None
+        payload = records[0].record.payload_digest if len(records) == 1 else None
+        return _Unbound(
+            code=str(exc.refusal_code),
+            missing_body=payload
+            if exc.refusal_code == "trigger_capture_unavailable"
+            and payload is not None
+            and not instance.body_store().verify(payload)
+            else None,
+        )
+
+
+def settleable_windows(instance: Any, *, evaluation_time: datetime) -> tuple[SettleableWindow, ...]:
+    """Unanswered windows closed at the requested instant, without another worker tick."""
+
+    with _STATE.open(instance, create=False) as connection:
+        if connection is None:
+            return ()
+        rows = connection.execute(
+            "SELECT c.reference,c.hypothesis,w.contract_id,w.window,"
+            "coalesce(w.checked_at,c.accepted_at) "
+            "FROM windows w INDEXED BY windows_by_status JOIN contracts c ON c.identity=w.identity "
+            "WHERE w.status='open' AND w.ends_at_us<=? ORDER BY w.ends_at_us,w.contract_id",
+            (_microseconds(evaluation_time),),
+        ).fetchall()
+    return tuple(
+        SettleableWindow(
+            contract=ResolutionContractReference.model_validate_json(reference),
+            hypothesis=hypothesis,
+            bound_contract_id=contract_id,
+            window=BoundObservationWindow.model_validate_json(window),
+            checked_at=_instant(checked_at),
+        )
+        for reference, hypothesis, contract_id, window, checked_at in rows
+    )
+
+
+def bound_window(instance: Any, bound_contract_id: str) -> SettleableWindow | None:
+    """One bound window the worker holds, by its bound contract id, whatever its status."""
+
+    with _STATE.open(instance, create=False) as connection:
+        if connection is None:
+            return None
+        row = connection.execute(
+            "SELECT c.reference,c.hypothesis,w.contract_id,w.window,w.checked_at "
+            "FROM windows w JOIN contracts c ON c.identity=w.identity WHERE w.contract_id=?",
+            (bound_contract_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    reference, hypothesis, contract_id, window, checked_at = row
+    return SettleableWindow(
+        contract=ResolutionContractReference.model_validate_json(reference),
+        hypothesis=hypothesis,
+        bound_contract_id=contract_id,
+        window=BoundObservationWindow.model_validate_json(window),
+        checked_at=_instant(checked_at) if checked_at else _instant("1970-01-01T00:00:00Z"),
+    )
+
+
+# A stored window is open or resolved; an open one whose end has passed at the
+# read's evaluation instant reads as settleable, without another worker tick.
+_READ_STATUS = "CASE WHEN status='open' AND ends_at_us<=? THEN 'settleable' ELSE status END"
+
+
+def contract_windows(
+    instance: Any, identity: str, *, limit: int, evaluation_time: datetime
+) -> tuple[tuple[tuple[str, BoundObservationWindow, str], ...], dict[str, int]] | None:
+    """One contract's bound windows (soonest to close first, bounded) and counts by status.
+
+    ``None`` when the worker never ran on this instance, so an empty answer is
+    never mistaken for "no windows".
+    """
+
+    at = _microseconds(evaluation_time)
+    with _STATE.open(instance, create=False) as connection:
+        if connection is None:
+            return None
+        counts = {status: 0 for status in ("open", "settleable", "resolved")}
+        for status, count in connection.execute(
+            f"SELECT {_READ_STATUS} AS read_status, count(*) FROM windows "
+            "INDEXED BY windows_by_identity WHERE identity=? GROUP BY read_status",
+            (at, identity),
+        ):
+            counts[str(status)] = int(count)
+        rows = connection.execute(
+            f"SELECT contract_id, window, {_READ_STATUS} FROM windows "
+            "INDEXED BY windows_by_identity "
+            "WHERE identity=? ORDER BY status='resolved', ends_at_us, contract_id LIMIT ?",
+            (at, identity, limit),
+        ).fetchall()
+    return (
+        tuple(
+            (str(contract_id), BoundObservationWindow.model_validate_json(window), str(status))
+            for contract_id, window, status in rows
+        ),
+        counts,
+    )
+
+
+@dataclass(frozen=True)
+class WindowTally:
+    open: int
+    settleable: int
+    resolved: int
+    #: When the soonest still-open window closes.
+    next_close: datetime | None
+
+
+def window_tallies(
+    instance: Any, identities: Iterable[str], *, evaluation_time: datetime
+) -> dict[str, WindowTally]:
+    """Bound windows by status for each named contract; empty before the worker ran."""
+
+    wanted = tuple(identities)
+    if not wanted:
+        return {}
+    at = _microseconds(evaluation_time)
+    with _STATE.open(instance, create=False) as connection:
+        if connection is None:
+            return {}
+        found: dict[str, dict[str, int]] = {}
+        closes: dict[str, int] = {}
+        for identity in wanted:
+            for status, count, soonest in connection.execute(
+                f"SELECT {_READ_STATUS} AS read_status, count(*), min(ends_at_us) FROM windows "
+                "INDEXED BY windows_by_identity WHERE identity=? GROUP BY read_status",
+                (at, identity),
+            ):
+                found.setdefault(identity, {})[str(status)] = int(count)
+                if status == "open" and soonest is not None:
+                    closes[identity] = int(soonest)
+    return {
+        identity: WindowTally(
+            open=counts.get("open", 0),
+            settleable=counts.get("settleable", 0),
+            resolved=counts.get("resolved", 0),
+            next_close=(
+                None
+                if identity not in closes
+                else datetime(1970, 1, 1, tzinfo=UTC) + timedelta(microseconds=closes[identity])
+            ),
+        )
+        for identity, counts in found.items()
+    }
+
+
+def unbindable_anchors(instance: Any) -> tuple[UnbindableAnchor, ...]:
+    """Matching anchors whose material could not bind a window at the last look."""
+
+    with _STATE.open(instance, create=False) as connection:
+        if connection is None:
+            return ()
+        rows = connection.execute(
+            "SELECT c.reference,c.hypothesis,u.event,u.code,u.checked_at "
+            "FROM unbindable u JOIN contracts c ON c.identity=u.identity "
+            "ORDER BY u.identity,u.record_digest"
+        ).fetchall()
+    return tuple(
+        UnbindableAnchor(
+            contract=ResolutionContractReference.model_validate_json(reference),
+            hypothesis=hypothesis,
+            event=TriggerEventReference.model_validate_json(event),
+            code=code,
+            checked_at=_instant(checked_at),
+        )
+        for reference, hypothesis, event, code, checked_at in rows
+    )
+
+
+def _behind_on_captures(
+    connection: sqlite3.Connection, columns: str, *, head: int, limit: int
+) -> list[Any]:
+    """Event contracts whose capture scan is behind, each reason read by its own index.
+
+    One predicate joining the reasons with OR walks every contract when none is
+    behind; separate seeks cost the same whatever the contract population.
+    """
+
+    found: dict[Any, Any] = {}
+    for index, where, args in (
+        ("contracts_scanning", "scan_cursor IS NOT NULL", ()),
+        (
+            "contracts_unscanned",
+            "selector_digest IS NOT NULL AND capture_generation IS NULL",
+            (),
+        ),
+        ("contracts_by_capture", "selector_digest IS NOT NULL AND capture_ordinal<?", (head,)),
+    ):
+        for row in connection.execute(
+            f"SELECT {columns} FROM contracts INDEXED BY {index} WHERE {where} LIMIT ?",
+            (*args, limit),
+        ).fetchall():
+            found.setdefault(row[0], row)
+    return list(found.values())[:limit]
+
+
+def _journals(instance: Any) -> tuple[Any, Any, Any]:
+    """The shared journal backend, its capture stream, and its resolution stream."""
+
+    from cruxible_core.service.procedures import predictions, procedure_runs
+
+    journal, resolutions = predictions._journal(instance)
+    return journal, procedure_runs._stream(instance), resolutions
+
+
+class PredictionPart:
+    def match(self, instance: Any, *, now: datetime, daemon_id: str) -> None:
+        with instance.accepted_history_reader() as history:
+            head = history.sequence
+            with _STATE.open(instance) as connection:
+                assert connection is not None
+                row = connection.execute("SELECT generation FROM progress").fetchone()
+            cursor = head if row is None else row[0]
+            through = min(head, cursor + GENERATION_BATCH)
+            contracts = {
+                version.identity
+                for sequence in range(cursor + 1, through + 1)
+                for version in history.versions_at(sequence)
+                if version.path.startswith("resolution-contracts/")
+            }
+        journal, captures_stream, resolution_stream = _journals(instance)
+        captures = journal.index.positions(captures_stream, event_kind="produced_capture")
+        resolutions = journal.index.positions(resolution_stream)
+        generation = captures["generation"]
+        with _STATE.open(instance) as connection:
+            assert connection is not None
+            if row is None:
+                # A new worker reads today's live contracts, not their history;
+                # none has a window yet, so no settlement before now needs reading.
+                connection.execute(
+                    "INSERT INTO progress(singleton,generation,backfill_after,index_generation,"
+                    "capture_head,resolution_ordinal) VALUES (1,?,'',?,?,?)",
+                    (head, generation, captures["ordinal"], resolutions["ordinal"]),
+                )
+                return
+            (known, ordinal, capture_head, trigger_sequence) = connection.execute(
+                "SELECT index_generation,resolution_ordinal,capture_head,trigger_sequence "
+                "FROM progress"
+            ).fetchone()
+        # A rebuilt index renumbers every record: read the resolution journal
+        # again from its start, and let each contract rescan its captures.
+        after = {"generation": generation, "ordinal": ordinal if known == generation else 0}
+        partitions, stopped = journal.index.appended_partitions(
+            resolution_stream, after=after, through=resolutions, limit=EVENT_BATCH
+        )
+        events = trigger_events(
+            instance, after=trigger_sequence, action=ACTION.name, limit=EVENT_BATCH
+        )
+        # The payload bodies the landings since the last pass stored: read from
+        # the index over exactly those landings.
+        landed_bodies = (
+            journal.index.payload_digests(
+                captures_stream,
+                event_kind="produced_capture",
+                after=capture_head,
+                through=captures["ordinal"],
+            )
+            if known == generation and captures["ordinal"] > capture_head
+            else ()
+        )
+        mark = uuid4().hex
+        with _STATE.open(instance) as connection:
+            assert connection is not None
+            # A later generation re-queues a contract the worker may be loading
+            # now; the worker only clears the queueing it read.
+            connection.executemany(
+                "INSERT INTO pending VALUES (?,?) "
+                "ON CONFLICT(identity) DO UPDATE SET generation=excluded.generation",
+                ((identity, through) for identity in contracts),
+            )
+            connection.executemany(
+                "UPDATE windows SET dirty=? WHERE contract_id=?",
+                (
+                    (mark, partition.removeprefix(_PREFIX))
+                    for partition in partitions
+                    if partition.startswith(_PREFIX)
+                ),
+            )
+            if known != generation:
+                # Positions from the old index mean nothing in the new one.
+                connection.execute(
+                    "UPDATE contracts SET capture_generation=NULL,capture_ordinal=0,"
+                    "scan_through=NULL,scan_cursor=NULL WHERE selector_digest IS NOT NULL"
+                )
+            # The anchor-retry Trigger requeues every unbindable anchor. A new
+            # landing requeues only the anchors whose missing payload body it
+            # stored (payloads are content addressed and need not name their
+            # run): never every anchor ever refused.
+            if events:
+                connection.execute(
+                    "INSERT INTO retries SELECT identity,record_digest,? "
+                    "FROM unbindable WHERE true "
+                    "ON CONFLICT(identity,record_digest) DO UPDATE SET dirty=excluded.dirty",
+                    (mark,),
+                )
+            elif landed_bodies:
+                connection.executemany(
+                    "INSERT INTO retries SELECT identity,record_digest,? "
+                    "FROM unbindable INDEXED BY unbindable_by_missing_body "
+                    "WHERE missing_body=? "
+                    "ON CONFLICT(identity,record_digest) DO UPDATE SET dirty=excluded.dirty",
+                    ((mark, body) for body in landed_bodies),
+                )
+            if events:
+                connection.execute("UPDATE progress SET trigger_sequence=?", (events[-1].sequence,))
+            connection.execute(
+                "UPDATE progress SET retry_completed_sequence=trigger_sequence "
+                "WHERE NOT EXISTS (SELECT 1 FROM retries)"
+            )
+            connection.execute(
+                "UPDATE progress SET generation=?,index_generation=?,capture_head=?,"
+                "resolution_ordinal=?",
+                (
+                    through,
+                    generation,
+                    captures["ordinal"],
+                    (stopped or resolutions)["ordinal"],
+                ),
+            )
+
+    def due(self, instance: Any, *, now: datetime) -> Iterable[ConsumerWork]:
+        with _STATE.open(instance) as connection:
+            assert connection is not None
+            progress = connection.execute(
+                "SELECT backfill_after,capture_head FROM progress"
+            ).fetchone()
+            if progress is None:
+                return ()
+            backfill_after, capture_head = progress
+            contracts = (
+                backfill_after is not None
+                or connection.execute("SELECT 1 FROM pending LIMIT 1").fetchone()
+            )
+            captures = _behind_on_captures(connection, "identity", head=capture_head, limit=1)
+            windows = (
+                connection.execute(
+                    "SELECT 1 FROM windows WHERE dirty IS NOT NULL LIMIT 1"
+                ).fetchone()
+                or connection.execute("SELECT 1 FROM retries LIMIT 1").fetchone()
+            )
+        return tuple(
+            ConsumerWork(key=key, item=key)
+            for key, due in (("contracts", contracts), ("captures", captures), ("windows", windows))
+            if due
+        )
+
+    def run(self, manager: Any, instance_id: str, work: ConsumerWork, *, now: datetime) -> None:
+        instance = manager.get(instance_id)
+        try:
+            if work.item == "contracts":
+                self._contracts(instance, now=now)
+            elif work.item == "captures":
+                self._captures(instance, now=now)
+            else:
+                self._windows(instance, now=now)
+        except Exception as exc:
+            with _STATE.open(instance) as connection:
+                assert connection is not None
+                connection.execute(
+                    "UPDATE progress SET last_error=?,last_error_at=?",
+                    (f"{type(exc).__name__}: {exc}", format_datetime(now)),
+                )
+            raise
+        with _STATE.open(instance) as connection:
+            assert connection is not None
+            connection.execute("UPDATE progress SET last_error=NULL,last_error_at=NULL")
+
+    def _contracts(self, instance: Any, *, now: datetime) -> None:
+        """Follow accepted contracts: load a new version, drop a retired or revised one."""
+
+        with _STATE.open(instance) as connection:
+            assert connection is not None
+            pending = connection.execute(
+                "SELECT identity,generation FROM pending ORDER BY identity LIMIT ?",
+                (CONTRACT_BATCH,),
+            ).fetchall()
+            (backfill_after,) = connection.execute("SELECT backfill_after FROM progress").fetchone()
+        coordinate = instance.accepted_coordinate()
+        live: dict[str, str | None] = {}
+        backfilled: str | None = None
+        with instance.bind_accepted_projection(coordinate) as projection:
+            typed = projection.typed.connection
+            identities = [identity for identity, _generation in pending]
+            if backfill_after is not None:
+                page = [
+                    row[0]
+                    for row in typed.execute(
+                        "SELECT identity FROM resolution_contracts WHERE identity>? "
+                        "ORDER BY identity LIMIT ?",
+                        (backfill_after, CONTRACT_BATCH),
+                    ).fetchall()
+                ]
+                identities.extend(page)
+                backfilled = page[-1] if len(page) == CONTRACT_BATCH else None
+            for identity in identities:
+                row = typed.execute(
+                    "SELECT artifact_digest FROM resolution_contracts "
+                    "WHERE identity=? AND lifecycle='live'",
+                    (identity,),
+                ).fetchone()
+                live[identity] = None if row is None else row[0]
+        with _STATE.open(instance) as connection:
+            assert connection is not None
+            known = dict(
+                connection.execute(
+                    "SELECT identity,artifact_digest FROM contracts WHERE identity IN "
+                    f"({','.join('?' * len(live))})",
+                    tuple(live),
+                ).fetchall()
+            )
+        at = AcceptedCoordinate.from_internal(coordinate)
+        loaded = [
+            self._load(instance, identity, digest, at=at, now=now)
+            for identity, digest in live.items()
+            if digest is not None and known.get(identity) != digest
+        ]
+        # A retired contract is withdrawn, and a revised one is a new test:
+        # neither leaves the old version's windows owed.
+        dropped = [
+            identity
+            for identity, digest in live.items()
+            if (digest is None and identity in known)
+            or (digest is not None and known.get(identity) not in {None, digest})
+        ]
+        with _STATE.open(instance) as connection:
+            assert connection is not None
+            for identity in dropped:
+                for table in ("contracts", "windows", "unbindable", "retries"):
+                    connection.execute(f"DELETE FROM {table} WHERE identity=?", (identity,))
+            for contract, windows in loaded:
+                window = contract.contract.window
+                connection.execute(
+                    "INSERT INTO contracts(identity,artifact_digest,hypothesis,reference,contract,"
+                    "accepted_at,selector_digest) VALUES (?,?,?,?,?,?,?)",
+                    (
+                        contract.identity,
+                        contract.reference.artifact_digest,
+                        contract.contract.hypothesis.identity.qualified,
+                        contract.reference.model_dump_json(),
+                        contract.contract.model_dump_json(),
+                        format_datetime(contract.accepted_at),
+                        window.event.capture_contract_digest
+                        if isinstance(window, CaptureEventWindow)
+                        else None,
+                    ),
+                )
+                connection.executemany(
+                    "INSERT OR IGNORE INTO windows"
+                    "(contract_id,identity,window,ends_at_us,status,dirty) "
+                    "VALUES (?,?,?,?,'open','initial')",
+                    windows,
+                )
+            connection.executemany("DELETE FROM pending WHERE identity=? AND generation=?", pending)
+            if backfill_after is not None:
+                connection.execute("UPDATE progress SET backfill_after=?", (backfilled,))
+
+    def _load(
+        self, instance: Any, identity: str, digest: str, *, at: AcceptedCoordinate, now: datetime
+    ) -> tuple[_Contract, list[tuple[Any, ...]]]:
+        from cruxible_core.service.procedures.resolution_contracts import (
+            artifact_accepted_time,
+            bind_window,
+            canonical_contract_reference,
+            read_resolution_contract,
+        )
+
+        kind, name = identity.split(":", 1)
+        reference = canonical_contract_reference(
+            instance,
+            ResolutionContractReference(
+                identity=ArtifactIdentity(kind=kind, name=name),
+                artifact_digest=digest,
+                coordinate=at,
+            ),
+        )
+        contract = _Contract(
+            identity=identity,
+            reference=reference,
+            contract=read_resolution_contract(instance, reference),
+            accepted_at=artifact_accepted_time(instance, reference),
+        )
+        if isinstance(contract.contract.window, CaptureEventWindow):
+            # Its windows wait for the anchors the capture scan finds.
+            return contract, []
+        row = _window_row(
+            contract,
+            bind_window(instance, contract.contract.window, None, now=contract.accepted_at),
+        )
+        return contract, [] if row is None else [row]
+
+    def _captures(self, instance: Any, *, now: datetime) -> None:
+        """Bind one window per landed Capture an event contract's selector matches."""
+
+        with _STATE.open(instance) as connection:
+            assert connection is not None
+            generation, head = connection.execute(
+                "SELECT index_generation,capture_head FROM progress"
+            ).fetchone()
+            rows = _behind_on_captures(
+                connection,
+                "identity,reference,contract,accepted_at,selector_digest,"
+                "capture_generation,capture_ordinal,scan_through,scan_cursor",
+                head=head,
+                limit=CONTRACT_BATCH,
+            )
+        journal, stream, _resolutions = _journals(instance)
+        for row in rows:
+            contract = _contract_row(row[:4])
+            selector, scanned_in, ordinal, scan_through, scan_cursor = row[4:]
+            if scanned_in != generation:
+                ordinal, scan_through, scan_cursor = 0, None, None
+            through = head if scan_through is None else scan_through
+            event_window = contract.contract.window
+            assert isinstance(event_window, CaptureEventWindow)
+            records, cursor, complete = journal.index.captures(
+                stream,
+                bodies=instance.body_store(),
+                contract_identity=event_window.event.capture_contract_identity.qualified,
+                resolve_contract=lambda digest: capture_contract_name(instance, digest),
+                since=None,
+                until=datetime.max.replace(tzinfo=UTC),
+                limit=CAPTURE_PAGE,
+                cursor=None if scan_cursor is None else tuple(json.loads(scan_cursor)),
+                after={"generation": generation, "ordinal": ordinal},
+                through={"generation": generation, "ordinal": through},
+            )
+            if not complete:
+                continue  # the index is still projecting new landings
+            windows: list[tuple[Any, ...]] = []
+            unbound: list[tuple[str, TriggerEventReference, _Unbound]] = []
+            bound: list[str] = []
+            retry = False
+            for stored in records:
+                event = TriggerEventReference(
+                    run_id=stored.record.run_id or "",
+                    partition_id=stored.record.partition_id,
+                    sequence=stored.record.sequence,
+                    record_digest=stored.record_digest,
+                )
+                window = _bind(instance, contract, event)
+                if window is None:
+                    retry = True
+                    break
+                if isinstance(window, _Unbound):
+                    unbound.append((stored.record_digest, event, window))
+                    continue
+                bound.append(stored.record_digest)
+                if (item := _window_row(contract, window)) is not None:
+                    windows.append(item)
+            with _STATE.open(instance) as connection:
+                assert connection is not None
+                (current,) = connection.execute("SELECT index_generation FROM progress").fetchone()
+                if current != generation:
+                    # The index was rebuilt while this pass read it, and matching
+                    # already reset every scan: nothing read here may land, not
+                    # even the cursor that would undo that reset.
+                    return
+                self._record_bindings(
+                    connection, contract.identity, windows, unbound, bound, now=now
+                )
+                if retry:
+                    continue
+                connection.execute(
+                    "UPDATE contracts SET capture_generation=?,capture_ordinal=?,scan_through=?,"
+                    "scan_cursor=? WHERE identity=? AND artifact_digest=?",
+                    (
+                        generation,
+                        ordinal if cursor is not None else through,
+                        through if cursor is not None else None,
+                        None if cursor is None else json.dumps(list(cursor)),
+                        contract.identity,
+                        contract.reference.artifact_digest,
+                    ),
+                )
+
+    @staticmethod
+    def _record_bindings(
+        connection: sqlite3.Connection,
+        identity: str,
+        windows: list[tuple[Any, ...]],
+        unbound: list[tuple[str, TriggerEventReference, _Unbound]],
+        bound: list[str],
+        *,
+        now: datetime,
+    ) -> None:
+        # The contract may have been revised or retired while its anchors bound.
+        if not connection.execute(
+            "SELECT 1 FROM contracts WHERE identity=?", (identity,)
+        ).fetchone():
+            return
+        connection.executemany(
+            "INSERT OR IGNORE INTO windows(contract_id,identity,window,ends_at_us,status,dirty) "
+            "VALUES (?,?,?,?,'open','initial')",
+            windows,
+        )
+        connection.executemany(
+            "DELETE FROM unbindable WHERE identity=? AND record_digest=?",
+            ((identity, digest) for digest in bound),
+        )
+        connection.executemany(
+            "DELETE FROM retries WHERE identity=? AND record_digest=?",
+            ((identity, digest) for digest in bound),
+        )
+        connection.executemany(
+            # An upsert, not a replace: a replace deletes without firing the tally.
+            "INSERT INTO unbindable VALUES (?,?,?,?,?,?) ON CONFLICT(identity,record_digest) "
+            "DO UPDATE SET event=excluded.event,code=excluded.code,"
+            "checked_at=excluded.checked_at,missing_body=excluded.missing_body",
+            (
+                (
+                    identity,
+                    digest,
+                    event.model_dump_json(),
+                    unbindable.code,
+                    format_datetime(now),
+                    unbindable.missing_body,
+                )
+                for digest, event, unbindable in unbound
+            ),
+        )
+
+    def _windows(self, instance: Any, *, now: datetime) -> None:
+        """Follow resolution changes and retry the anchors a logged event queued."""
+
+        from cruxible_core.procedures.resolution import (
+            ProcedureResolutionBook,
+            resolution_contract_partition_id,
+        )
+
+        columns = (
+            "w.contract_id,w.window,w.dirty,c.identity,c.reference,c.contract,c.accepted_at "
+            "FROM windows w JOIN contracts c ON c.identity=w.identity"
+        )
+        with _STATE.open(instance) as connection:
+            assert connection is not None
+            rows = connection.execute(
+                f"SELECT {columns} WHERE w.dirty IS NOT NULL LIMIT ?", (CHECK_BATCH,)
+            ).fetchall()
+            retries = connection.execute(
+                "SELECT u.record_digest,u.event,r.dirty,c.identity,c.reference,c.contract,"
+                "c.accepted_at "
+                "FROM retries r JOIN unbindable u "
+                "ON u.identity=r.identity AND u.record_digest=r.record_digest "
+                "JOIN contracts c ON c.identity=u.identity "
+                "ORDER BY r.identity,r.record_digest LIMIT ?",
+                (CHECK_BATCH,),
+            ).fetchall()
+        journal, _captures, stream = _journals(instance)
+        bodies = instance.body_store()
+        checked: list[tuple[str, str, str | None]] = []
+        for contract_id, window, dirty, *contract_row in rows:
+            contract = _contract_row(tuple(contract_row))
+            bound = BoundObservationWindow.model_validate_json(window)
+            activation = _activation(contract, bound)
+            assert activation.contract_id == contract_id
+            book = ProcedureResolutionBook((activation,))
+            book.replay(
+                journal.all_records(stream, resolution_contract_partition_id(activation)),
+                bodies=bodies,
+            )
+            status = "resolved" if book.latest_non_overturned(contract_id) is not None else "open"
+            checked.append((contract_id, status, dirty))
+        rebound: list[tuple[_Contract, list[tuple[Any, ...]], list[Any], list[str]]] = []
+        retried: list[tuple[str, str, str]] = []
+        for digest, event_json, retry_mark, *contract_row in retries:
+            contract = _contract_row(tuple(contract_row))
+            event = TriggerEventReference.model_validate_json(event_json)
+            window = _bind(instance, contract, event)
+            retried.append((contract.identity, digest, retry_mark))
+            if window is None:
+                continue
+            if isinstance(window, _Unbound):
+                rebound.append((contract, [], [(digest, event, window)], []))
+                continue
+            row = _window_row(contract, window)
+            rebound.append((contract, [] if row is None else [row], [], [digest]))
+        with _STATE.open(instance) as connection:
+            assert connection is not None
+            for contract_id, status, dirty in checked:
+                connection.execute(
+                    "UPDATE windows SET status=?,checked_at=? WHERE contract_id=?",
+                    (status, format_datetime(now), contract_id),
+                )
+                # A journal record that landed after this read marked it again.
+                connection.execute(
+                    "UPDATE windows SET dirty=NULL WHERE contract_id=? AND dirty IS ?",
+                    (contract_id, dirty),
+                )
+            connection.executemany(
+                "DELETE FROM retries WHERE identity=? AND record_digest=? AND dirty=?", retried
+            )
+            for contract, windows, unbound, found in rebound:
+                self._record_bindings(
+                    connection, contract.identity, windows, unbound, found, now=now
+                )
+
+            connection.execute(
+                "UPDATE progress SET retry_completed_sequence=trigger_sequence "
+                "WHERE NOT EXISTS (SELECT 1 FROM retries)"
+            )
+
+    def health(self, instance: Any, *, now: datetime) -> tuple[ConsumerHealth, ...]:
+        with _STATE.open(instance, create=False) as connection:
+            if connection is None:
+                return ()
+            row = connection.execute(
+                "SELECT generation,backfill_after,capture_head,resolution_ordinal,last_error,"
+                "last_error_at,trigger_sequence,retry_completed_sequence FROM progress"
+            ).fetchone()
+            if row is None:
+                return ()
+            # Kept by triggers as rows change, so health reads no row population.
+            tally = dict(connection.execute("SELECT name,value FROM tally").fetchall())
+        (
+            generation,
+            backfill_after,
+            capture_head,
+            resolution_ordinal,
+            error,
+            error_at,
+            trigger_sequence,
+            retry_completed_sequence,
+        ) = row
+        failing = error is not None
+        with instance.accepted_history_reader() as history:
+            behind = history.sequence - generation
+        outstanding = trigger_events(
+            instance, after=retry_completed_sequence, action=ACTION.name, limit=2
+        )
+        lagging = behind > GENERATION_BATCH or len(outstanding) > 1
+        return (
+            ConsumerHealth(
+                kind="next",
+                consumer_id="consumer:next",
+                state="stalled" if failing else "lagging" if lagging else "running",
+                detail={
+                    "generation": generation,
+                    "generations_behind": behind,
+                    "contract_backfill_in_progress": backfill_after is not None,
+                    "capture_position": capture_head,
+                    "resolution_position": resolution_ordinal,
+                    "pending_contracts": tally["pending"],
+                    "contracts": tally["contracts"],
+                    "open_windows": tally["open"],
+                    "resolved_windows": tally["resolved"],
+                    "anchor_retry_position": trigger_sequence,
+                    "completed_anchor_retry_position": retry_completed_sequence,
+                    "pending_anchor_retries": tally["retries"],
+                    "unbindable_anchors": tally["unbindable"],
+                    "last_error": error,
+                    "last_error_at": error_at,
+                },
+                repair=(
+                    ConsumerRepair(
+                        operation="hand_edit",
+                        required_change="resolve_the_worker_error_then_restart_the_daemon",
+                        arguments={},
+                    )
+                    if failing
+                    else None
+                ),
+            ),
+        )
+
+
+_PART = PredictionPart()

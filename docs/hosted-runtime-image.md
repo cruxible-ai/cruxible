@@ -2,7 +2,7 @@
 
 The hosted runtime image packages `cruxible` (daemon included) for private runtime
 containers. It starts the daemon (`cruxible server start`) as a non-root
-`cruxible` user and stores mutable server state under `/var/lib/cruxible/server`.
+`cruxible` user and uses `/var/lib/cruxible` as its explicit state root.
 
 Build with any Docker-compatible backend. OrbStack works for local development:
 
@@ -10,25 +10,25 @@ Build with any Docker-compatible backend. OrbStack works for local development:
 docker build -f deploy/runtime/Dockerfile -t cruxible-core-runtime:test .
 ```
 
-Run with a mounted state directory and a runtime-supplied bootstrap secret:
+Run with a mounted state root and a runtime-supplied bootstrap secret:
 
 ```bash
 STATE_DIR="$(mktemp -d)"
 chmod 0777 "${STATE_DIR}"
 docker run --rm \
   -e CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET=bootstrap-secret \
-  -v "${STATE_DIR}":/var/lib/cruxible/server \
+  -v "${STATE_DIR}":/var/lib/cruxible \
   -p 127.0.0.1:8100:8100 \
   cruxible-core-runtime:test
 ```
 
-The image intentionally fails fast if `/var/lib/cruxible/server` is not an
+The image intentionally fails fast if `/var/lib/cruxible` is not an
 external Docker mount, or if the non-root `cruxible` user cannot write to it.
 This prevents hosted runtime state from being stored only in the container's
 ephemeral filesystem layer.
 
 The external Cloud control plane (the separate `cruxible-cloud-api` package, not
-`cruxible`) is what prepares each per-instance host state directory before
+`cruxible`) is what prepares each runtime state root before
 starting the runtime container. By default it applies mode `0777`, matching the
 local smoke-test pattern above so the non-root container user can write through
 the bind mount on a normal Linux host. Tighter host-ownership modes are
@@ -49,8 +49,25 @@ Expected response:
 
 Do not bake bootstrap secrets or runtime credentials into the image. Provide
 them at container runtime through environment variables or the future deployment
-secret layer. See [Runtime Auth And Agent Roles](runtime-auth-and-agent-roles.md)
-for the bootstrap and credential model.
+secret layer.
+
+### Provider lane precondition
+
+The daemon runs Provider code in child processes it reaches over Unix control
+sockets, and a Unix socket path holds at most 103 bytes. The daemon puts them
+under `<state-root>/c` when that fits, which `/var/lib/cruxible` does;
+otherwise it needs a private per-user runtime directory, `XDG_RUNTIME_DIR` on
+Linux, which containers rarely set. A derived image or a run that moves the
+state root to a longer path (about 80 bytes or more) without one comes up
+with the Provider lane `unavailable`: `server start` prints
+`Warning: Provider lane unavailable; ...` with the cause (byte counts and the
+variable, never a path) and the repair, then serves everything that needs no
+installed Provider code, and `server status` keeps reporting the lane code
+`provider_runtime_directory_unavailable`. Kit add, provider install and
+Provider-backed Procedure and Line runs refuse with that code (HTTP 503; an
+`operational_failed` run). Repair: keep the state root short, or set
+`XDG_RUNTIME_DIR` to a short directory owned by the `cruxible` user with mode
+0700, and restart the container.
 
 ## Publishing the image
 
@@ -183,13 +200,101 @@ obtain a new one.
 ## Shared Profile Customer Code Policy
 
 Set `CRUXIBLE_HOSTED_SERVER_PROFILE=shared` for runtimes that may host
-untrusted or multi-tenant material. In this profile, provider execution and
-Python provider loading are denied unless
-`CRUXIBLE_HOSTED_ISOLATED_EXECUTION_BACKEND` is set to a supported isolated
-backend. The current supported backend name is `docker`.
+untrusted or multi-tenant material. In this profile the daemon executes no
+Provider code at all: `procedure run`, `line run` and `provider install` refuse
+with the public-safe error code `customer_code_execution_unsupported` and the
+detail `isolation backend not implemented`, and the refusal happens before any
+tenant secret is resolved and before any child process exists.
 
-Unsupported or missing isolated backends fail with the public-safe error code
-`customer_code_execution_unsupported`.
+Execution is permitted only when an isolated executor is REGISTERED in the
+running build, not when one is merely named in the environment. Registration
+goes through the typed seam in `runtime/execution_policy.py`:
+`register_isolated_executor()` takes an object publishing an
+`IsolatedExecutorRegistration` record -- a `backend_id`, the exact
+`implementation_digest` doing the isolating, and its `capabilities` -- and
+`registered_isolated_executors()` reports what this process has. Cruxible registers
+none, so `CRUXIBLE_HOSTED_ISOLATED_EXECUTION_BACKEND` cannot re-enable execution
+today. The variable is the selector: it names which REGISTERED
+backend to use, and a value naming an unregistered backend refuses with that
+backend named in the detail.
+
+### Packaging an executor for discovery
+
+A tenant image ships its executor as an ordinary installed distribution that
+advertises the entry-point group `cruxible.isolated_executors`:
+
+```toml
+[project.entry-points."cruxible.isolated_executors"]
+container = "my_executor_package:ContainerExecutor"
+```
+
+The daemon iterates that group ONCE at start, before it serves anything, loads
+each object — a class is constructed with no arguments; an instance is taken as
+it is — and registers what it publishes. This is the path for an out-of-tree
+executor; a distribution that is installed but does not advertise here is not
+registered, because a backend nothing declares is a backend nothing audited.
+`register_isolated_executor()` remains the in-process seam for an embedded host
+that builds the executor itself.
+
+Discovery FAILS CLOSED, and it is all-or-nothing. An entry point that cannot be
+imported, an object that does not implement the seam, an executor that cannot be
+constructed, and a `backend_id` that collides with one already registered are
+the same outcome: the daemon **refuses to start**, with error code
+`isolated_executor_discovery_failed` naming the entry point's name, its target,
+its group and the distribution that advertises it, and nothing in the group is
+registered — not even the executors whose entry points loaded first. A bad
+advertisement is a startup failure to repair, not a Provider lane that comes up
+degraded. `server status` reports the registered backend ids on
+the Provider lane, so an operator can confirm what a started daemon discovered.
+
+**The trust boundary is installation, and nothing else.** Any distribution on
+the daemon's `sys.path` that writes this group into its entry-point metadata
+gets its object loaded, and the `IsolatedExecutorRegistration` that object
+reports about ITSELF becomes the evidence that unlocks Provider execution under
+the shared profile. There is no provenance check, no allow-list, no signature
+and no digest pin on a discovered executor. That is defensible because anyone
+who can install a distribution into the daemon's environment can already replace
+the daemon, and it matches the Cloud model where the executor ships inside the
+tenant image — but it means the image build, not the daemon, is what decides
+which executor is trusted.
+
+A non-empty `CRUXIBLE_HOSTED_SERVER_PROFILE` this build does not declare —
+a misspelling, or a profile from a newer image — refuses typed with
+`hosted_profile_unknown` rather than being read as "not shared". Both refusals
+reach HTTP as `403` and reconstruct as their typed client classes.
+
+Runtimes that must execute Provider code run without
+`CRUXIBLE_HOSTED_SERVER_PROFILE` set: that is the ordinary single-tenant
+profile, and it is unchanged.
+
+## Evidence Uploads
+
+A hosted runtime has no workspace mounts, so a scan or log reaches it as an
+upload. The operator names a daemon-owned staging directory outside the state
+root in `daemon/provider-runtime.json`:
+
+```json
+{"upload_root": "/var/lib/cruxible-uploads"}
+```
+
+Optional limits sit beside it: `upload_max_bytes` (default 8 MiB per file),
+`upload_session_seconds` (default 3600) and `upload_max_open_sessions` (default
+8 per instance). Without `upload_root` the daemon refuses uploads
+(`cruxible.upload.not_configured`).
+
+An upload is three kinds of request, each at GOVERNED_WRITE by a principal that
+can write here: `POST /api/v1/{instance}/uploads` opens a session for an exact
+length, sha256 and file name; `POST .../uploads/{upload_id}/parts/{n}` sends one
+part of at most 512 KiB as raw `application/octet-stream`, so every request
+stays under the edge's 1 MB body cap; `POST .../uploads/{upload_id}/complete`
+names the acquire Procedure (`procedure`, its other `input`, and
+`input_path_field`, `relative_path` by default). Completing runs that Procedure
+exactly as a direct run, at the caller's tier for it, with a one-file `uploads`
+workspace as its only readable root; the Capture, its receipt, replay and the
+import Line that fires on it are the ordinary ones. The staged file and its parts
+are deleted when the run returns or fails. A session belongs to the principal
+that opened it, takes each part once (a retry must be the same bytes), and
+expires unfinished. The client's `upload_capture` does all three.
 
 ## Private Runtime Network
 

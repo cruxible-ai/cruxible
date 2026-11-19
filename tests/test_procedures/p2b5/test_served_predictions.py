@@ -1,0 +1,791 @@
+"""Served prediction authoring and exact P2-C settlement reuse."""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.authoring.models import (
+    AuthoringClaimStatement,
+    ClaimAuthoringPayload,
+    ClaimDependencyDrafts,
+    ExistingCaptureCitationSource,
+)
+from cruxible_client.contracts.claim_types import (
+    ClaimType,
+    claim_type_path,
+    render_claim_type,
+)
+from cruxible_client.contracts.claims import (
+    LiteralClaimObject,
+    claim_artifact_digest,
+    claim_path,
+    claim_statement_digest,
+    parse_claim,
+)
+from cruxible_client.contracts.predictions import (
+    ObservationSettlementEvidence,
+    PredictionEqualityRule,
+    PredictionObservationSelector,
+    PredictionPresenceRule,
+    PredictionThresholdRule,
+    PredictRequest,
+    SettleRequest,
+    TerminalSettlementEvidence,
+)
+from cruxible_client.contracts.procedures.windows import FixedWindow
+from cruxible_client.contracts.resolution_contracts import (
+    ClaimVersionReference,
+    ResolutionContract,
+    ResolutionContractReference,
+    resolution_contract_digest,
+)
+from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
+from cruxible_core.exhaust.records import parse_journal_payload
+from cruxible_core.governance.actor_context import GovernedActorContext
+from cruxible_core.indexes.projection import AcceptedCoordinate
+from cruxible_core.procedures.resolution import (
+    ResolutionContractActivationV3,
+    SettledOutcomeRelationV2,
+    evaluate_prediction_correctness_condition,
+)
+from cruxible_core.procedures.settled_outcomes import (
+    SettledOutcomesAccessProfileV1,
+    SettledOutcomesQueryRequestV1,
+    query_settled_outcomes,
+)
+from cruxible_core.proposals.proposals import AuthenticatedActor
+from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.service.authoring.documents import service_inspect_playbill_proposal
+from cruxible_core.service.procedures.predictions import (
+    PredictionRefused,
+    _journal,
+    service_predict_playbill,
+    service_settle_playbill_prediction,
+)
+from cruxible_core.storage.cas import BodyAccessContext
+from tests.core_support._knowledge_loop_support import (
+    PREDICATE,
+    accept_proposal,
+    subject_address,
+)
+from tests.core_support._subject_kind_support import fixture_claim_paths
+from tests.support.claim_types import claim_type_changes
+from tests.test_claims.test_claims import vocabulary_claim_type as _work_item_claim_type
+from tests.test_indexes.test_resolution_contracts import _accept_tree
+from tests.test_query.test_query_execution_service import _instance_with_query
+
+PREDICTED_AT = datetime(2026, 9, 2, 12, 1, tzinfo=UTC)
+OBSERVED_AT = PREDICTED_AT + timedelta(minutes=1)
+RECORDED_AT = OBSERVED_AT + timedelta(minutes=1)
+
+
+def _retained_activations(instance: PlaybillInstance) -> tuple[dict[str, object], ...]:
+    """Every activation payload either resolution journal retains, in partition order."""
+    retained: list[dict[str, object]] = []
+    for independent in (False, True):
+        journal, stream = _journal(instance, independent=independent)
+        retained.extend(
+            parse_journal_payload(
+                instance.body_store().read(
+                    stored.record.payload_digest,
+                    access=BodyAccessContext(principal_id="test", can_read_body=True),
+                )
+            )
+            for partition in journal.partition_ids(stream)
+            for stored in journal.all_records(stream, partition)
+            if stored.record.event_kind == "resolution_activation"
+        )
+    return tuple(retained)
+
+
+def _world(tmp_path: Path):
+    instance, owner = _instance_with_query(tmp_path)
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    seed_path = fixture_claim_paths(tree)[0]
+    seed = parse_claim(tree[seed_path], path=seed_path)
+    return instance, owner, seed.backing.capture_digests[0]
+
+
+def _reference(instance, claim_id):
+    at = instance.accepted_coordinate()
+    path = claim_path(claim_id.removeprefix("Claim:"))
+    claim = parse_claim(instance.blob_at(at.git_oid, path), path=path)
+    return ClaimVersionReference(
+        identity=claim.identity,
+        artifact_digest=claim_artifact_digest(claim).tagged,
+        statement_digest=claim_statement_digest(claim.statement).tagged,
+        coordinate=AcceptedCoordinate.from_internal(at),
+    )
+
+
+def _accept_payload(instance, owner, payload, timestamp):
+    actor = AuthenticatedActor(actor_id="owner")
+    coordinator = AuthoringIntentCoordinator.for_instance(instance)
+    created = coordinator.create(actor=actor, payload=payload, canonical_timestamp=timestamp)
+    submitted = coordinator.submit(created.intent.intent_id, actor=actor)
+    assert submitted.status.proposal_id is not None, submitted.status
+    accept_proposal(
+        instance,
+        owner,
+        service_inspect_playbill_proposal(instance, proposal_id=submitted.status.proposal_id),
+    )
+    return _reference(instance, created.intent.semantic_identity)
+
+
+def _payload(capture_digest: str, *, qualifier: str, value: object) -> ClaimAuthoringPayload:
+    return ClaimAuthoringPayload(
+        statement=AuthoringClaimStatement(
+            subject=subject_address("wi-42"),
+            predicate=PREDICATE,
+            qualifier=qualifier,
+            object=LiteralClaimObject(value=value),
+            role="observation",
+        ),
+        rationale=f"Record {qualifier} for the served prediction test.",
+        source=ExistingCaptureCitationSource(capture_digest=capture_digest),
+        citation_role="copy",
+        dependency_drafts=ClaimDependencyDrafts(),
+    )
+
+
+def _predict(
+    instance,
+    owner,
+    capture_digest,
+    *,
+    value="ready",
+    presence=False,
+    rule=None,
+    observation_predicate=None,
+):
+    maker = _presence_payload if presence else _payload
+    h = _accept_payload(
+        instance,
+        owner,
+        maker(capture_digest, qualifier="prediction", value=value),
+        "2026-09-02T12:00:45.000000Z",
+    )
+    contract = ResolutionContract(
+        identity=ArtifactIdentity(kind="ResolutionContract", name="status-test"),
+        hypothesis=h,
+        observation=PredictionObservationSelector(
+            subject=subject_address("wi-42"),
+            predicate=observation_predicate or (PRESENCE_PREDICATE if presence else PREDICATE),
+            qualifier="prediction-outcome",
+        ),
+        rule=rule or (PredictionPresenceRule() if presence else PredictionEqualityRule()),
+        window=FixedWindow(starts_at=PREDICTED_AT, duration_seconds=3600),
+    )
+    proposed = service_predict_playbill(
+        instance,
+        request=PredictRequest(contract=contract),
+        actor=AuthenticatedActor(actor_id="owner"),
+        evaluation_time=PREDICTED_AT,
+    )
+    accept_proposal(
+        instance,
+        owner,
+        service_inspect_playbill_proposal(instance, proposal_id=proposed.proposal_id),
+    )
+    return ResolutionContractReference(
+        identity=contract.identity,
+        artifact_digest=resolution_contract_digest(contract).tagged,
+        coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+    )
+
+
+def _settle(instance, contract, observation, *, at=RECORDED_AT):
+    return service_settle_playbill_prediction(
+        instance,
+        prediction_id=contract.identity.name,
+        request=SettleRequest(
+            contract=contract, evidence=ObservationSettlementEvidence(claim=observation)
+        ),
+        actor_context=_actor(),
+        recorded_at=at,
+    )
+
+
+def _actor(actor_id: str = "owner") -> GovernedActorContext:
+    return GovernedActorContext(
+        actor_type="human_user",
+        actor_id=actor_id,
+        org_id="inst_playbill_test",
+        operation_id=f"settle-{actor_id}",
+        timestamp=RECORDED_AT,
+    )
+
+
+def test_prediction_rules_are_closed_and_mechanical() -> None:
+    assert evaluate_prediction_correctness_condition(
+        PredictionEqualityRule().model_dump(mode="json"),
+        prediction_value={"expected": 3},
+        settlement_value={"expected": 3},
+        evidence_present=True,
+    )
+    threshold = PredictionThresholdRule(comparison="gte", threshold=3)
+    assert evaluate_prediction_correctness_condition(
+        threshold.model_dump(mode="json"),
+        prediction_value=True,
+        settlement_value=3,
+        evidence_present=True,
+    )
+    assert evaluate_prediction_correctness_condition(
+        threshold.model_dump(mode="json"),
+        prediction_value=False,
+        settlement_value=2,
+        evidence_present=True,
+    )
+    presence = PredictionPresenceRule().model_dump(mode="json")
+    assert evaluate_prediction_correctness_condition(
+        presence,
+        prediction_value=True,
+        settlement_value=None,
+        evidence_present=True,
+    )
+    # A prediction of absence is correct exactly when the evidence is absent.
+    assert evaluate_prediction_correctness_condition(
+        presence,
+        prediction_value=False,
+        settlement_value=None,
+        evidence_present=False,
+    )
+    assert not evaluate_prediction_correctness_condition(
+        presence,
+        prediction_value=False,
+        settlement_value="ready",
+        evidence_present=True,
+    )
+    assert (
+        evaluate_prediction_correctness_condition(
+            {"operator": "invented"},
+            prediction_value=True,
+            settlement_value=True,
+            evidence_present=True,
+        )
+        is None
+    )
+
+
+def test_observation_settlement_replays_into_existing_fold_and_survives_change(tmp_path: Path):
+    instance, owner, capture = _world(tmp_path)
+    contract = _predict(instance, owner, capture)
+    observation = _accept_payload(
+        instance,
+        owner,
+        _payload(capture, qualifier="prediction-outcome", value="ready"),
+        "2026-09-02T12:02:00.000000Z",
+    )
+    result = _settle(instance, contract, observation)
+    assert _settle(instance, contract, observation, at=RECORDED_AT + timedelta(days=1)) == result
+    activation = ResolutionContractActivationV3.model_validate(result.activation)
+    relation = SettledOutcomeRelationV2.model_validate(result.relation)
+    assert relation.resolution.settlement_outcome is True
+    assert activation.procedure_artifact_digest is None
+    assert _retained_activations(instance) == (activation.model_dump(mode="json"),)
+    journal, stream = _journal(instance)
+    records = {p: journal.all_records(stream, p) for p in journal.partition_ids(stream)}
+    folded, _ = query_settled_outcomes(
+        SettledOutcomesQueryRequestV1(
+            accepted_coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+            evaluation_time=RECORDED_AT,
+            access_profile=SettledOutcomesAccessProfileV1(
+                profile_id="test",
+                can_read_resolution_bodies=True,
+                visible_proof_digests=(relation.resolution.evidence_refs[0].digest,),
+            ),
+        ),
+        activations=(activation,),
+        records_by_partition=records,
+        bodies=instance.body_store(),
+    )
+    assert folded.rows[0].relation == relation
+    assert not (instance.root / instance.descriptor.storage.exhaust / "predictions").exists()
+    # A later proposal cannot reinterpret the already retained settlement.
+    _accept_payload(
+        instance,
+        owner,
+        _payload(capture, qualifier="other", value="blocked"),
+        "2026-09-02T12:04:00.000000Z",
+    )
+    assert _settle(instance, contract, observation, at=RECORDED_AT + timedelta(days=2)) == result
+    later_reference = contract.model_copy(
+        update={"coordinate": AcceptedCoordinate.from_internal(instance.accepted_coordinate())}
+    )
+    assert (
+        _settle(instance, later_reference, observation, at=RECORDED_AT + timedelta(days=2))
+        == result
+    )
+    assert _retained_activations(instance) == (activation.model_dump(mode="json"),)
+
+
+def test_predict_resolution_contracts_and_settle_take_plain_claim_ids(tmp_path: Path):
+    """R06: every Claim version reference can be a Claim ID the daemon resolves."""
+
+    from cruxible_client.contracts.predictions import ResolutionContractInput
+    from cruxible_client.contracts.resolution_contracts import ResolutionContractsRequest
+    from cruxible_core.service.procedures.resolution_contracts import (
+        resolve_claim_version,
+        service_resolution_contracts,
+    )
+
+    instance, owner, capture = _world(tmp_path)
+    hypothesis = _accept_payload(
+        instance,
+        owner,
+        _payload(capture, qualifier="prediction", value="ready"),
+        "2026-09-02T12:00:45.000000Z",
+    )
+    claim_id = hypothesis.identity.name
+    # A later, unrelated generation: the ID still resolves to the accepting one.
+    _accept_payload(
+        instance,
+        owner,
+        _payload(capture, qualifier="unrelated", value="blocked"),
+        "2026-09-02T12:00:50.000000Z",
+    )
+    assert resolve_claim_version(instance, claim_id) == hypothesis
+    contract = ResolutionContractInput.model_validate(
+        {
+            "identity": {"kind": "ResolutionContract", "name": "status-test"},
+            "hypothesis": f"Claim:{claim_id}",
+            "observation": PredictionObservationSelector(
+                subject=subject_address("wi-42"),
+                predicate=PREDICATE,
+                qualifier="prediction-outcome",
+            ).model_dump(mode="json"),
+            "rule": PredictionEqualityRule().model_dump(mode="json"),
+            "window": FixedWindow(starts_at=PREDICTED_AT, duration_seconds=3600).model_dump(
+                mode="json"
+            ),
+        }
+    )
+    proposed = service_predict_playbill(
+        instance,
+        request=PredictRequest(contract=contract),
+        actor=AuthenticatedActor(actor_id="owner"),
+        evaluation_time=PREDICTED_AT,
+    )
+    accept_proposal(
+        instance,
+        owner,
+        service_inspect_playbill_proposal(instance, proposal_id=proposed.proposal_id),
+    )
+    found = service_resolution_contracts(instance, ResolutionContractsRequest(hypothesis=claim_id))
+    (view,) = found.contracts
+    assert view.contract.hypothesis == hypothesis
+    observation = _accept_payload(
+        instance,
+        owner,
+        _payload(capture, qualifier="prediction-outcome", value="ready"),
+        "2026-09-02T12:02:00.000000Z",
+    )
+    settled = service_settle_playbill_prediction(
+        instance,
+        prediction_id="status-test",
+        request=SettleRequest(observation=observation.identity.name),
+        actor_context=_actor(),
+        recorded_at=RECORDED_AT,
+    )
+    assert settled.resolution["settlement_outcome"] is True
+    # The same settlement through the exact-reference advanced form is the same answer.
+    assert _settle(instance, view.reference, observation) == settled
+
+
+PRESENCE_PREDICATE = "project.work_item.presence"
+
+
+def _presence_claim_type() -> ClaimType:
+    """A ClaimType whose literal may be a boolean or an explicit absence."""
+
+    base = _work_item_claim_type()
+    return base.model_copy(
+        update=claim_type_changes(
+            predicate=PRESENCE_PREDICATE,
+            value_type={"type": "boolean"},
+            identity=ArtifactIdentity(kind="ClaimType", name=PRESENCE_PREDICATE),
+        )
+    )
+
+
+def _accept_presence_claim_type(instance, owner) -> None:  # type: ignore[no-untyped-def]
+    claim_type = _presence_claim_type()
+    _accept_tree(
+        instance,
+        owner,
+        {
+            **instance.tree_at(instance.accepted_coordinate().git_oid),
+            claim_type_path(PRESENCE_PREDICATE): render_claim_type(claim_type),
+        },
+        timestamp="2026-09-02T12:00:30.000000Z",
+        proposal_name="presence-claim-type",
+    )
+
+
+def _presence_payload(
+    capture_digest: str, *, qualifier: str, value: object
+) -> ClaimAuthoringPayload:
+    return ClaimAuthoringPayload(
+        statement=AuthoringClaimStatement(
+            subject=subject_address("wi-42"),
+            predicate=PRESENCE_PREDICATE,
+            qualifier=qualifier,
+            object=LiteralClaimObject(value=value),
+            role="observation",
+        ),
+        rationale=f"Record {qualifier} for the served presence prediction test.",
+        source=ExistingCaptureCitationSource(capture_digest=capture_digest),
+        citation_role="copy",
+        dependency_drafts=ClaimDependencyDrafts(),
+    )
+
+
+@pytest.mark.parametrize(
+    ("predicted", "observed", "expected"),
+    [(True, True, True), (False, True, False), (True, None, False), (False, None, True)],
+)
+def test_presence_settles_both_directions(tmp_path: Path, predicted, observed, expected):
+    instance, owner, capture = _world(tmp_path)
+    _accept_presence_claim_type(instance, owner)
+    contract = _predict(instance, owner, capture, value=predicted, presence=True)
+    if observed is None:
+        before = instance.accepted_coordinate()
+        result = AuthoringIntentCoordinator.for_instance(instance).compile(
+            actor=AuthenticatedActor(actor_id="owner"),
+            payload=_presence_payload(capture, qualifier="prediction-outcome", value=None),
+            canonical_timestamp="2026-09-02T12:02:00.000000Z",
+        )
+        assert result.verdict == "refused"
+        assert any("value_invalid" in d.code for d in result.frontier.diagnostics), (
+            result.frontier.diagnostics
+        )
+        assert instance.accepted_coordinate() == before
+        journal, stream = _journal(instance)
+        assert journal.partition_ids(stream) == ()
+        return
+    observation = _accept_payload(
+        instance,
+        owner,
+        _presence_payload(capture, qualifier="prediction-outcome", value=observed),
+        "2026-09-02T12:02:00.000000Z",
+    )
+    relation = SettledOutcomeRelationV2.model_validate(
+        _settle(instance, contract, observation).relation
+    )
+    assert relation.resolution.settlement_outcome is expected
+    assert relation.resolution.value["evidence_present"] is (observed is not None)
+
+
+def test_old_observation_cannot_be_relabelled_with_later_snapshot(tmp_path: Path):
+    instance, owner, capture = _world(tmp_path)
+    observation = _accept_payload(
+        instance,
+        owner,
+        _payload(capture, qualifier="prediction-outcome", value="ready"),
+        "2026-09-02T12:00:00.000000Z",
+    )
+    contract = _predict(instance, owner, capture)
+    later = observation.model_copy(
+        update={"coordinate": AcceptedCoordinate.from_internal(instance.accepted_coordinate())}
+    )
+    with pytest.raises(PredictionRefused) as refused:
+        _settle(instance, contract, later)
+    assert refused.value.code == "prediction_observation_predates_contract"
+
+
+def test_terminal_cannot_settle_another_investigation(tmp_path: Path, monkeypatch):
+    from cruxible_core.service.procedures import procedure_runs
+    from cruxible_core.service.procedures.predictions import _terminal_record
+    from cruxible_core.service.procedures.resolution_contracts import bind_investigation
+
+    instance, owner, capture = _world(tmp_path)
+    contract = _predict(instance, owner, capture)
+    binding = bind_investigation(instance, contract, event=None, now=RECORDED_AT)
+    monkeypatch.setattr(
+        procedure_runs, "_state_from_records", lambda *_a, **_k: SimpleNamespace(investigation=None)
+    )
+    with pytest.raises(PredictionRefused, match="different contract"):
+        _terminal_record(
+            instance,
+            evidence=TerminalSettlementEvidence(
+                claim=binding.hypothesis,
+                run_id="RUN-other",
+                terminal_record_digest="sha256:" + "a" * 64,
+            ),
+            investigation=binding,
+        )
+
+
+@pytest.mark.parametrize("missing_material", [False, True], ids=["no-observation", "failed"])
+def test_attempt_without_settlement_preserves_binding_and_stays_unresolved(
+    tmp_path: Path, monkeypatch, missing_material: bool
+):
+    from cruxible_core.service.procedures import procedure_runs
+    from tests.test_procedures.test_procedure_run_surface import _world as run_world
+
+    instance, owner, procedure = run_world(tmp_path)
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    path = fixture_claim_paths(tree)[0]
+    capture = parse_claim(tree[path], path=path).backing.capture_digests[0]
+    contract = _predict(instance, owner, capture)
+    before = instance.accepted_coordinate()
+    journal, stream = _journal(instance)
+    assert journal.partition_ids(stream) == ()
+    if missing_material:
+        prepare = procedure_runs.prepare_direct_procedure_run
+
+        def lose_material(*args, **kwargs):
+            prepared = prepare(*args, **kwargs)
+            material = prepared.accepted_state_materials[0]
+            assert kwargs["bodies"].erase(material.input.material_body_digest)
+            return prepared
+
+        monkeypatch.setattr(procedure_runs, "prepare_direct_procedure_run", lose_material)
+    request = procedure_runs.ProcedureRunRequest(
+        input={}, evaluation_time=OBSERVED_AT, resolution_contract=contract
+    )
+    run = procedure_runs.service_run_playbill_procedure(
+        instance, name=procedure.identity.name, request=request, actor_context=_actor()
+    )
+    assert run.status == ("operational_failed" if missing_material else "succeeded")
+    if missing_material:
+        assert run.terminal.code == "cas_unavailable_at_replay"
+    assert run.investigation.contract == contract
+    assert procedure_runs.service_get_playbill_procedure_run(instance, run_id=run.run_id) == run
+    assert (
+        procedure_runs.service_run_playbill_procedure(
+            instance, name=procedure.identity.name, request=request, actor_context=_actor()
+        )
+        == run
+    )
+    # Neither a failed method nor a successful query without an observation
+    # establishes that the hypothesis is false (or creates any settlement).
+    assert instance.accepted_coordinate() == before
+    assert journal.partition_ids(stream) == ()
+    assert _retained_activations(instance) == ()
+
+
+def test_unevaluable_observation_stays_unresolved_until_replaced(tmp_path: Path):
+    instance, owner, capture = _world(tmp_path)
+    _accept_presence_claim_type(instance, owner)
+    measurement_predicate = "project.work_item.measurement"
+    claim_type = _presence_claim_type().model_copy(
+        update=claim_type_changes(
+            value_type={"type": "integer"},
+            predicate=measurement_predicate,
+            identity=ArtifactIdentity(kind="ClaimType", name=measurement_predicate),
+        )
+    )
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    tree[claim_type_path(measurement_predicate)] = render_claim_type(claim_type)
+    _accept_tree(
+        instance,
+        owner,
+        tree,
+        timestamp="2026-09-02T12:00:30.000000Z",
+        proposal_name="measurement-claim-type",
+    )
+    contract = _predict(
+        instance,
+        owner,
+        capture,
+        value=True,
+        presence=True,
+        observation_predicate=measurement_predicate,
+        rule=PredictionThresholdRule(comparison="gte", threshold=3),
+    )
+    before = instance.accepted_coordinate()
+    invalid = AuthoringIntentCoordinator.for_instance(instance).compile(
+        actor=AuthenticatedActor(actor_id="owner"),
+        payload=_presence_payload(capture, qualifier="prediction-outcome", value=None).model_copy(
+            update={
+                "statement": _presence_payload(
+                    capture, qualifier="prediction-outcome", value=None
+                ).statement.model_copy(update={"predicate": measurement_predicate})
+            }
+        ),
+        canonical_timestamp="2026-09-02T12:02:00.000000Z",
+    )
+    assert invalid.verdict == "refused"
+    assert any("value_invalid" in d.code for d in invalid.frontier.diagnostics), (
+        invalid.frontier.diagnostics
+    )
+    assert instance.accepted_coordinate() == before
+    journal, stream = _journal(instance)
+    assert journal.partition_ids(stream) == ()
+    assert _retained_activations(instance) == ()
+    measured = _accept_payload(
+        instance,
+        owner,
+        _presence_payload(capture, qualifier="prediction-outcome", value=4).model_copy(
+            update={
+                "statement": _presence_payload(
+                    capture, qualifier="prediction-outcome", value=4
+                ).statement.model_copy(update={"predicate": measurement_predicate})
+            }
+        ),
+        "2026-09-02T12:04:00.000000Z",
+    )
+    result = _settle(instance, contract, measured, at=RECORDED_AT + timedelta(minutes=2))
+    relation = SettledOutcomeRelationV2.model_validate(result.relation)
+    assert relation.resolution.settlement_outcome is True
+    assert relation.resolution.sequence == 1
+    assert relation.resolution.settlement.content_digest == measured.statement_digest
+
+
+@pytest.mark.parametrize("terminal_kind", ["settled", "proposed"])
+def test_retained_terminal_settles_exact_investigation_and_replays(
+    tmp_path: Path, terminal_kind: str
+):
+    """Exercise the settlement reader against retained settle terminal receipts.
+
+    A settle terminal that actually settled counts; one that fell back to an
+    ordinary proposal settled nothing and cannot settle the prediction.
+    """
+    from cruxible_core.exhaust import ProcedureExhaustWriter
+    from cruxible_core.procedures.egress import (
+        TerminalEgressChildReceiptV2,
+        TerminalEgressReceiptV4,
+    )
+    from cruxible_core.service.procedures import procedure_runs
+    from tests.test_procedures.test_procedure_run_surface import _world as run_world
+
+    instance, owner, procedure = run_world(tmp_path)
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    path = fixture_claim_paths(tree)[0]
+    capture = parse_claim(tree[path], path=path).backing.capture_digests[0]
+    contract = _predict(instance, owner, capture)
+    observation = _accept_payload(
+        instance,
+        owner,
+        _payload(capture, qualifier="prediction-outcome", value="ready"),
+        "2026-09-02T12:02:00.000000Z",
+    )
+    run = procedure_runs.service_run_playbill_procedure(
+        instance,
+        name=procedure.identity.name,
+        request=procedure_runs.ProcedureRunRequest(
+            input={}, evaluation_time=OBSERVED_AT, resolution_contract=contract
+        ),
+        actor_context=_actor(),
+    )
+    assert run.status == "succeeded"
+    # Supply the retained sink-output fixture at the journal boundary. Admission,
+    # run lookup, terminal parsing, actor checks, settlement and replay are real;
+    # this does not claim that today's public runner can execute this terminal.
+    records = procedure_runs._records_for_run(instance, run.run_id)
+    admission_record = next(r.record for r in records if r.record.event_kind == "admission_bound")
+    journal, _ = procedure_runs._journal_for_write(instance)
+    stream = procedure_runs._stream(instance)
+    procedure_runs._activate_writer(journal, stream, admission_record.partition_id)
+    writer = ProcedureExhaustWriter(
+        journal=journal,
+        bodies=instance.body_store(),
+        fencing_token=procedure_runs.PROCEDURE_RUN_FENCING_TOKEN,
+    )
+    settled = terminal_kind == "settled"
+    path = claim_path(observation.identity.name)
+    receipt = TerminalEgressReceiptV4(
+        kind="claims",
+        run_id=run.run_id,
+        node_id="settle-observation",
+        disposition="settled" if settled else "received",
+        operation_key="sha256:" + "a" * 64,
+        children=(
+            TerminalEgressChildReceiptV2(
+                child_index=0,
+                item_key=path,
+                egress_digest=observation.artifact_digest,
+                path=path,
+            ),
+        ),
+        proposal_id="sha256:" + "b" * 64,
+        candidate_digest="sha256:" + "c" * 64,
+        target_paths=(path,),
+        outcome="settled" if settled else "proposed",
+        procedure_mandate_digest="sha256:" + "d" * 64,
+        accepted_git_oid="e" * 40 if settled else None,
+        fallback_reason=None if settled else "cruxible.settle.condition_false",
+    )
+    terminal = writer.append(
+        stream=stream,
+        partition_id=admission_record.partition_id,
+        event_kind="terminal_egress",
+        accepted_coordinate=admission_record.accepted_coordinate,
+        procedure_artifact_digest=run.procedure_artifact_digest,
+        definition_digest=admission_record.definition_digest,
+        admission_binding_digest=admission_record.admission_binding_digest,
+        line_spec_digest=admission_record.line_spec_digest,
+        occurrence_id=admission_record.occurrence_id,
+        attempt=admission_record.attempt,
+        actor_context=admission_record.actor_context,
+        recorded_at=RECORDED_AT,
+        run_id=run.run_id,
+        payload={
+            "tag": "playbill-procedure-terminal-egress-v1",
+            "node_id": receipt.node_id,
+            "kind": receipt.kind,
+            "verdict": "delivered",
+            "receipt": receipt.model_dump(mode="json"),
+        },
+    )
+    request = SettleRequest(
+        contract=contract,
+        evidence=TerminalSettlementEvidence(
+            claim=observation, run_id=run.run_id, terminal_record_digest=terminal.record_digest
+        ),
+    )
+    if terminal_kind == "proposed":
+        with pytest.raises(PredictionRefused, match="settlement_evidence_mismatch"):
+            service_settle_playbill_prediction(
+                instance,
+                prediction_id=contract.identity.name,
+                request=request,
+                actor_context=_actor(),
+                recorded_at=RECORDED_AT,
+            )
+        return
+    with pytest.raises(PredictionRefused, match="principal"):
+        service_settle_playbill_prediction(
+            instance,
+            prediction_id=contract.identity.name,
+            request=request,
+            actor_context=_actor("another-actor"),
+            recorded_at=RECORDED_AT,
+        )
+    result = service_settle_playbill_prediction(
+        instance,
+        prediction_id=contract.identity.name,
+        request=request,
+        actor_context=_actor(),
+        recorded_at=RECORDED_AT,
+    )
+    relation = SettledOutcomeRelationV2.model_validate(result.relation)
+    assert relation.activation.investigation == run.investigation
+    assert relation.resolution.settlement_outcome is True
+    assert relation.resolution.evidence_refs[0].kind == "run_receipt"
+    assert relation.resolution.evidence_refs[0].digest == terminal.record_digest
+    assert relation.resolution.actor_context.actor_id == "owner"
+    assert (
+        service_settle_playbill_prediction(
+            instance,
+            prediction_id=contract.identity.name,
+            request=request,
+            actor_context=_actor(),
+            recorded_at=RECORDED_AT + timedelta(days=1),
+        )
+        == result
+    )
+    settlement_journal, settlement_stream = _journal(instance)
+    retained = tuple(
+        r
+        for p in settlement_journal.partition_ids(settlement_stream)
+        for r in settlement_journal.all_records(settlement_stream, p)
+        if r.record.event_kind == "resolution"
+    )
+    assert len(retained) == 1

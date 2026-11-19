@@ -5,10 +5,12 @@ from __future__ import annotations
 import ipaddress
 import os
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Iterable, Mapping
 from urllib.parse import urlsplit
 
+from cruxible_client.contracts.errors import ReseedRequired
+from cruxible_client.contracts.workspace_layout import daemon_state_root
 from cruxible_core.errors import ConfigError
 
 _VOLATILE_STATE_ROOTS = (
@@ -18,6 +20,12 @@ _VOLATILE_STATE_ROOTS = (
     Path("/private/var/tmp"),
     Path("/private/var/folders"),
 )
+
+
+class ServerStateConfigurationError(ConfigError):
+    """A server state-root setting is present but cannot be used safely."""
+
+    error_code = "cruxible.server.state_configuration_invalid"
 
 
 def _is_truthy(value: str | None) -> bool:
@@ -74,22 +82,150 @@ def resolve_server_settings(
     )
 
 
-def get_server_state_dir(environ: Mapping[str, str] | None = None) -> Path:
-    """Return the server-owned state directory."""
-    env = environ or os.environ
-    raw = env.get("CRUXIBLE_SERVER_STATE_DIR")
-    if raw:
-        return Path(raw).expanduser().resolve()
-    return (Path.home() / ".cruxible" / "server").resolve()
+def get_server_state_root(environ: Mapping[str, str] | None = None) -> Path:
+    """Return the canonical server-owned state root."""
+    env = os.environ if environ is None else environ
+    if "CRUXIBLE_SERVER_STATE_DIR" in env:
+        raise ServerStateConfigurationError(
+            "CRUXIBLE_SERVER_STATE_DIR is obsolete; use CRUXIBLE_STATE_ROOT and re-seed "
+            "pre-PC-HR instances"
+        )
+    raw = env.get("CRUXIBLE_STATE_ROOT")
+    if raw is not None:
+        if not raw.strip():
+            raise ServerStateConfigurationError("CRUXIBLE_STATE_ROOT may not be empty")
+    state_root = daemon_state_root(env)
+    legacy = state_root / "server"
+    for path in (
+        legacy / "registry.db",
+        legacy / "runtime_credentials.db",
+        state_root / "registry.db",
+        state_root / "runtime_credentials.db",
+    ):
+        _refuse_legacy_state_file(path)
+    for entry in STATE_ROOT_OWN_ENTRIES:
+        within_state_root(state_root, *entry)
+    return state_root
+
+
+#: Paths every daemon component opens under its state root. Each must be the
+#: root's own: a copied root whose ``daemon/`` (or registry, or credential DB,
+#: or ``instances/``) links back into the original would serve and write the
+#: original's state.
+STATE_ROOT_OWN_ENTRIES: tuple[tuple[str, ...], ...] = (
+    ("daemon",),
+    ("daemon", "registry.db"),
+    ("daemon", "runtime_credentials.db"),
+    ("instances",),
+)
+
+
+def contained_relative(path: Path, root: Path) -> PurePath | None:
+    """``path`` relative to ``root`` when its real path lies strictly under root's.
+
+    Both sides are resolved through every symlink first, then compared one
+    component at a time with ``casefold``: a case-insensitive volume names one
+    directory by many spellings, and a byte comparison would let a spelling
+    other than the root's read as outside it (or, the other way round, an
+    alias of the original read as inside a copy).
+    """
+
+    parts = Path(os.path.realpath(path)).parts
+    root_parts = Path(os.path.realpath(root)).parts
+    if len(parts) <= len(root_parts):
+        return None
+    if any(a.casefold() != b.casefold() for a, b in zip(root_parts, parts, strict=False)):
+        return None
+    return PurePath(*parts[len(root_parts) :])
+
+
+def within_state_root(state_root: Path, *parts: str) -> Path:
+    """``state_root / parts``, refused when any existing step resolves elsewhere.
+
+    Each existing prefix must resolve to the same place under the state
+    root's real path (compared case-insensitively). A symlink alias of the
+    WHOLE state root is fine -- the root is resolved first -- but a link
+    inside it that leads out of it, or onto a different entry inside it, is
+    refused before anything is opened or migrated through it.
+    """
+
+    real_root = Path(os.path.realpath(state_root))
+    path = real_root
+    for depth, part in enumerate(parts, start=1):
+        path = path / part
+        if not os.path.lexists(path):
+            continue
+        expected = [step.casefold() for step in parts[:depth]]
+        relative = contained_relative(path, real_root)
+        if relative is None or [step.casefold() for step in relative.parts] != expected:
+            raise ServerStateConfigurationError(
+                f"{path} resolves to {os.path.realpath(path)!r}, which is not this state "
+                f"root's own {'/'.join(parts[:depth])}; a state root's daemon and instance "
+                "stores must live inside it (a copied state root may not link back to the "
+                "original's). Repair: replace the link with a real copy, or point "
+                "CRUXIBLE_STATE_ROOT at the root it names"
+            )
+    return path
+
+
+_SQLITE_HEADER = b"SQLite format 3\x00"
+
+
+def _refuse_legacy_state_file(path: Path) -> None:
+    """Refuse a pre-PC-HR database at ``path``, naming it; ignore an empty file.
+
+    Only a SQLite database there is the old layout. An empty file is not a
+    layout at all: a read-looking probe such as ``sqlite3 <path>`` creates one,
+    and treating it as the old layout took a daemon down. Anything else sitting
+    at a legacy path is refused by name, as neither.
+    """
+
+    try:
+        with path.open("rb") as handle:
+            head = handle.read(len(_SQLITE_HEADER))
+    except FileNotFoundError:
+        return
+    except IsADirectoryError as exc:
+        raise ServerStateConfigurationError(
+            f"{path} is a directory where the layout from before PC-HR kept a database; "
+            "repair: move it out of the state root"
+        ) from exc
+    except OSError as exc:
+        raise ServerStateConfigurationError(
+            f"{path} sits where the layout from before PC-HR kept a database and cannot be "
+            f"read ({exc.strerror}); repair: move it out of the state root"
+        ) from exc
+    if not head:
+        return
+    if head == _SQLITE_HEADER:
+        raise ReseedRequired(found=str(path))
+    raise ServerStateConfigurationError(
+        f"{path} sits where the layout from before PC-HR kept a database, but it is "
+        "neither empty nor a SQLite database; repair: move it out of the state root"
+    )
 
 
 def get_server_log_path(environ: Mapping[str, str] | None = None) -> Path:
     """Return the durable server request log path."""
-    env = environ or os.environ
+    env = os.environ if environ is None else environ
     raw = env.get("CRUXIBLE_SERVER_LOG_PATH")
     if raw:
         return Path(raw).expanduser().resolve()
-    return (get_server_state_dir(env) / "logs" / "server.log").resolve()
+    return (get_server_state_root(env) / "daemon" / "logs" / "server.log").resolve()
+
+
+def get_server_fatal_log_path(environ: Mapping[str, str] | None = None) -> Path:
+    """Return the file a fatal fault writes its traceback to.
+
+    A sibling of the request log rather than the request log itself: the
+    request log is structured JSON lines written through a rotating sink, and a
+    C-level fault handler writes plain text through a raw file descriptor with
+    no idea that either is true. Interleaving them would corrupt the one an
+    operator parses. Same directory, so an operator who found one has found the
+    other.
+    """
+
+    return (get_server_log_path(environ).parent / "fatal.log").resolve()
 
 
 def is_volatile_state_path(path: str | Path) -> bool:
@@ -108,12 +244,12 @@ def volatile_state_path_warnings(
     instance_locations: Iterable[tuple[str, str]] = (),
 ) -> list[str]:
     """Return startup warnings for durable state paths under volatile dirs."""
-    state_dir = get_server_state_dir(environ)
+    state_dir = get_server_state_root(environ)
     warnings: list[str] = []
     if is_volatile_state_path(state_dir):
         warnings.append(
-            "CRUXIBLE_SERVER_STATE_DIR resolves under a volatile temp path "
-            f"({state_dir}). Use a durable directory such as ~/.cruxible/server "
+            "CRUXIBLE_STATE_ROOT resolves under a volatile temp path "
+            f"({state_dir}). Use a durable directory such as ~/.cruxible "
             "or /var/lib/cruxible for long-lived daemon state."
         )
 
@@ -125,6 +261,17 @@ def volatile_state_path_warnings(
                 "durable storage before relying on it for long-lived state."
             )
     return warnings
+
+
+def get_disabled_consumers(environ: Mapping[str, str] | None = None) -> frozenset[str]:
+    """Built-in consumer kinds the operator turned off (``CRUXIBLE_DISABLED_CONSUMERS``)."""
+    env = os.environ if environ is None else environ
+    raw = env.get("CRUXIBLE_DISABLED_CONSUMERS", "")
+    disabled = frozenset(name.strip() for name in raw.split(",") if name.strip())
+    unknown = disabled - {"next"}
+    if unknown:
+        raise ValueError("Unknown CRUXIBLE_DISABLED_CONSUMERS: " + ", ".join(sorted(unknown)))
+    return disabled
 
 
 def is_server_auth_enabled(environ: Mapping[str, str] | None = None) -> bool:
@@ -244,6 +391,22 @@ def is_origin_allowed(origin: str | None, environ: Mapping[str, str] | None = No
     return normalized in get_origin_allowlist(environ)
 
 
+class ServerAuthRequired(ConfigError):
+    """The daemon refuses to serve without auth on this transport or state root.
+
+    Carries one code per cause, so a refusal names the exact repair instead of
+    a shared sentence covering several different situations.
+    """
+
+    def __init__(self, error_code: str, message: str) -> None:
+        self.error_code = error_code
+        super().__init__(f"{error_code}: {message}")
+
+
+#: The one repair every auth-off refusal names: the explicit local opt-in.
+SERVER_AUTH_OPT_IN = "cruxible server start --auth"
+
+
 def validate_server_startup_settings(
     environ: Mapping[str, str] | None = None,
     *,
@@ -257,9 +420,11 @@ def validate_server_startup_settings(
     bootstrap_secret = get_runtime_bootstrap_secret(env)
 
     if auth_required and not auth_enabled:
-        raise ConfigError(
-            "Refusing to start the Cruxible daemon without auth because this server "
-            "state dir previously required auth. Set CRUXIBLE_SERVER_AUTH=true."
+        raise ServerAuthRequired(
+            "cruxible.server.auth_latched",
+            "this state root previously required auth, so the daemon refuses to serve "
+            f"it without auth; repair: `{SERVER_AUTH_OPT_IN}` (or set "
+            "CRUXIBLE_SERVER_AUTH=true)",
         )
 
     if auth_enabled and bootstrap_secret is None and not runtime_credentials_available:
@@ -269,13 +434,30 @@ def validate_server_startup_settings(
         )
 
     if env.get("CRUXIBLE_SERVER_SOCKET"):
+        # A Unix socket is reachable only through a 0700 directory this OS user
+        # owns, so every process that can connect already runs as the operator.
         return
 
-    host = env.get("CRUXIBLE_HOST", "127.0.0.1")
-    if not _is_loopback_host(host) and not auth_enabled:
-        raise ConfigError(
-            "Refusing to bind the Cruxible daemon to a non-loopback host without auth. "
-            "Set CRUXIBLE_SERVER_AUTH=true with CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET "
-            "or stored runtime credentials, "
-            "or bind CRUXIBLE_HOST to 127.0.0.1/localhost."
+    if not auth_enabled:
+        # A TCP port has no such boundary: loopback is reachable by every local
+        # user, and anything bound wider by the network. Without auth, any of
+        # them could claim any principal.
+        host = env.get("CRUXIBLE_HOST", "127.0.0.1")
+        port = env.get("CRUXIBLE_PORT", "8100")
+        raise ServerAuthRequired(
+            "cruxible.server.tcp_requires_auth",
+            f"a TCP daemon ({host}:{port}) refuses to start without auth, because any "
+            "process that can reach the port could act as any principal; repair: "
+            f"`{SERVER_AUTH_OPT_IN}`, or listen on a Unix socket with "
+            "`cruxible server start --socket PATH`",
         )
+
+
+def auth_off_startup_notice() -> str:
+    """The one line an auth-off daemon prints when it starts."""
+
+    return (
+        "Auth off: Unix-socket daemon; every process running as this OS user is equally "
+        "trusted and a principal ID is a claim, not authentication. "
+        f"Opt in with `{SERVER_AUTH_OPT_IN}`."
+    )

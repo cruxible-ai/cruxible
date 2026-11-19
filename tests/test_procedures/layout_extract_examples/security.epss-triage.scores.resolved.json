@@ -1,0 +1,32 @@
+{
+  "capture": "$steps.scores_api.captures",
+  "fields": {
+    "date": {
+      "at": "date",
+      "parse": "date"
+    },
+    "percentile": {
+      "at": "percentile",
+      "parse": "decimal"
+    },
+    "score": {
+      "at": "epss",
+      "parse": "decimal"
+    }
+  },
+  "id": "scores",
+  "key": {
+    "cve_id": {
+      "at": "cve",
+      "type": "key_part<security.vulnerability:cve_id>"
+    }
+  },
+  "kind": "extract",
+  "only_keys": "$steps.watch_keys.rows",
+  "records": "/data/*",
+  "row": {
+    "digest": "sha256:c87071597d8c0acb652d8bed03018de5134311ee844347548fa38939be0a2782",
+    "name": "security.epss-row",
+    "version": 1
+  }
+}

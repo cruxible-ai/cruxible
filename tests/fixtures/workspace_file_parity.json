@@ -1,0 +1,318 @@
+{
+  "fixtures": [
+    {
+      "envelope_sha256": "sha256:049ffa56487e620bbfba1426e88c27e65c3f1d46b95cdb2dac8c48fab8ead0a5",
+      "fixture_id": "workspace-file-binary-medium"
+    },
+    {
+      "envelope_sha256": "sha256:d223c12d4248a11d7cb3e811ef5eae49f6a6dcc2543c008468ef2d099bb1a05b",
+      "fixture_id": "workspace-file-binary-small"
+    },
+    {
+      "envelope_sha256": "sha256:f8b7992be0b54aa9f665558eedae0bfd6b60534fbd712c779965d28e53bfc3f8",
+      "fixture_id": "workspace-file-binary-tiny"
+    },
+    {
+      "envelope_sha256": "sha256:5afe58a158717303409412f0403d970e77c92c2083a2ab46f52035466fa915d6",
+      "fixture_id": "workspace-file-text-medium"
+    },
+    {
+      "envelope_sha256": "sha256:8b33d5bf689dfd22d4ec851401ba7f339fb5a4cdb7ca18f78743f7af3b6962dc",
+      "fixture_id": "workspace-file-text-small"
+    },
+    {
+      "envelope_sha256": "sha256:c87cdc0fea245ed3ca8bddf595f25d3fcc6ccc910c4d561d16a65b39ea071ff3",
+      "fixture_id": "workspace-file-text-tiny"
+    }
+  ],
+  "source": "cruxible core builtin workspace read, revision sha256:04922994e7747b10f7a84726512d7b537d89d37655ca63a926bbb216dfdc25a5 (inputs: cruxible-providers db085204 packages/cruxible-provider-workspace 0.2.0 registration fixtures and vectors)",
+  "vectors": [
+    {
+      "envelope_sha256": "sha256:96a6f2d91a9587bbdb35308b2eb91c72623e42ad5a5f5d9e62db2ee404e0a55e",
+      "id": "text-empty",
+      "input": {
+        "byte_length": 0,
+        "bytes": "",
+        "bytes_digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "commitment_digest": "sha256:c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+        "content_encoding": "base64",
+        "logical_source": "parity/source"
+      },
+      "status": "ok"
+    },
+    {
+      "envelope_sha256": "sha256:da5b8ebf16aa475fa03dce66fc78f27d3d7438f64a966bbfc963d3376e62cdc1",
+      "id": "text-crlf-lf-cr-mixed",
+      "input": {
+        "byte_length": 8,
+        "bytes": "YQ0KYgpjDWQ=",
+        "bytes_digest": "sha256:830d68e2cc23e5791bb929e30d5febd8d1667416de2ebe7157204d5e6d454755",
+        "commitment_digest": "sha256:c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+        "content_encoding": "base64",
+        "logical_source": "parity/source"
+      },
+      "status": "ok"
+    },
+    {
+      "envelope_sha256": "sha256:ed6cb1fa167109d42b4678acf5496efb36c86f66a55dcd081e3a03697930e071",
+      "id": "text-lone-cr-tail",
+      "input": {
+        "byte_length": 2,
+        "bytes": "eA0=",
+        "bytes_digest": "sha256:896dfdaceccde1790c65d5cf32aa62d534947892db8caf916ec499f84f3ae398",
+        "commitment_digest": "sha256:c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+        "content_encoding": "base64",
+        "logical_source": "parity/source"
+      },
+      "status": "ok"
+    },
+    {
+      "envelope_sha256": "sha256:e9bf6fbd8282a87b23241b3aa487c2c50acb70e853c5e8501f647ac8b0e6225b",
+      "id": "text-bom-only",
+      "input": {
+        "byte_length": 3,
+        "bytes": "77u/",
+        "bytes_digest": "sha256:f1945cd6c19e56b3c1c78943ef5ec18116907a4ca1efc40a57d48ab1db7adfc5",
+        "commitment_digest": "sha256:c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+        "content_encoding": "base64",
+        "logical_source": "parity/source"
+      },
+      "status": "ok"
+    },
+    {
+      "envelope_sha256": "sha256:355c3a936a65ec0178916ef75f2c12c656174870b9919911cb55006102fe4dc0",
+      "id": "text-form-feed-not-a-break",
+      "input": {
+        "byte_length": 4,
+        "bytes": "YQxiCg==",
+        "bytes_digest": "sha256:c0e222f364db4094c86f70b169abb62bf6498d46ff31b8cabdf7bf6253d3d90a",
+        "commitment_digest": "sha256:c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+        "content_encoding": "base64",
+        "logical_source": "parity/source"
+      },
+      "status": "ok"
+    },
+    {
+      "envelope_sha256": "sha256:e9bf6fbd8282a87b23241b3aa487c2c50acb70e853c5e8501f647ac8b0e6225b",
+      "id": "binary-nul",
+      "input": {
+        "byte_length": 3,
+        "bytes": "YQBi",
+        "bytes_digest": "sha256:59b271ae1bbcb1d31d41929817f4b16fb439eb4f31520b5ad1d5ce98920a7138",
+        "commitment_digest": "sha256:c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+        "content_encoding": "base64",
+        "logical_source": "parity/source"
+      },
+      "status": "ok"
+    },
+    {
+      "envelope_sha256": "sha256:e9bf6fbd8282a87b23241b3aa487c2c50acb70e853c5e8501f647ac8b0e6225b",
+      "id": "binary-invalid-utf8",
+      "input": {
+        "byte_length": 3,
+        "bytes": "//79",
+        "bytes_digest": "sha256:8ca9f8c269c0a4b1d8bf0efc67d97df8ad5e0ea93630fd9099860d36c0fe75ea",
+        "commitment_digest": "sha256:c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+        "content_encoding": "base64",
+        "logical_source": "parity/source"
+      },
+      "status": "ok"
+    },
+    {
+      "envelope_sha256": "sha256:1397f0bd4128ae26c8e6af35628fb0e790dbb37b0c2aef2cf7400f2df177bfca",
+      "id": "refuse-unknown-field",
+      "input": {
+        "byte_length": 15,
+        "bytes": "c2V2ZXJpdHk6IGhpZ2gK",
+        "bytes_digest": "sha256:0c45aa3dab138f1230963f1aa3c4afc8472736f3af548898ae18837493b9e54d",
+        "commitment_digest": "sha256:c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+        "content_encoding": "base64",
+        "extra": 1,
+        "logical_source": "parity/source"
+      },
+      "refusal_code": "invalid_parameter",
+      "status": "refused"
+    },
+    {
+      "envelope_sha256": "sha256:515d912e493e69739457aa323d612c9d65ec9f6eb7e1d6a7e02954e4334e9ad6",
+      "id": "refuse-missing-field",
+      "input": {
+        "byte_length": 15,
+        "bytes": "c2V2ZXJpdHk6IGhpZ2gK",
+        "commitment_digest": "sha256:c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+        "content_encoding": "base64",
+        "logical_source": "parity/source"
+      },
+      "refusal_code": "invalid_parameter",
+      "status": "refused"
+    },
+    {
+      "envelope_sha256": "sha256:96be3130e873cafb5557668ff73dd95d6c7e6f7f74e0b4768fd5d8df43031af0",
+      "id": "refuse-empty-logical-source",
+      "input": {
+        "byte_length": 15,
+        "bytes": "c2V2ZXJpdHk6IGhpZ2gK",
+        "bytes_digest": "sha256:0c45aa3dab138f1230963f1aa3c4afc8472736f3af548898ae18837493b9e54d",
+        "commitment_digest": "sha256:c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+        "content_encoding": "base64",
+        "logical_source": ""
+      },
+      "refusal_code": "invalid_parameter",
+      "status": "refused"
+    },
+    {
+      "envelope_sha256": "sha256:96be3130e873cafb5557668ff73dd95d6c7e6f7f74e0b4768fd5d8df43031af0",
+      "id": "refuse-control-logical-source",
+      "input": {
+        "byte_length": 15,
+        "bytes": "c2V2ZXJpdHk6IGhpZ2gK",
+        "bytes_digest": "sha256:0c45aa3dab138f1230963f1aa3c4afc8472736f3af548898ae18837493b9e54d",
+        "commitment_digest": "sha256:c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+        "content_encoding": "base64",
+        "logical_source": "a\nb"
+      },
+      "refusal_code": "invalid_parameter",
+      "status": "refused"
+    },
+    {
+      "envelope_sha256": "sha256:9c006e3571a79f386f1944f6437228c94546ea5cb847dc4be24adb24e7ca4c72",
+      "id": "refuse-uppercase-digest",
+      "input": {
+        "byte_length": 15,
+        "bytes": "c2V2ZXJpdHk6IGhpZ2gK",
+        "bytes_digest": "sha256:0c45aa3dab138f1230963f1aa3c4afc8472736f3af548898ae18837493b9e54d",
+        "commitment_digest": "sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "content_encoding": "base64",
+        "logical_source": "parity/source"
+      },
+      "refusal_code": "invalid_parameter",
+      "status": "refused"
+    },
+    {
+      "envelope_sha256": "sha256:c3b8eea1c1d564116e68b240daf9d667cc9123ea1b9406493b9d33748ae31ccc",
+      "id": "refuse-digest-trailing-newline",
+      "input": {
+        "byte_length": 15,
+        "bytes": "c2V2ZXJpdHk6IGhpZ2gK",
+        "bytes_digest": "sha256:0c45aa3dab138f1230963f1aa3c4afc8472736f3af548898ae18837493b9e54d\n",
+        "commitment_digest": "sha256:c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+        "content_encoding": "base64",
+        "logical_source": "parity/source"
+      },
+      "refusal_code": "provider_declined",
+      "status": "refused"
+    },
+    {
+      "envelope_sha256": "sha256:0e876b30677224904cb8a3ec56198a77484392411cae477427ec0f8d3b5f23fc",
+      "id": "refuse-wrong-encoding",
+      "input": {
+        "byte_length": 15,
+        "bytes": "c2V2ZXJpdHk6IGhpZ2gK",
+        "bytes_digest": "sha256:0c45aa3dab138f1230963f1aa3c4afc8472736f3af548898ae18837493b9e54d",
+        "commitment_digest": "sha256:c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+        "content_encoding": "base32",
+        "logical_source": "parity/source"
+      },
+      "refusal_code": "invalid_parameter",
+      "status": "refused"
+    },
+    {
+      "envelope_sha256": "sha256:ca6d8cc93e8e39e6593adafb1b42e1d5ec6ce55b8cba1b25570c04e398a7eb7d",
+      "id": "refuse-bytes-not-string",
+      "input": {
+        "byte_length": 15,
+        "bytes": 5,
+        "bytes_digest": "sha256:0c45aa3dab138f1230963f1aa3c4afc8472736f3af548898ae18837493b9e54d",
+        "commitment_digest": "sha256:c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+        "content_encoding": "base64",
+        "logical_source": "parity/source"
+      },
+      "refusal_code": "invalid_parameter",
+      "status": "refused"
+    },
+    {
+      "envelope_sha256": "sha256:abe472ae7a132e63820da0c9eaf86aa762069467aef7e0e623c162e43fbe067c",
+      "id": "refuse-bool-length",
+      "input": {
+        "byte_length": true,
+        "bytes": "c2V2ZXJpdHk6IGhpZ2gK",
+        "bytes_digest": "sha256:0c45aa3dab138f1230963f1aa3c4afc8472736f3af548898ae18837493b9e54d",
+        "commitment_digest": "sha256:c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+        "content_encoding": "base64",
+        "logical_source": "parity/source"
+      },
+      "refusal_code": "invalid_parameter",
+      "status": "refused"
+    },
+    {
+      "envelope_sha256": "sha256:abe472ae7a132e63820da0c9eaf86aa762069467aef7e0e623c162e43fbe067c",
+      "id": "refuse-negative-length",
+      "input": {
+        "byte_length": -1,
+        "bytes": "c2V2ZXJpdHk6IGhpZ2gK",
+        "bytes_digest": "sha256:0c45aa3dab138f1230963f1aa3c4afc8472736f3af548898ae18837493b9e54d",
+        "commitment_digest": "sha256:c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+        "content_encoding": "base64",
+        "logical_source": "parity/source"
+      },
+      "refusal_code": "invalid_parameter",
+      "status": "refused"
+    },
+    {
+      "envelope_sha256": "sha256:ae70e39bc2ac2a9ef69dc17214fbc0b5a222810ded50b329ba1fc8839f007003",
+      "id": "refuse-not-base64",
+      "input": {
+        "byte_length": 15,
+        "bytes": "@@@@",
+        "bytes_digest": "sha256:0c45aa3dab138f1230963f1aa3c4afc8472736f3af548898ae18837493b9e54d",
+        "commitment_digest": "sha256:c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+        "content_encoding": "base64",
+        "logical_source": "parity/source"
+      },
+      "refusal_code": "invalid_parameter",
+      "status": "refused"
+    },
+    {
+      "envelope_sha256": "sha256:ae70e39bc2ac2a9ef69dc17214fbc0b5a222810ded50b329ba1fc8839f007003",
+      "id": "refuse-base64-line-break",
+      "input": {
+        "byte_length": 15,
+        "bytes": "c2V2ZXJpdHk6IGhpZ2gK\n",
+        "bytes_digest": "sha256:0c45aa3dab138f1230963f1aa3c4afc8472736f3af548898ae18837493b9e54d",
+        "commitment_digest": "sha256:c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+        "content_encoding": "base64",
+        "logical_source": "parity/source"
+      },
+      "refusal_code": "invalid_parameter",
+      "status": "refused"
+    },
+    {
+      "envelope_sha256": "sha256:4e35184d4eb53acf6d214b061db8659c4ede87de4e90cd2d5265acbc11bd8c72",
+      "id": "refuse-length-mismatch",
+      "input": {
+        "byte_length": 16,
+        "bytes": "c2V2ZXJpdHk6IGhpZ2gK",
+        "bytes_digest": "sha256:0c45aa3dab138f1230963f1aa3c4afc8472736f3af548898ae18837493b9e54d",
+        "commitment_digest": "sha256:c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+        "content_encoding": "base64",
+        "logical_source": "parity/source"
+      },
+      "refusal_code": "mismatched_lengths",
+      "status": "refused"
+    },
+    {
+      "envelope_sha256": "sha256:c324ca7d563e046c37b48c05f81f9765ffa95fcf03f945caf6d88f234d050cd4",
+      "id": "refuse-digest-mismatch",
+      "input": {
+        "byte_length": 15,
+        "bytes": "c2V2ZXJpdHk6IGhpZ2gK",
+        "bytes_digest": "sha256:d9298a10d1b0735837dc4bd85dac641b0f3cef27a47e5d53a54f2f3f5b2fcffa",
+        "commitment_digest": "sha256:c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+        "content_encoding": "base64",
+        "logical_source": "parity/source"
+      },
+      "refusal_code": "provider_declined",
+      "status": "refused"
+    }
+  ]
+}

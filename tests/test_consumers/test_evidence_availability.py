@@ -1,0 +1,424 @@
+"""The evidence worker flags cited Captures the store can no longer produce, and only those."""
+
+from __future__ import annotations
+
+import sqlite3
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+from cruxible_client.contracts.captures import parse_capture_envelope
+from cruxible_client.contracts.cas_contracts import BodyAccessContext
+from cruxible_client.contracts.errors import CasError
+from cruxible_core.consumers.next import NEXT_QUEUE, evidence
+from cruxible_core.consumers.next.evidence import _PART as WORKER
+from cruxible_core.consumers.next.evidence import evidence_findings
+from tests.support.internal_triggers import fire_internal_triggers
+from tests.test_authoring.test_authoring_existing_capture import shared_capture_world
+
+SWEEP_INTERVAL = timedelta(days=1)
+READ = BodyAccessContext(principal_id="test", can_read_body=True)
+NOW = datetime(2026, 9, 1, tzinfo=UTC)
+
+
+def _world(tmp_path: Path):  # type: ignore[no-untyped-def]
+    instance, *_rest = shared_capture_world(tmp_path)
+    with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
+        (capture,) = {
+            row[0]
+            for row in projection.typed.connection.execute(
+                "SELECT capture_digest FROM citation_uses WHERE owner_kind='Claim' "
+                "AND owner_key NOT IN (SELECT identity FROM claims WHERE predicate LIKE '%.slug')"
+            )
+        }
+    return instance, capture
+
+
+def _drain(instance, *, now: datetime) -> None:  # type: ignore[no-untyped-def]
+    fire_internal_triggers(instance, now=now)
+    manager = SimpleNamespace(get=lambda _id: instance)
+    for _pass in range(16):
+        NEXT_QUEUE.match(instance, now=now, daemon_id="daemon")
+        units = tuple(NEXT_QUEUE.due(instance, now=now))
+        if not units:
+            return
+        for work in units:
+            try:
+                NEXT_QUEUE.run(manager, "instance", work, now=now)
+            except Exception:
+                # Like the runner, one failed facts pass cannot stop evidence checks.
+                # This fixture deliberately removes/corrupts CAS material.
+                if not work.key.startswith("facts:"):
+                    raise
+    raise AssertionError("the folded worker never ran out of due work")
+
+
+def _findings(instance):  # type: ignore[no-untyped-def]
+    return {(item.capture_digest, item.part, item.state) for item in evidence_findings(instance)}
+
+
+def test_a_healthy_world_sweeps_clean_and_reports_running(tmp_path: Path) -> None:
+    instance, _capture = _world(tmp_path)
+    _drain(instance, now=NOW)  # starts the cursor at head; history is left to the sweep
+    _drain(instance, now=NOW)
+
+    assert _findings(instance) == set()
+    (health,) = WORKER.health(instance, now=NOW)
+    assert health.state == "running" and health.detail["sweep_completed_at"] is not None
+
+
+def test_a_missing_or_rotted_envelope_is_found_by_the_sweep_and_cleared_once_restored(
+    tmp_path: Path,
+) -> None:
+    instance, capture = _world(tmp_path)
+    store = instance.body_store()
+    path = store._path(capture)
+    original = path.read_bytes()
+    _drain(instance, now=NOW)
+    _drain(instance, now=NOW)
+
+    path.chmod(0o600)
+    path.write_bytes(b"rot" + original[3:])
+    # Nothing re-checks before the sweep comes due.
+    _drain(instance, now=NOW + timedelta(hours=1))
+    assert _findings(instance) == set()
+    _drain(instance, now=NOW + SWEEP_INTERVAL)
+    assert _findings(instance) == {(capture, "envelope", "corrupt")}
+
+    path.unlink()
+    _drain(instance, now=NOW + 2 * SWEEP_INTERVAL)
+    assert _findings(instance) == {(capture, "envelope", "missing")}
+
+    path.write_bytes(original)
+    _drain(instance, now=NOW + 3 * SWEEP_INTERVAL)
+    assert _findings(instance) == set()
+
+
+def test_a_newly_cited_capture_is_checked_without_waiting_for_the_sweep(tmp_path: Path) -> None:
+    instance, capture = _world(tmp_path)
+    _drain(instance, now=NOW)
+    _drain(instance, now=NOW)
+    with instance.accepted_history_reader() as history:
+        head = history.sequence
+    # Rewind the worker so the generation that cited the capture is new to it.
+    with sqlite3.connect(evidence._STATE.path(instance)) as connection:
+        connection.execute("UPDATE progress SET generation=?", (head - 1,))
+    instance.body_store()._path(capture).unlink()
+
+    _drain(instance, now=NOW + timedelta(minutes=1))
+
+    assert _findings(instance) == {(capture, "envelope", "missing")}
+
+
+def test_a_body_its_policy_lets_go_is_not_a_finding_but_a_rotted_body_is(
+    tmp_path: Path,
+) -> None:
+    instance, capture = _world(tmp_path)
+    store = instance.body_store()
+    envelope = parse_capture_envelope(store.read(capture, access=READ))
+    if envelope.commitment.materialization != "cas":
+        pytest.skip("this world's Capture keeps no body in the store")
+    body = store._path(envelope.commitment.digest)
+    original = body.read_bytes()
+    _drain(instance, now=NOW)
+
+    body.unlink()  # optional retention: the envelope still commits to the bytes
+    _drain(instance, now=NOW + SWEEP_INTERVAL)
+    assert _findings(instance) == set()
+
+    body.write_bytes(b"x" + original[1:])
+    _drain(instance, now=NOW + 2 * SWEEP_INTERVAL)
+    assert _findings(instance) == {(capture, "body", "corrupt")}
+
+
+def test_the_operator_can_turn_the_worker_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CRUXIBLE_DISABLED_CONSUMERS", "next")
+    assert not NEXT_QUEUE.active(SimpleNamespace())
+    monkeypatch.setenv("CRUXIBLE_DISABLED_CONSUMERS", "")
+    assert NEXT_QUEUE.active(SimpleNamespace())
+
+
+def test_a_failing_worker_is_stalled_with_a_repair_and_recovers_on_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_core.consumers.runner import consumer_health
+
+    instance, _capture = _world(tmp_path)
+    _drain(instance, now=NOW)
+    original = WORKER._sweep
+
+    def broken(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        raise OSError("store unreadable")
+
+    monkeypatch.setattr(WORKER, "_sweep", broken)
+    due = NOW + SWEEP_INTERVAL
+    with pytest.raises(OSError):
+        _drain(instance, now=due)
+    (health,) = [item for item in consumer_health(instance, now=due) if item.kind == "next"]
+    assert (
+        health.state == "stalled" and "store unreadable" in health.detail["evidence"]["last_error"]
+    )
+    assert health.repair is not None and health.repair.operation == "hand_edit"
+
+    monkeypatch.setattr(WORKER, "_sweep", original)
+    _drain(instance, now=due)
+    (health,) = WORKER.health(instance, now=due)
+    assert health.state == "running"
+
+
+def test_server_status_lists_open_instances_consumers_including_disabled_workers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_core.consumers.runner import consumer_statuses
+
+    instance, _capture = _world(tmp_path)
+    # Status measures lag at the real current time, so sweep then.
+    _drain(instance, now=datetime.now(UTC))
+    manager = SimpleNamespace(open_instances=lambda: (("inst", instance),))
+
+    (running,) = consumer_statuses(manager)
+    assert (running.instance_id, running.kind, running.state) == ("inst", "next", "running")
+
+    monkeypatch.setenv("CRUXIBLE_DISABLED_CONSUMERS", "next")
+    (disabled,) = consumer_statuses(manager)
+    assert (disabled.consumer_id, disabled.state) == ("consumer:next", "disabled")
+
+
+def _citations(count: int) -> sqlite3.Connection:
+    connection = sqlite3.connect(":memory:")
+    connection.executescript(
+        "CREATE TABLE citation_uses (owner_kind TEXT, owner_key TEXT, use_key TEXT, "
+        "capture_digest TEXT, origin TEXT, role TEXT); "
+        "CREATE INDEX citations_by_owner ON citation_uses(owner_kind,owner_key); "
+        "CREATE INDEX citations_by_capture ON citation_uses"
+        "(capture_digest,owner_kind,owner_key,use_key); "
+        "CREATE TABLE claims (identity TEXT PRIMARY KEY, lifecycle TEXT);"
+    )
+    connection.executemany(
+        "INSERT INTO claims VALUES (?,?)",
+        ((f"Claim:CLM-{index:06d}", "live") for index in range(count)),
+    )
+    connection.executemany(
+        "INSERT INTO citation_uses VALUES ('Claim',?,'u',?,'independent','evidence')",
+        ((f"Claim:CLM-{index:06d}", f"sha256:{index:064x}") for index in range(count)),
+    )
+    connection.execute("ANALYZE")
+    return connection
+
+
+def test_a_sweep_page_costs_its_own_size_not_the_citation_population() -> None:
+    def steps(count: int) -> int:
+        connection = _citations(count)
+        counter = [0]
+
+        def tick() -> int:
+            counter[0] += 1
+            return 0
+
+        connection.set_progress_handler(tick, 1)
+        page, stopped = evidence._cited_captures(connection, after="", limit=256)
+        assert len(page) == 256 and stopped == page[-1]
+        return counter[0]
+
+    small, large = steps(1_000), steps(10_000)
+    assert large < small * 1.5, (small, large)
+
+
+def test_health_costs_the_same_whatever_the_pending_backlog(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests.test_consumers.test_prediction_settlement import _fake_instance, _steps
+
+    def steps(count: int) -> int:
+        instance = _fake_instance(tmp_path / str(count))
+        with evidence._STATE.open(instance) as connection:
+            assert connection is not None
+            connection.execute("INSERT INTO progress(singleton,generation) VALUES (1,0)")
+            connection.executemany(
+                "INSERT INTO pending VALUES (?,?)",
+                ((f"sha256:{index:064x}", "2026-09-01T00:00:00.000000Z") for index in range(count)),
+            )
+        (health,) = WORKER.health(instance, now=NOW)
+        assert health.detail["pending_checks"] == count
+        return _steps(monkeypatch, lambda: WORKER.health(instance, now=NOW))
+
+    small, large = steps(1_000), steps(10_000)
+    assert large < small * 1.5, (small, large)
+
+
+def test_state_an_earlier_version_wrote_is_rebuilt_with_exact_counts(tmp_path: Path) -> None:
+    instance, _capture = _world(tmp_path)
+    _drain(instance, now=NOW)
+    # The shape this worker's state had before its pending tally, with a backlog.
+    with sqlite3.connect(evidence._STATE.path(instance)) as connection:
+        for (trigger,) in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='trigger'"
+        ).fetchall():
+            connection.execute(f"DROP TRIGGER {trigger}")
+        connection.execute("DROP TABLE tally")
+        connection.executemany(
+            "INSERT INTO pending VALUES (?,?)",
+            ((f"sha256:{index:064x}", "2026-09-01T00:00:00.000000Z") for index in range(3)),
+        )
+
+    # A reader finds no state it can read and leaves the file as it is.
+    assert WORKER.health(instance, now=NOW) == ()
+    with sqlite3.connect(evidence._STATE.path(instance)) as connection:
+        assert connection.execute("SELECT count(*) FROM pending").fetchone() == (3,)
+    # The worker's own open rebuilds it: nothing survives, as on a new instance.
+    WORKER.match(instance, now=NOW, daemon_id="daemon")
+    with sqlite3.connect(evidence._STATE.path(instance)) as connection:
+        assert connection.execute("SELECT count(*) FROM pending").fetchone() == (0,)
+        assert connection.execute("SELECT value FROM tally").fetchall() == [(0,)]
+    _drain(instance, now=NOW)
+    _drain(instance, now=NOW)
+    (health,) = WORKER.health(instance, now=NOW)
+    assert health.detail["pending_checks"] == 0 and _findings(instance) == set()
+
+
+def test_no_sweep_or_clock_lag_without_a_fired_event(tmp_path: Path) -> None:
+    instance, _capture = _world(tmp_path)
+    WORKER.match(instance, now=NOW, daemon_id="daemon")
+    assert tuple(WORKER.due(instance, now=NOW + timedelta(days=100))) == ()
+    (health,) = WORKER.health(instance, now=NOW + timedelta(days=100))
+    assert health.state == "running" and health.detail["sweep_completed_at"] is None
+    fire_internal_triggers(instance, now=NOW)
+    (health,) = WORKER.health(instance, now=NOW)
+    assert health.state == "running" and health.detail["sweep_in_progress"]
+    fire_internal_triggers(instance, now=NOW + SWEEP_INTERVAL)
+    (health,) = WORKER.health(instance, now=NOW)
+    assert health.state == "lagging"
+    _drain(instance, now=NOW)
+    _drain(instance, now=NOW)
+    (health,) = WORKER.health(instance, now=NOW + timedelta(days=100))
+    assert health.state == "running"
+
+
+def test_sweep_resumes_a_fired_event_at_its_logged_time(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    instance, capture = _world(tmp_path)
+    fire_internal_triggers(instance, now=NOW)
+    WORKER.match(instance, now=NOW, daemon_id="daemon")
+    monkeypatch.setattr(evidence, "CHECK_BATCH", 1)
+    manager = SimpleNamespace(get=lambda _id: instance)
+    seen = []
+    check = WORKER._check
+
+    def checked(instance, digests, *, now):  # type: ignore[no-untyped-def]
+        seen.append(now)
+        return check(instance, digests, now=now)
+
+    monkeypatch.setattr(WORKER, "_check", checked)
+    (work,) = WORKER.due(instance, now=NOW)
+    WORKER.run(manager, "instance", work, now=NOW + timedelta(days=100))
+    (health,) = WORKER.health(instance, now=NOW)
+    assert health.state == "running" and health.detail["sweep_position"] == 0
+    # A restart continues this event, even if another one has fired meanwhile.
+    fire_internal_triggers(instance, now=NOW + SWEEP_INTERVAL)
+    (health,) = WORKER.health(instance, now=NOW)
+    assert health.state == "lagging"
+    # One Capture per batch: the world's key Claims cite Captures of their own too.
+    for _ in range(16):
+        for work in WORKER.due(instance, now=NOW):
+            WORKER.run(manager, "instance", work, now=NOW + timedelta(days=100))
+    assert NOW in seen and NOW + SWEEP_INTERVAL in seen
+    assert NOW + timedelta(days=100) not in seen
+    assert capture and not tuple(WORKER.due(instance, now=NOW))
+
+
+@pytest.mark.parametrize("damage", ("deleted", "corrupt"))
+def test_a_positioned_read_reads_a_damaged_envelope_as_unavailable(
+    tmp_path: Path, damage: str
+) -> None:
+    from cruxible_core.consumers.next.facts import read_positions
+    from cruxible_core.service.evidence import evidence as verdict_evidence
+    from cruxible_core.storage.read_positions import reading_at
+    from tests.test_evidence.test_slot_verdict_reuse import _rewrite_in_place
+
+    instance, capture = _world(tmp_path)
+    path = instance.body_store()._path(capture)
+    # Deleted or rewritten out of band: the landing log still has it present at
+    # the read's position, and a derivation that needs its bytes reads it as
+    # unavailable, never as a refusal of the whole read.
+    if damage == "deleted":
+        path.unlink()
+    else:
+        _rewrite_in_place(path, keep_mtime=False)
+    assert instance.body_store().availability(capture) == (
+        "missing" if damage == "deleted" else "corrupt"
+    )
+    with reading_at(read_positions(instance)):
+        assert verdict_evidence._current_replay_available(instance, capture, readers={}) is False
+        # The fold answers the same for the damaged body.
+        assert verdict_evidence._replay_available(instance, capture, readers={}) is False
+    if damage == "corrupt":
+        # Reading the bytes themselves still refuses.
+        with pytest.raises(CasError):
+            instance.body_store().read(
+                capture, access=BodyAccessContext(principal_id="test", can_read_body=True)
+            )
+
+
+@pytest.mark.parametrize("damage", ("deleted", "corrupt"))
+@pytest.mark.parametrize("kind", ("source", "commitment"))
+def test_a_positioned_read_answers_a_damaged_dependency_by_its_damage_record(
+    tmp_path: Path, kind: str, damage: str
+) -> None:
+    from cruxible_client.contracts.captures import render_capture_envelope
+    from cruxible_client.contracts.source_references import CasSourceReference
+    from cruxible_core.consumers.next.facts import read_positions
+    from cruxible_core.service.evidence import evidence as verdict_evidence
+    from cruxible_core.storage.read_positions import reading_at
+    from tests.core_support._knowledge_loop_support import seed_claims
+    from tests.test_evidence.test_slot_verdict_reuse import _rewrite_in_place
+    from tests.test_integration.test_next_closed_loop import _current_claim
+
+    instance, _owner = seed_claims(tmp_path)
+    store = instance.body_store()
+    capture = _current_claim(instance).backing.capture_digests[0]
+    envelope = parse_capture_envelope(store.read(capture, access=READ))
+    assert envelope.commitment.materialization == "cas"
+    target = envelope.commitment.digest
+    if kind == "source":
+        # The same bytes as a Capture's CAS source rather than its commitment.
+        envelope = envelope.model_copy(update={"source": CasSourceReference(content_digest=target)})
+        capture = store.store(render_capture_envelope(envelope)).digest
+    path = store._path(target)
+    original = path.read_bytes()
+
+    def replayable(positions):  # type: ignore[no-untyped-def]
+        with reading_at(positions):
+            return verdict_evidence._current_replay_available(instance, capture, readers={})
+
+    landed = read_positions(instance)
+    assert replayable(landed)
+    if damage == "deleted":
+        path.unlink()
+    else:
+        _rewrite_in_place(path, keep_mtime=True)
+    # Presence is the landing log's, never the file's: no read stats or hashes it,
+    # so until the damage is recorded a positioned read answers as before.
+    assert replayable(read_positions(instance))
+    # The evidence sweep's hash records the damage once.
+    found = "missing" if damage == "deleted" else "corrupt"
+    assert store.availability(target) == found
+    damaged = read_positions(instance)
+    assert damaged.landing == landed.landing + 1
+    assert store.availability(target) == found
+    assert read_positions(instance) == damaged
+    assert replayable(damaged) is False
+    with reading_at(damaged):
+        # The full verifier answers the same.
+        assert verdict_evidence._replay_available(instance, capture, readers={}) is False
+    # A read positioned before the damage record still answers present.
+    assert replayable(landed)
+    # Repaired, the next verification clears it with a record of its own.
+    path.write_bytes(original)
+    assert store.availability(target) == "present"
+    repaired = read_positions(instance)
+    assert repaired.landing == damaged.landing + 1
+    assert replayable(repaired)
+    assert replayable(damaged) is False

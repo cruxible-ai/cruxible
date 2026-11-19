@@ -1,35 +1,15 @@
-"""Query engine, traversal, and constraints."""
+"""Claim-native governed query surface.
+
+PC-F slice 1 freezes the declarative grammar and the
+``cruxible-query-definition-v3`` artifact. Direct evaluation runs accepted
+definitions against accepted Subject/Claim facts under one explicit coordinate
+and evaluation time through the deterministic direct index. The semantic
+discovery and compact-interface modules project that same accepted vocabulary;
+dependency impact pairs the exact generation each dependent used with the
+current standing of the Claim it used, without relabelling the historical
+coordinate.
+"""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from cruxible_core.query.types import QueryResult
-
-
-def execute_query(*args: Any, **kwargs: Any) -> "QueryResult":
-    """Execute a named query.
-
-    Imported lazily so config schema validation can use query result contracts
-    without importing the query engine and its config dependencies.
-    """
-    from cruxible_core.query.engine import execute_query as _execute_query
-
-    return _execute_query(*args, **kwargs)
-
-
-def __getattr__(name: str) -> Any:
-    if name == "QueryResult":
-        from cruxible_core.query.types import QueryResult
-
-        return QueryResult
-    if name == "execute_query":
-        return execute_query
-    raise AttributeError(name)
-
-
-__all__ = [
-    "QueryResult",
-    "execute_query",
-]
+__all__: tuple[str, ...] = ()

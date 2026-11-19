@@ -1,0 +1,47 @@
+{
+  "capture": "$steps.catalog.capture",
+  "complete_when": {
+    "count_at": "/count"
+  },
+  "fields": {
+    "date_added": {
+      "at": "dateAdded",
+      "parse": "date"
+    },
+    "due_date": {
+      "at": "dueDate",
+      "parse": "date",
+      "presence": "optional"
+    },
+    "listed_from": {
+      "at": "dateAdded",
+      "parse": "date",
+      "project": "utc_start_of_day"
+    },
+    "ransomware_use": {
+      "at": "knownRansomwareCampaignUse",
+      "canonicalize": "claim_type",
+      "presence": "optional"
+    }
+  },
+  "header": {
+    "catalog_version": {
+      "at": "/catalogVersion",
+      "presence": "required"
+    }
+  },
+  "id": "entries",
+  "key": {
+    "cve_id": {
+      "at": "cveID",
+      "type": "key_part<security.vulnerability:cve_id>"
+    }
+  },
+  "kind": "extract",
+  "records": "/vulnerabilities/*",
+  "row": {
+    "digest": "sha256:4a0615f4aabe5ccc4acc0cbeae98a8712695a59eb3ade3d37faec1770a07dc16",
+    "name": "security.kev-record",
+    "version": 1
+  }
+}

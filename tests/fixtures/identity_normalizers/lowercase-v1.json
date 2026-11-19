@@ -1,0 +1,15 @@
+{
+  "normalizer": {"normalizer": "lowercase", "version": 1},
+  "about": "lowercase@1: NFC, Unicode default lowercase (str.lower), NFC. Text only.",
+  "cases": [
+    {"raw": "CVE-2024-1234", "canonical": "cve-2024-1234"},
+    {"raw": "cve-2024-1234", "canonical": "cve-2024-1234"},
+    {"raw": "GitHub.com/Org", "canonical": "github.com/org"},
+    {"raw": "ÉCOLE", "canonical": "école"},
+    {"raw": "École", "canonical": "école"},
+    {"raw": "Straße", "canonical": "straße"},
+    {"raw": "  Mixed Case  ", "canonical": "  mixed case  "},
+    {"raw": 7, "refused": "key_unparseable"},
+    {"raw": true, "refused": "key_unparseable"}
+  ]
+}

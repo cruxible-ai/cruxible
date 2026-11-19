@@ -1,0 +1,1576 @@
+"""Concrete immutable SQLite storage for Cruxible projection contracts."""
+
+from __future__ import annotations
+
+import errno
+import fcntl
+import hashlib
+import json
+import os
+import re
+import secrets
+import sqlite3
+import stat
+import sys
+import threading
+from collections import OrderedDict
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Any
+
+from cruxible_client.contracts.canonical import (
+    LogicalDigest,
+    Sha256Value,
+    canonical_bytes,
+)
+from cruxible_client.contracts.errors import ProjectionIntegrityError
+from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_core.compiler.projection_artifacts import ArtifactEnvelopeRow, ParsedProjectionTree
+from cruxible_core.derived.memo import memo_clear, memo_get, memo_put
+from cruxible_core.documents.projection_documents import (
+    DocumentProjectionView,
+    document_projection_view,
+)
+from cruxible_core.indexes.acquisition import (
+    ACQUISITION_ATTEMPTS,
+    DatabasePathChangedError,
+    guard_database_path,
+    pause_before_acquisition_retry,
+)
+from cruxible_core.indexes.claims.projection_claims import (
+    ClaimProjectionView,
+    claim_projection_view,
+)
+from cruxible_core.indexes.claims.projection_subjects import (
+    SubjectProjectionView,
+    subject_projection_view,
+)
+from cruxible_core.indexes.projection import (
+    PROJECTION_STORAGE_SCHEMA_VERSION,
+    AcceptedProjectionCoordinate,
+    AssemblerRequest,
+    ProjectionManifest,
+    ProjectionOrphan,
+    projection_manifest_name,
+    render_projection_manifest,
+)
+from cruxible_core.storage import fsync_directory as _fsync_directory
+from cruxible_core.storage.cas import BodyAccessContext
+
+# A bound piece is verified whole — a physical SHA-256 over the file, a
+# ``PRAGMA integrity_check`` page scan and a canonical logical re-export — and
+# that cost is paid per bind, not per generation. The identity below names the
+# exact bytes that were verified: same device and inode, same size, same
+# modification and inode-change timestamps, under the same accepted coordinate
+# and the same manifest digests. Any write to the piece moves st_mtime_ns and
+# st_ctime_ns, so a tampered file misses the memo and is verified again.
+_VERIFIED_PIECE_CAPACITY = 8
+_VERIFIED_PIECES: "OrderedDict[tuple[object, ...], str]" = OrderedDict()
+
+
+def _verified_piece_identity(
+    piece_path: Path,
+    metadata: "os.stat_result",
+    *,
+    expected: AcceptedProjectionCoordinate,
+    manifest: ProjectionManifest,
+    physical_digest: str,
+) -> tuple[object, ...]:
+    return (
+        str(piece_path),
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+        expected.instance_id,
+        expected.git_object_format,
+        expected.git_oid,
+        expected.semantic_root,
+        expected.generation_root,
+        expected.compiler.rule_digest,
+        expected.compiler.schema_version,
+        manifest.logical_digest,
+        physical_digest,
+    )
+
+
+def _piece_already_verified(identity: tuple[object, ...]) -> bool:
+    return memo_get(_VERIFIED_PIECES, identity) is not None
+
+
+def _record_verified_piece(
+    identity: tuple[object, ...], *, source_authenticated: bool = False
+) -> None:
+    previous = memo_get(_VERIFIED_PIECES, identity)
+    value = (
+        "source-authenticated"
+        if source_authenticated or previous == "source-authenticated"
+        else "verified"
+    )
+    memo_put(_VERIFIED_PIECES, identity, value, capacity=_VERIFIED_PIECE_CAPACITY)
+
+
+# Source authentication re-derives every typed row from accepted sources. A
+# piece that passed it -- or that the assembler built from verified sources --
+# is recorded here by its physical digest and coordinate, so a later process
+# that has re-hashed the piece against its manifest need not re-derive it.
+SOURCE_AUTHENTICATION_STAMPS = "source-authenticated.json"
+_SOURCE_AUTHENTICATOR = "playbill-typed-source-authentication-v1"
+_SOURCE_AUTHENTICATION_STAMPS_RETAINED = 8
+
+
+def _authentication_stamp(accepted: Any, manifest: ProjectionManifest) -> dict[str, object]:
+    return {
+        "authenticator": _SOURCE_AUTHENTICATOR,
+        "storage_schema_version": PROJECTION_STORAGE_SCHEMA_VERSION,
+        "physical_digest": manifest.pieces[0].physical_digest,
+        "logical_digest": manifest.logical_digest,
+        # The coordinate fields a piece's verification identity binds, which
+        # the assembler's and a reader's coordinate both carry.
+        "coordinate": [
+            accepted.instance_id,
+            accepted.git_object_format,
+            accepted.git_oid,
+            accepted.semantic_root,
+            accepted.generation_root,
+            accepted.compiler.rule_digest,
+            accepted.compiler.schema_version,
+        ],
+    }
+
+
+def _authentication_stamps(directory: Path) -> list[dict[str, object]]:
+    path = directory / SOURCE_AUTHENTICATION_STAMPS
+    try:
+        if path.is_symlink() or not path.is_file():
+            return []
+        loaded = json.loads(path.read_bytes())
+    except (OSError, ValueError):
+        return []
+    return [item for item in loaded if isinstance(item, dict)] if isinstance(loaded, list) else []
+
+
+# The records this process trusts, per projection directory: those on disk
+# when it first bound a projection there (for the daemon, during startup
+# recovery), plus those it wrote itself. A record that appears
+# later -- beside a piece replaced while the daemon runs -- is never honored;
+# only a restart takes the persisted records as its starting trust.
+_TRUSTED_STAMPS: dict[str, list[dict[str, object]]] = {}
+_TRUSTED_STAMPS_RETAINED = 64
+_TRUSTED_STAMPS_LOCK = threading.Lock()
+
+
+def _stamp_key(directory: Path) -> str:
+    try:
+        return str(directory.resolve(strict=True))
+    except OSError:
+        return str(directory)
+
+
+def _trusted_stamps(directory: Path) -> list[dict[str, object]]:
+    key = _stamp_key(directory)
+    with _TRUSTED_STAMPS_LOCK:
+        trusted = _TRUSTED_STAMPS.get(key)
+        if trusted is None:
+            trusted = _TRUSTED_STAMPS[key] = _authentication_stamps(directory)
+        return list(trusted)
+
+
+@contextmanager
+def stamp_ring_guard(directory: Path) -> Iterator[None]:
+    """Serialize stamp-ring rewrites with serving publication in ``directory``.
+
+    A stamp write reads the serving pointer and the on-disk ring, merges, and
+    replaces the ring. Unserialized, a historical read that read both before an
+    activation could replace the ring after it, dropping the stamp the
+    activation just recorded for the new head. An exclusive ``flock`` on the
+    directory itself covers every thread and process that writes here; it is
+    per open file description, so it is not reentrant -- callers holding it use
+    the ``_locked`` helpers.
+    """
+
+    descriptor = os.open(directory, os.O_RDONLY)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(descriptor)
+
+
+def _serving_head(directory: Path) -> tuple[list[object], str] | None:
+    """The coordinate and logical digest the serving pointer here names, if any."""
+
+    from cruxible_core.indexes.serving import load_serving_manifest
+
+    try:
+        serving = load_serving_manifest(directory)
+    except (OSError, ProjectionIntegrityError):
+        return None
+    return (
+        [
+            serving.instance_id,
+            serving.git_object_format,
+            serving.git_oid,
+            serving.semantic_root,
+            serving.generation_root,
+            serving.compiler_digest,
+            serving.schema_version,
+        ],
+        serving.logical_digest,
+    )
+
+
+def _head_stamp(
+    stamps: list[dict[str, object]], head: tuple[list[object], str]
+) -> dict[str, object] | None:
+    coordinate, logical_digest = head
+    return next(
+        (
+            item
+            for item in stamps
+            if item.get("coordinate") == coordinate and item.get("logical_digest") == logical_digest
+        ),
+        None,
+    )
+
+
+def _retain_stamps(
+    stamps: list[dict[str, object]],
+    limit: int,
+    head: tuple[list[object], str] | None,
+) -> list[dict[str, object]]:
+    """Keep the newest ``limit`` stamps, never dropping the serving head's.
+
+    Pinned reads of older coordinates each land a stamp; without this, enough
+    of them push the head's out and the next process to bind the head re-derives
+    every typed row from source. Retention decides only what is kept, never what
+    is trusted: trust still comes from the records on disk at first bind.
+    """
+
+    retained = stamps[:limit]
+    if head is None:
+        return retained
+    head_stamp = _head_stamp(stamps, head)
+    if head_stamp is None or head_stamp in retained:
+        return retained
+    return retained[: limit - 1] + [head_stamp]
+
+
+def _trust_stamp(
+    directory: Path,
+    stamp: dict[str, object],
+    *,
+    head: tuple[list[object], str] | None = None,
+) -> None:
+    _trusted_stamps(directory)
+    with _TRUSTED_STAMPS_LOCK:
+        trusted = _TRUSTED_STAMPS[_stamp_key(directory)]
+        if stamp not in trusted:
+            trusted[:] = _retain_stamps([stamp, *trusted], _TRUSTED_STAMPS_RETAINED, head)
+
+
+def _write_stamp_ring_locked(directory: Path, stamps: list[dict[str, object]]) -> None:
+    body = canonical_bytes(stamps) + b"\n"
+    temporary = directory / f".{SOURCE_AUTHENTICATION_STAMPS}.{secrets.token_hex(8)}.tmp"
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        view = memoryview(body)
+        while view:
+            written = os.write(descriptor, view)
+            view = view[written:]
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    os.replace(temporary, directory / SOURCE_AUTHENTICATION_STAMPS)
+    _fsync_directory(directory)
+
+
+def _record_authentication_stamp(
+    directory: Path, accepted: Any, manifest: ProjectionManifest
+) -> None:
+    stamp = _authentication_stamp(accepted, manifest)
+    with stamp_ring_guard(directory):
+        # Read the pointer and the ring under the guard, so the ring written
+        # here is merged from the latest of both.
+        head = _serving_head(directory)
+        _trust_stamp(directory, stamp, head=head)
+        retained = _retain_stamps(
+            [stamp] + [item for item in _authentication_stamps(directory) if item != stamp],
+            _SOURCE_AUTHENTICATION_STAMPS_RETAINED,
+            head,
+        )
+        _write_stamp_ring_locked(directory, retained)
+
+
+def retain_serving_head_stamp_locked(
+    directory: Path, *, built: dict[str, object] | None = None
+) -> None:
+    """Keep the newly served head's stamp on disk after older writes pushed it out.
+
+    Called by serving publication while it holds ``stamp_ring_guard``. The
+    assembler stamps a build before activation publishes it, and every stamp
+    written in between protected the previous head, so any number of them can
+    push the new head's stamp out of both rings. ``built`` is the stamp the
+    assembler recorded for the published build in this process, carried on its
+    result; failing that, a stamp this process trusts (recorded here, or on disk
+    at first bind) is used. Nothing read from disk later is ever restored.
+    """
+
+    head = _serving_head(directory)
+    if head is None:
+        return
+    head_stamp = None if built is None else _head_stamp([built], head)
+    if head_stamp is None:
+        head_stamp = _head_stamp(_trusted_stamps(directory), head)
+    if head_stamp is None:
+        return
+    _trust_stamp(directory, head_stamp, head=head)
+    on_disk = _authentication_stamps(directory)
+    if head_stamp in on_disk:
+        return
+    _write_stamp_ring_locked(
+        directory,
+        _retain_stamps([*on_disk, head_stamp], _SOURCE_AUTHENTICATION_STAMPS_RETAINED, head),
+    )
+
+
+def piece_content_identity(metadata: os.stat_result) -> tuple[int, int, int, int]:
+    """A piece's inode and bytes as a stat names them: device, inode, size, mtime.
+
+    Linking a staged piece into place and unlinking its staged name move only
+    its ctime, so this survives publication and still moves with any write.
+    """
+    return (metadata.st_dev, metadata.st_ino, metadata.st_size, metadata.st_mtime_ns)
+
+
+def record_source_built_piece(
+    path: Path, *, accepted: Any, manifest: ProjectionManifest, hashed: os.stat_result
+) -> dict[str, object]:
+    """Mark only the assembler's completed exact source-derived output ready.
+
+    ``hashed`` is the piece's stat when the assembler took the manifest's
+    physical digest from its staged name: the published inode must be that
+    one, unwritten since, so the bytes are not read a second time. Returns the
+    stamp recorded for it, which the assembler carries on its result to
+    serving publication.
+    """
+    after = path.stat()
+    digest = manifest.pieces[0].physical_digest
+    if piece_content_identity(hashed) != piece_content_identity(after):
+        raise ProjectionIntegrityError(
+            "source-built projection changed before readiness publication"
+        )
+    identity = _verified_piece_identity(
+        path, after, expected=accepted, manifest=manifest, physical_digest=digest
+    )
+    _record_verified_piece(identity, source_authenticated=True)
+    _record_authentication_stamp(path.parent, accepted, manifest)
+    return _authentication_stamp(accepted, manifest)
+
+
+def reset_projection_verification_memo() -> None:
+    """Forget every in-process piece verification.
+
+    Verification is memoized on file identity, so a test that simulates
+    corruption without writing to the piece (patching a digest function, say)
+    needs an explicit reset to make the next bind pay the full check again.
+    """
+
+    memo_clear(_VERIFIED_PIECES)
+    with _TRUSTED_STAMPS_LOCK:
+        _TRUSTED_STAMPS.clear()
+
+
+_PIECE_RE = re.compile(r"^piece-[0-9a-f]{64}-[0-9]{4}\.sqlite$")
+_MANIFEST_RE = re.compile(r"^projection-[0-9a-f]{64}\.json$")
+_ASSEMBLER_IMPLEMENTATION_RE = re.compile(r"^[a-z][a-z0-9.-]{0,63}$")
+
+
+def projection_tree_inventory(handle: ProjectionHandle) -> tuple[int, int]:
+    """The verified projection's carried (file count, byte total) of its tree."""
+
+    row = handle._connection.execute(
+        "SELECT file_count,byte_total FROM tree_inventory WHERE singleton=1"
+    ).fetchone()
+    if row is None:
+        raise ProjectionIntegrityError("projection has no tree inventory")
+    return int(row[0]), int(row[1])
+
+
+def clone_verified_piece(parent: ProjectionHandle, destination: Path) -> bool:
+    """Clone the verified parent's open inode copy-on-write, if the filesystem can.
+
+    The clone is taken from the descriptor the bind verified, never by name, so
+    a swapped path cannot substitute other bytes. False selects a page copy.
+    """
+    source = parent._source_descriptor
+    if source is None or destination.exists():
+        return False
+    try:
+        if sys.platform == "darwin":
+            import ctypes
+
+            libc = ctypes.CDLL(None, use_errno=True)
+            at_fdcwd = -2
+            if libc.fclonefileat(source, at_fdcwd, os.fsencode(destination), 0) != 0:
+                return False
+        elif sys.platform.startswith("linux"):
+            import fcntl
+
+            ficlone = 0x40049409
+            target = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            try:
+                fcntl.ioctl(target, ficlone, source)
+            except OSError:
+                os.close(target)
+                destination.unlink(missing_ok=True)
+                return False
+            os.close(target)
+        else:
+            return False
+        os.chmod(destination, 0o600)
+    except (OSError, AttributeError):
+        destination.unlink(missing_ok=True)
+        return False
+    return True
+
+
+def update_projection_database(
+    path: Path,
+    *,
+    parent: ProjectionHandle,
+    request: AssemblerRequest,
+    parsed: ParsedProjectionTree,
+    changed_paths: frozenset[str],
+    sources: Mapping[str, bytes],
+    inventory: tuple[int, int],
+    bodies: Any = None,
+    resolve_digest: Callable[[str], tuple[str, ...]] | None = None,
+) -> dict[str, int]:
+    """Copy one verified typed publication, then replace changed owners atomically."""
+    from cruxible_client.contracts.types import CompilerCoordinate
+    from cruxible_core.compiler.compiler import require_current_compiler
+    from cruxible_core.indexes.typed_sqlite import update
+
+    require_current_compiler(CompilerCoordinate(rule_digest=request.compiler_digest))
+    return update(
+        path,
+        parent=None if clone_verified_piece(parent, path) else parent._connection,
+        request=request,
+        parsed=parsed,
+        sources=sources,
+        changed_paths=changed_paths,
+        inventory=inventory,
+        bodies=bodies,
+        resolve_digest=resolve_digest,
+    )
+
+
+def initialize_projection_database(
+    path: Path,
+    *,
+    request: AssemblerRequest,
+    parsed: ParsedProjectionTree,
+    assembler_implementation: str,
+    sources: Mapping[str, bytes] | None = None,
+    repository: Any = None,
+    bodies: Any = None,
+    resolve_digest: Callable[[str], tuple[str, ...]] | None = None,
+) -> dict[str, int]:
+    """Create and populate the complete PB-B one-piece SQLite projection."""
+
+    from cruxible_client.contracts.types import CompilerCoordinate
+    from cruxible_core.compiler.compiler import require_current_compiler
+    from cruxible_core.indexes.typed_sqlite import initialize
+
+    require_current_compiler(CompilerCoordinate(rule_digest=request.compiler_digest))
+    if repository is None:
+        repository = _source_repository(request.repository_path)
+    if sources is None:
+        sources = repository.read_tree(request.git_oid)
+    return initialize(
+        path,
+        request=request,
+        parsed=parsed,
+        sources=sources,
+        repository=repository,
+        assembler_implementation=assembler_implementation,
+        bodies=bodies,
+        resolve_digest=resolve_digest,
+    )
+
+
+def _verify_projection_schema(connection: sqlite3.Connection) -> None:
+    if connection.execute("PRAGMA user_version").fetchone()[0] != (
+        PROJECTION_STORAGE_SCHEMA_VERSION
+    ):
+        raise ProjectionIntegrityError("projection SQLite schema version is unsupported")
+    from cruxible_core.indexes.typed_sqlite import verify_schema
+
+    verify_schema(connection)
+
+
+def _canonical_connection_export(connection: sqlite3.Connection) -> dict[str, object]:
+    _verify_projection_schema(connection)
+    from cruxible_core.indexes.typed_sqlite import logical_export
+
+    return logical_export(connection)
+
+
+def canonical_logical_export(source: Path | sqlite3.Connection) -> dict[str, object]:
+    """Export logical tables independent of page layout and binding metadata."""
+    try:
+        if isinstance(source, sqlite3.Connection):
+            return _canonical_connection_export(source)
+        connection = sqlite3.connect(f"{source.as_uri()}?mode=ro&immutable=1", uri=True)
+        try:
+            return _canonical_connection_export(connection)
+        finally:
+            connection.close()
+    except (OSError, sqlite3.DatabaseError) as exc:
+        raise ProjectionIntegrityError(
+            "projection cannot produce a canonical logical export"
+        ) from exc
+
+
+def projection_logical_digest(
+    source: Path | sqlite3.Connection, *, recompute: bool = True
+) -> LogicalDigest:
+    """The combinable logical digest, recomputed from every row by default.
+
+    ``recompute=False`` reads the sums the build maintained; only the builder
+    that just wrote them uses it. Binding always recomputes and cross-checks.
+    """
+    from cruxible_core.indexes.logical_digest import (
+        compute_table_sums,
+        logical_digest_from_sums,
+        stored_table_sums,
+    )
+
+    def digest(connection: sqlite3.Connection) -> LogicalDigest:
+        _verify_projection_schema(connection)
+        sums = compute_table_sums(connection) if recompute else stored_table_sums(connection)
+        return logical_digest_from_sums(connection, sums)
+
+    try:
+        if isinstance(source, sqlite3.Connection):
+            return digest(source)
+        connection = sqlite3.connect(f"{source.as_uri()}?mode=ro&immutable=1", uri=True)
+        try:
+            return digest(connection)
+        finally:
+            connection.close()
+    except (OSError, sqlite3.DatabaseError) as exc:
+        raise ProjectionIntegrityError("projection cannot produce a logical digest") from exc
+
+
+def claim_list_query(
+    *,
+    subject: SemanticAddress | None,
+    predicate: str | None,
+    include_retired: bool,
+    subject_kind: str | None,
+) -> tuple[str, list[object]]:
+    """The statement ``ProjectionHandle.list_claims`` selects Claim keys with."""
+
+    values: list[object] = []
+    clauses: list[str] = []
+    if subject is not None:
+        clauses.extend(("subject_path=?", "subject_selector_scheme=?", "subject_selector_value=?"))
+        values.extend((subject.artifact_path, subject.selector.scheme, subject.selector.value))
+    if predicate is not None:
+        clauses.append("predicate=?")
+        values.append(predicate)
+    if subject_kind is not None:
+        clauses.append("subject_path IN (SELECT path FROM subjects WHERE subject_kind=?)")
+        values.append(subject_kind)
+    if not include_retired:
+        # With a Subject, ``+lifecycle`` keeps the planner on
+        # ``claims_by_subject_predicate`` (a seek) and off ``claims_by_lifecycle``
+        # (a walk of every live Claim to skip sorting one Subject's rows).
+        clauses.append("+lifecycle='live'" if subject is not None else "lifecycle='live'")
+    sql = "SELECT identity FROM claims"
+    if clauses:
+        sql += " WHERE " + " AND ".join(clauses)
+    return sql + " ORDER BY identity", values
+
+
+def physical_file_digest(path: Path) -> Sha256Value:
+    digest = hashlib.sha256()
+    try:
+        with path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+    except OSError as exc:
+        raise ProjectionIntegrityError("projection piece cannot be read") from exc
+    return Sha256Value(digest.hexdigest())
+
+
+def _descriptor_digest(descriptor: int) -> str:
+    digest = hashlib.sha256()
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    while chunk := os.read(descriptor, 1024 * 1024):
+        digest.update(chunk)
+    return Sha256Value(digest.hexdigest()).tagged
+
+
+class _DescriptorAliasRefused(Exception):
+    """SQLite could not open a live descriptor alias; the acquisition is retryable."""
+
+
+def _descriptor_uri(descriptor: int) -> str | None:
+    """Use a descriptor alias so SQLite opens the verified inode, not its old name."""
+    expected = os.fstat(descriptor)
+    for directory in ("/dev/fd", "/proc/self/fd"):
+        alias = Path(directory) / str(descriptor)
+        try:
+            duplicate = os.open(alias, os.O_RDONLY)
+        except OSError:
+            continue
+        try:
+            # Darwin's devfs alias reports a synthetic st_dev through stat;
+            # fstat of the opened alias reports the underlying file identity.
+            metadata = os.fstat(duplicate)
+            if (metadata.st_dev, metadata.st_ino) == (expected.st_dev, expected.st_ino):
+                return f"{alias.as_uri()}?mode=ro&immutable=1"
+        finally:
+            os.close(duplicate)
+    return None
+
+
+def load_projection_manifest(path: Path) -> ProjectionManifest:
+    """The manifest at ``path``, or a refusal; one that is absent is refused from its ENOENT.
+
+    A manifest absent when it is looked at or read carries that
+    ``FileNotFoundError`` as its cause, so a caller can tell an absent manifest
+    (``_manifest_vanished``) from a present malformed one.
+    """
+
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError as exc:
+        raise ProjectionIntegrityError("projection manifest must be a regular file") from exc
+    if not stat.S_ISREG(metadata.st_mode):
+        raise ProjectionIntegrityError("projection manifest must be a regular file")
+    try:
+        raw = path.read_bytes()
+        manifest = ProjectionManifest.model_validate_json(raw)
+    except Exception as exc:
+        raise ProjectionIntegrityError("projection manifest is missing or malformed") from exc
+    if render_projection_manifest(manifest) != raw:
+        raise ProjectionIntegrityError("projection manifest is not canonical")
+    if path.name != projection_manifest_name(manifest):
+        raise ProjectionIntegrityError("projection manifest name does not match its coordinates")
+    return manifest
+
+
+def _manifest_matches_coordinate(
+    manifest: ProjectionManifest,
+    expected: AcceptedProjectionCoordinate,
+) -> bool:
+    return (
+        manifest.instance_id == expected.instance_id
+        and manifest.git_object_format == expected.git_object_format
+        and manifest.git_oid == expected.git_oid
+        and manifest.semantic_root == expected.semantic_root
+        and manifest.generation_root == expected.generation_root
+        and manifest.compiler_digest == expected.compiler.rule_digest
+        and manifest.schema_version == expected.compiler.schema_version
+    )
+
+
+def _source_repository(path: str) -> Any:
+    from cruxible_core.ledger.git import GitLedger
+
+    # Exact blob reads do not consult signing custody; credentials are deliberately
+    # unusable on this standalone read adapter. Instance callers attach their reader.
+    return GitLedger(
+        Path(path),
+        signing_key_path=Path(path) / ".read-only",
+        allowed_signers_path=Path(path) / ".read-only",
+    )
+
+
+class ProjectionEvicted(ProjectionIntegrityError):
+    """The coordinate was evicted while it was being bound; binding again rebuilds it."""
+
+
+def _manifest_vanished(error: BaseException) -> bool:
+    """Whether a manifest refusal came from the manifest being absent (ENOENT) when read.
+
+    Decided by the failed operation itself, never by looking at the path
+    again: another reader may have rebuilt it since.
+    """
+
+    cause = error.__cause__
+    return isinstance(cause, FileNotFoundError) or getattr(cause, "errno", None) == errno.ENOENT
+
+
+_HOLD_OPEN = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+
+
+class _PieceHolds:
+    """This process's holds by manifest path, and the pieces eviction is waiting on.
+
+    A handle counts its hold here before it takes the ``flock`` and uncounts
+    it after releasing it, so a count of zero means no handle in this process
+    holds the piece. Eviction that finds a piece held here records it as
+    waiting; the last release moves it to its directory's released set,
+    which the next eviction pass takes whole. A release is the only thing
+    that makes a held piece worth trying again, so no pass retries the rest.
+    """
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.counts: dict[Path, int] = {}
+        self.waiting: dict[Path, int] = {}
+        self.released: dict[Path, dict[str, int]] = {}
+
+    def taken(self, manifest: Path) -> None:
+        with self.lock:
+            self.counts[manifest] = self.counts.get(manifest, 0) + 1
+
+    def dropped(self, manifest: Path) -> None:
+        with self.lock:
+            left = self.counts.get(manifest, 0) - 1
+            if left > 0:
+                self.counts[manifest] = left
+                return
+            self.counts.pop(manifest, None)
+            sequence = self.waiting.pop(manifest, None)
+            if sequence is not None:
+                self.released.setdefault(manifest.parent, {})[manifest.name] = sequence
+
+
+_HOLDS = _PieceHolds()
+
+
+def _hold_key(manifest: Path) -> Path:
+    return Path(os.path.abspath(manifest))
+
+
+@contextmanager
+def held_here(manifest: Path, sequence: int) -> Iterator[bool]:
+    """Whether a handle in this process holds ``manifest``'s piece, with the registry locked.
+
+    Yields True after recording the piece as waiting (``sequence`` is its
+    generation): its last release here makes it eligible again
+    (``released_pieces``). Yields False when no handle here holds it; while
+    the block runs no handle here can take or drop a hold, so a ``flock``
+    still held then is another process's.
+    """
+
+    key = _hold_key(manifest)
+    with _HOLDS.lock:
+        if _HOLDS.counts.get(key, 0) > 0:
+            _HOLDS.waiting[key] = sequence
+            yield True
+        else:
+            yield False
+
+
+def released_pieces(directory: Path) -> dict[str, int]:
+    """Take the manifests (name -> sequence) released since the last call, for ``directory``."""
+
+    with _HOLDS.lock:
+        return _HOLDS.released.pop(_hold_key(directory), {})
+
+
+def lock_piece_shared(piece: Path, manifest: Path) -> int:
+    """Open ``piece`` and hold it from eviction; the descriptor is the hold.
+
+    A shared ``flock`` for the life of a handle, in any process: eviction
+    takes the exclusive lock without waiting and skips a held piece. Raises
+    ``ProjectionEvicted`` when eviction removed the piece or its manifest
+    before the hold was taken.
+    """
+
+    import fcntl
+
+    try:
+        descriptor = os.open(piece, _HOLD_OPEN)
+    except FileNotFoundError as exc:
+        raise ProjectionEvicted("projection piece was evicted while binding") from exc
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_SH)
+        held = os.fstat(descriptor)
+        try:
+            named = os.stat(piece, follow_symlinks=False)
+        except FileNotFoundError as exc:
+            raise ProjectionEvicted("projection piece was evicted while binding") from exc
+        if (held.st_dev, held.st_ino) != (named.st_dev, named.st_ino) or not manifest.exists():
+            raise ProjectionEvicted("projection piece was evicted while binding")
+    except BaseException:
+        os.close(descriptor)
+        raise
+    return descriptor
+
+
+class ProjectionHandle:
+    """An immutable read handle whose complete build was verified exactly once."""
+
+    def __init__(
+        self,
+        *,
+        manifest_path: Path,
+        manifest: ProjectionManifest,
+        piece_paths: tuple[Path, ...],
+        connection: sqlite3.Connection,
+        accepted: AcceptedProjectionCoordinate,
+        source_descriptor: int | None = None,
+        hold_descriptor: int | None = None,
+    ) -> None:
+        self._source_descriptor = source_descriptor
+        # The shared lock that keeps this piece from eviction while the handle
+        # lives, and its entry in this process's hold registry.
+        self._hold_descriptor = hold_descriptor
+        self._hold_key: Path | None = None
+        self.manifest_path = manifest_path
+        self.manifest = manifest
+        self.piece_paths = piece_paths
+        self._connection = connection
+        self.accepted = accepted
+        self._closed = False
+        self._verification_identity: tuple[object, ...] | None = None
+        # Set while the handle belongs to a request's ProjectionPool: closing it
+        # then returns it to the pool instead of closing the connection.
+        self._release: Callable[[ProjectionHandle], bool] | None = None
+        from cruxible_core.indexes.typed_state import TypedStateReader
+
+        self.typed = TypedStateReader(
+            connection, accepted, _source_repository(accepted.repository_path)
+        )
+
+    def attach_sources(
+        self,
+        repository: Any,
+        *,
+        bodies: Any,
+        history: Any,
+        records: Any = None,
+        fact_memo: Any = None,
+    ) -> ProjectionHandle:
+        from cruxible_core.indexes.typed_state import TypedStateReader
+
+        self.typed = TypedStateReader(
+            self._connection,
+            self.accepted,
+            repository,
+            bodies=bodies,
+            history=history,
+            records=records,
+            fact_memo=fact_memo,
+        )
+        try:
+            self.require_source_authentication(repository=repository)
+        except BaseException:
+            self.close()
+            raise
+        return self
+
+    def require_source_authentication(self, *, repository: Any = None) -> None:
+        """Authenticate static typed rows before they can select acceptance inputs.
+
+        Immutable hashes authenticate a file's self-consistency, not its claimed
+        source. An unrecognized persisted piece pays a full Git/typed-row parity
+        check once. Live citation envelopes remain outside this static boundary.
+        """
+        if self._closed or self._verification_identity is None:
+            raise ProjectionIntegrityError(
+                "source authentication requires a bound typed projection"
+            )
+        current_identity = _verified_piece_identity(
+            self.index_path,
+            self.index_path.stat(),
+            expected=self.accepted,
+            manifest=self.manifest,
+            physical_digest=self.manifest.pieces[0].physical_digest,
+        )
+        if current_identity != self._verification_identity:
+            raise ProjectionIntegrityError("bound typed projection file identity changed")
+        if memo_get(_VERIFIED_PIECES, self._verification_identity) == "source-authenticated":
+            return
+        # Binding re-hashed this piece against its manifest in this process;
+        # a trusted stamp for that digest and coordinate says its rows were
+        # already derived from source.
+        if _authentication_stamp(self.accepted, self.manifest) in _trusted_stamps(
+            self.index_path.parent
+        ):
+            _record_verified_piece(self._verification_identity, source_authenticated=True)
+            return
+        from cruxible_core.indexes.typed_sqlite import authenticate_source_rows
+
+        authenticate_source_rows(self, repository=repository or self.typed.repository)
+        _record_verified_piece(self._verification_identity, source_authenticated=True)
+        _record_authentication_stamp(self.index_path.parent, self.accepted, self.manifest)
+
+    @property
+    def citations(self) -> Any:
+        if self._closed:
+            raise ProjectionIntegrityError("projection handle is closed")
+        from cruxible_core.indexes.evidence.citation_sql import CitationReader
+
+        return CitationReader(self._connection, self.typed.member_bytes)
+
+    @property
+    def index_path(self) -> Path:
+        if len(self.piece_paths) != 1:
+            raise ProjectionIntegrityError("PB-B can query exactly one physical piece")
+        return self.piece_paths[0]
+
+    def artifact_envelopes(
+        self, *, paths: tuple[str, ...] | None = None
+    ) -> tuple[ArtifactEnvelopeRow, ...]:
+        """Read typed artifact metadata, optionally for an exact changed-path set."""
+        if self._closed:
+            raise ProjectionIntegrityError("projection handle is closed")
+        return self.typed.envelopes(paths=paths)
+
+    def document(
+        self,
+        identity: str,
+        *,
+        access: BodyAccessContext,
+    ) -> DocumentProjectionView | None:
+        """Read one canonical Document; proposal refs are outside this bound handle."""
+
+        if self._closed:
+            raise ProjectionIntegrityError("projection handle is closed")
+        envelope = self.typed.envelope(identity)
+        if envelope is None or envelope.kind != "document":
+            return None
+        return document_projection_view(
+            envelope,
+            self.typed.facts(identity=identity),
+            coordinate=self.accepted,
+            access=access,
+        )
+
+    def list_documents(
+        self,
+        *,
+        access: BodyAccessContext,
+    ) -> tuple[DocumentProjectionView, ...]:
+        """List canonical Documents in stable identity order."""
+
+        if self._closed:
+            raise ProjectionIntegrityError("projection handle is closed")
+        rows = self.typed.envelopes(kind="document")
+        facts = self.typed.facts_for(rows)
+        return tuple(
+            document_projection_view(
+                row, facts[row.identity], coordinate=self.accepted, access=access
+            )
+            for row in rows
+        )
+
+    def subject(self, identity: str) -> SubjectProjectionView | None:
+        """Read one canonical identity-only Subject at this accepted coordinate."""
+
+        if self._closed:
+            raise ProjectionIntegrityError("projection handle is closed")
+        envelope = self.typed.envelope(identity)
+        if envelope is None or envelope.kind != "subject":
+            return None
+        return subject_projection_view(
+            envelope, self.typed.facts(identity=identity), coordinate=self.accepted
+        )
+
+    def subject_index(self) -> tuple[tuple[str, str, str, str], ...]:
+        """Every Subject's identity, kind, ID and lifecycle, straight from the index.
+
+        Listing Subjects with their facts compiles every Subject's projection;
+        a caller that only needs to know which Subjects exist reads this.
+        """
+
+        if self._closed:
+            raise ProjectionIntegrityError("projection handle is closed")
+        return tuple(
+            (str(identity), str(kind), str(subject_id), str(lifecycle))
+            for identity, kind, subject_id, lifecycle in self.typed.connection.execute(
+                "SELECT identity, subject_kind, subject_id, lifecycle FROM subjects "
+                "ORDER BY identity"
+            )
+        )
+
+    def claim(self, identity: str) -> ClaimProjectionView | None:
+        """Read one canonical first-class Claim at this accepted coordinate."""
+
+        return next(iter(self.claims((identity,))), None)
+
+    def claims(self, identities: tuple[str, ...]) -> tuple[ClaimProjectionView, ...]:
+        """Materialize only the selected Claims, sharing source and history reads."""
+        if self._closed:
+            raise ProjectionIntegrityError("projection handle is closed")
+        rows = tuple(
+            row
+            for identity in dict.fromkeys(identities)
+            if (row := self.typed.envelope(identity)) is not None and row.kind == "claim"
+        )
+        facts = self.typed.facts_for(rows)
+        views = {
+            row.identity: claim_projection_view(row, facts[row.identity], coordinate=self.accepted)
+            for row in rows
+        }
+        return tuple(views[identity] for identity in identities if identity in views)
+
+    def select_claim_identities(
+        self,
+        *,
+        subject_paths: tuple[str, ...],
+        predicates: tuple[str, ...],
+        include_retired: bool,
+        after: str,
+        limit: int,
+    ) -> tuple[str, ...]:
+        """Select a bounded page without materializing unrelated Claim views."""
+        if self._closed:
+            raise ProjectionIntegrityError("projection handle is closed")
+        clauses = [
+            "identity>?",
+            "subject_path IN (" + ",".join("?" for _ in subject_paths) + ")",
+        ]
+        values: list[object] = [after, *subject_paths]
+        if predicates:
+            clauses.append("predicate IN (" + ",".join("?" for _ in predicates) + ")")
+            values.extend(predicates)
+        if not include_retired:
+            clauses.append("lifecycle='live'")
+        values.append(limit)
+        return tuple(
+            row[0]
+            for row in self._connection.execute(
+                "SELECT identity FROM claims WHERE "
+                + " AND ".join(clauses)
+                + " ORDER BY identity LIMIT ?",
+                values,
+            )
+        )
+
+    def list_claims(
+        self,
+        *,
+        subject: SemanticAddress | None = None,
+        predicate: str | None = None,
+        include_retired: bool = True,
+        subject_kind: str | None = None,
+    ) -> tuple[ClaimProjectionView, ...]:
+        """Select exact Claim keys before materializing their canonical views."""
+
+        if self._closed:
+            raise ProjectionIntegrityError("projection handle is closed")
+        sql, values = claim_list_query(
+            subject=subject,
+            predicate=predicate,
+            include_retired=include_retired,
+            subject_kind=subject_kind,
+        )
+        identities = self._connection.execute(sql, values).fetchall()
+        return self.claims(tuple(row["identity"] for row in identities))
+
+    def close(self) -> None:
+        release = self._release
+        if release is not None and not self._closed and release(self):
+            return
+        if not self._closed:
+            try:
+                self._connection.close()
+            finally:
+                if self._source_descriptor is not None:
+                    os.close(self._source_descriptor)
+                    self._source_descriptor = None
+                if self._hold_descriptor is not None:
+                    os.close(self._hold_descriptor)
+                    self._hold_descriptor = None
+                if self._hold_key is not None:
+                    _HOLDS.dropped(self._hold_key)
+                    self._hold_key = None
+                self._closed = True
+
+    def __enter__(self) -> "ProjectionHandle":
+        if self._closed:
+            raise ProjectionIntegrityError("projection handle is closed")
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.close()
+
+
+class ProjectionPool:
+    """Bound projections one request reuses on one thread, instead of rebinding per lookup.
+
+    Every handle the pool adopts is tracked as checked out or idle. A handle is
+    exclusive while checked out, exactly like a fresh bind. Closing it returns it
+    once: a second close of the same checkout is a no-op, so one handle can never
+    be idle twice or handed to two holders. It goes back to the idle list only
+    when its connection is as the bind left it -- no TEMP objects (a candidate
+    overlay's rows), nothing attached, no open transaction, the bind's row
+    factory -- and is otherwise really closed. At scope exit every tracked handle,
+    idle or still checked out, is closed and released from the pool. The
+    accepted projection a handle reads is immutable, so a reused handle answers
+    what a fresh one would. Work that must see the request's holds released
+    (projection eviction) is deferred to scope exit with ``after_close``.
+    """
+
+    def __init__(self, *, derived_values: bool = True) -> None:
+        self._idle: dict[object, list[ProjectionHandle]] = {}
+        # Whether holders may keep derived values for the pool's lifetime; a
+        # bind-only pool (a long consumer pass) keeps none, only its handles.
+        self._derived_values = derived_values
+        self._verified: dict[object, object] = {}
+        # id(handle) -> (handle, key, checked_out) for every live adopted handle.
+        self._tracked: dict[int, tuple[ProjectionHandle, object, bool]] = {}
+        self._owners: list[object] = []
+        self._open = True
+        self._thread = threading.get_ident()
+        self._lock = threading.Lock()
+        self._values: dict[object, Any] = {}
+        # key -> work run once, after every handle is closed (see ``after_close``).
+        self._after_close: dict[object, Callable[[], object]] = {}
+
+    def _on_thread(self) -> bool:
+        return self._open and threading.get_ident() == self._thread
+
+    def values(self) -> dict[object, Any] | None:
+        """This request's derived values, on its own thread only (else None).
+
+        Holders key them by exactly the inputs they were derived from and
+        re-check whatever can move within a request before reusing one.
+        """
+        return self._values if self._derived_values and self._on_thread() else None
+
+    def verified_coordinates(self) -> dict[object, object] | None:
+        """The coordinates this request already re-verified, on its own thread only.
+
+        Kept by every pool, bind-only or not: a reused handle re-verifies its
+        coordinate once per recovered epoch, never per lookup.
+        """
+        return self._verified if self._on_thread() else None
+
+    def after_close(self, key: object, run: Callable[[], object]) -> bool:
+        """Run ``run`` once at scope exit, after the pool's handles release their holds.
+
+        Work registered again under the same ``key`` runs once. False when the
+        pool is not this thread's open pool: the caller runs the work itself.
+        ``run`` must not raise; it runs inside the scope's ``finally``.
+        """
+        if not self._on_thread():
+            return False
+        with self._lock:
+            self._after_close.setdefault(key, run)
+        return True
+
+    def take(self, key: object) -> ProjectionHandle | None:
+        """An idle handle of ``key``, now checked out to the caller, or None."""
+        if not self._on_thread():
+            return None
+        with self._lock:
+            idle = self._idle.get(key)
+            if not idle:
+                return None
+            handle = idle.pop()
+            self._tracked[id(handle)] = (handle, key, True)
+            return handle
+
+    def adopt(self, key: object, handle: ProjectionHandle, *, owner: object) -> ProjectionHandle:
+        """Track a freshly bound ``handle`` as checked out; closing returns it here."""
+        if self._on_thread():
+            with self._lock:
+                self._owners.append(owner)  # keeps ``key``'s owner identity alive
+                self._tracked[id(handle)] = (handle, key, True)
+            handle._release = self._give_back
+        return handle
+
+    def _give_back(self, handle: ProjectionHandle) -> bool:
+        """Whether ``handle``'s close was absorbed: returned once, or already idle."""
+        with self._lock:
+            entry = self._tracked.get(id(handle))
+            if entry is None or entry[0] is not handle:
+                return False
+            if not entry[2]:
+                return True  # already idle: a second close of one checkout
+            if not self._on_thread():
+                del self._tracked[id(handle)]
+                handle._release = None
+                return False
+        try:
+            connection = handle._connection
+            clean = (
+                not connection.in_transaction
+                and connection.row_factory is sqlite3.Row
+                and connection.execute("SELECT count(*) FROM temp.sqlite_master").fetchone()[0] == 0
+                and {row[1] for row in connection.execute("PRAGMA database_list")}
+                <= {"main", "temp"}
+            )
+        except sqlite3.Error:
+            clean = False
+        with self._lock:
+            if not clean or not self._open:
+                self._tracked.pop(id(handle), None)
+                handle._release = None
+                return False
+            key = entry[1]
+            self._tracked[id(handle)] = (handle, key, False)
+            self._idle.setdefault(key, []).append(handle)
+            return True
+
+    def close(self) -> None:
+        """End the request: close every tracked handle, idle or still checked out."""
+        with self._lock:
+            self._open = False
+            tracked = [entry[0] for entry in self._tracked.values()]
+            self._tracked.clear()
+            self._idle.clear()
+            self._owners.clear()
+            self._values.clear()
+            self._verified.clear()
+            deferred = list(self._after_close.values())
+            self._after_close.clear()
+        try:
+            for handle in tracked:
+                handle._release = None
+                handle.close()
+        finally:
+            for run in deferred:
+                run()
+
+
+def bind_projection(
+    manifest_path: Path,
+    *,
+    expected: AcceptedProjectionCoordinate,
+) -> ProjectionHandle:
+    """Verify one complete manifest and return a handle that does no per-read rehash.
+
+    The handle holds its piece from eviction (``lock_piece_shared``) until it
+    closes. A manifest or piece evicted before the hold is taken raises
+    ``ProjectionEvicted``, and binding again rebuilds the coordinate.
+    """
+
+    # The first bind in a process fixes which authentication records it trusts
+    # here, before any later read could be answered from a replaced piece.
+    _trusted_stamps(manifest_path.parent)
+    try:
+        manifest = load_projection_manifest(manifest_path)
+    except ProjectionIntegrityError as exc:
+        # Absent when looked at or read (ENOENT): eviction removed it, and
+        # binding again rebuilds the coordinate, even if another reader has
+        # rebuilt it since. A present malformed or untrustworthy manifest is
+        # refused as it was.
+        if _manifest_vanished(exc):
+            raise ProjectionEvicted(
+                "projection manifest must be a regular file: it was evicted while binding"
+            ) from exc
+        raise
+    if not manifest.pieces:
+        raise ProjectionIntegrityError("PB-B supports one-piece serving only")
+    piece_name = manifest.pieces[0].name
+    key = _hold_key(manifest_path)
+    # Counted before the flock and uncounted after it is released, so the
+    # registry never shows zero while this process holds the piece.
+    _HOLDS.taken(key)
+    try:
+        try:
+            hold = lock_piece_shared(manifest_path.parent / piece_name, manifest_path)
+        except ProjectionEvicted:
+            raise
+        except OSError as exc:
+            raise ProjectionIntegrityError(f"projection piece is missing: {piece_name}") from exc
+        try:
+            handle = _bind_held_projection(manifest_path, manifest, expected=expected)
+        except BaseException:
+            os.close(hold)
+            raise
+    except BaseException:
+        _HOLDS.dropped(key)
+        raise
+    handle._hold_descriptor = hold
+    handle._hold_key = key
+    return handle
+
+
+def _bind_held_projection(
+    manifest_path: Path,
+    manifest: ProjectionManifest,
+    *,
+    expected: AcceptedProjectionCoordinate,
+) -> ProjectionHandle:
+    if not _manifest_matches_coordinate(manifest, expected):
+        raise ProjectionIntegrityError("projection manifest differs from the accepted coordinate")
+    if len(manifest.pieces) != 1:
+        raise ProjectionIntegrityError("PB-B supports one-piece serving only")
+
+    pieces: list[Path] = []
+    identities: list[tuple[object, ...]] = []
+    already_verified = True
+    for piece in manifest.pieces:
+        path = manifest_path.parent / piece.name
+        if path.is_symlink() or not path.is_file():
+            raise ProjectionIntegrityError(f"projection piece is missing: {piece.name}")
+        resolved = path.resolve(strict=True)
+        if resolved.parent != manifest_path.parent.resolve(strict=True):
+            raise ProjectionIntegrityError("projection piece escapes its publication directory")
+        metadata = resolved.stat()
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_size != piece.byte_length:
+            raise ProjectionIntegrityError(f"projection piece size mismatch: {piece.name}")
+        identity = _verified_piece_identity(
+            resolved,
+            metadata,
+            expected=expected,
+            manifest=manifest,
+            physical_digest=piece.physical_digest,
+        )
+        identities.append(identity)
+        if _piece_already_verified(identity):
+            pieces.append(resolved)
+            continue
+        already_verified = False
+        pieces.append(resolved)
+
+    index_path = pieces[0]
+    connection: sqlite3.Connection | None = None
+    descriptor: int | None = None
+    try:
+        for attempt in range(ACQUISITION_ATTEMPTS):
+            try:
+                # Some SQLite VFS implementations resolve descriptor aliases
+                # back to pathnames. Guard that short acquisition too, including
+                # an ancestor swapped away and restored before connect returns.
+                with guard_database_path(index_path):
+                    descriptor = os.open(index_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+                    opened_identity = _verified_piece_identity(
+                        index_path,
+                        os.fstat(descriptor),
+                        expected=expected,
+                        manifest=manifest,
+                        physical_digest=manifest.pieces[0].physical_digest,
+                    )
+                    if opened_identity != identities[0]:
+                        raise ProjectionIntegrityError(
+                            "projection piece changed during acquisition"
+                        )
+                    descriptor_uri = _descriptor_uri(descriptor)
+                    try:
+                        connection = sqlite3.connect(
+                            descriptor_uri or f"{index_path.as_uri()}?mode=ro&immutable=1",
+                            uri=True,
+                        )
+                    except sqlite3.OperationalError as exc:
+                        if (
+                            descriptor_uri is None
+                            or getattr(exc, "sqlite_errorname", None) != "SQLITE_CANTOPEN"
+                        ):
+                            raise
+                        # SQLite lstat()s every component of the alias it opens,
+                        # and Darwin's descriptor filesystem transiently answers
+                        # EBADF for a live descriptor while other processes use
+                        # it. Nothing was acquired; retry like a namespace race.
+                        if attempt == ACQUISITION_ATTEMPTS - 1:
+                            raise
+                        raise _DescriptorAliasRefused from exc
+                    # Make SQLite acquire its actual file before ending the
+                    # namespace proof. Full cold scans use this connection later.
+                    connection.execute("SELECT name FROM sqlite_master LIMIT 1").fetchone()
+                break
+            except (DatabasePathChangedError, _DescriptorAliasRefused):
+                if connection is not None:
+                    connection.close()
+                    connection = None
+                if descriptor is not None:
+                    os.close(descriptor)
+                    descriptor = None
+                if attempt == ACQUISITION_ATTEMPTS - 1:
+                    raise
+                pause_before_acquisition_retry(attempt)
+        assert descriptor is not None and connection is not None
+        if (
+            not already_verified
+            and _descriptor_digest(descriptor) != manifest.pieces[0].physical_digest
+        ):
+            raise ProjectionIntegrityError(
+                f"projection piece digest mismatch: {manifest.pieces[0].name}"
+            )
+        if descriptor_uri is None:
+            # Without a descriptor namespace there is no pathname-only proof of
+            # which inode SQLite opened. This portable fallback charges a full
+            # opened-snapshot hash per bind, never certifying it from a warm memo.
+            actual = Sha256Value(hashlib.sha256(connection.serialize()).hexdigest()).tagged
+            if actual != manifest.pieces[0].physical_digest:
+                raise ProjectionIntegrityError("opened projection snapshot digest mismatch")
+        connection.row_factory = sqlite3.Row
+        _verify_projection_schema(connection)
+        # A piece already verified in this process under this exact file
+        # identity does not re-run the page scan. Record that the check did not
+        # run rather than synthesizing a passing result for it: a forged "ok"
+        # would read, here and to anything that later surfaced it, as a check
+        # that ran.
+        if connection.execute("PRAGMA user_version").fetchone()[0] != (
+            PROJECTION_STORAGE_SCHEMA_VERSION
+        ):
+            raise ProjectionIntegrityError("manifest and SQLite storage versions differ")
+        integrity_ok = already_verified
+        if not already_verified:
+            integrity = connection.execute("PRAGMA integrity_check").fetchone()
+            integrity_ok = integrity is not None and tuple(integrity) == ("ok",)
+        metadata_row = connection.execute(
+            "SELECT instance_id,git_object_format,git_oid,semantic_root,generation_root "
+            "FROM generation_metadata WHERE singleton = 1"
+        ).fetchone()
+        compiler_row = connection.execute(
+            "SELECT schema_version,compiler_digest FROM compiler_coordinates WHERE singleton = 1"
+        ).fetchone()
+        assembler_row = connection.execute(
+            "SELECT implementation,contract_version FROM assembler_metadata WHERE singleton = 1"
+        ).fetchone()
+        if already_verified:
+            # Counts were checked under this exact immutable file identity.
+            counts = manifest.row_counts
+        else:
+            from cruxible_core.indexes.typed_sqlite import row_counts
+
+            counts = row_counts(connection)
+        expected_metadata = (
+            manifest.instance_id,
+            manifest.git_object_format,
+            manifest.git_oid,
+            manifest.semantic_root,
+            manifest.generation_root,
+        )
+        expected_compiler = (
+            expected.compiler.schema_version,
+            expected.compiler.rule_digest,
+        )
+        binding_metadata = tuple(metadata_row) if metadata_row is not None else None
+        compiler = tuple(compiler_row) if compiler_row is not None else None
+        assembler = tuple(assembler_row) if assembler_row is not None else None
+        assembler_valid = (
+            assembler is not None
+            and len(assembler) == 2
+            and isinstance(assembler[0], str)
+            and _ASSEMBLER_IMPLEMENTATION_RE.fullmatch(assembler[0]) is not None
+            and assembler[1] == 1
+        )
+        if (
+            not integrity_ok
+            or binding_metadata != expected_metadata
+            or compiler != expected_compiler
+            or not assembler_valid
+        ):
+            raise ProjectionIntegrityError("projection internal binding metadata is inconsistent")
+        sorted_counts = dict(sorted(counts.items(), key=lambda item: item[0].encode("utf-8")))
+        if sorted_counts != manifest.row_counts:
+            raise ProjectionIntegrityError("projection row counts differ from the manifest")
+        if not already_verified:
+            from cruxible_core.indexes.logical_digest import verify_logical_digest
+
+            verify_logical_digest(connection, manifest.logical_digest)
+        final_identity = _verified_piece_identity(
+            index_path,
+            os.fstat(descriptor),
+            expected=expected,
+            manifest=manifest,
+            physical_digest=manifest.pieces[0].physical_digest,
+        )
+        if final_identity != opened_identity:
+            raise ProjectionIntegrityError("projection piece changed while binding")
+        for identity in identities:
+            _record_verified_piece(identity)
+        handle = ProjectionHandle(
+            manifest_path=manifest_path.resolve(strict=True),
+            manifest=manifest,
+            piece_paths=tuple(pieces),
+            connection=connection,
+            accepted=expected,
+            source_descriptor=descriptor,
+        )
+        handle._verification_identity = identities[0]
+        return handle
+    except (OSError, sqlite3.DatabaseError) as exc:
+        if connection is not None:
+            connection.close()
+        if descriptor is not None:
+            os.close(descriptor)
+        raise ProjectionIntegrityError(
+            "projection piece is not a valid PB-B SQLite database"
+        ) from exc
+    except BaseException:
+        if connection is not None:
+            connection.close()
+        if descriptor is not None:
+            os.close(descriptor)
+        raise
+
+
+def detect_projection_orphans(publication_directory: Path) -> tuple[ProjectionOrphan, ...]:
+    """Report deterministic cleanup candidates without deleting any bytes."""
+
+    if not publication_directory.is_dir():
+        raise ProjectionIntegrityError("projection publication directory is absent")
+    orphans: list[ProjectionOrphan] = []
+    referenced: set[str] = set()
+    manifests = sorted(
+        (path for path in publication_directory.iterdir() if _MANIFEST_RE.fullmatch(path.name)),
+        key=lambda path: path.name.encode("utf-8"),
+    )
+    for path in manifests:
+        try:
+            manifest = load_projection_manifest(path)
+        except ProjectionIntegrityError as exc:
+            orphans.append(
+                ProjectionOrphan(kind="malformed-manifest", path=str(path), detail=str(exc))
+            )
+            continue
+        for piece in manifest.pieces:
+            referenced.add(piece.name)
+            piece_path = publication_directory / piece.name
+            if not piece_path.is_file() or piece_path.is_symlink():
+                orphans.append(
+                    ProjectionOrphan(
+                        kind="missing-piece",
+                        path=str(piece_path),
+                        detail=f"referenced by {path.name}",
+                    )
+                )
+    for path in sorted(publication_directory.iterdir(), key=lambda item: item.name.encode("utf-8")):
+        if path.name.startswith(".stage-"):
+            orphans.append(
+                ProjectionOrphan(
+                    kind="staging-build",
+                    path=str(path),
+                    detail="private staging output was not fully retired",
+                )
+            )
+        elif _PIECE_RE.fullmatch(path.name) and path.name not in referenced:
+            orphans.append(
+                ProjectionOrphan(
+                    kind="unreferenced-piece",
+                    path=str(path),
+                    detail="immutable piece is not referenced by a valid manifest",
+                )
+            )
+    return tuple(
+        sorted(
+            orphans,
+            key=lambda item: (item.kind.encode("utf-8"), item.path.encode("utf-8")),
+        )
+    )
+
+
+__all__ = [
+    "ProjectionEvicted",
+    "ProjectionHandle",
+    "ProjectionPool",
+    "bind_projection",
+    "canonical_logical_export",
+    "detect_projection_orphans",
+    "held_here",
+    "initialize_projection_database",
+    "load_projection_manifest",
+    "lock_piece_shared",
+    "physical_file_digest",
+    "projection_logical_digest",
+    "released_pieces",
+    "reset_projection_verification_memo",
+]

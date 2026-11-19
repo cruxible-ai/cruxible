@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from cruxible_core.temporal import (
+from cruxible_client.contracts.temporal import (
     ensure_utc,
     format_datetime,
     is_effective,

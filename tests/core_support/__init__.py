@@ -1,0 +1,1 @@
+"""Cruxible substrate contract tests."""

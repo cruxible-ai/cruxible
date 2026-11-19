@@ -1,0 +1,21 @@
+{
+  "artifact_format": "cruxible-contract-v1",
+  "description": "One component the OSV match left unchecked, and why: a distro package whose source name OSV cannot be asked by, a component with no version, a batch that failed or was truncated, an advisory that could not be read, or a component never asked.",
+  "fields": {
+    "reason": {
+      "type": {
+        "kind": "enum",
+        "members": [
+          "advisory_unreadable",
+          "batch_failed",
+          "distro_source_name_unknown",
+          "no_version",
+          "not_asked",
+          "truncated"
+        ]
+      }
+    }
+  },
+  "name": "security.osv-not-checked",
+  "version": 1
+}

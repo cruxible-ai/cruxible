@@ -1,0 +1,3784 @@
+"""Kits: export owned definitions as a self-contained release; install one as a diff.
+
+A release snapshots mutable definitions without their lineage. Immutable Contract
+versions retain their exact accepted bytes, nested pins and predecessor chain.
+Installing diffs the release against the consumer's accepted state. A missing
+path is added as released; a changed mutable definition becomes a successor of
+the consumer's current definition, and dropped mutable definitions may retire.
+Mutable pins follow the digests the consumer holds. Contract commitments never
+move: a conflicting version or a remap changing its pins refuses.
+"""
+
+from __future__ import annotations
+
+import dataclasses
+import functools
+import json
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from typing import Any, Final, Literal, Protocol, cast
+
+from cruxible_client.contracts.approval_policy import APPROVAL_POLICY_PATH, parse_approval_policy
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.canonical import canonical_digest, pretty_canonical_bytes
+from cruxible_client.contracts.capabilities import (
+    CAPABILITY_IDENTITY_KIND,
+    Capability,
+    capability_path,
+)
+from cruxible_client.contracts.captures import FOREIGN_SOURCE_CONTRACT_PREFIX
+from cruxible_client.contracts.cas_contracts import BodyAccessContext
+from cruxible_client.contracts.claim_types import parse_claim_type
+from cruxible_client.contracts.diagnostics import CompilerDiagnostic
+from cruxible_client.contracts.documents import (
+    DocumentLifecycle,
+    DocumentShell,
+    document_digest,
+    document_path,
+    parse_document,
+    render_document,
+)
+from cruxible_client.contracts.errors import (
+    ProposalIntegrityError,
+    ProposalStale,
+    SettlementIntegrityError,
+)
+from cruxible_client.contracts.kit_requires import (
+    KIT_REMOVE_REQUIRED,
+    KIT_REQUIRES_MISSING,
+    KIT_REQUIRES_UNRESOLVED,
+    KitRequirement,
+    remove_required_message,
+    requires_lowered_message,
+    requires_missing_message,
+    requires_unresolved_message,
+)
+from cruxible_client.contracts.kits import (
+    KIT_ARTIFACT_PREFIXES,
+    KIT_RECEIPT_DOCUMENT_KIND,
+    InstalledKit,
+    KitAddRequest,
+    KitArtifact,
+    KitArtifactBytes,
+    KitBuildRequest,
+    KitBuildResult,
+    KitBundle,
+    KitChangeResult,
+    KitConsequence,
+    KitDocumentBody,
+    KitFileBytes,
+    KitIdReusedRefusal,
+    KitInstalledArtifact,
+    KitKeptDivergence,
+    KitManifest,
+    KitOwnershipConflictRefusal,
+    KitPathPlan,
+    KitProvenance,
+    KitProvider,
+    KitProviderFileBytes,
+    KitProviderStatus,
+    KitProviderStep,
+    KitReceipt,
+    KitRemoveRequest,
+    KitRequirementStatus,
+    KitResumeStatus,
+    KitStatus,
+    KitTransition,
+    kit_artifact_path_allowed,
+    kit_content_digest,
+    kit_document_body_digests,
+    kit_file_entry,
+    kit_lineage_keys,
+    kit_receipt_document_id,
+    kit_version_key,
+)
+from cruxible_client.contracts.projection import AcceptedCoordinate as ServedCoordinate
+from cruxible_client.contracts.proposal_models import AuthenticatedActor
+from cruxible_client.contracts.provider_installation import (
+    AutomationCarryV1,
+    ProviderInstallRequest,
+    ProviderInstallResult,
+    ProviderRepinV1,
+    ProviderWheelObject,
+    StoppedAutomationV1,
+)
+from cruxible_client.contracts.providers import (
+    ProviderAny,
+    ProviderV2,
+    parse_provider,
+    parse_provider_build_name,
+    provider_digest,
+    provider_path,
+)
+from cruxible_client.contracts.public_names import public_name
+from cruxible_client.contracts.repairs import HandEditInstruction, HandEditRepair, RepairOperation
+from cruxible_client.contracts.shapes import (
+    Contract,
+    contract_path_for_identity,
+    evaluate_contract_law,
+    key_type_problem,
+    key_types,
+)
+from cruxible_core.claims.artifact_references import (
+    immutable_capability_error,
+    immutable_contract_error,
+    movable_references,
+    move_references,
+    referenced_digests,
+    referenced_identities,
+)
+from cruxible_core.claims.claim_type_migrations import (
+    ClaimTypeMigrationError,
+    dependent_closure_inventory,
+)
+from cruxible_core.claims.closure import ArtifactDependencyStateV1, parse_dependency_artifact
+from cruxible_core.derived.derived_state import fork_tree, paths_with_prefix
+from cruxible_core.errors import ConfigError, DataValidationError, RequestRefusedError
+from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
+from cruxible_core.indexes.sql_batch import select_in
+from cruxible_core.ledger.bootstrap import genesis_seed_files
+from cruxible_core.proposals.proposals import ProposalAdmissionRequest, ProposalHeadMovedError
+from cruxible_core.providers.automation_carry import carry_automation, parse_carry_line
+from cruxible_core.providers.build_moves import (
+    Mover,
+    ProviderBuildMove,
+    ProviderBuildMoveRefused,
+    SettledMoves,
+    build_move,
+    live_triggers_of,
+    settle_changes,
+)
+from cruxible_core.providers.builds import indexed_move_pinners, tree_provider_builds
+from cruxible_core.providers.package_inspection import (
+    InspectedProviderPackage,
+    inspect_provider_package,
+)
+from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.service.authoring.documents import (
+    activation_not_permitted_detail,
+    service_activate_playbill_proposal,
+)
+from cruxible_core.service.change_preview import (
+    ChangeMode,
+    admit_change_set,
+    change_scope,
+    preview_guards,
+)
+from cruxible_core.service.procedures.provider_installation import ExpectedProviderBuild
+from cruxible_core.service.proposals.proposals import open_proposal_at_target
+
+# Definition families an owned artifact may pin. A pin into any other family is
+# authority, binding or state, which a kit cannot carry, so the build refuses.
+_INDEXED_PREFIXES: tuple[str, ...] = (
+    *KIT_ARTIFACT_PREFIXES,
+    "lines/",
+    "procedure-mandates/",
+    "providers/",
+    "resolution-contracts/",
+)
+_RECEIPT_ACCESS = BodyAccessContext(principal_id="kit-receipt", can_read_body=True)
+_PROVIDER_FILE_ACCESS = BodyAccessContext(principal_id="kit-provider", can_read_body=True)
+_RECEIPT_SCOPE = ("kit",)
+_SNAPSHOT_LIFECYCLE = {"predecessor_digest": None, "state": "live"}
+#: Definitions pinned at an exact digest whatever the compiler mode: immutable
+#: versions. A pin to any other definition a required kit owns resolves by name.
+_EXACT_KINDS = frozenset({"Contract", CAPABILITY_IDENTITY_KIND})
+#: Left-out definitions whose bytes a release's own laws read: nested Contract
+#: and Capability versions, and the SubjectKinds a ``key<K>`` field names.
+_HELD_FAMILIES = ("capabilities/", "contracts/", "subject-kinds/")
+
+
+def _contract_key_kinds(payload: Mapping[str, Any]) -> Iterator[tuple[str, Any]]:
+    """Every (SubjectKind name, key type) a Contract's ``key<K>``/``key_part<K:p>`` fields name."""
+
+    for declared in Contract.model_validate(payload).fields.values():
+        for found in key_types(declared.type):
+            yield found.subject_kind, found
+
+
+@functools.cache
+def _builtin_definitions() -> dict[tuple[str, str], frozenset[str]]:
+    """(kind, name) -> the artifact digests of every compiler-seeded Provider and
+    Contract in the genesis seeds (``cruxible-builtin`` and the ``workspace.file``
+    operation's Contracts). They are on every instance, so a kit pins them as they
+    are: it never carries, installs or remaps one."""
+
+    found: dict[tuple[str, str], set[str]] = {}
+    for path, content in genesis_seed_files().items():
+        if path.startswith(("providers/", "contracts/")):
+            state = _artifact_state(path, content)
+            found.setdefault((state.identity.kind, state.identity.name), set()).add(
+                state.artifact_digest
+            )
+    return {key: frozenset(digests) for key, digests in found.items()}
+
+
+def _builtin(kind: str, name: str, digest: str) -> bool:
+    return digest in _builtin_definitions().get((kind, name), frozenset())
+
+
+def _builtin_refusals(
+    tree: Mapping[str, bytes], contents: Mapping[str, bytes], *, by_name: bool = False
+) -> list[str]:
+    """A release pinning a built-in needs this instance to hold that exact one."""
+
+    refused = []
+    for path, content in sorted(contents.items()):
+        state = parse_dependency_artifact(path, content, by_name=by_name)
+        assert state is not None
+        for pin in state.pins:
+            if not isinstance(pin, ArtifactPin):
+                continue
+            if not _builtin(pin.target.kind, pin.target.name, pin.artifact_digest):
+                continue
+            held_path = (
+                provider_path(pin.target.name)
+                if pin.target.kind == "Provider"
+                else contract_path_for_identity(pin.target.name)
+            )
+            held = tree.get(held_path)
+            state = None if held is None else _artifact_state(held_path, held)
+            if (
+                state is None
+                or state.artifact_digest != pin.artifact_digest
+                or state.lifecycle.state != "live"
+            ):
+                refused.append(
+                    f"{path} pins the built-in {pin.target.qualified} at "
+                    f"{pin.artifact_digest[:19]}, which this instance does not hold live; "
+                    "its genesis seeded another revision"
+                )
+    return sorted(set(refused))
+
+
+def _without_lifecycle(value: Mapping[str, Any]) -> dict[str, Any]:
+    lineage = kit_lineage_keys(value)
+    return {key: item for key, item in value.items() if key not in lineage}
+
+
+#: Why a kit never retires a governed Document it installed: Documents have no
+#: retired state and accepted state refuses their removal
+#: (``cruxible.document.removal_unsupported``), so one stays accepted, as an
+#: immutable Contract version does.
+_DOCUMENT_KEPT = "Documents have no retired state and remain accepted"
+
+
+def _is_document(path: str) -> bool:
+    return path.startswith("documents/")
+
+
+def _snapshot(path: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """A release's lineage-free snapshot of one definition (Contracts keep their bytes)."""
+
+    if _is_document(path):
+        payload["predecessor_digest"] = None
+        payload["lifecycle"] = {**payload["lifecycle"], "revision": 1}
+    elif not path.startswith(("contracts/", "capabilities/")):
+        payload["lifecycle"] = dict(_SNAPSHOT_LIFECYCLE)
+    return payload
+
+
+def _references(path: str, payload: dict[str, Any]) -> Iterator[str]:
+    return referenced_digests(path, payload)
+
+
+def _substitute(path: str, payload: Mapping[str, Any], remap: Mapping[str, str]) -> dict[str, Any]:
+    return move_references(path, payload, remap)
+
+
+def _artifact_state(path: str, content: bytes) -> ArtifactDependencyStateV1:
+    state = parse_dependency_artifact(path, content)
+    if state is None:
+        raise DataValidationError(f"{path} is not a definition artifact")
+    if pretty_canonical_bytes(json.loads(content)) != content:
+        raise DataValidationError(f"{path} is not in canonical form")
+    return state
+
+
+def _render(path: str, payload: dict[str, Any]) -> tuple[bytes, str]:
+    if path.startswith("procedures/"):
+        from cruxible_client.contracts.procedures.artifacts import (
+            ProcedureArtifact,
+            render_procedure,
+        )
+
+        content = render_procedure(ProcedureArtifact.model_validate(payload))
+    elif path.startswith("query-definitions/") and payload.get("artifact_format") in (
+        "cruxible-query-definition-v3",
+        "cruxible-query-definition-v4",
+    ):
+        from cruxible_client.contracts.query.definitions import (
+            QueryDefinition,
+            render_query_definition,
+        )
+
+        content = render_query_definition(QueryDefinition.model_validate(payload))
+    else:
+        content = pretty_canonical_bytes(payload)
+    return content, _artifact_state(path, content).artifact_digest
+
+
+def _owned(state: ArtifactDependencyStateV1, owns: tuple[str, ...]) -> bool:
+    return state.identity.name.startswith(owns)
+
+
+def _dependency_order(
+    states: Mapping[str, ArtifactDependencyStateV1],
+    payloads: Mapping[str, dict[str, Any]],
+    *,
+    within: set[str] | None = None,
+    outside: Mapping[str, bytes] | None = None,
+) -> Iterator[tuple[str, tuple[str, ...]]]:
+    """Paths with the paths they pin, dependencies first; a cycle refuses.
+
+    ``outside`` holds the definitions a release names but leaves out because a
+    kit it requires owns them (nested Contracts, the SubjectKinds of key types),
+    so the Contract law reads the bytes held.
+    """
+
+    by_digest = {state.artifact_digest: path for path, state in states.items()}
+    by_identity = {
+        (state.identity.kind, state.identity.name): path for path, state in states.items()
+    }
+
+    @functools.cache
+    def contract_lookup(path: str) -> bytes | None:
+        if path in payloads:
+            return pretty_canonical_bytes(payloads[path])
+        if outside is not None and path in outside:
+            return outside[path]
+        return genesis_seed_files().get(path)
+
+    @functools.cache
+    def exact(path: str) -> set[str]:
+        if path.startswith("contracts/"):
+            contract = Contract.model_validate(payloads[path])
+            problems = evaluate_contract_law(
+                contract,
+                path=path,
+                lookup=contract_lookup,
+                parent_content=None,
+                content=pretty_canonical_bytes(payloads[path]),
+            )
+            if problems:
+                problem = problems[0]
+                raise RequestRefusedError(
+                    problem.code,
+                    f"{path}: {problem.message}",
+                    repair=HandEditRepair(
+                        hand_edit=HandEditInstruction(
+                            target=path,
+                            required_change=(
+                                "Supply the exact nested Contract versions and predecessor chain."
+                            ),
+                        )
+                    ),
+                )
+        found = set()
+        for pin in states[path].pins:
+            target = by_digest.get(getattr(pin, "artifact_digest", "")) or by_identity.get(
+                (pin.target.kind, pin.target.name)
+            )
+            if target is not None:
+                found.add(target)
+        for text in _references(path, payloads[path]):
+            if text in by_digest:
+                found.add(by_digest[text])
+        found.discard(path)
+        return found
+
+    def named(path: str) -> set[str]:
+        # Identity references decide what travels with a definition, never the
+        # order: nothing re-pins them, so they cannot form a remapping cycle.
+        found = {
+            target
+            for identity in referenced_identities(path, payloads[path])
+            if (target := by_identity.get(identity)) is not None
+        }
+        found.discard(path)
+        return found
+
+    # Membership first, through both kinds of reference; then order that set by
+    # exact dependencies alone, so an identity reference can never close a cycle.
+    members: set[str] = set()
+    pending = sorted(within if within is not None else states, reverse=True)
+    while pending:
+        path = pending.pop()
+        if path in members:
+            continue
+        members.add(path)
+        pending.extend(sorted(exact(path) | named(path), reverse=True))
+
+    done: set[str] = set()
+    visiting: set[str] = set()
+
+    def visit(path: str) -> Iterator[tuple[str, tuple[str, ...]]]:
+        if path in done:
+            return
+        if path in visiting:
+            raise DataValidationError(f"definitions pin each other in a cycle through {path}")
+        visiting.add(path)
+        ordered = exact(path)
+        for dependency in sorted(ordered):
+            yield from visit(dependency)
+        visiting.discard(path)
+        done.add(path)
+        yield path, tuple(sorted(ordered | named(path)))
+
+    for path in sorted(members):
+        yield from visit(path)
+
+
+def _require_staged(
+    instance: PlaybillInstance,
+    files: Mapping[str, str],
+    operation: str,
+    *,
+    kit: str | None = None,
+) -> None:
+    """Refuse unless every named file (name -> sha256) is in the body store.
+
+    ``kit`` names the kit a ``kit add`` repair adds again (its own reference).
+    """
+
+    missing = sorted(
+        name
+        for name, digest in files.items()
+        if instance.body_store().availability(digest) != "present"
+    )
+    if missing:
+        raise RequestRefusedError(
+            "cruxible.kit.provider_files_not_staged",
+            f"{', '.join(missing)} not in this instance's body store; stage each file first "
+            f"(the CLI and MCP {operation.rpartition('.')[2]} adapters stage what they send)",
+            repair=RepairOperation(
+                operation=operation, arguments={} if kit is None else {"kit": kit}
+            ),
+        )
+
+
+def _require_document_bodies(
+    instance: PlaybillInstance, contents: Mapping[str, bytes], *, kit: str | None
+) -> None:
+    """Refuse unless every kit Document's body is in the body store (staged by the adapter).
+
+    ``kit`` is the reference the repair adds again, when the instance vouches
+    for one (``bundled_base_reference``); a client's source label is not one.
+    """
+
+    store = instance.body_store()
+    missing = sorted(
+        f"{path} ({digest})"
+        for path, digest in kit_document_body_digests(contents).items()
+        if store.availability(digest) != "present"
+    )
+    if missing:
+        raise RequestRefusedError(
+            "cruxible.kit.document_bodies_not_staged",
+            f"{', '.join(missing)}: the Document body is not in this instance's body store; "
+            "stage each body first (the CLI and MCP kit add adapters stage what they send)",
+            repair=RepairOperation(
+                operation="cruxible.kit.add", arguments={} if kit is None else {"kit": kit}
+            ),
+        )
+
+
+def _staged(instance: PlaybillInstance, digest: str, name: str) -> bytes:
+    _require_staged(instance, {name: digest}, "cruxible.kit.build")
+    return instance.body_store().read(digest, access=_PROVIDER_FILE_ACCESS)
+
+
+def service_build_kit(
+    instance: PlaybillInstance,
+    request: KitBuildRequest,
+    *,
+    principal_id: str | None = None,
+    template_actor_id: str | None = None,
+) -> KitBuildResult:
+    """Export owned definitions at the accepted head as one release of ``kit_id``.
+
+    The manifest records where it was built (this instance, the accepted
+    coordinate, the building principal): claimed, not proven. Each provider
+    package named in ``request.providers`` is read from the body store, recorded
+    in the manifest and carried as bytes in the returned bundle. The
+    ``automation_template`` is checked as ``template_actor_id``'s authoring
+    preview against exactly this build's exported closure (never this
+    instance's other local definitions; D-R48 fix round F3), the bundled
+    provider packages' own validated builds and operations (review fix round
+    2, R2), and the closure's own Document bodies (review fix round 2, R3),
+    and refuses the build ``cruxible.kit.automation_template_invalid`` (or the
+    underlying typed refusal, e.g. ``cruxible.line.binding_unavailable``)
+    unless it authors cleanly there.
+    """
+
+    template = request.automation_template
+    if template is not None and template_actor_id is None:
+        raise DataValidationError("checking an automation template needs an authoring principal")
+
+    coordinate = instance.accepted_coordinate()
+    tree = instance.immutable_tree_at(coordinate.git_oid)
+    provenance = KitProvenance(
+        instance_id=instance.descriptor.instance_id,
+        coordinate=ServedCoordinate.model_validate(
+            AcceptedCoordinate.from_internal(coordinate).model_dump(mode="json")
+        ),
+        principal_id=principal_id,
+    )
+    packages = []
+    files: dict[str, bytes] = {}
+    for item in request.providers:
+        wheel = _staged(instance, item.wheel.digest, item.wheel.filename)
+        lock = _staged(instance, item.lock_digest, "the provider lock")
+        dependencies = tuple(
+            (dependency.filename, _staged(instance, dependency.digest, dependency.filename))
+            for dependency in item.dependencies
+        )
+        inspected = inspect_provider_package(
+            wheel=(item.wheel.filename, wheel),
+            lock=lock,
+            dependencies=dependencies,
+            delivery=item.delivery,
+        )
+        if item.delivery == "index":
+            # A default provider installs by name: the kit carries none of its
+            # files, and its path dependencies come from the index that serves it.
+            packages.append(
+                dataclasses.replace(
+                    inspected,
+                    provider=inspected.provider.model_copy(
+                        update={"delivery": "index", "dependencies": ()}
+                    ),
+                )
+            )
+            continue
+        packages.append(inspected)
+        files[inspected.provider.wheel.filename] = wheel
+        files[inspected.provider.lock.filename] = lock
+        files.update(dependencies)
+    # The kits installed here: a definition another of them owns is left out of
+    # this release and that kit recorded in its requires (O(installed kits)).
+    receipts = tuple(_receipts(instance, tree))
+    bundle = build_kit(
+        tree,
+        request,
+        provenance=provenance,
+        providers=tuple(packages),
+        automation_template=None,
+        installed=receipts,
+    )
+    # Collected before the template check (R3): a non-genesis Document body in
+    # the closure must already be in the throwaway instance's body store when
+    # the template is checked against it, exactly as a fresh adopter receives
+    # it with the release.
+    bodies = sorted(set(bundle.document_body_digests().values()))
+    body_bytes = {
+        digest: _staged(instance, digest, f"the Document body {digest}") for digest in bodies
+    }
+    if template is not None:
+        from cruxible_core.service.kit_template import check_automation_template
+
+        assert template_actor_id is not None  # refused above when a template is named
+        check_automation_template(
+            {
+                **_required_definitions(tree, receipts, bundle.manifest.requires),
+                **bundle.contents(),
+            },
+            template,
+            actor_id=template_actor_id,
+            providers=tuple(packages),
+            document_bodies=body_bytes,
+        )
+        bundle = bundle.model_copy(
+            update={
+                "manifest": bundle.manifest.model_copy(
+                    update={
+                        "automation_template": template.path,
+                        "files": (kit_file_entry(template.path, template.content.encode("utf-8")),),
+                    }
+                ),
+                "files": (KitFileBytes.of(template.path, template.content.encode("utf-8")),),
+            }
+        )
+    if body_bytes:
+        bundle = bundle.model_copy(
+            update={
+                "document_bodies": tuple(
+                    KitDocumentBody.of(content) for content in body_bytes.values()
+                )
+            }
+        )
+    return KitBuildResult(
+        bundle=bundle.model_copy(
+            update={
+                "provider_files": tuple(
+                    KitProviderFileBytes.of(name, files[name]) for name in sorted(files)
+                )
+            }
+        )
+        if files
+        else bundle
+    )
+
+
+def _bundled_provider_pins(
+    path: str,
+    state: ArtifactDependencyStateV1,
+    tree_providers: Mapping[str, ArtifactDependencyStateV1],
+    tree: Mapping[str, bytes],
+    bundled: Mapping[str, InspectedProviderPackage],
+) -> None:
+    """Every Provider a carried definition pins is bundled, as the build installed here.
+
+    A kit never carries a Provider: on install it pins the Provider its bundled
+    wheel registers, so that wheel must be the one this instance installed.
+    """
+
+    for pin in state.pins:
+        if pin.target.kind != "Provider":
+            continue
+        held = tree_providers.get(provider_path(pin.target.name))
+        digest = (
+            pin.artifact_digest
+            if isinstance(pin, ArtifactPin)
+            else ""
+            if held is None
+            else held.artifact_digest
+        )
+        if _builtin("Provider", pin.target.name, digest):
+            continue
+        name = parse_provider_build_name(pin.target.name).name
+        package = bundled.get(name)
+        if package is None:
+            raise RequestRefusedError(
+                "cruxible.kit.provider_not_bundled",
+                f"{path} pins Provider {name}, which this kit does not bundle; "
+                "bundle its package (kit build --provider DIR)",
+                repair=RepairOperation(operation="cruxible.kit.build"),
+            )
+        if package.provider.build != pin.target.name:
+            raise RequestRefusedError(
+                "cruxible.kit.provider_build_differs",
+                f"{path} pins {pin.target.qualified}, another wheel and lock build "
+                "than the bundled "
+                f"{package.provider.package} {package.provider.version} "
+                f"({package.provider.build}); move it to the bundled build "
+                f"(provider move {name}) or bundle the build it pins",
+                repair=RepairOperation(operation="cruxible.provider.move"),
+            )
+        provider_path_here = provider_path(pin.target.name)
+        held = tree_providers.get(provider_path_here)
+        provider = (
+            None
+            if held is None
+            or (isinstance(pin, ArtifactPin) and held.artifact_digest != pin.artifact_digest)
+            else parse_provider(tree[provider_path_here], path=provider_path_here)
+        )
+        differs = _build_difference(provider, package)
+        if differs is not None:
+            raise RequestRefusedError(
+                "cruxible.kit.provider_build_differs",
+                f"{path} pins Provider {pin.target.name} installed here from another build "
+                f"than the bundled package ({differs}); bundle the wheel and lock this "
+                "instance installed, or install the bundled ones here first",
+                repair=RepairOperation(operation="cruxible.provider.install"),
+            )
+
+
+def _build_difference(
+    provider: ProviderAny | None, package: InspectedProviderPackage
+) -> str | None:
+    """How the Provider held here differs from the bundled build, or None."""
+
+    if not isinstance(provider, ProviderV2):
+        return "no package Provider is held at that digest"
+    runtime = provider.runtime_artifact
+    if runtime.distribution.sha256 != package.provider.wheel.sha256:
+        return f"wheel other than {package.provider.wheel.filename}"
+    if runtime.local_env is None or runtime.local_env.lock_sha256 != package.provider.lock.sha256:
+        return "lock other than the bundled one"
+    if package.pin_key is None:
+        # An index default given no path dependency wheels: its closure is the
+        # index's, so only the wheel and lock it installs are compared.
+        return None
+    if runtime.local_env.materialization_digests.get(package.pin_key) != package.materialization:
+        # The lock pins path dependencies by name and version only: the
+        # materialization digest is what names their exact wheels.
+        return "dependency closure other than the bundled wheels"
+    return None
+
+
+def _named_definitions(
+    path: str, state: ArtifactDependencyStateV1, payload: Mapping[str, Any]
+) -> Iterator[tuple[ArtifactIdentity, str | None]]:
+    """Every definition one artifact names: its pins (with their digests) and the
+    identities it names by reference."""
+
+    for pin in state.pins:
+        yield pin.target, pin.artifact_digest if isinstance(pin, ArtifactPin) else None
+    for kind, name in referenced_identities(path, payload):
+        yield ArtifactIdentity(kind=kind, name=name), None
+    if path.startswith("contracts/"):
+        # A key type reads its kind's identity rules: a name, resolved live.
+        for name, _found in _contract_key_kinds(payload):
+            yield ArtifactIdentity(kind="SubjectKind", name=name), None
+
+
+def _required_definitions(
+    tree: Mapping[str, bytes],
+    receipts: tuple[KitReceipt, ...],
+    requires: tuple[KitRequirement, ...],
+) -> dict[str, bytes]:
+    """What the required kits (and the kits they require) installed here, as held.
+
+    An adopter holds every required kit before this one, so checking the
+    release against it needs their definitions too. O(required kits' members).
+    """
+
+    by_id = {receipt.kit_id: receipt for receipt in receipts if receipt.artifacts}
+    found: dict[str, bytes] = {}
+    pending = [item.kit_id for item in requires]
+    seen: set[str] = set()
+    while pending:
+        kit_id = pending.pop()
+        receipt = by_id.get(kit_id)
+        if kit_id in seen or receipt is None:
+            continue
+        seen.add(kit_id)
+        pending.extend(item.kit_id for item in receipt.requires)
+        for entry in (*receipt.artifacts, *receipt.carried):
+            if entry.path in tree:
+                found[entry.path] = tree[entry.path]
+    return found
+
+
+KIT_PER_FILE_EVIDENCE_RULE: Final = "cruxible.kit.per_file_evidence_rule"
+
+
+def _refuse_per_file_evidence_rules(path: str, payload: Mapping[str, Any]) -> None:
+    """A kit never carries a rule naming one workspace file's own CaptureContract.
+
+    That contract stands for a file of this workspace; a consumer whose file
+    lives elsewhere would get a rule naming a file they do not have.
+    """
+
+    if not path.startswith("claim-types/"):
+        return
+    policy = payload.get("evidence_admission_policy")
+    rules = policy.get("rules", ()) if isinstance(policy, Mapping) else ()
+    for rule in rules:
+        for entry in rule.get("capture_contracts", ()) if isinstance(rule, Mapping) else ():
+            target = entry.get("target") if isinstance(entry, Mapping) else None
+            name = target.get("name") if isinstance(target, Mapping) else None
+            if isinstance(name, str) and name.startswith(FOREIGN_SOURCE_CONTRACT_PREFIX):
+                raise RequestRefusedError(
+                    KIT_PER_FILE_EVIDENCE_RULE,
+                    f"ClaimType:{payload.get('predicate')} evidence rule "
+                    f"{rule.get('rule_id')!r} names CaptureContract:{public_name(name)}; "
+                    "this contract stands for one workspace file, so a kit cannot carry "
+                    "the rule. A workspace citation needs no rule; for a particular kind of "
+                    "source, list its shaped CaptureContract in the field's evidence: "
+                    "[<contract name>, ...] (a ClaimType edit), then build again",
+                    repair=RepairOperation(operation="cruxible.kit.build"),
+                )
+
+
+def build_kit(
+    tree: Mapping[str, bytes],
+    request: KitBuildRequest,
+    *,
+    provenance: KitProvenance | None = None,
+    providers: tuple[InspectedProviderPackage, ...] = (),
+    automation_template: tuple[str, bytes] | None = None,
+    installed: tuple[KitReceipt, ...] = (),
+) -> KitBundle:
+    """Export the owned definitions of one accepted tree as a self-contained release.
+
+    Mutable definitions become lineage-free snapshots; their pins move to the
+    snapshot digests. Immutable Contract versions retain exact bytes and carry
+    their nested closure and predecessor chain. A Provider pin names a bundled
+    package instead. An ``automation_template`` (its kit path and bytes, already
+    checked) is named in the manifest and carried as the release's kit file.
+
+    A definition under a prefix another ``installed`` kit owns is never
+    carried: the release keeps its pins to it and requires that kit at the
+    version installed here. Such a pin refuses unless that kit's receipt holds
+    the definition (an immutable version at the pinned digest).
+    """
+
+    bundled: dict[str, InspectedProviderPackage] = {}
+    for package in providers:
+        if bundled.setdefault(package.provider.provider_id, package) is not package:
+            raise DataValidationError(
+                f"two bundled packages register Provider {package.provider.provider_id}"
+            )
+    owners = tuple(
+        (prefix, receipt)
+        for receipt in installed
+        if receipt.kit_id != request.kit_id and receipt.artifacts
+        for prefix in receipt.owns
+    )
+
+    def owner_of(name: str) -> tuple[str, KitReceipt] | None:
+        if name.startswith(request.owns):
+            return None
+        return next(((p, r) for p, r in owners if name.startswith(p)), None)
+
+    states: dict[str, ArtifactDependencyStateV1] = {}
+    payloads: dict[str, dict[str, Any]] = {}
+    tree_providers: dict[str, ArtifactDependencyStateV1] = {}
+    # Definitions another installed kit owns, by identity: left out of the release.
+    outside: dict[tuple[str, str], str] = {}
+    for path in tree:
+        if path.endswith(".json") and path.startswith(_INDEXED_PREFIXES):
+            state = parse_dependency_artifact(path, tree[path])
+            if state is None:
+                continue
+            if path.startswith("providers/"):
+                # Never carried: a bundled package registers it on install.
+                tree_providers[path] = state
+                continue
+            if _builtin(state.identity.kind, state.identity.name, state.artifact_digest):
+                # A compiler-seeded Contract: pinned as it is, never carried.
+                continue
+            if owners and owner_of(state.identity.name) is not None:
+                # Another installed kit's definition: pinned, never carried.
+                outside[(state.identity.kind, state.identity.name)] = path
+                continue
+            states[path] = state
+            payloads[path] = json.loads(tree[path])
+    roots = {
+        path
+        for path, state in states.items()
+        if kit_artifact_path_allowed(path)
+        and state.lifecycle.state == "live"
+        and _owned(state, request.owns)
+    }
+    if not roots:
+        raise DataValidationError(f"no live definitions are named under {', '.join(request.owns)}")
+    # A bundled provider is never carried itself (it registers on install), and
+    # its operations' Contracts are copies inside its build (``declares``): they
+    # root nothing here. Instance Contracts travel only through the kit's own
+    # consumer definitions.
+    remap: dict[str, str] = {}
+    built: dict[str, bytes] = {}
+    held = {path: tree[path] for path in outside.values() if path.startswith(_HELD_FAMILIES)}
+    for path, pinned in _dependency_order(states, payloads, within=roots, outside=held):
+        for dependency in pinned:
+            if not kit_artifact_path_allowed(dependency):
+                raise DataValidationError(
+                    f"{path} pins {dependency}, which a kit cannot carry; "
+                    "a kit holds definitions, never authority, bindings or state"
+                )
+            if states[dependency].lifecycle.state != "live":
+                raise DataValidationError(f"{path} pins retired {dependency}")
+        _bundled_provider_pins(path, states[path], tree_providers, tree, bundled)
+        _refuse_per_file_evidence_rules(path, payloads[path])
+        payload = _snapshot(path, _substitute(path, payloads[path], remap))
+        content, digest = _render(path, payload)
+        if digest != states[path].artifact_digest:
+            remap[states[path].artifact_digest] = digest
+        built[path] = content
+    # Every definition the release names that another installed kit owns: one
+    # lookup per name each built definition (or bundled operation) names.
+    required: dict[str, str] = {}
+    if outside:
+        named = [
+            (path, identity, digest)
+            for path in sorted(built)
+            for identity, digest in _named_definitions(path, states[path], payloads[path])
+        ]
+        members: dict[str, dict[str, KitInstalledArtifact]] = {}
+        for source, identity, pin_digest in named:
+            target = outside.get((identity.kind, identity.name))
+            if target is None:
+                continue
+            owner = owner_of(identity.name)
+            assert owner is not None
+            prefix, receipt = owner
+            if receipt.kit_id not in members:
+                members[receipt.kit_id] = {item.path: item for item in receipt.artifacts}
+            entry = members[receipt.kit_id].get(target)
+            exact = identity.kind in _EXACT_KINDS
+            if entry is None or (
+                exact and pin_digest is not None and pin_digest != entry.release_digest
+            ):
+                raise RequestRefusedError(
+                    KIT_REQUIRES_UNRESOLVED,
+                    f"{source} pins {identity.qualified}, under {prefix}, which kit "
+                    f"{receipt.kit_id} owns; kit {receipt.kit_id} {receipt.version} does not "
+                    "hold it" + (" at the pinned digest" if exact else "") + ". A kit "
+                    "never carries a definition another installed kit owns: add it to kit "
+                    f"{receipt.kit_id}, or name it under this kit's own prefix",
+                    repair=RepairOperation(operation="cruxible.kit.build"),
+                )
+            required[receipt.kit_id] = receipt.version
+    manifest = KitManifest(
+        kit_id=request.kit_id,
+        version=request.version,
+        owns=request.owns,
+        requires=tuple(
+            KitRequirement(kit_id=kit_id, min_version=version)
+            for kit_id, version in sorted(required.items())
+        ),
+        artifacts=tuple(
+            KitArtifact(
+                path=path, artifact_digest=_artifact_state(path, built[path]).artifact_digest
+            )
+            for path in sorted(built)
+        ),
+        providers=tuple(bundled[name].provider for name in sorted(bundled)),
+        provenance=provenance,
+        files=()
+        if automation_template is None
+        else (kit_file_entry(automation_template[0], automation_template[1]),),
+        automation_template=None if automation_template is None else automation_template[0],
+    )
+    return KitBundle(
+        manifest=manifest,
+        artifacts=tuple(KitArtifactBytes.of(path, built[path]) for path in sorted(built)),
+        files=()
+        if automation_template is None
+        else (KitFileBytes.of(automation_template[0], automation_template[1]),),
+    )
+
+
+def _verify_bundle(bundle: KitBundle) -> dict[str, bytes]:
+    contents = bundle.contents()
+    digests = bundle.manifest.digests()
+    for path, content in contents.items():
+        state = _artifact_state(path, content)
+        if state.artifact_digest != digests[path]:
+            raise DataValidationError(f"{path} does not match its manifest digest")
+        if state.lifecycle.state != "live" or state.lifecycle.predecessor_digest is not None:
+            raise DataValidationError(
+                f"{path} is not a snapshot; a release carries live definitions with no history"
+            )
+    return contents
+
+
+def _receipt_at(
+    instance: PlaybillInstance, path: str, raw: bytes, kit_id: str
+) -> tuple[DocumentShell, KitReceipt] | None:
+    """The receipt at ``path``, or None when an ordinary Document holds that name."""
+
+    shell = parse_document(raw, path=path)
+    if shell.document_kind != KIT_RECEIPT_DOCUMENT_KIND:
+        return None
+    body = instance.body_store().read(shell.body_digest, access=_RECEIPT_ACCESS)
+    receipt = KitReceipt.model_validate_json(body)
+    if receipt.kit_id != kit_id:
+        raise ProposalIntegrityError(f"{path} records kit {receipt.kit_id}, not {kit_id}")
+    return shell, receipt
+
+
+def proposed_kit_receipt(
+    instance: PlaybillInstance, tree_oid: str, kit_id: str, *, proposal_id: str
+) -> KitReceipt | None:
+    """The receipt a kit proposal writes for ``kit_id``: one blob of its own tree."""
+
+    path = f"{_RECEIPT_PATH_PREFIX}{kit_id}.json"
+    raw = instance.proposal_blobs(tree_oid, [path], proposal_id=proposal_id).get(path)
+    if raw is None:
+        return None
+    held = _receipt_at(instance, path, raw, kit_id)
+    return None if held is None else held[1]
+
+
+def _read_receipt(
+    instance: PlaybillInstance, tree: Mapping[str, bytes], kit_id: str
+) -> tuple[DocumentShell, KitReceipt] | None:
+    path = document_path(kit_receipt_document_id(kit_id))
+    raw = tree.get(path)
+    if raw is None:
+        return None
+    found = _receipt_at(instance, path, raw, kit_id)
+    if found is None:
+        raise DataValidationError(
+            f"{path} is an ordinary Document, so kit {kit_id} has no receipt path"
+        )
+    return found
+
+
+def _receipts(instance: PlaybillInstance, tree: Mapping[str, bytes]) -> Iterator[KitReceipt]:
+    for path in paths_with_prefix(tree, "documents/kit-"):
+        if path.endswith(".json"):
+            kit_id = path.removeprefix("documents/kit-").removesuffix(".json")
+            found = _receipt_at(instance, path, tree[path], kit_id)
+            if found is not None:
+                yield found[1]
+
+
+def _successor_payload(
+    payload: Mapping[str, Any],
+    *,
+    predecessor: str,
+    state: str,
+    current: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    if payload.get("artifact_format") == "cruxible-contract-v1":
+        contract = Contract.model_validate(payload)
+        raise immutable_contract_error(contract_path_for_identity(contract.identity.name))
+    if payload.get("artifact_format") == "cruxible-capability-v1":
+        capability = Capability.model_validate(payload)
+        raise immutable_capability_error(capability_path(capability.name, capability.version))
+    successor = dict(payload)
+    if payload.get("kind") == "document":
+        # A Document's lineage: its predecessor digest and the next revision.
+        assert current is not None and state == "live"
+        successor["predecessor_digest"] = predecessor
+        successor["lifecycle"] = {
+            **payload["lifecycle"],
+            "revision": int(current["lifecycle"]["revision"]) + 1,
+        }
+        return successor
+    successor["lifecycle"] = {"predecessor_digest": predecessor, "state": state}
+    return successor
+
+
+class _Diff:
+    """One release diffed against one accepted tree."""
+
+    def __init__(self) -> None:
+        self.plan: list[KitPathPlan] = []
+        self.writes: dict[str, bytes] = {}
+        # Release digest -> the digest this instance holds (or will) for that path.
+        self.installed: dict[str, str] = {}
+        # Path -> the content digest (lifecycle apart) this instance holds after.
+        self.content: dict[str, str] = {}
+        # Divergences kept on purpose, recorded in the receipt.
+        self.kept: list[KitKeptDivergence] = []
+        # Paths the kit installed that this instance retired since (S7): kept
+        # retired, still the kit's (they stay in the receipt).
+        self.kept_retired: dict[str, str] = {}
+        # Live definitions the install retains without writing them (unchanged
+        # or kept), with the content this instance holds: the S7 dependency
+        # check reads their own pins.
+        self.retained_live: dict[str, tuple[ArtifactDependencyStateV1, dict[str, Any]]] = {}
+        # Identity -> dependents counted beyond the pin closure (evidence-rule
+        # consumers of a CaptureContract, with their closures).
+        self.semantic_counts: dict[str, int] = {}
+
+
+def _refuse_retired_dependencies(
+    diff: _Diff,
+    pins_of: Mapping[str, tuple[str, ...]],
+    states: Mapping[str, ArtifactDependencyStateV1],
+    payloads: Mapping[str, dict[str, Any]],
+    held: Mapping[str, bytes] | None,
+) -> None:
+    """Refuse when a live definition the install leaves pins one kept retired (S7).
+
+    The written definitions are read from the release; the ones retained
+    without a write (unchanged or kept) from the content this instance holds,
+    so a local edit that dropped the dependency does not refuse.
+    """
+
+    if not diff.kept_retired:
+        return
+    needs: dict[str, tuple[str, ...]] = {path: pins_of.get(path, ()) for path in diff.writes}
+    for path, (held_state, held_payload) in diff.retained_live.items():
+        found = dict(
+            _dependency_order(
+                {**states, path: held_state},
+                {**payloads, path: held_payload},
+                within={path},
+                outside=held,
+            )
+        )
+        needs[path] = found.get(path, ())
+    for path in sorted(needs):
+        for pinned in needs[path]:
+            if pinned in diff.kept_retired:
+                dependent = states[path].identity.qualified
+                retired = diff.kept_retired[pinned]
+                raise RequestRefusedError(
+                    "cruxible.kit.retired_dependency",
+                    f"{dependent}, which stays live with this kit, depends on {retired}, which "
+                    "this instance retired; the kit keeps your retirement, so the dependent "
+                    "cannot stay live",
+                    repair=HandEditRepair(
+                        hand_edit=HandEditInstruction(
+                            target=retired,
+                            required_change=(
+                                f"Retire {dependent} too (it then stays retired as well), or "
+                                f"author a live successor of {retired} to use it again, then "
+                                "add the kit again"
+                            ),
+                        )
+                    ),
+                )
+
+
+def _refuse_retired_provider_dependents(
+    contents: Mapping[str, bytes], diff: _Diff, steps: Sequence[KitProviderStep]
+) -> None:
+    """Refuse when a definition the kit installs pins a build this instance retired (S7)."""
+
+    retired = {step.build: step.provider_id for step in steps if step.action == "kept_retired"}
+    if not retired:
+        return
+    # Written definitions by their release content; the ones retained without a
+    # write (unchanged or kept) by the content this instance holds.
+    candidates = {
+        path: _artifact_state(path, contents[path]) for path in diff.writes if path in contents
+    }
+    candidates.update({path: held for path, (held, _payload) in diff.retained_live.items()})
+    for path in sorted(candidates):
+        state = candidates[path]
+        for pin in state.pins:
+            if (
+                isinstance(pin, ArtifactPin)
+                and pin.target.kind == "Provider"
+                and pin.target.name in retired
+            ):
+                dependent = state.identity.qualified
+                build = f"Provider:{pin.target.name}"
+                raise RequestRefusedError(
+                    "cruxible.kit.retired_dependency",
+                    f"{dependent}, which stays live with this kit, depends on {build}, which "
+                    "this instance retired; the kit keeps your retirement, so the dependent "
+                    "cannot stay live",
+                    repair=HandEditRepair(
+                        hand_edit=HandEditInstruction(
+                            target=build,
+                            required_change=(
+                                f"Retire {dependent} too (it then stays retired as well), or "
+                                f"install {build} again (cruxible provider install), then add "
+                                "the kit again"
+                            ),
+                        )
+                    ),
+                )
+
+
+def kit_back_remap(
+    entries: Iterable[KitInstalledArtifact], current_digest: Callable[[str], str | None]
+) -> dict[str, str]:
+    """{this instance's digest of a kit member: the digest the receipt installed}.
+
+    Only members whose held digest moved (a local succession) appear. Applied
+    to a member's references, it undoes pins that merely followed another
+    member's succession, so such a pin is not counted as an edit. Built once
+    per receipt: O(kit members).
+    """
+
+    remap: dict[str, str] = {}
+    for entry in entries:
+        digest = current_digest(entry.path)
+        if digest is not None and digest != entry.installed_digest:
+            remap[digest] = entry.installed_digest
+    return remap
+
+
+def kit_content_matches(
+    path: str, payload: Mapping[str, Any], recorded: str | None, back: Mapping[str, str]
+) -> bool:
+    """Whether a held kit member is its installed content, modulo pins that followed a member."""
+
+    if recorded is None:
+        return False
+    if kit_content_digest(dict(payload)) == recorded:
+        return True
+    if not back or not movable_references(path):
+        return False
+    return kit_content_digest(move_references(path, payload, back)) == recorded
+
+
+def _tree_back_remap(
+    receipt_entries: Iterable[KitInstalledArtifact], tree: Mapping[str, bytes]
+) -> dict[str, str]:
+    def current(path: str) -> str | None:
+        raw = tree.get(path)
+        if raw is None:
+            return None
+        try:
+            return _artifact_state(path, raw).artifact_digest
+        except DataValidationError:
+            return None
+
+    return kit_back_remap(receipt_entries, current)
+
+
+def _installed_content(entry: KitInstalledArtifact, tree: Mapping[str, bytes]) -> str | None:
+    """The content digest a receipt recorded; receipts from before it use the bytes held."""
+
+    if entry.content_digest is not None:
+        return entry.content_digest
+    current = tree.get(entry.path)
+    if current is None:
+        return None
+    if _artifact_state(entry.path, current).artifact_digest != entry.installed_digest:
+        return None
+    return kit_content_digest(json.loads(current))
+
+
+def _diff_release(
+    tree: Mapping[str, bytes],
+    contents: Mapping[str, bytes],
+    *,
+    owns: tuple[str, ...],
+    installed: Mapping[str, KitInstalledArtifact],
+    kept: Mapping[str, KitKeptDivergence],
+    keep: frozenset[str],
+    keep_local_edits: bool,
+    preset: Mapping[str, str] | None = None,
+    held: Mapping[str, bytes] | None = None,
+) -> tuple[_Diff, set[str]]:
+    """Plan every release path against the tree; returns the diff and the owned paths.
+
+    A conflicting immutable Contract version refuses. A mutable definition held
+    differently takes the release's version as a successor of its own,
+    unless ``keep`` (or ``keep_local_edits``) keeps this instance's version or an
+    earlier install kept it on purpose against this same release version.
+    ``held`` holds the definitions the release left out because a kit it
+    requires owns them, as this instance holds them.
+    """
+
+    states = {path: _artifact_state(path, content) for path, content in contents.items()}
+    payloads = {path: json.loads(content) for path, content in contents.items()}
+    owned = {path for path, state in states.items() if _owned(state, owns)}
+    # A pin that followed a kit member's local succession is not an edit.
+    back = _tree_back_remap(installed.values(), tree)
+    diff = _Diff()
+    # Digests the release pins outside itself, already moved to this instance's
+    # (a bundled provider's Provider).
+    diff.installed.update(preset or {})
+    pins_of: dict[str, tuple[str, ...]] = {}
+    for path, pinned in _dependency_order(states, payloads, outside=held):
+        pins_of[path] = pinned
+        release_digest = states[path].artifact_digest
+        identity = states[path].identity.qualified
+        payload = _substitute(path, payloads[path], diff.installed)
+        carried = path not in owned
+        current = tree.get(path)
+        if current is None:
+            content, digest = _render(path, payload)
+            diff.plan.append(KitPathPlan(path=path, action="add", identity=identity))
+            diff.writes[path] = content
+            diff.installed[release_digest] = digest
+            diff.content[path] = kit_content_digest(payload)
+            continue
+        current_state = _artifact_state(path, current)
+        current_payload = json.loads(current)
+        if path.startswith("contracts/") and current != contents[path]:
+            raise immutable_contract_error(path)
+        if path.startswith("capabilities/") and current != contents[path]:
+            raise immutable_capability_error(path)
+        live = current_state.lifecycle.state == "live"
+        if live and _without_lifecycle(current_payload) == _without_lifecycle(payload):
+            diff.retained_live[path] = (current_state, current_payload)
+            diff.plan.append(KitPathPlan(path=path, action="unchanged", identity=identity))
+            diff.installed[release_digest] = current_state.artifact_digest
+            diff.content[path] = kit_content_digest(current_payload)
+            continue
+        if not live and path in installed and not carried:
+            # S7: the kit installed it and this instance retired it since: the
+            # retirement is the consumer's word, so it stays retired, unasked.
+            diff.plan.append(
+                KitPathPlan(
+                    path=path,
+                    action="keep",
+                    identity=identity,
+                    consequence="consumer_retired",
+                    detail="kept retired",
+                )
+            )
+            diff.installed[release_digest] = current_state.artifact_digest
+            diff.content[path] = kit_content_digest(current_payload)
+            diff.kept_retired[path] = identity
+            continue
+        previously = kept.get(path)
+        if previously is not None and previously.release_digest == release_digest:
+            # Kept on purpose against this same release version: not asked again.
+            if live:
+                diff.retained_live[path] = (current_state, current_payload)
+            diff.plan.append(
+                KitPathPlan(
+                    path=path,
+                    action="keep",
+                    identity=identity,
+                    consequence=previously.consequence,
+                    detail="kept on purpose at an earlier install",
+                )
+            )
+            diff.installed[release_digest] = current_state.artifact_digest
+            diff.content[path] = kit_content_digest(current_payload)
+            diff.kept.append(previously)
+            continue
+        consequence: KitConsequence | None
+        if not live:
+            consequence = "re_adds_retired"
+        elif carried:
+            consequence = "replaces_carried_definition"
+        elif path not in installed:
+            consequence = "takes_over_outside_definition"
+        elif kit_content_matches(
+            path, current_payload, _installed_content(installed[path], tree), back
+        ):
+            consequence = None
+        else:
+            consequence = "overwrites_your_edit"
+        keeping = consequence is not None and (
+            identity in keep or (keep_local_edits and consequence == "overwrites_your_edit")
+        )
+        if keeping:
+            assert consequence is not None
+            if live:
+                diff.retained_live[path] = (current_state, current_payload)
+            diff.plan.append(
+                KitPathPlan(
+                    path=path,
+                    action="keep",
+                    identity=identity,
+                    consequence=consequence,
+                )
+            )
+            diff.installed[release_digest] = current_state.artifact_digest
+            diff.content[path] = kit_content_digest(current_payload)
+            diff.kept.append(
+                KitKeptDivergence(
+                    path=path,
+                    identity=identity,
+                    consequence=consequence,
+                    release_digest=release_digest,
+                )
+            )
+            continue
+        content, digest = _render(
+            path,
+            _successor_payload(
+                payload,
+                predecessor=current_state.artifact_digest,
+                state="live",
+                current=current_payload,
+            ),
+        )
+        diff.plan.append(
+            KitPathPlan(path=path, action="replace", identity=identity, consequence=consequence)
+        )
+        diff.writes[path] = content
+        diff.installed[release_digest] = digest
+        diff.content[path] = kit_content_digest(payload)
+    _refuse_retired_dependencies(diff, pins_of, states, payloads, held)
+    return diff, owned
+
+
+def _retirement(path: str, current: bytes, *, by_name: bool = False) -> bytes:
+    assert not _is_document(path), _DOCUMENT_KEPT
+    state = _artifact_state(path, current)
+    content, _digest = _render(
+        path,
+        _successor_payload(json.loads(current), predecessor=state.artifact_digest, state="retired"),
+    )
+    if not by_name:
+        return content
+    if path.startswith("query-definitions/"):
+        from cruxible_client.contracts.query.definitions import (
+            parse_query_definition,
+            render_query_definition,
+        )
+
+        return render_query_definition(parse_query_definition(content, path=path))
+    if path.startswith("triggers/"):
+        from cruxible_client.contracts.triggers import parse_trigger, render_trigger
+
+        return render_trigger(parse_trigger(content, path=path))
+    if path.startswith("capture-contracts/"):
+        from cruxible_client.contracts.capture_contract_inputs import (
+            CaptureContractInputRecord,
+            lower_capture_contract_input,
+        )
+        from cruxible_client.contracts.captures import (
+            parse_capture_contract,
+            render_capture_contract,
+        )
+
+        return render_capture_contract(
+            lower_capture_contract_input(
+                CaptureContractInputRecord(name=state.identity.name, lifecycle="retired"),
+                predecessor=parse_capture_contract(current, path=path),
+                named=True,
+            )
+        )
+    return content
+
+
+def _live_dependents(
+    tree: Mapping[str, bytes], identity: ArtifactIdentity, path: str
+) -> frozenset[str]:
+    """The paths of the live reverse-pin closure of one definition."""
+
+    try:
+        return frozenset(
+            item.path
+            for item in dependent_closure_inventory(
+                tree, roots=(identity,), fixed_paths=frozenset({path})
+            )
+        )
+    except ClaimTypeMigrationError:
+        return frozenset()
+
+
+def _evidence_rule_consumers(
+    tree: Mapping[str, bytes], contract: ArtifactDependencyStateV1
+) -> tuple[tuple[str, ArtifactIdentity], ...]:
+    """Live ClaimTypes whose evidence rules admit captures under this CaptureContract.
+
+    A semantic dependency, not a pin: an identity rule
+    names the contract by identity and a historical rule by exact digest, and
+    neither is a reverse-pin edge. Retiring the contract strands every one of
+    them, which admission refuses. Claims citing the contract are provenance and
+    never count.
+    """
+
+    found = []
+    for path in sorted(tree):
+        if not (path.startswith("claim-types/") and path.endswith(".json")):
+            continue
+        try:
+            claim_type = parse_claim_type(tree[path], path=path)
+        except ValueError:
+            continue
+        if claim_type.lifecycle.state != "live":
+            continue
+        for rule in claim_type.evidence_admission_policy.rules:
+            if any(ref.target == contract.identity for ref in rule.capture_contracts):
+                found.append((path, claim_type.identity))
+                break
+    return tuple(found)
+
+
+def _settle_dropped(
+    tree: Mapping[str, bytes],
+    installed: Mapping[str, KitInstalledArtifact],
+    keep_paths: set[str],
+    diff: _Diff,
+    *,
+    keep: frozenset[str],
+    retire_dependents: frozenset[str],
+    kept: Mapping[str, KitKeptDivergence],
+    by_name: bool = False,
+) -> set[str]:
+    """Decide each definition the kit installed that the release dropped.
+
+    One decision per definition: kept live when named in ``keep``, retired with
+    its dependents when named in ``retire_dependents``, otherwise retired when
+    nothing live depends on it and kept (and reported) when something does.
+    Returns the identities retired together with their dependents.
+    """
+
+    retiring_with_dependents: set[str] = set()
+    # Dependents are counted on the tree this change leaves: a definition the
+    # release replaces in the same change and that no longer pins the dropped
+    # one is not its dependent.
+    after = fork_tree(tree)
+    for path, content in diff.writes.items():
+        after[path] = content
+    for path in sorted(installed):
+        if path in keep_paths:
+            continue
+        current = tree.get(path)
+        if current is None:
+            continue
+        state = _artifact_state(path, current)
+        if state.lifecycle.state != "live":
+            continue
+        identity = state.identity.qualified
+        previously = kept.get(path)
+        dependent_paths = set(_live_dependents(after, state.identity, path))
+        consumers = (
+            _evidence_rule_consumers(after, state)
+            if state.identity.kind == "CaptureContract"
+            else ()
+        )
+        for consumer_path, consumer in consumers:
+            dependent_paths.add(consumer_path)
+            dependent_paths |= _live_dependents(after, consumer, consumer_path)
+        dependent_paths.discard(path)
+        dependents = len(dependent_paths)
+        # Counted against the post-diff tree, including semantic consumers.
+        diff.semantic_counts[identity] = dependents
+        named_retire = identity in retire_dependents
+        immutable = state.artifact_kind in ("contract", "capability", "document")
+        if (
+            immutable
+            or identity in keep
+            or (
+                not named_retire
+                and (dependents or (previously is not None and previously.release_digest is None))
+            )
+        ):
+            diff.plan.append(
+                KitPathPlan(
+                    path=path,
+                    action="keep",
+                    identity=identity,
+                    consequence="release_dropped",
+                    dependent_count=dependents,
+                    detail=(
+                        _DOCUMENT_KEPT
+                        if state.artifact_kind == "document"
+                        else "Contract versions are immutable and remain accepted"
+                    )
+                    if immutable
+                    else None
+                    if identity in keep
+                    else "the release dropped it and live artifacts depend on it; name it in "
+                    "retire_dependents (--retire-dependents) to retire it and them"
+                    if dependents
+                    else "the release dropped it and an earlier install kept it on purpose; "
+                    "name it in retire_dependents (--retire-dependents) to retire it",
+                )
+            )
+            diff.kept.append(
+                KitKeptDivergence(path=path, identity=identity, consequence="release_dropped")
+            )
+            continue
+        diff.plan.append(
+            KitPathPlan(
+                path=path,
+                action="retire",
+                identity=identity,
+                consequence="release_dropped",
+                dependent_count=dependents,
+            )
+        )
+        diff.writes[path] = _retirement(path, current, by_name=by_name)
+        if dependents:
+            retiring_with_dependents.add(identity)
+        for consumer_path, consumer in consumers:
+            # A ClaimType whose evidence rules need the retired contract retires
+            # with it, and its own dependents with it.
+            if consumer_path not in diff.writes:
+                diff.writes[consumer_path] = _retirement(
+                    consumer_path, tree[consumer_path], by_name=by_name
+                )
+            retiring_with_dependents.add(consumer.qualified)
+    return retiring_with_dependents
+
+
+def _settle_dependents(
+    tree: Mapping[str, bytes],
+    diff: _Diff,
+    *,
+    retire_with: set[str],
+    connection: Any,
+    movers: tuple[Mover, ...] = (),
+    moves: Mapping[str, ProviderBuildMove] | None = None,
+    keep_build: frozenset[str] = frozenset(),
+    by_name: bool = False,
+) -> SettledMoves:
+    """Every write, plus one successor for each accepted dependent they change.
+
+    A normal change set owes the closure of what it changes: every live artifact
+    pinning a replaced or retired kit definition takes a successor in the same
+    generation, carried (re-pinned) to the kit's final definitions, or retired
+    with a definition the request retires together with its dependents. Each
+    live Line bound to another build of a provider the kit ships moves to
+    the kit's build (``movers``), unless ``keep_build`` names it. A Line,
+    or Mandate over a replaced or moved Procedure is carried disabled or
+    propose-only, respectively; Triggers stay untouched. The plan
+    counts each definition's dependents rather than listing them.
+    """
+
+    settled = settle_changes(
+        tree,
+        writes=diff.writes,
+        connection=connection,
+        movers=movers,
+        moves=moves,
+        keep=keep_build,
+        retire_with=frozenset(retire_with),
+        by_name=by_name,
+    )
+    if not settled.refused:
+        diff.plan[:] = [
+            item.model_copy(update={"dependent_count": settled.counts[item.identity]})
+            if item.identity in settled.counts and item.identity not in diff.semantic_counts
+            else item
+            for item in diff.plan
+        ]
+    return settled
+
+
+def _kit_movers(
+    connection: Any,
+    tree: Mapping[str, bytes],
+    providers: tuple[KitProvider, ...],
+    writes: Mapping[str, bytes],
+) -> tuple[Mover, ...]:
+    """Each live Line bound to another build of a provider the kit ships.
+
+    A kit carries no Lines, so every live binder of another build moves to the
+    kit's build. O(affected live Line bindings), from the maintained name
+    reverse-pin index.
+    """
+
+    found = []
+    for provider in providers:
+        for identity, path, source in indexed_move_pinners(
+            connection,
+            provider.provider_id,
+            f"Provider:{provider.build}",
+        ):
+            if path in writes and _artifact_state(path, writes[path]).lifecycle.state != "live":
+                continue
+            kind, _, name = identity.partition(":")
+            found.append(
+                Mover(
+                    identity=ArtifactIdentity(kind=kind, name=name),
+                    path=path,
+                    from_build=source.partition(":")[2],
+                    to_build=provider.build,
+                )
+            )
+    return tuple(sorted(found, key=lambda item: (item.identity.qualified, item.from_build)))
+
+
+def _kit_moves(
+    tree: Mapping[str, bytes], movers: tuple[Mover, ...]
+) -> dict[str, ProviderBuildMove]:
+    moves: dict[str, ProviderBuildMove] = {}
+    for mover in movers:
+        key = f"Provider:{mover.from_build}"
+        if key not in moves:
+            try:
+                moves[key] = build_move(tree, mover.from_build, mover.to_build)
+            except ProviderBuildMoveRefused:
+                continue
+    return moves
+
+
+def _planned_automation(
+    connection: Any,
+    tree: Mapping[str, bytes],
+    roots: tuple[ArtifactIdentity, ...],
+    writes: Mapping[str, bytes],
+    retire_with: set[str],
+    *,
+    by_name: bool = False,
+) -> tuple[tuple[AutomationCarryV1, ...], tuple[StoppedAutomationV1, ...]]:
+    """Affected automation before installation, with unavailable final digests.
+
+    Closure errors block inventory. Retirement remains distinct from carry;
+    discovery uses the same indexed closure and target lookups as settlement.
+    """
+
+    fixed = frozenset(writes)
+    items = dependent_closure_inventory(tree, roots=roots, fixed_paths=fixed)
+    retiring_procedures = {
+        _artifact_state(path, content).identity.qualified
+        for path, content in writes.items()
+        if path.startswith("procedures/")
+        and _artifact_state(path, content).lifecycle.state == "retired"
+    }
+    if retire_with:
+        retired_items = dependent_closure_inventory(
+            tree,
+            roots=tuple(root for root in roots if root.qualified in retire_with),
+            fixed_paths=fixed,
+        )
+        retiring_procedures.update(
+            item.identity.qualified for item in retired_items if item.artifact_kind == "procedure"
+        )
+    carries = []
+    stops: dict[str, StoppedAutomationV1] = {}
+    for item in items:
+        if item.artifact_kind not in {"line", "procedure-mandate"}:
+            continue
+        if (
+            by_name
+            and item.artifact_kind == "line"
+            and item.triggering_identity.qualified not in retiring_procedures
+        ):
+            # A Line pins its Procedure's exact version, so a live Procedure
+            # successor carries it disabled, as settlement does. Any other root
+            # reaching a Line needs its own authoring and is not planned here.
+            if item.triggering_identity.kind != "Procedure":
+                continue
+        elif by_name and item.artifact_kind == "line":
+            line = parse_carry_line(tree[item.path], path=item.path)
+            stops[line.identity.qualified] = StoppedAutomationV1(
+                identity=line.identity.qualified,
+                kind="line",
+                stopped_by=line.procedure.target.qualified,
+            )
+            for trigger, _ in live_triggers_of(connection, line.identity.qualified):
+                stops[trigger] = StoppedAutomationV1(
+                    identity=trigger, kind="trigger", stopped_by=line.identity.qualified
+                )
+            continue
+        row = carry_automation(item.path, tree[item.path], {}, planned=True)[1]
+        stopped_by = item.triggering_identity.qualified
+        if stopped_by not in retiring_procedures:
+            carries.append(row)
+            continue
+        stops[row.identity] = StoppedAutomationV1(
+            identity=row.identity, kind=row.kind, stopped_by=stopped_by
+        )
+        if row.kind == "line":
+            for trigger, _ in live_triggers_of(connection, row.identity):
+                stops[trigger] = StoppedAutomationV1(
+                    identity=trigger, kind="trigger", stopped_by=row.identity
+                )
+    return (
+        tuple(sorted(carries, key=lambda row: row.identity)),
+        tuple(stops[key] for key in sorted(stops)),
+    )
+
+
+def _held_by_other_kits(receipts: tuple[KitReceipt, ...], kit_id: str) -> dict[str, str]:
+    """Every definition path another installed kit holds -> that kit.
+
+    A kit holds what its receipt records, not only what its current prefixes
+    name: a definition the release dropped but the consumer kept stays that
+    kit's even when a later release narrows its prefixes past it.
+    """
+
+    return {
+        entry.path: receipt.kit_id
+        for receipt in receipts
+        if receipt.kit_id != kit_id
+        for entry in receipt.artifacts
+    }
+
+
+def _ownership_refusal(
+    manifest: KitManifest,
+    owner: str,
+    detail: str,
+    *,
+    owning_prefix: str | None = None,
+    identity: str | None = None,
+) -> KitOwnershipConflictRefusal:
+    return KitOwnershipConflictRefusal(
+        our_prefixes=manifest.owns,
+        owning_kit_id=owner,
+        owning_prefix=owning_prefix,
+        identity=identity,
+        detail=detail,
+        repair=f"Remove the owning kit {owner} first (kit remove); or install a release "
+        "that does not own the overlapping prefix or replace the held definition.",
+    )
+
+
+def _foreign_takeovers(
+    receipts: tuple[KitReceipt, ...], manifest: KitManifest, diff: _Diff
+) -> list[KitOwnershipConflictRefusal]:
+    """A release may not change a definition another installed kit owns or holds: a
+    hard block, like overlapping ownership."""
+
+    owners = [
+        (prefix, receipt.kit_id)
+        for receipt in receipts
+        if receipt.kit_id != manifest.kit_id and receipt.artifacts
+        for prefix in receipt.owns
+    ]
+    held = _held_by_other_kits(receipts, manifest.kit_id)
+    found: list[KitOwnershipConflictRefusal] = []
+    for item in diff.plan:
+        if item.action != "replace" or item.identity is None:
+            continue
+        name = item.identity.partition(":")[2]
+        owned_by = [(prefix, owner) for prefix, owner in owners if name.startswith(prefix)]
+        found.extend(
+            _ownership_refusal(
+                manifest,
+                owner,
+                f"{item.identity} is owned by kit {owner}",
+                owning_prefix=prefix,
+                identity=item.identity,
+            )
+            for prefix, owner in owned_by
+        )
+        holder = held.get(item.path)
+        if holder is not None and not any(owner == holder for _, owner in owned_by):
+            found.append(
+                _ownership_refusal(
+                    manifest,
+                    holder,
+                    f"{item.identity} is held by kit {holder}",
+                    identity=item.identity,
+                )
+            )
+    return found
+
+
+def _ownership_conflicts(
+    receipts: tuple[KitReceipt, ...], tree: Mapping[str, bytes], manifest: KitManifest
+) -> list[KitOwnershipConflictRefusal]:
+    conflicts = []
+    for receipt in receipts:
+        if receipt.kit_id == manifest.kit_id or not receipt.artifacts:
+            continue
+        for prefix in manifest.owns:
+            for theirs in receipt.owns:
+                if prefix.startswith(theirs) or theirs.startswith(prefix):
+                    conflicts.append(
+                        _ownership_refusal(
+                            manifest,
+                            receipt.kit_id,
+                            f"{prefix} overlaps {theirs}, owned by kit {receipt.kit_id}",
+                            owning_prefix=theirs,
+                        )
+                    )
+    # A prefix may not take in a definition another kit still holds outside
+    # its own prefixes (one it kept after its release dropped it).
+    for path, holder in sorted(_held_by_other_kits(receipts, manifest.kit_id).items()):
+        current = tree.get(path)
+        if current is None:
+            continue
+        identity = _artifact_state(path, current).identity
+        if any(identity.name.startswith(prefix) for prefix in manifest.owns) and not any(
+            conflict.owning_kit_id == holder for conflict in conflicts
+        ):
+            conflicts.append(
+                _ownership_refusal(
+                    manifest,
+                    holder,
+                    f"{identity.qualified} is held by kit {holder}",
+                    identity=identity.qualified,
+                )
+            )
+    return conflicts
+
+
+_INCOMPLETE_CLOSURE = "cruxible.change_set.incomplete_closure"
+#: How many names a refusal prints per group before it counts the rest.
+_NAMED = 3
+
+
+def _named(names: list[str]) -> str:
+    shown = ", ".join(names[:_NAMED])
+    return shown if len(names) <= _NAMED else f"{shown} and {len(names) - _NAMED:,} more"
+
+
+def _closure_summary(message: str, tree: Mapping[str, bytes], *, removal: bool) -> str:
+    """An incomplete closure said as counts by kind, a few names and the repair.
+
+    The closure's own record lists every dependent with its digests (one line per
+    Claim on an instance that used the kit); a person needs how many of what, and
+    what to do. Reads only the dependents' paths, plus one parse per non-Claim
+    dependent: the work is the size of the refusal.
+    """
+
+    from cruxible_core.claims.closure import IncompleteClosureItemV1
+
+    # The record has one row per dependency edge: an artifact pinning several
+    # retired definitions is one dependent, counted under the first.
+    missing: dict[str, IncompleteClosureItemV1] = {}
+    for raw in json.loads(message)["missing"]:
+        row = IncompleteClosureItemV1.model_validate(raw)
+        missing.setdefault(row.path, row)
+    claims: dict[str, list[str]] = {}
+    others: dict[str, list[str]] = {}
+    names: dict[str, str] = {}
+
+    def name_of(path: str, *, qualified: bool) -> tuple[str, str]:
+        content = tree.get(path)
+        state = None if content is None else parse_dependency_artifact(path, content)
+        if state is None:
+            return "artifact", path
+        return state.identity.kind, state.identity.qualified if qualified else state.identity.name
+
+    for item in missing.values():
+        if item.path.startswith("claims/"):
+            trigger = item.triggering_dependency_path
+            if trigger not in names:
+                names[trigger] = name_of(trigger, qualified=False)[1]
+            claim = "Claim:" + item.path.rsplit("/", 1)[-1].removesuffix(".json")
+            claims.setdefault(names[trigger], []).append(claim)
+            continue
+        kind, name = name_of(item.path, qualified=True)
+        others.setdefault(kind, []).append(name)
+    groups = []
+    if claims:
+        count = sum(len(held) for held in claims.values())
+        by_type = sorted(claims.items(), key=lambda pair: (-len(pair[1]), pair[0]))
+        groups.append(
+            f"{count:,} Claim(s) of {len(claims)} ClaimType(s) ("
+            + _named([f"{predicate} {len(held):,}" for predicate, held in by_type])
+            + "; e.g. "
+            + ", ".join(by_type[0][1][:_NAMED])
+            + ")"
+        )
+    for kind, held in sorted(others.items()):
+        groups.append(f"{len(held):,} {kind}(s) ({_named(sorted(held))})")
+    summary = (
+        f"{_INCOMPLETE_CLOSURE}: {len(missing):,} live artifact(s) outside this change depend "
+        "on definitions it retires or replaces: " + "; ".join(groups) + "."
+    )
+    if not removal:
+        return summary
+    steps = []
+    if others:
+        steps.append(
+            "retire the definitions you authored over the kit in one authored change "
+            '("retire": true on each Line, Mandate, Trigger and Runbook; cruxible authoring '
+            "submit)"
+        )
+    if claims:
+        steps.append(
+            "retire the Claims, one Subject at a time with all its Claims (cruxible retire "
+            "KIND/ID --with-claims --because TEXT; a pair before its ends)"
+        )
+    return (
+        f"{summary} kit remove retires the kit's own definitions, never Claims or definitions "
+        f"you authored. Repair: {'; then '.join(steps)}; then preview the removal again. Or "
+        "keep the kit installed."
+    )
+
+
+#: The repair a kit add refused for re-adding definitions retired here carries
+#: (morning-rulings-1116 (8): a retired definition is not revived in 0.5.0).
+KIT_RETIRED_REPAIR = (
+    ". Definitions retired here cannot be added back in this release: add the kit on a new instance"
+)
+
+
+#: The codes a definition law refuses a retired definition's revival with.
+_REVIVAL_REFUSALS = (".revival_refused", ".lifecycle_invalid")
+
+
+def _refused_revival(
+    diagnostics: Iterable[CompilerDiagnostic], plan: Sequence[KitPathPlan]
+) -> bool:
+    """Whether admission refused reviving a definition this change writes over a retired one.
+
+    Decided from the refusal's own code and the path it names, against the plan's
+    written re-adds (``replace`` of a retired definition); a kept retired path is
+    not written, so an unrelated refusal never earns the new-instance repair.
+    """
+
+    revived = {
+        item.path
+        for item in plan
+        if item.action == "replace" and item.consequence == "re_adds_retired"
+    }
+    return any(
+        item.code.endswith(_REVIVAL_REFUSALS)
+        and item.subject is not None
+        and item.subject.artifact_path in revived
+        for item in diagnostics
+    )
+
+
+def _kit_refusal_detail(
+    diagnostics: Iterable[CompilerDiagnostic], tree: Mapping[str, bytes], *, removal: bool
+) -> str:
+    """Each refusal by code and its message, once with a count when it repeats; an
+    incomplete closure as a summary."""
+
+    counted: dict[str, int] = {}
+    for item in diagnostics:
+        line = (
+            _closure_summary(item.message, tree, removal=removal)
+            if item.code == _INCOMPLETE_CLOSURE
+            else f"{item.code}: {item.message}"
+        )
+        counted[line] = counted.get(line, 0) + 1
+    return "Refused: " + "; ".join(
+        line if count == 1 else f"{line} ({count:,} definitions)" for line, count in counted.items()
+    )
+
+
+def _submit(
+    instance: PlaybillInstance,
+    mode: ChangeMode,
+    *,
+    kit_id: str,
+    version: str | None,
+    receipt: KitReceipt,
+    previous_receipt: DocumentShell | None,
+    writes: Mapping[str, bytes],
+    plan: tuple[KitPathPlan, ...],
+    actor_id: str,
+    timestamp: str,
+    transition: KitTransition | None = None,
+    installed_version: str | None = None,
+    provenance: KitProvenance | None = None,
+    providers: tuple[KitProviderStep, ...] = (),
+    requires: tuple[KitRequirementStatus, ...] = (),
+    repins: tuple[ProviderRepinV1, ...] = (),
+    stops: tuple[StoppedAutomationV1, ...] = (),
+    automation_carries: tuple[AutomationCarryV1, ...] = (),
+    removal: bool = False,
+    may_activate: bool = True,
+) -> KitChangeResult:
+    assert mode.head is not None
+    base = mode.head
+    described = {
+        "transition": transition,
+        "installed_version": installed_version,
+        "provenance": provenance,
+        "providers": providers,
+        "requires": requires,
+        "repins": repins,
+        "stops": stops,
+        "automation_carries": automation_carries,
+    }
+    body = instance.store_document_body(pretty_canonical_bytes(receipt.model_dump(mode="json")))
+    shell = DocumentShell(
+        identity=f"document:{kit_receipt_document_id(kit_id)}",
+        document_kind=KIT_RECEIPT_DOCUMENT_KIND,
+        title=f"Kit {kit_id}" + ("" if version is None else f" {version}"),
+        media_type="application/json",
+        body_digest=body.digest,
+        governance_scope=_RECEIPT_SCOPE,
+        predecessor_digest=None
+        if previous_receipt is None
+        else document_digest(previous_receipt).tagged,
+        lifecycle=DocumentLifecycle(
+            revision=1 if previous_receipt is None else previous_receipt.lifecycle.revision + 1
+        ),
+    )
+    candidate = instance.immutable_tree_at(base.git_oid).fork()
+    for path, content in writes.items():
+        candidate[path] = content
+    candidate[document_path(kit_receipt_document_id(kit_id))] = render_document(shell)
+    suffix = canonical_digest(
+        "playbill-kit-change-target-v1",
+        {
+            "base": base.semantic_root,
+            "kit": kit_id,
+            "receipt": body.digest,
+            "members": {path: content.hex() for path, content in sorted(writes.items())},
+        },
+    )
+    target = f"refs/proposals/{actor_id}/kit-{kit_id}-{suffix[:32]}"
+    pending = open_proposal_at_target(instance, target)
+    if pending is not None:
+        # The same change is already proposed: a commit returns it, and a
+        # preview says the commit would.
+        assert pending.candidate_digest is not None
+        evidence = instance.proposal_evidence().read_candidate(pending.candidate_digest)
+        return KitChangeResult(
+            kit_id=kit_id,
+            version=version,
+            status="would_propose" if mode.previewing else "proposed",
+            proposal_id=pending.proposal_id,
+            approval_required=bool(evidence.approval_requirements),
+            plan=plan,
+            coordinate=mode.coordinate,
+            **described,  # type: ignore[arg-type]
+        )
+    # Carries have no per-item reason: the accepting admission records why
+    # this revision changed, for the shared get/floor reason resolver.
+    if transition is None:
+        rationale = f"Remove kit {kit_id} {version}."
+    elif installed_version is None or transition == "reinstall":
+        rationale = f"{transition.capitalize()} kit {kit_id} {version}."
+    else:
+        rationale = f"{transition.capitalize()} kit {kit_id} from {installed_version} to {version}."
+    request = ProposalAdmissionRequest(
+        target_ref=target,
+        proposed_base_oid=base.git_oid,
+        rationale=rationale,
+        # Typed, so a later reader (the late-signer refusal) never parses prose.
+        kit_transition="remove" if transition is None else "add",
+    )
+    binding: dict[str, Any] = {}
+    if removal and not mode.previewing:
+        # A blocked kit change records nothing (like an edited path or an unmet
+        # requirement), so a removal evaluates on submit's own path first, at the
+        # head its candidate was built on, and submits only what passed there.
+        # The submission is bound to that head and that candidate: a head that
+        # moved in between refuses state_moved before anything is evaluated or
+        # published, and the same head reproduces the same candidate, so a
+        # refused removal is never published. The second evaluation is the
+        # removal's own size.
+        with preview_guards(True):
+            checked = instance.proposal_service().preview(
+                actor=AuthenticatedActor(actor_id=actor_id, capabilities=("propose",)),
+                request=request,
+                candidate_tree=candidate,
+                timestamp=timestamp,
+            )
+        evaluated_at = checked.evaluation.evaluated_base_oid
+        if evaluated_at != base.git_oid:
+            # Accepted state moved after the candidate was built: refuse as a
+            # moved head (a pinned commit as at entry), whatever the verdict.
+            mode.refuse_moved_head(evaluated_at)
+            raise ProposalHeadMovedError(
+                "accepted main moved after the removal was planned; preview it again"
+            )
+        if checked.candidate is None:
+            return KitChangeResult(
+                kit_id=kit_id,
+                version=version,
+                status="blocked",
+                plan=plan,
+                detail=_kit_refusal_detail(
+                    checked.evaluation.diagnostics, candidate, removal=removal
+                ),
+                coordinate=mode.coordinate,
+                **described,  # type: ignore[arg-type]
+            )
+
+        def at_planned_head(
+            current: AcceptedProjectionCoordinate, _tree: Mapping[str, bytes]
+        ) -> None:
+            if current.git_oid != base.git_oid:
+                raise ProposalHeadMovedError(
+                    "accepted main moved after the removal was checked; preview it again"
+                )
+
+        binding = {
+            "authorize": at_planned_head,
+            "expected_candidate": (base.git_oid, checked.candidate.candidate_digest),
+        }
+    admitted = admit_change_set(
+        instance,
+        mode,
+        actor_id=actor_id,
+        request=request,
+        candidate_tree=candidate,
+        timestamp=timestamp,
+        **binding,
+    )
+    status: Literal[
+        "unchanged", "proposed", "accepted", "blocked", "would_propose", "would_block"
+    ] = admitted.status
+    if status == "proposed" and not admitted.approval_required and not may_activate:
+        # The policy lets it through, but this request's tier may not activate.
+        assert admitted.proposal_id is not None
+        return KitChangeResult(
+            kit_id=kit_id,
+            version=version,
+            status=status,
+            proposal_id=admitted.proposal_id,
+            plan=plan,
+            detail=activation_not_permitted_detail(admitted.proposal_id),
+            coordinate=mode.coordinate,
+            **described,  # type: ignore[arg-type]
+        )
+    if status == "proposed" and not admitted.approval_required:
+        # Like provider install and value writes, a kit change the approval
+        # policy lets through lands at once; otherwise it stops at proposed.
+        assert admitted.proposal_id is not None
+        try:
+            activation = service_activate_playbill_proposal(
+                instance, proposal_id=admitted.proposal_id, activated_by=actor_id
+            )
+        except (SettlementIntegrityError, ProposalStale):
+            # A concurrent add can publish after activation's stale check but
+            # before settlement. Preserve integrity errors at the same head;
+            # a genuinely moved preview gets the ordinary R12 refusal.
+            with instance.accepted_head_held() as head_oid:
+                if head_oid == base.git_oid:
+                    raise
+                mode.confirm_head(head_oid)
+            return KitChangeResult(
+                kit_id=kit_id,
+                version=version,
+                status="blocked",
+                plan=plan,
+                proposal_id=admitted.proposal_id,
+                proposal_open=True,
+                detail="Accepted state moved during kit add; preview the kit again.",
+                coordinate=mode.coordinate,
+                **described,  # type: ignore[arg-type]
+            )
+        if activation.status == "accepted":
+            status = "accepted"
+    return KitChangeResult(
+        kit_id=kit_id,
+        version=version,
+        status=status,
+        proposal_id=admitted.proposal_id,
+        approval_required=admitted.approval_required,
+        plan=plan,
+        detail=None
+        if admitted.admitted
+        else _kit_refusal_detail(admitted.diagnostics, candidate, removal=removal)
+        + (KIT_RETIRED_REPAIR if _refused_revival(admitted.diagnostics, plan) else ""),
+        coordinate=mode.coordinate,
+        **described,  # type: ignore[arg-type]
+    )
+
+
+def _policy_requires_approval(tree: Mapping[str, bytes]) -> bool:
+    """Whether the accepted approval policy makes every proposal here wait for an approver."""
+
+    content = tree.get(APPROVAL_POLICY_PATH)
+    return (
+        content is not None
+        and parse_approval_policy(content, path=APPROVAL_POLICY_PATH).mode
+        == "independent_approval_required"
+    )
+
+
+def _transition(installed: str | None, release: str) -> KitTransition:
+    if installed is None:
+        return "install"
+    before, after = kit_version_key(installed), kit_version_key(release)
+    return "upgrade" if after > before else "downgrade" if after < before else "reinstall"
+
+
+class ProviderInstaller(Protocol):
+    """Installs one provider package through the ordinary install (the API layer
+    checks the install permission before it runs); ``expected_build`` pins an
+    install by name to the published wheel and lock a kit's default names."""
+
+    def __call__(
+        self,
+        request: ProviderInstallRequest,
+        *,
+        expected_build: ExpectedProviderBuild | None = None,
+    ) -> ProviderInstallResult: ...
+
+
+_ProviderState = Literal["installed", "differs", "missing", "retired"]
+
+
+def _provider_here(
+    tree: Mapping[str, bytes],
+    provider: KitProvider,
+    inspected: InspectedProviderPackage | None = None,
+) -> tuple[_ProviderState, str | None, str | None]:
+    """Whether this bundled build is live here: (state, digest, version).
+
+    The build is its own artifact (``provider.build``), read at its exact path:
+    another build of the provider never counts. ``differs`` is this build
+    materialized here with another dependency closure; it is only known with
+    ``inspected`` (the staged files, resolved for this host).
+    """
+
+    path = provider_path(provider.build)
+    raw = tree.get(path)
+    if raw is None:
+        return "missing", None, None
+    held = parse_provider(raw, path=path)
+    digest = provider_digest(held).tagged
+    if held.lifecycle.state != "live":
+        return "retired", digest, None
+    if not isinstance(held, ProviderV2):
+        return "differs", digest, None
+    same = inspected is None or _build_difference(held, inspected) is None
+    return ("installed" if same else "differs"), digest, held.runtime_artifact.distribution.version
+
+
+def _default_implementers(
+    connection: Any,
+    tree: Mapping[str, bytes],
+    provider: KitProvider,
+    contents: Mapping[str, bytes],
+) -> tuple[str, ...]:
+    """The live builds here that stand in for an index default, or none.
+
+    A default provider stands for the operations the kit's Procedures' slots
+    need, so it is skipped only when, for every slot the kit carries, a live
+    operation of another provider here serves the slot's capability and fits it.
+    The candidates come from the capability index (one seek per capability),
+    never a walk of every Provider.
+    """
+
+    from collections import ChainMap
+
+    from cruxible_client.contracts.capabilities import (
+        CapabilityRef,
+        tree_capability_resolver,
+    )
+    from cruxible_client.contracts.capability_fit import Fits
+    from cruxible_client.contracts.procedures.artifacts import parse_procedure
+    from cruxible_client.contracts.procedures.line_specs import (
+        SlotCapabilityUnresolved,
+        slot_needs,
+    )
+    from cruxible_core.capabilities.artifact import BUILTIN_CAPABILITY_NAMES
+    from cruxible_core.providers.operation_index import (
+        memoized_slot_fitter,
+        serving_operations,
+        tree_build_reader,
+        tree_capability_side,
+    )
+
+    if provider.delivery != "index" or not provider.operations:
+        return ()
+    # A slot's capability is the kit's own (carried) or already accepted here.
+    from_kit, from_tree = tree_capability_resolver(contents), tree_capability_resolver(tree)
+
+    def capabilities(ref: CapabilityRef) -> Capability | None:
+        return from_kit(ref) or from_tree(ref)
+
+    try:
+        needs = {
+            (need.pin.name, need.pin.version, need.pin.digest, need.may_truncate): need
+            for path, content in sorted(contents.items())
+            if path.startswith("procedures/")
+            for need in slot_needs(
+                parse_procedure(content, path=path).definition.slots,
+                capabilities=capabilities,
+                builtin_names=BUILTIN_CAPABILITY_NAMES,
+            ).values()
+        }
+    except SlotCapabilityUnresolved:
+        return ()  # the kit's own add refuses the Procedure; no provider stands in
+    if not needs:
+        return ()
+    fitter = memoized_slot_fitter(
+        tree_capability_side(ChainMap(cast(Any, contents), cast(Any, tree)))
+    )
+    builds = tree_build_reader(tree)
+    found: set[str] = set()
+    for key, need in sorted(needs.items(), key=lambda item: repr(item[0])):
+        serving: set[str] = set()
+        for row in serving_operations(connection, need.pin.name):
+            name = row.build.removeprefix("Provider:")
+            if parse_provider_build_name(name).name == provider.provider_id:
+                continue
+            if not need.builtin:
+                if row.effect != need.capability.effect:
+                    continue
+                build = builds(row.build, row.build_digest)
+                operation = (
+                    None
+                    if build is None
+                    else next(
+                        (item for item in build.operations if item.name == row.operation), None
+                    )
+                )
+                if build is None or operation is None:
+                    continue
+                if not isinstance(fitter(str(key), need, build, row.build_digest, operation), Fits):
+                    continue
+            serving.add(name)
+        if not serving:
+            return ()
+        found.update(serving)
+    return tuple(sorted(found))
+
+
+def _provider_steps(
+    connection: Any,
+    tree: Mapping[str, bytes],
+    manifest: KitManifest,
+    inspected: Mapping[str, InspectedProviderPackage] | None = None,
+    *,
+    contents: Mapping[str, bytes],
+) -> tuple[list[KitProviderStep], list[KitProvider]]:
+    """One step per provider package, and the ones still to install.
+
+    The kit names one exact build per provider. Installing it adds that build
+    beside any other build of the provider here, so another installed build
+    never blocks: its Procedures move to the kit's build in the kit's change
+    (``repins``). An index default another live Provider stands in for is not
+    installed.
+    """
+
+    steps = []
+    missing = []
+    for provider in manifest.providers:
+        state, _digest, _version = _provider_here(
+            tree, provider, None if inspected is None else inspected.get(provider.provider_id)
+        )
+        named = {
+            "provider_id": provider.provider_id,
+            "package": provider.package,
+            "version": provider.version,
+            "build": provider.build,
+        }
+        implementers = (
+            ()
+            if state == "installed"
+            else _default_implementers(connection, tree, provider, contents)
+        )
+        if state == "installed":
+            steps.append(KitProviderStep(**named, action="unchanged"))
+        elif implementers:
+            steps.append(
+                KitProviderStep(
+                    **named,
+                    action="satisfied",
+                    detail=f"implemented here by {', '.join(implementers)}; the default "
+                    "is not installed",
+                )
+            )
+        elif state == "retired":
+            # S7: the consumer retired this build; the kit keeps that retirement.
+            steps.append(KitProviderStep(**named, action="kept_retired", detail="kept retired"))
+        elif state == "missing":
+            missing.append(provider)
+            steps.append(
+                KitProviderStep(
+                    **named,
+                    action="would_install",
+                    detail=(
+                        f"by name from the provider index at exactly {provider.version}, "
+                        "refusing any other build; refused where provider_repository is "
+                        "configured"
+                    )
+                    if provider.delivery == "index"
+                    else None,
+                )
+            )
+        else:
+            steps.append(
+                KitProviderStep(
+                    **named,
+                    action="blocked",
+                    detail=f"build {provider.build} is installed here with another dependency "
+                    "closure than the kit bundles (cruxible.provider.build_rematerialized); "
+                    "the same wheel and lock name one build",
+                )
+            )
+    return steps, missing
+
+
+#: What a commit of a kit whose bundled providers are missing does: each provider
+#: carries its own shapes, so nothing is accepted before the installs.
+KIT_PREVIEW_AWAITING_INSTALL = (
+    "a commit installs the bundled providers first, then proposes these definitions, "
+    "which are checked against the installed providers"
+)
+
+
+#: The bundled base kit's id: never removed while it holds the bundled definitions,
+#: see ``_remove_kit``.
+BASE_KIT_ID = "base"
+KIT_BASE_REQUIRED = "cruxible.kit.base_required"
+KIT_BASE_REQUIRED_REPAIR = (
+    "Leave the base kit installed; to stop using one of its definitions, retire that "
+    "definition in an authored change (cruxible authoring submit)."
+)
+
+
+def _holds_bundled_base(receipt: KitReceipt) -> bool:
+    """Whether a kit's receipt holds a definition exactly as the bundled base kit ships it.
+
+    What makes it the base kit for removal: the reserved ``web.`` and
+    ``workspace.`` definitions the bundled kit owns, at the bundled digest. That
+    survives an update that rewrites the receipt's source or version, and an
+    unrelated kit merely named base holds none of them.
+    """
+
+    from cruxible_core.kits.base_kit import bundled_base_kit
+
+    bundled = bundled_base_kit().manifest.digests()
+    return any(bundled.get(entry.path) == entry.release_digest for entry in receipt.artifacts)
+
+
+def bundled_base_reference(kit_id: str, content_digest: str) -> str | None:
+    """``base`` when a kit is exactly the base kit this core bundles, else None.
+
+    Decided by the kit's id and content digest, which the daemon holds, never
+    by the free-form source label a client recorded: a folder named
+    ``bundled`` is not the bundled kit, and ``kit add base`` adds only this one.
+    """
+
+    from cruxible_core.kits.base_kit import BASE_KIT_REFERENCE, bundled_base_kit
+
+    bundled = bundled_base_kit().manifest
+    if (kit_id, content_digest) == (bundled.kit_id, bundled.content_digest):
+        return BASE_KIT_REFERENCE
+    return None
+
+
+def _required_kit_reference(requirement: KitRequirement) -> str | None:
+    """``base`` when the bundled base kit is the required kit and meets the requirement."""
+
+    from cruxible_core.kits.base_kit import BASE_KIT_REFERENCE, bundled_base_kit
+
+    bundled = bundled_base_kit().manifest
+    if requirement.kit_id == bundled.kit_id and requirement.met_by(bundled.version):
+        return BASE_KIT_REFERENCE
+    return None
+
+
+def _add_required_kit(requirement: KitRequirement) -> RepairOperation:
+    """``kit add`` of a required kit: named only when the instance vouches for a reference.
+
+    That is the bundled base kit, when it meets the requirement. For any other
+    kit the requirement names an id and a minimum version, which identify no
+    release a registry is known to hold, so its reference or build path stays
+    the caller's to name.
+    """
+
+    reference = _required_kit_reference(requirement)
+    return RepairOperation(
+        operation="cruxible.kit.add", arguments={} if reference is None else {"kit": reference}
+    )
+
+
+def _pending_kit_proposal(instance: PlaybillInstance, requirement: KitRequirement) -> str | None:
+    """The open proposal whose approval installs a required kit, when one is recorded.
+
+    Only a recorded add of a release that meets the requirement counts:
+    approving an older release would land it and leave the dependent blocked.
+    Read only on the refusal path: that kit's one resume row by key, then one
+    indexed proposal lookup. An ordinary `kit add` that stopped at its
+    proposal keeps no such row and no index names an open proposal by kit, so
+    it is not looked for (that would be a scan of open proposals): the
+    refusal then gives the ordinary repair, adding the required kit.
+    """
+
+    from cruxible_core.service.kit_resume import proposed_kit_proposal
+    from cruxible_core.service.proposals.proposals import proposal_is_open
+
+    recorded = proposed_kit_proposal(instance, requirement.kit_id)
+    if recorded is None:
+        return None
+    version, proposal_id = recorded
+    if not requirement.met_by(version) or not proposal_is_open(instance, proposal_id):
+        return None
+    return proposal_id
+
+
+def _required_receipts(
+    instance: PlaybillInstance, manifest: KitManifest, receipts: tuple[KitReceipt, ...]
+) -> dict[str, KitReceipt]:
+    """Each kit the release requires, installed here at ``min_version`` or later.
+
+    Refuses ``cruxible.kit.requires_missing`` naming the first that is not, and
+    the repair that installs it: the approval of its own pending add (the base
+    kit of an instance under independent approval), else ``kit add`` of the
+    release that meets the requirement.
+    """
+
+    installed = {receipt.kit_id: receipt for receipt in receipts if receipt.artifacts}
+    for requirement in manifest.requires:
+        receipt = installed.get(requirement.kit_id)
+        version = None if receipt is None else receipt.version
+        if not requirement.met_by(version):
+            pending = _pending_kit_proposal(instance, requirement)
+            raise RequestRefusedError(
+                KIT_REQUIRES_MISSING,
+                requires_missing_message(
+                    manifest.kit_id,
+                    manifest.version,
+                    requirement,
+                    version,
+                    pending_proposal=pending,
+                    reference=_required_kit_reference(requirement),
+                ),
+                repair=(
+                    RepairOperation(
+                        operation="cruxible.proposal.approve",
+                        arguments={"proposal_id": pending},
+                    )
+                    if pending is not None
+                    else _add_required_kit(requirement)
+                ),
+            )
+    return {item.kit_id: installed[item.kit_id] for item in manifest.requires}
+
+
+def _left_out_pins(
+    connection: Any,
+    tree: Mapping[str, bytes],
+    manifest: KitManifest,
+    contents: Mapping[str, bytes],
+    required: Mapping[str, KitReceipt],
+) -> tuple[dict[str, bytes], dict[str, str]]:
+    """Every definition the release names but leaves out, resolved here.
+
+    A name under a prefix a required kit owns, which the release does not carry,
+    must resolve on this instance: an immutable version (Contract, Capability)
+    at its pinned digest, any other definition by name, live; a SubjectKind a
+    ``key<K>`` field names must also declare the key named. Refuses
+    ``cruxible.kit.requires_unresolved`` otherwise. Returns the definitions the
+    release's laws read (Contracts, Capabilities, SubjectKinds; path -> bytes)
+    and the moves of mutable pins to the digests held here.
+    One indexed lookup per name, never a scan of this instance's definitions.
+    """
+
+    owners = tuple((prefix, receipt) for receipt in required.values() for prefix in receipt.owns)
+    if not owners:
+        return {}, {}
+    states = {path: _artifact_state(path, content) for path, content in contents.items()}
+    carried = {state.identity for state in states.values()}
+    wanted: dict[str, list[tuple[ArtifactIdentity, str | None, KitReceipt]]] = {}
+    for path, state in sorted(states.items()):
+        for identity, digest in _named_definitions(path, state, json.loads(contents[path])):
+            if identity in carried or identity.name.startswith(manifest.owns):
+                continue
+            owner = next((r for p, r in owners if identity.name.startswith(p)), None)
+            if owner is not None:
+                wanted.setdefault(identity.qualified, []).append((identity, digest, owner))
+    if not wanted:
+        return {}, {}
+    paths = dict(
+        select_in(
+            connection,
+            "SELECT identity,path FROM artifact_lookup WHERE identity IN ({})",
+            sorted(wanted),
+        )
+    )
+    held: dict[str, bytes] = {}
+    moves: dict[str, str] = {}
+    for qualified, names in sorted(wanted.items()):
+        held_path = paths.get(qualified)
+        raw = None if held_path is None else tree.get(held_path)
+        here = None if held_path is None or raw is None else _artifact_state(held_path, raw)
+        for identity, digest, owner in names:
+            exact = identity.kind in _EXACT_KINDS
+            if (
+                here is None
+                or here.lifecycle.state != "live"
+                or (exact and digest is not None and here.artifact_digest != digest)
+            ):
+                raise RequestRefusedError(
+                    KIT_REQUIRES_UNRESOLVED,
+                    requires_unresolved_message(
+                        manifest.kit_id, manifest.version, owner.kit_id, qualified, exact=exact
+                    ),
+                    repair=RepairOperation(
+                        operation="cruxible.kit.add", arguments={"kit": owner.kit_id}
+                    ),
+                )
+            assert held_path is not None and raw is not None and here is not None
+            if held_path.startswith(_HELD_FAMILIES):
+                held[held_path] = raw
+            if not exact and digest is not None and digest != here.artifact_digest:
+                moves[digest] = here.artifact_digest
+    # A key type names one of the left-out kind's keys, as this instance holds it.
+    for path in sorted(contents):
+        if not path.startswith("contracts/"):
+            continue
+        for name, found in _contract_key_kinds(json.loads(contents[path])):
+            owner = next((r for p, r in owners if name.startswith(p)), None)
+            if owner is None or name.startswith(manifest.owns):
+                continue
+            problem = key_type_problem(found, held.get)
+            if problem is not None:
+                raise RequestRefusedError(
+                    KIT_REQUIRES_UNRESOLVED,
+                    f"{path}: {problem}. "
+                    + requires_unresolved_message(
+                        manifest.kit_id,
+                        manifest.version,
+                        owner.kit_id,
+                        f"SubjectKind:{name}",
+                        exact=False,
+                    ),
+                    repair=RepairOperation(
+                        operation="cruxible.kit.add", arguments={"kit": owner.kit_id}
+                    ),
+                )
+    return held, moves
+
+
+def _early_refusals(
+    tree: Mapping[str, bytes],
+    manifest: KitManifest,
+    contents: Mapping[str, bytes],
+    *,
+    downgrade: bool,
+    installed_version: str | None,
+    by_name: bool = False,
+) -> list[str]:
+    """Refusals the current state decides, checked before any provider installs.
+
+    A pinned built-in is either live here at exactly its digest or refused.
+    """
+
+    refused = _builtin_refusals(tree, contents, by_name=by_name)
+    if downgrade:
+        refused.append(
+            f"release {manifest.version} is older than installed {installed_version}; "
+            "pass allow_downgrade (--allow-downgrade) to install it"
+        )
+    return refused
+
+
+def _inspect_staged(
+    instance: PlaybillInstance, manifest: KitManifest, *, kit: str | None
+) -> dict[str, InspectedProviderPackage]:
+    """Each bundled package read from the body store and resolved for this host.
+
+    Metadata only, through the toolchain's readers: no provider code runs.
+    """
+
+    _require_staged(instance, manifest.provider_files(), "cruxible.kit.add", kit=kit)
+
+    def read(name: str) -> bytes:
+        return instance.body_store().read(
+            manifest.provider_files()[name], access=_PROVIDER_FILE_ACCESS
+        )
+
+    return {
+        provider.provider_id: inspect_provider_package(
+            wheel=(provider.wheel.filename, read(provider.wheel.filename)),
+            lock=read(provider.lock.filename),
+            dependencies=tuple(
+                (item.filename, read(item.filename)) for item in provider.dependencies
+            ),
+        )
+        for provider in manifest.providers
+        if provider.delivery == "bundled"
+    }
+
+
+def _install_providers(
+    instance: PlaybillInstance,
+    missing: list[KitProvider],
+    steps: list[KitProviderStep],
+    install: ProviderInstaller | None,
+) -> list[KitProviderStep]:
+    """Install each missing provider: a bundled one through the transfer install
+    path, an index default by name at its exact version."""
+
+    if install is None:
+        raise ConfigError("this daemon cannot install the kit's providers")
+    # The files were read from the body store already (_inspect_staged).
+    by_id = {step.provider_id: index for index, step in enumerate(steps)}
+    for provider in missing:
+        if provider.delivery == "index":
+            # Another build at the same name and version is refused before any of
+            # it is fetched past its listing, prepared, registered or proposed.
+            result = install(
+                ProviderInstallRequest(
+                    package=provider.package, version=provider.version, dry_run=False
+                ),
+                expected_build=ExpectedProviderBuild(
+                    wheel_sha256=provider.wheel.sha256, lock_sha256=provider.lock.sha256
+                ),
+            )
+        else:
+            result = install(
+                ProviderInstallRequest(
+                    wheel=ProviderWheelObject(
+                        filename=provider.wheel.filename, digest=provider.wheel.sha256
+                    ),
+                    lock_digest=provider.lock.sha256,
+                    dependencies=tuple(
+                        ProviderWheelObject(filename=item.filename, digest=item.sha256)
+                        for item in provider.dependencies
+                    ),
+                    dry_run=False,
+                )
+            )
+        index = by_id[provider.provider_id]
+        if result.registered:
+            update: dict[str, object] = {"action": "install", "detail": result.detail}
+        elif result.status == "awaiting_approval":
+            update = {"action": "awaiting_approval", "proposal_id": result.proposal_id}
+        else:
+            update = {
+                "action": "blocked",
+                "proposal_id": result.proposal_id,
+                "detail": result.detail or f"install {result.status}",
+            }
+        steps[index] = steps[index].model_copy(update=update)
+    return steps
+
+
+def _provider_remap(
+    tree: Mapping[str, bytes],
+    contents: Mapping[str, bytes],
+    manifest: KitManifest,
+    inspected: Mapping[str, InspectedProviderPackage] | None = None,
+) -> dict[str, str]:
+    """Release Provider pin digest -> the digest of the same build installed here.
+
+    A build's identity names its wheel and lock, so it is the same on every host;
+    its digest includes the environment the host materialized (platform,
+    machine, Python), so a release Procedure's pin keeps its identity and moves
+    to the digest held here.
+    """
+
+    held = {}
+    for provider in manifest.providers:
+        state, digest, _version = _provider_here(
+            tree, provider, None if inspected is None else inspected.get(provider.provider_id)
+        )
+        if state == "installed" and digest is not None:
+            held[provider.build] = digest
+    remap: dict[str, str] = {}
+    for path, content in contents.items():
+        for pin in _artifact_state(path, content).pins:
+            if (
+                isinstance(pin, ArtifactPin)
+                and pin.target.kind == "Provider"
+                and pin.target.name in held
+            ):
+                remap[pin.artifact_digest] = held[pin.target.name]
+    return remap
+
+
+def service_add_kit(
+    instance: PlaybillInstance,
+    request: KitAddRequest,
+    *,
+    actor_id: str,
+    timestamp: str,
+    install_provider: ProviderInstaller | None = None,
+    may_activate: bool = True,
+) -> KitChangeResult:
+    """Propose the diff that brings this instance to one kit release.
+
+    Derived across many artifacts, so it previews unless ``dry_run`` is false.
+    A kit first installs its missing bundled provider packages through
+    ``install_provider`` (each carries its own shapes, so nothing is accepted
+    before them); the definitions follow once they land. An index default is
+    not installed when live operations of providers here already serve every
+    slot's capability. A commit that
+    stops at ``awaiting_providers`` is recorded, and the activation that lands
+    the last awaited install proposes the definitions as this caller
+    (``kit_resume``); any other commit of the kit replaces that record.
+    """
+
+    from cruxible_core.service import kit_resume
+
+    with change_scope(
+        instance,
+        dry_run=request.dry_run,
+        at=request.at,
+        kind="derived",
+        operation="cruxible.kit.add",
+        describe=f"installing kit {request.bundle.manifest.kit_id}",
+    ) as mode:
+        result = _add_kit(
+            instance,
+            mode,
+            request,
+            actor_id=actor_id,
+            timestamp=timestamp,
+            install_provider=install_provider,
+            may_activate=may_activate,
+        )
+        previewing = mode.previewing
+    template = request.bundle.manifest.automation_template
+    if template is not None:
+        # Named, never installed: the adopter tailors and submits it (D-R48).
+        result = result.model_copy(update={"automation_template": template})
+    if previewing or kit_resume.resuming():
+        return result
+    if result.status == "awaiting_providers":
+        awaited = {
+            step.provider_id for step in result.providers if step.action == "awaiting_approval"
+        }
+        kit_resume.record_kit_resume(
+            instance,
+            request,
+            actor_id=actor_id,
+            waiting_on=(
+                provider
+                for provider in request.bundle.manifest.providers
+                if provider.provider_id in awaited
+            ),
+        )
+        return result.model_copy(
+            update={
+                "detail": (result.detail or "")
+                + "; the definitions are proposed automatically, as you, once these "
+                "installs activate (kit status shows the pending resume)"
+            }
+        )
+    kit_resume.forget_kit_resume(instance, result.kit_id)
+    return result
+
+
+def _add_kit(
+    instance: PlaybillInstance,
+    mode: ChangeMode,
+    request: KitAddRequest,
+    *,
+    actor_id: str,
+    timestamp: str,
+    install_provider: ProviderInstaller | None = None,
+    may_activate: bool = True,
+) -> KitChangeResult:
+    assert mode.head is not None
+    bundle = request.bundle
+    manifest = bundle.manifest
+    contents = _verify_bundle(bundle)
+    if mode.previewing:
+        # The adapters send Document bytes with previews instead of persisting
+        # them first. change_scope's dry-run body store holds these only in memory.
+        store = instance.body_store()
+        for body in bundle.document_bodies:
+            if store.store(body.content).digest != body.digest:
+                raise DataValidationError(
+                    f"kit Document body {body.digest} differs from its digest"
+                )
+    # Every governed Document's body is staged before anything is planned.
+    _require_document_bodies(
+        instance,
+        contents,
+        kit=bundled_base_reference(manifest.kit_id, manifest.content_digest),
+    )
+    tree = instance.immutable_tree_at(mode.head.git_oid)
+    found = _read_receipt(instance, tree, manifest.kit_id)
+    shell, receipt = (None, None) if found is None else found
+    installed_version = None if receipt is None or not receipt.artifacts else receipt.version
+    transition = _transition(installed_version, manifest.version)
+    if (
+        receipt is not None
+        and receipt.artifacts
+        and not any(
+            ours.startswith(theirs) or theirs.startswith(ours)
+            for ours in manifest.owns
+            for theirs in receipt.owns
+        )
+    ):
+        refusal = KitIdReusedRefusal(
+            owning_kit_id=receipt.kit_id,
+            our_prefixes=manifest.owns,
+            installed_prefixes=receipt.owns,
+            detail=f"kit id {manifest.kit_id} is installed with prefixes {receipt.owns}; "
+            f"release prefixes {manifest.owns} share no prefix with that kit",
+            repair=f"Remove the installed kit {receipt.kit_id} first (kit remove), then add "
+            "this release.",
+        )
+        return KitChangeResult(
+            kit_id=manifest.kit_id,
+            version=manifest.version,
+            status="would_block" if mode.previewing else "blocked",
+            transition=transition,
+            installed_version=installed_version,
+            provenance=manifest.provenance,
+            refusals=(refusal,),
+            detail=refusal.detail,
+            coordinate=mode.coordinate,
+        )
+    # Kit-add work only: indexed receipt documents and their recorded definitions,
+    # never the instance's Claims or Subjects. Reuse this inventory for both guards.
+    receipts = tuple(_receipts(instance, tree))
+    # The kits this release requires, then every pin it left out to their
+    # definitions: both before anything is installed or proposed.
+    required = _required_receipts(instance, manifest, receipts)
+    _refuse_lowering_below_dependents(
+        manifest.kit_id, manifest.version, (receipt for receipt in receipts if receipt.artifacts)
+    )
+    held: dict[str, bytes] = {}
+    left_out_moves: dict[str, str] = {}
+    if required:
+        with instance.bind_accepted_projection(mode.head) as projection:
+            held, left_out_moves = _left_out_pins(
+                projection.typed.connection, tree, manifest, contents, required
+            )
+    ownership = _ownership_conflicts(receipts, tree, manifest)
+    if ownership:
+        return KitChangeResult(
+            kit_id=manifest.kit_id,
+            version=manifest.version,
+            status="would_block" if mode.previewing else "blocked",
+            transition=transition,
+            installed_version=installed_version,
+            provenance=manifest.provenance,
+            refusals=tuple(ownership),
+            detail="; ".join(item.detail for item in ownership),
+            coordinate=mode.coordinate,
+        )
+    # A commit reads the staged provider files and resolves them for this host,
+    # so a bundled build counts as installed only with its whole dependency
+    # closure; a preview has no files and compares wheel and lock.
+    inspected = (
+        None
+        if mode.previewing or not manifest.providers
+        else _inspect_staged(
+            instance,
+            manifest,
+            kit=bundled_base_reference(manifest.kit_id, manifest.content_digest),
+        )
+    )
+    for provider in manifest.providers:
+        # The staged bytes must reproduce what the manifest says they are.
+        if (
+            inspected is not None
+            and provider.delivery == "bundled"
+            and inspected[provider.provider_id].provider != provider
+        ):
+            raise RequestRefusedError(
+                "cruxible.kit.provider_manifest_mismatch",
+                f"the staged files of bundled provider {provider.provider_id} do not "
+                "reproduce its manifest entry (provider id, package, version, files or "
+                "operations); rebuild the kit with kit build",
+                repair=RepairOperation(operation="cruxible.kit.build"),
+            )
+    with instance.bind_accepted_projection(mode.head) as projection:
+        steps, missing = _provider_steps(
+            projection.typed.connection, tree, manifest, inspected, contents=contents
+        )
+    described: dict[str, object] = {
+        "transition": transition,
+        "installed_version": installed_version,
+        "provenance": manifest.provenance,
+        "providers": tuple(steps),
+        # Each required kit is met here, or the add refused above.
+        "requires": tuple(
+            KitRequirementStatus(
+                kit_id=item.kit_id,
+                min_version=item.min_version,
+                installed_version=required[item.kit_id].version,
+                met=True,
+            )
+            for item in manifest.requires
+        ),
+    }
+    # The definitions pin what the bundled providers register, so they are
+    # proposed only once those are live. A preview cannot install, so it plans
+    # the definitions without evaluating them.
+    awaiting_install = bool(missing) and not any(step.action == "blocked" for step in steps)
+    if awaiting_install and not mode.previewing:
+        # Every refusal the current state already decides comes before any
+        # provider is prepared or installed.
+        early = _early_refusals(
+            tree,
+            manifest,
+            contents,
+            downgrade=transition == "downgrade" and not request.allow_downgrade,
+            installed_version=installed_version,
+            by_name=True,
+        )
+        # A definition another installed kit owns or holds, which the release
+        # would replace: the initial tree's diff decides it, with the same keep
+        # decisions and the remap of the bundled providers already installed.
+        initial, _owned_paths = _diff_release(
+            tree,
+            contents,
+            owns=manifest.owns,
+            installed={} if receipt is None else {item.path: item for item in receipt.artifacts},
+            kept={} if receipt is None else {item.path: item for item in receipt.kept},
+            keep=frozenset(request.keep),
+            keep_local_edits=request.keep_local_edits,
+            preset={**left_out_moves, **_provider_remap(tree, contents, manifest, inspected)},
+            held=held,
+        )
+        ownership = _foreign_takeovers(receipts, manifest, initial)
+        early.extend(item.detail for item in ownership)
+        if early:
+            return KitChangeResult(
+                kit_id=manifest.kit_id,
+                version=manifest.version,
+                status="blocked",
+                detail="; ".join(early),
+                refusals=tuple(ownership),
+                coordinate=mode.coordinate,
+                **described,  # type: ignore[arg-type]
+            )
+        steps = _install_providers(instance, missing, steps, install_provider)
+        described["providers"] = tuple(steps)
+        pending = [step for step in steps if step.action in {"awaiting_approval", "blocked"}]
+        if pending:
+            return KitChangeResult(
+                kit_id=manifest.kit_id,
+                version=manifest.version,
+                status="blocked"
+                if any(step.action == "blocked" for step in pending)
+                else "awaiting_providers",
+                # The installs await an approver, and so will the definitions.
+                approval_required=any(step.action == "awaiting_approval" for step in pending),
+                detail="the kit's definitions are proposed once its bundled providers are "
+                "installed: "
+                + "; ".join(
+                    f"{step.provider_id} {step.action.replace('_', ' ')}"
+                    + ("" if step.detail is None else f" ({step.detail})")
+                    for step in pending
+                ),
+                coordinate=mode.coordinate,
+                **described,  # type: ignore[arg-type]
+            )
+        # The installs moved the head; the definitions are pinned to the head
+        # they produced.
+        mode = ChangeMode(
+            instance,
+            previewing=False,
+            at=None if mode.at is None else instance.accepted_coordinate().git_oid,
+            kind="derived",
+            operation="cruxible.kit.add",
+            describe=f"installing kit {manifest.kit_id}",
+        )
+        assert mode.head is not None
+        tree = instance.immutable_tree_at(mode.head.git_oid)
+        awaiting_install = False
+        assert inspected is not None
+        satisfied = {
+            step.provider_id for step in steps if step.action in {"satisfied", "kept_retired"}
+        }
+        absent = [
+            provider.provider_id
+            for provider in manifest.providers
+            if provider.provider_id not in satisfied
+            and _provider_here(tree, provider, inspected.get(provider.provider_id))[0]
+            != "installed"
+        ]
+        if absent:
+            raise RequestRefusedError(
+                "cruxible.kit.provider_not_installed",
+                f"after installing, {', '.join(absent)} is not the live bundled build here; "
+                "the definitions that pin it are not proposed",
+                repair=RepairOperation(operation="cruxible.kit.status"),
+            )
+    assert mode.head is not None
+    blocked = _builtin_refusals(tree, contents, by_name=True)
+    blocked.extend(
+        f"{step.provider_id}: {step.detail}" for step in steps if step.action == "blocked"
+    )
+    if transition == "downgrade" and not request.allow_downgrade:
+        blocked.append(
+            f"release {manifest.version} is older than installed {installed_version}; "
+            "pass allow_downgrade (--allow-downgrade) to install it"
+        )
+    installed = {} if receipt is None else {item.path: item for item in receipt.artifacts}
+    kept = {} if receipt is None else {item.path: item for item in receipt.kept}
+    keep = frozenset(request.keep)
+    diff, owned = _diff_release(
+        tree,
+        contents,
+        owns=manifest.owns,
+        installed=installed,
+        kept=kept,
+        keep=keep,
+        keep_local_edits=request.keep_local_edits,
+        preset={**left_out_moves, **_provider_remap(tree, contents, manifest, inspected)},
+        held=held,
+    )
+    _refuse_retired_provider_dependents(contents, diff, steps)
+    retire_with = _settle_dropped(
+        tree,
+        installed,
+        owned,
+        diff,
+        keep=keep,
+        retire_dependents=frozenset(request.retire_dependents),
+        kept=kept,
+        by_name=True,
+    )
+    ownership = _foreign_takeovers(receipts, manifest, diff)
+    blocked.extend(item.detail for item in ownership)
+    # Each live Line on another build of a provider the kit ships moves to
+    # the kit's build in this same change; a satisfied index default installs no
+    # build, so nothing moves for it.
+    shipped = tuple(
+        provider
+        for provider, step in zip(manifest.providers, steps, strict=True)
+        if step.action != "satisfied"
+    )
+    assert mode.head is not None
+    with instance.bind_accepted_projection(mode.head) as projection:
+        connection = projection.typed.connection
+        movers = _kit_movers(connection, tree, shipped, diff.writes)
+        if awaiting_install:
+            # The kit's builds are not installed yet, so nothing can be moved or
+            # evaluated: the preview names what the change will move and stop.
+            repins = tuple(
+                ProviderRepinV1(
+                    identity=mover.identity.qualified,
+                    from_build=mover.from_build,
+                    to_build=mover.to_build,
+                    action="kept",
+                    reason="keep_build",
+                )
+                if mover.identity.qualified in request.keep_build
+                else ProviderRepinV1(
+                    identity=mover.identity.qualified,
+                    from_build=mover.from_build,
+                    to_build=mover.to_build,
+                    action="successor",
+                )
+                for mover in movers
+            )
+            changed_roots = tuple(
+                _artifact_state(path, tree[path]).identity for path in diff.writes if path in tree
+            )
+            stops: tuple[StoppedAutomationV1, ...]
+            try:
+                automation_carries, stops = _planned_automation(
+                    connection,
+                    tree,
+                    (
+                        *changed_roots,
+                        *(
+                            mover.identity
+                            for mover in movers
+                            if mover.identity.qualified not in request.keep_build
+                        ),
+                    ),
+                    diff.writes,
+                    retire_with,
+                    by_name=True,
+                )
+            except (ClaimTypeMigrationError, ValueError) as exc:
+                blocked.append(f"automation inventory incomplete: {exc}")
+                automation_carries = ()
+                stops = ()
+            writes: dict[str, bytes] = dict(diff.writes)
+        else:
+            moves = _kit_moves(tree, movers)
+            settled = _settle_dependents(
+                tree,
+                diff,
+                retire_with=retire_with,
+                connection=connection,
+                movers=movers,
+                moves=moves,
+                keep_build=frozenset(request.keep_build),
+                by_name=True,
+            )
+            blocked.extend(settled.refused)
+            blocked.extend(
+                f"{item.identity} cannot move to {item.to_build}: {item.reason}"
+                for item in settled.repins
+                if item.action == "refused"
+            )
+            writes = settled.writes if not settled.refused else dict(diff.writes)
+            repins = tuple(settled.repins)
+            stops = tuple(settled.stops)
+            automation_carries = tuple(settled.automation_carries)
+    described["repins"] = repins
+    described["stops"] = stops
+    described["automation_carries"] = automation_carries
+    plan = tuple(sorted(diff.plan, key=lambda item: item.path))
+    if blocked:
+        return KitChangeResult(
+            kit_id=manifest.kit_id,
+            version=manifest.version,
+            status="would_block" if mode.previewing else "blocked",
+            plan=plan,
+            detail="; ".join(blocked),
+            refusals=tuple(ownership),
+            coordinate=mode.coordinate,
+            **described,  # type: ignore[arg-type]
+        )
+
+    for artifact in manifest.artifacts:
+        if artifact.path in writes:
+            state = _artifact_state(artifact.path, writes[artifact.path])
+            diff.installed[artifact.artifact_digest] = state.artifact_digest
+            diff.content[artifact.path] = kit_content_digest(json.loads(writes[artifact.path]))
+
+    def entries(paths: set[str]) -> tuple[KitInstalledArtifact, ...]:
+        return tuple(
+            KitInstalledArtifact(
+                path=item.path,
+                release_digest=item.artifact_digest,
+                installed_digest=diff.installed[item.artifact_digest],
+                content_digest=diff.content[item.path],
+            )
+            for item in manifest.artifacts
+            if item.path in paths
+        )
+
+    # A definition the release dropped but this instance kept stays the kit's:
+    # its installation record carries forward, so status, removal, ownership
+    # and the next install's decisions (keep it, or retire it and its
+    # dependents) still see it.
+    retained = tuple(
+        installed[item.path]
+        for item in sorted(diff.kept, key=lambda item: item.path)
+        if item.consequence == "release_dropped" and item.path in installed
+    )
+    receipt_body = KitReceipt(
+        kit_id=manifest.kit_id,
+        version=manifest.version,
+        content_digest=manifest.content_digest,
+        owns=manifest.owns,
+        artifacts=entries(owned) + retained,
+        carried=entries(set(contents) - owned),
+        source=request.source,
+        kept=tuple(sorted(diff.kept, key=lambda item: item.path)),
+        provenance=manifest.provenance,
+        providers=manifest.providers,
+        requires=manifest.requires,
+    )
+    if awaiting_install:
+        return KitChangeResult(
+            kit_id=manifest.kit_id,
+            version=manifest.version,
+            status="would_propose",
+            # Nothing is evaluated before the installs, so the instance's
+            # approval policy answers whether they and the definitions wait.
+            approval_required=_policy_requires_approval(tree),
+            plan=plan,
+            detail=KIT_PREVIEW_AWAITING_INSTALL,
+            coordinate=mode.coordinate,
+            **described,  # type: ignore[arg-type]
+        )
+    if not writes and receipt is not None and receipt == receipt_body:
+        return KitChangeResult(
+            kit_id=manifest.kit_id,
+            version=manifest.version,
+            status="unchanged",
+            plan=plan,
+            coordinate=mode.coordinate,
+            **described,  # type: ignore[arg-type]
+        )
+    return _submit(
+        instance,
+        mode,
+        kit_id=manifest.kit_id,
+        version=manifest.version,
+        receipt=receipt_body,
+        previous_receipt=shell,
+        writes=writes,
+        plan=plan,
+        actor_id=actor_id,
+        timestamp=timestamp,
+        may_activate=may_activate,
+        **described,  # type: ignore[arg-type]
+    )
+
+
+def service_remove_kit(
+    instance: PlaybillInstance,
+    request: KitRemoveRequest,
+    *,
+    actor_id: str,
+    timestamp: str,
+    may_activate: bool = True,
+) -> KitChangeResult:
+    """Propose retiring mutable definitions a kit owns; Contracts and carried ones stay.
+
+    Derived across many artifacts, so it previews unless ``dry_run`` is false.
+    """
+
+    with change_scope(
+        instance,
+        dry_run=request.dry_run,
+        at=request.at,
+        kind="derived",
+        operation="cruxible.kit.remove",
+        describe=f"removing kit {request.kit_id}",
+    ) as mode:
+        return _remove_kit(
+            instance,
+            mode,
+            request,
+            actor_id=actor_id,
+            timestamp=timestamp,
+            may_activate=may_activate,
+        )
+
+
+def _remove_kit(
+    instance: PlaybillInstance,
+    mode: ChangeMode,
+    request: KitRemoveRequest,
+    *,
+    actor_id: str,
+    timestamp: str,
+    may_activate: bool = True,
+) -> KitChangeResult:
+    assert mode.head is not None
+    tree = instance.immutable_tree_at(mode.head.git_oid)
+    found = _read_receipt(instance, tree, request.kit_id)
+    if found is None or not found[1].artifacts:
+        installed = sorted(
+            receipt.kit_id for receipt in _receipts(instance, tree) if receipt.artifacts
+        )
+        named = ", ".join(installed) if installed else "none"
+        raise RequestRefusedError(
+            "cruxible.kit.not_installed",
+            f"kit {request.kit_id!r} is not installed; installed: {named}",
+            repair=RepairOperation(operation="cruxible.kit.status"),
+        )
+    shell, receipt = found
+    # Kit-remove work only: the receipts of the installed kits (O(installed kits)).
+    dependents = sorted(
+        other.kit_id
+        for other in _receipts(instance, tree)
+        if other.artifacts
+        and other.kit_id != request.kit_id
+        and any(item.kit_id == request.kit_id for item in other.requires)
+    )
+    if dependents:
+        raise RequestRefusedError(
+            KIT_REMOVE_REQUIRED,
+            remove_required_message(request.kit_id, dependents),
+            repair=RepairOperation(
+                operation="cruxible.kit.remove", arguments={"kit_id": dependents[0]}
+            ),
+        )
+    if request.kit_id == BASE_KIT_ID and _holds_bundled_base(receipt):
+        # Its retired definitions could never come back: a retired kind is never
+        # revived, so a later `kit add base` would refuse.
+        raise RequestRefusedError(
+            KIT_BASE_REQUIRED,
+            "the base kit stays installed: it holds the capabilities and Contracts that "
+            "workspace reads and web fetches name, and a definition it retired could not "
+            f"be added back. {KIT_BASE_REQUIRED_REPAIR}",
+            repair=HandEditRepair(
+                hand_edit=HandEditInstruction(
+                    target="kit:base", required_change=KIT_BASE_REQUIRED_REPAIR
+                )
+            ),
+        )
+    diff = _Diff()
+    edited = []
+    back = _tree_back_remap((*receipt.artifacts, *receipt.carried), tree)
+    for entry in receipt.artifacts:
+        current = tree.get(entry.path)
+        if current is None:
+            continue
+        state = _artifact_state(entry.path, current)
+        if state.lifecycle.state != "live":
+            continue
+        if state.artifact_kind in ("contract", "capability", "document"):
+            diff.plan.append(
+                KitPathPlan(
+                    path=entry.path,
+                    action="keep",
+                    identity=state.identity.qualified,
+                    detail=_DOCUMENT_KEPT
+                    if state.artifact_kind == "document"
+                    else "Capability versions are immutable and remain accepted"
+                    if state.artifact_kind == "capability"
+                    else "Contract versions are immutable and remain accepted",
+                )
+            )
+            continue
+        if state.artifact_kind == "claim-type" and _pair_endpoint(tree, entry.path, current):
+            diff.plan.append(
+                KitPathPlan(
+                    path=entry.path,
+                    action="keep",
+                    identity=state.identity.qualified,
+                    detail=_PAIR_ENDPOINT_KEPT,
+                )
+            )
+            continue
+        if not kit_content_matches(
+            entry.path, json.loads(current), _installed_content(entry, tree), back
+        ):
+            edited.append(entry.path)
+            continue
+        diff.plan.append(
+            KitPathPlan(path=entry.path, action="retire", identity=state.identity.qualified)
+        )
+        diff.writes[entry.path] = _retirement(entry.path, current, by_name=True)
+    plan = tuple(sorted(diff.plan, key=lambda item: item.path))
+    if edited:
+        return KitChangeResult(
+            kit_id=request.kit_id,
+            version=receipt.version,
+            status="would_block" if mode.previewing else "blocked",
+            plan=plan,
+            detail="edited kit paths must be reverted or retired by their own change first: "
+            + ", ".join(edited),
+            coordinate=mode.coordinate,
+        )
+    result = _submit(
+        instance,
+        mode,
+        kit_id=request.kit_id,
+        version=receipt.version,
+        receipt=receipt.model_copy(
+            update={"artifacts": (), "carried": (), "kept": (), "providers": (), "requires": ()}
+        ),
+        previous_receipt=shell,
+        writes=diff.writes,
+        plan=plan,
+        actor_id=actor_id,
+        timestamp=timestamp,
+        removal=True,
+        may_activate=may_activate,
+    )
+    if result.status == "would_propose" and result.detail is None:
+        retires = any(item.action == "retire" for item in plan)
+        result = result.model_copy(
+            update={"detail": KIT_REMOVAL_ONE_WAY if retires else KIT_REMOVAL_RETIRES_NOTHING}
+        )
+    return result
+
+
+#: What a removal preview says before it is committed (morning-rulings-1116 (8)):
+#: a retired definition is never revived in this release.
+KIT_REMOVAL_ONE_WAY = (
+    "one-way: the definitions this removal retires cannot be added back in this release"
+)
+#: A removal that retires nothing (every path kept, a Documents-only kit).
+#: A member retired earlier by ordinary authoring still blocks a re-add, so this
+#: promises nothing about adding the kit again.
+KIT_REMOVAL_RETIRES_NOTHING = "retires nothing"
+
+
+#: Why a kit removal keeps a pair kind's endpoint ClaimType (R13): a Subject-valued
+#: key part of a pair kind is never retired while the kind exists, retired or not.
+_PAIR_ENDPOINT_KEPT = "a pair kind's endpoints are frozen for life and remain accepted"
+
+
+def _pair_endpoint(tree: Mapping[str, bytes], path: str, content: bytes) -> bool:
+    """Whether this ClaimType is a Subject-valued key part of a kind it may be about.
+
+    A key ClaimType is about its kind only, so its allowed kinds are the only
+    kinds it can key: one read each.
+    """
+
+    from cruxible_client.contracts.shapes import claim_value_kind
+    from cruxible_client.contracts.subject_kinds import parse_subject_kind, subject_kind_path
+
+    claim_type = parse_claim_type(content, path=path)
+    if claim_value_kind(claim_type.value) != "subject":
+        return False
+    for kind in claim_type.allowed_subject_kinds:
+        declared = tree.get(subject_kind_path(kind))
+        if (
+            declared is not None
+            and claim_type.predicate
+            in parse_subject_kind(declared, path=subject_kind_path(kind)).keys
+        ):
+            return True
+    return False
+
+
+_RECEIPT_PATH_PREFIX = "documents/kit-"
+
+
+def _changed_receipts(
+    instance: PlaybillInstance, paths: Iterable[str], tree: Mapping[str, bytes]
+) -> dict[str, KitReceipt]:
+    """The kit receipts among a change's member ``paths``, as ``tree`` holds them."""
+
+    found: dict[str, KitReceipt] = {}
+    for path in paths:
+        if not (path.startswith(_RECEIPT_PATH_PREFIX) and path.endswith(".json")):
+            continue
+        raw = tree.get(path)
+        if raw is None:
+            continue
+        kit_id = path.removeprefix(_RECEIPT_PATH_PREFIX).removesuffix(".json")
+        held = _receipt_at(instance, path, raw, kit_id)
+        if held is not None:
+            found[kit_id] = held[1]
+    return found
+
+
+def _refuse_lowering_below_dependents(
+    kit_id: str, version: str, installed: Iterable[KitReceipt]
+) -> None:
+    """Installing ``kit_id`` at ``version`` leaves every installed kit that requires it
+    met: a version below one's ``min_version`` refuses ``cruxible.kit.requires_missing``
+    from that dependent's side. An upgrade never refuses here.
+    """
+
+    for other in sorted(installed, key=lambda receipt: receipt.kit_id):
+        if other.kit_id == kit_id:
+            continue
+        for requirement in other.requires:
+            if requirement.kit_id == kit_id and not requirement.met_by(version):
+                raise RequestRefusedError(
+                    KIT_REQUIRES_MISSING,
+                    requires_lowered_message(
+                        kit_id, version, other.kit_id, other.version, requirement
+                    ),
+                    repair=RepairOperation(
+                        operation="cruxible.kit.remove", arguments={"kit_id": other.kit_id}
+                    ),
+                )
+
+
+def _refuse_unmet_requires(
+    after: Mapping[str, KitReceipt], changed: Mapping[str, KitReceipt]
+) -> None:
+    """A kit change lands only where every kit it installs still has what it requires,
+    where it removes no kit an installed kit requires, and where it lowers no kit
+    below the version an installed kit requires.
+
+    ``after``: every receipt once the change lands (kit id -> receipt); ``changed``:
+    the receipts the change writes.
+    """
+
+    installed = {kit_id: receipt for kit_id, receipt in after.items() if receipt.artifacts}
+    for kit_id, receipt in sorted(changed.items()):
+        if not receipt.artifacts:
+            dependents = sorted(
+                other.kit_id
+                for other in installed.values()
+                if any(item.kit_id == kit_id for item in other.requires)
+            )
+            if dependents:
+                raise RequestRefusedError(
+                    KIT_REMOVE_REQUIRED,
+                    remove_required_message(kit_id, dependents),
+                    repair=RepairOperation(
+                        operation="cruxible.kit.remove", arguments={"kit_id": dependents[0]}
+                    ),
+                )
+            continue
+        _refuse_lowering_below_dependents(kit_id, receipt.version, installed.values())
+        for requirement in receipt.requires:
+            held = installed.get(requirement.kit_id)
+            version = None if held is None else held.version
+            if not requirement.met_by(version):
+                raise RequestRefusedError(
+                    KIT_REQUIRES_MISSING,
+                    requires_missing_message(
+                        kit_id,
+                        receipt.version,
+                        requirement,
+                        version,
+                        reference=_required_kit_reference(requirement),
+                    ),
+                    repair=_add_required_kit(requirement),
+                )
+
+
+def refuse_unmet_kit_requires(
+    instance: PlaybillInstance, member_paths: Iterable[str], candidate_tree: Mapping[str, bytes]
+) -> None:
+    """Before a kit change is accepted: recheck its requirements in the tree it lands as.
+
+    ``candidate_tree`` is the accepted base with the change applied. Only a change
+    that writes a kit receipt is checked, against the installed-kit receipts the
+    candidate holds (O(installed kits)); no definition is read.
+    """
+
+    changed = _changed_receipts(instance, member_paths, candidate_tree)
+    if changed:
+        after = {receipt.kit_id: receipt for receipt in _receipts(instance, candidate_tree)}
+        _refuse_unmet_requires(after, changed)
+
+
+def refuse_unmet_kit_requires_at(
+    instance: PlaybillInstance,
+    member_paths: Iterable[str],
+    proposal_tree: Callable[[], Mapping[str, bytes]],
+    head_tree: Mapping[str, bytes],
+) -> None:
+    """Before a moved kit change is recompiled at the head: the same recheck, with
+    the change's receipts (read from ``proposal_tree``) over the head's receipts."""
+
+    paths = [path for path in member_paths if path.startswith(_RECEIPT_PATH_PREFIX)]
+    if not paths:
+        return
+    changed = _changed_receipts(instance, paths, proposal_tree())
+    if changed:
+        after = {receipt.kit_id: receipt for receipt in _receipts(instance, head_tree)}
+        _refuse_unmet_requires({**after, **changed}, changed)
+
+
+def service_kit_status(instance: PlaybillInstance) -> KitStatus:
+    """Installed kits with the paths edited since install (by content, lineage apart)."""
+
+    coordinate = instance.accepted_coordinate()
+    tree = instance.immutable_tree_at(coordinate.git_oid)
+    kits = []
+    receipts = tuple(receipt for receipt in _receipts(instance, tree) if receipt.artifacts)
+    versions = {receipt.kit_id: receipt.version for receipt in receipts}
+    with instance.bind_accepted_projection(coordinate) as projection:
+        connection = projection.typed.connection
+        for receipt in receipts:
+            kits.append(_bundled_comparison(_installed_kit(connection, tree, receipt, versions)))
+    from cruxible_core.service.kit_resume import kit_resume_statuses
+
+    return KitStatus(
+        kits=tuple(kits), resumes=_pending_resumes(instance, kit_resume_statuses(instance))
+    )
+
+
+def _pending_resumes(
+    instance: PlaybillInstance, resumes: tuple[KitResumeStatus, ...]
+) -> tuple[KitResumeStatus, ...]:
+    """Each resume row still pending: a proposed row only while its proposal is open
+    or awaits readmission.
+
+    A proposed row whose proposal closed (accepted, rejected or withdrawn) has
+    nothing left to say: the kit is installed, removed or never landed, which the
+    installed kits answer. One whose proposal awaits readmission stays, marked, so
+    the add is re-run (morning-rulings-1116 (9)). One indexed proposal lookup per
+    proposed row (at most one row per kit).
+    """
+
+    from cruxible_core.service.kit_resume import recorded_content_digest
+    from cruxible_core.service.proposals.proposals import proposal_inventory_status
+
+    pending = []
+    for resume in resumes:
+        if resume.state != "proposed":
+            pending.append(resume)
+            continue
+        status = (
+            None
+            if resume.proposal_id is None
+            else proposal_inventory_status(instance, resume.proposal_id)
+        )
+        if status == "open":
+            pending.append(resume.model_copy(update={"proposal_open": True}))
+        elif status == "awaiting_readmit":
+            # Its repair names `base` only for the bundled base kit, told by its
+            # content digest: one body read, for the base kit's row only.
+            digest = (
+                recorded_content_digest(instance, resume.kit_id)
+                if resume.kit_id == BASE_KIT_ID
+                else None
+            )
+            pending.append(
+                resume.model_copy(
+                    update={"proposal_awaiting_readmit": True, "content_digest": digest}
+                )
+            )
+    return tuple(pending)
+
+
+def _bundled_comparison(kit: InstalledKit) -> InstalledKit:
+    """The installed base kit against the one this core bundles: a local comparison."""
+
+    from cruxible_core.kits.base_kit import BASE_KIT_PIN
+
+    if kit.kit_id != BASE_KIT_PIN.kit_id:
+        return kit
+    return kit.model_copy(
+        update={
+            "latest_available": BASE_KIT_PIN.version,
+            "latest_content_digest": BASE_KIT_PIN.content_digest,
+            "update_check": "checked",
+        }
+    )
+
+
+def _installed_kit(
+    connection: Any, tree: Mapping[str, bytes], receipt: KitReceipt, versions: Mapping[str, str]
+) -> InstalledKit:
+    """One installed kit's status: drifted paths, each provider build here, and
+    each kit it requires (``versions``: installed kit id -> version)."""
+
+    back = _tree_back_remap((*receipt.artifacts, *receipt.carried), tree)
+    drifted = tuple(
+        entry.path
+        for entry in receipt.artifacts
+        if entry.path not in tree
+        or not kit_content_matches(
+            entry.path, json.loads(tree[entry.path]), _installed_content(entry, tree), back
+        )
+    )
+    providers = []
+    held = {
+        entry.path: tree[entry.path]
+        for entry in (*receipt.artifacts, *receipt.carried)
+        if entry.path in tree
+    }
+    for provider in receipt.providers:
+        state, _digest, version = _provider_here(tree, provider)
+        others = [
+            row
+            for row in tree_provider_builds(tree, provider.provider_id)
+            if row.live and row.identity != f"Provider:{provider.build}"
+        ]
+        if state != "installed" and _default_implementers(connection, tree, provider, held):
+            shown: Literal["installed", "differs", "satisfied", "missing"] = "satisfied"
+        elif state in {"missing", "retired"} and others:
+            # The kit's build is not live, another build of it is.
+            shown, version = "differs", max(row.version or "" for row in others) or None
+        else:
+            shown = "missing" if state == "retired" else state
+        providers.append(
+            KitProviderStatus(
+                provider_id=provider.provider_id,
+                package=provider.package,
+                version=provider.version,
+                wheel_sha256=provider.wheel.sha256,
+                delivery=provider.delivery,
+                state=shown,
+                installed_version=version if shown in {"installed", "differs"} else None,
+            )
+        )
+    return InstalledKit(
+        kit_id=receipt.kit_id,
+        version=receipt.version,
+        content_digest=receipt.content_digest,
+        source=receipt.source,
+        requires=tuple(
+            KitRequirementStatus(
+                kit_id=item.kit_id,
+                min_version=item.min_version,
+                installed_version=versions.get(item.kit_id),
+                met=item.met_by(versions.get(item.kit_id)),
+            )
+            for item in receipt.requires
+        ),
+        drifted=drifted,
+        provenance=receipt.provenance,
+        kept=receipt.kept,
+        providers=tuple(providers),
+    )

@@ -1,0 +1,536 @@
+"""Procedure graph static analysis and domain-separated Merkle digests."""
+
+from __future__ import annotations
+
+import re
+from collections.abc import Mapping
+from dataclasses import dataclass
+from types import MappingProxyType
+from typing import Iterator
+
+from pydantic import BaseModel
+
+from cruxible_client.contracts.canonical import ArtifactDigest, typed_digest
+from cruxible_client.contracts.content_memo import sealed_memo
+from cruxible_client.contracts.errors import FormatError
+from cruxible_client.contracts.procedures.models import (
+    TERMINAL_REQUIRED_RUNGS,
+    CallNode,
+    CaptureEgressNode,
+    ClaimsNode,
+    GuardNode,
+    InboxEgressNode,
+    InvokeNode,
+    LayoutExtractNode,
+    ProcedureDefinition,
+    ProcedureNode,
+    ProjectNode,
+    ReadNode,
+    RepeatNode,
+    SelectNode,
+    TransformNode,
+    is_terminal_node,
+    predicate_step_aliases,
+)
+
+_ALIAS_RE = re.compile(r"^[a-z][a-z0-9_]{0,127}$")
+
+
+class ProcedureGraphFormatError(FormatError):
+    """A Procedure definition fails a static law."""
+
+
+@dataclass(frozen=True)
+class ProcedureGraph:
+    node_ids: tuple[str, ...]
+    kinds: dict[str, str]
+    edges: dict[str, dict[str, str]]
+    successors: dict[str, tuple[str, ...]]
+    predecessors: dict[str, tuple[str, ...]]
+    available_aliases: dict[str, frozenset[str]]
+    """Aliases produced on every path reaching each node (MUST)."""
+    reachable_aliases: dict[str, frozenset[str]]
+    """Aliases produced on at least one path reaching each node (MAY)."""
+    produced_alias: dict[str, str | None]
+
+
+@dataclass(frozen=True)
+class ProcedureNodeDigests:
+    node_id: str
+    kind: str
+    local_digest: str
+    subtree_digest: str
+
+
+def _declared_edges(node: ProcedureNode) -> dict[str, str]:
+    if isinstance(node, GuardNode):
+        edges: dict[str, str] = {"on_false": node.on_false}
+        if node.on_true is not None:
+            edges["on_true"] = node.on_true
+        return edges
+    target = getattr(node, "next", None)
+    return {} if target is None else {"next": str(target)}
+
+
+def _node_alias(node: ProcedureNode) -> str | None:
+    value = getattr(node, "as_", None)
+    return value if isinstance(value, str) else None
+
+
+def _canonical_edges(edges: dict[str, str]) -> dict[str, str]:
+    return {key: edges[key] for key in sorted(edges, key=lambda item: item.encode("utf-8"))}
+
+
+def _successors(edges: dict[str, str]) -> tuple[str, ...]:
+    return tuple(target for target in edges.values() if target != "$abort")
+
+
+def _reference_templates(
+    node: ProcedureNode,
+) -> Iterator[tuple[str, object]]:
+    """Yield only fields whose values the runtime resolves as references."""
+
+    if isinstance(node, CaptureEgressNode):
+        yield "result", node.result
+    if isinstance(node, ClaimsNode):
+        yield "for_each", node.for_each
+        yield "expect", node.expect
+        yield "subject", node.subject
+        yield "claims", node.claims
+        from cruxible_client.contracts.procedures.claims import rationale_references
+
+        yield (
+            "rationale",
+            tuple(
+                ref for mapping in node.claims for ref in rationale_references(mapping.rationale)
+            ),
+        )
+        yield "where", node.where
+    if isinstance(node, ReadNode):
+        if node.reads_claims:
+            yield "subject_id", node.subject_id
+        else:
+            yield "parameters", node.parameters
+    elif isinstance(node, CallNode | InvokeNode):
+        yield "input", node.input
+        if isinstance(node, InvokeNode) and node.parameters:
+            yield "parameters", node.parameters
+    elif isinstance(node, LayoutExtractNode):
+        yield "capture", node.capture
+        if node.only_keys is not None:
+            yield "only_keys", node.only_keys
+    elif isinstance(node, TransformNode):
+        yield "spec", node.spec
+    elif isinstance(node, ProjectNode):
+        if node.fields is not None:
+            yield "fields", node.fields
+    elif isinstance(node, RepeatNode):
+        return
+    elif isinstance(node, CaptureEgressNode):
+        yield "input", node.input
+    elif isinstance(node, InboxEgressNode):
+        if node.for_each is not None:
+            yield "for_each", node.for_each
+        yield "fields", node.fields
+
+
+def reference_templates(node: ProcedureNode) -> Iterator[tuple[str, object]]:
+    """``(field, template)`` for each node field the runtime resolves as references."""
+
+    return _reference_templates(node)
+
+
+def _step_alias_references(value: object, *, location: str) -> Iterator[str]:
+    """Extract structured ``$steps.<alias>`` references from canonical values."""
+
+    if isinstance(value, str):
+        if value == "$steps" or value.startswith("$steps."):
+            if not value.startswith("$steps."):
+                raise ProcedureGraphFormatError(
+                    f"{location} contains malformed step reference {value!r}"
+                )
+            remainder = value[len("$steps.") :]
+            alias = remainder.split(".", 1)[0]
+            if not _ALIAS_RE.fullmatch(alias):
+                raise ProcedureGraphFormatError(
+                    f"{location} contains malformed step reference {value!r}"
+                )
+            yield alias
+        return
+    if isinstance(value, BaseModel):
+        for field_name in value.__class__.model_fields:
+            if field_name == "tag":
+                continue
+            yield from _step_alias_references(
+                getattr(value, field_name),
+                location=location,
+            )
+        return
+    if isinstance(value, dict):
+        for item in value.values():
+            yield from _step_alias_references(item, location=location)
+        return
+    if isinstance(value, tuple | list):
+        for item in value:
+            yield from _step_alias_references(item, location=location)
+
+
+def _alias_dataflow(
+    definition: ProcedureDefinition,
+    *,
+    node_ids: tuple[str, ...],
+    predecessors: dict[str, tuple[str, ...]],
+) -> tuple[
+    dict[str, str | None],
+    dict[str, frozenset[str]],
+    dict[str, frozenset[str]],
+]:
+    """Compute distinct MUST-availability and MAY-reachability sets."""
+
+    produced = {node.node_id: _node_alias(node) for node in definition.nodes}
+    available: dict[str, frozenset[str]] = {}
+    reachable: dict[str, frozenset[str]] = {}
+
+    def after(node_id: str, aliases: frozenset[str]) -> frozenset[str]:
+        alias = produced[node_id]
+        return aliases if alias is None else aliases | frozenset({alias})
+
+    for position, node_id in enumerate(node_ids):
+        preds = predecessors[node_id]
+        if position == 0 or not preds:
+            available[node_id] = frozenset()
+            reachable[node_id] = frozenset()
+            continue
+        must_contributions = [after(pred, available[pred]) for pred in preds]
+        available[node_id] = frozenset.intersection(*must_contributions)
+        reachable[node_id] = frozenset().union(*[after(pred, reachable[pred]) for pred in preds])
+    return produced, available, reachable
+
+
+def _validate_node_references(
+    node: ProcedureNode,
+    *,
+    available: frozenset[str],
+) -> None:
+    if isinstance(node, ClaimsNode):
+        for predicate in (node.where, *(mapping.when for mapping in node.claims)):
+            if predicate is not None and set(predicate_step_aliases(predicate)) - available:
+                raise ProcedureGraphFormatError("Claims predicate reads an unavailable alias")
+    if isinstance(node, GuardNode):
+        missing = set(predicate_step_aliases(node.predicate)) - available
+        if missing:
+            raise ProcedureGraphFormatError(
+                f"R15: guard {node.node_id!r} references aliases not produced on every "
+                f"path reaching it: {sorted(missing)}"
+            )
+
+    for field_name, template in _reference_templates(node):
+        location = f"Procedure node {node.node_id!r} field {field_name!r}"
+        missing = set(_step_alias_references(template, location=location)) - available
+        if missing:
+            raise ProcedureGraphFormatError(
+                f"R15: {location} references aliases not produced on every path "
+                f"reaching it: {sorted(missing)}"
+            )
+
+    if not isinstance(node, RepeatNode):
+        return
+    body_available = set(available)
+    for body in node.body:
+        location = f"Procedure repeat {node.node_id!r} body {body.node_id!r} field 'spec'"
+        missing = set(_step_alias_references(body.spec, location=location)) - body_available
+        if missing:
+            raise ProcedureGraphFormatError(
+                f"R15: {location} references unavailable aliases: {sorted(missing)}"
+            )
+        body_available.add(body.as_)
+    body_aliases = {body.as_ for body in node.body}
+    missing = set(predicate_step_aliases(node.until)) - body_aliases
+    if missing:
+        raise ProcedureGraphFormatError(
+            f"repeat {node.node_id!r} predicate references aliases outside its body: "
+            f"{sorted(missing)}"
+        )
+
+
+def procedure_guard_halt_targets(definition: ProcedureDefinition) -> frozenset[str]:
+    """Halts excluded from ordinary implicit fallthrough in the compact wire."""
+    kinds = {node.node_id: node.kind for node in definition.nodes}
+    return frozenset(
+        target
+        for node in definition.nodes
+        if isinstance(node, GuardNode)
+        for target in (node.on_true, node.on_false)
+        if target is not None and target != "$abort" and kinds.get(target) == "halt"
+    )
+
+
+def analyze_procedure(definition: ProcedureDefinition) -> ProcedureGraph:
+    """Enforce the shared forward-only, reachable graph law."""
+
+    node_ids = tuple(node.node_id for node in definition.nodes)
+    position = {node_id: index for index, node_id in enumerate(node_ids)}
+    kinds: dict[str, str] = {node.node_id: node.kind for node in definition.nodes}
+    edges: dict[str, dict[str, str]] = {}
+    guard_halt_targets = procedure_guard_halt_targets(definition)
+
+    for index, node in enumerate(definition.nodes):
+        declared = _declared_edges(node)
+        fallthrough = node_ids[index + 1] if index + 1 < len(node_ids) else None
+        if isinstance(node, GuardNode) and "on_true" not in declared:
+            if fallthrough is None:
+                raise ProcedureGraphFormatError(
+                    f"Procedure guard {node.node_id!r} with omitted on_true must name a "
+                    "forward true target or have its intended successor placed after the guard"
+                )
+            declared["on_true"] = fallthrough
+        elif (
+            not is_terminal_node(node)
+            and not isinstance(node, GuardNode)
+            and "next" not in declared
+            and fallthrough
+            and fallthrough not in guard_halt_targets
+        ):
+            declared["next"] = fallthrough
+        if is_terminal_node(node) and declared:
+            raise ProcedureGraphFormatError(
+                f"R5: terminal Procedure node {node.node_id!r} cannot have successors"
+            )
+        required_rung = TERMINAL_REQUIRED_RUNGS.get(node.kind)
+        if required_rung is not None and required_rung > definition.terminal_capability:
+            raise ProcedureGraphFormatError(
+                f"Procedure terminal {node.node_id!r} kind {node.kind!r} requires rung "
+                f"{required_rung}, above declared terminal_capability "
+                f"{definition.terminal_capability}"
+            )
+        for label, target in declared.items():
+            if target == "$abort":
+                continue
+            if target not in position:
+                raise ProcedureGraphFormatError(
+                    f"R1: node {node.node_id!r} {label} names unknown target {target!r}"
+                )
+            if position[target] <= index:
+                raise ProcedureGraphFormatError(
+                    f"R2: node {node.node_id!r} {label} must target a later node"
+                )
+        edges[node.node_id] = _canonical_edges(declared)
+
+    reachable: set[str] = set()
+    pending = [node_ids[0]]
+    while pending:
+        current = pending.pop()
+        if current in reachable:
+            continue
+        reachable.add(current)
+        pending.extend(target for target in edges[current].values() if target != "$abort")
+    missing_nodes = tuple(node_id for node_id in node_ids if node_id not in reachable)
+    if missing_nodes:
+        raise ProcedureGraphFormatError(f"R3: unreachable Procedure nodes: {missing_nodes}")
+
+    successors = {node_id: _successors(edges[node_id]) for node_id in node_ids}
+    predecessor_lists: dict[str, list[str]] = {node_id: [] for node_id in node_ids}
+    for node_id, targets in successors.items():
+        for target in targets:
+            predecessor_lists[target].append(node_id)
+    predecessors = {node_id: tuple(values) for node_id, values in predecessor_lists.items()}
+    produced, available, reachable_aliases = _alias_dataflow(
+        definition,
+        node_ids=node_ids,
+        predecessors=predecessors,
+    )
+
+    # A select may read branch-local aliases only if EVERY path produces
+    # exactly one of them. Min/max counts over the DAG prove this in O(V + E)
+    # per join, without enumerating exponentially many paths.
+    for node in definition.nodes:
+        if not isinstance(node, SelectNode):
+            continue
+        if not set(node.sources).issubset(reachable_aliases[node.node_id]):
+            raise ProcedureGraphFormatError("select names a producer outside its incoming paths")
+        counts: dict[str, tuple[int, int]] = {}
+        for candidate in definition.nodes:
+            before = [counts[pred] for pred in predecessors[candidate.node_id]] or [(0, 0)]
+            low, high = min(v[0] for v in before), max(v[1] for v in before)
+            if candidate.node_id == node.node_id:
+                if (low, high) != (1, 1):
+                    raise ProcedureGraphFormatError(
+                        "select requires exactly one producer on every incoming path"
+                    )
+                break
+            produced_here = int(_node_alias(candidate) in node.sources)
+            counts[candidate.node_id] = (low + produced_here, high + produced_here)
+
+    alias_nodes = {_node_alias(node): node for node in definition.nodes if _node_alias(node)}
+    # A read may name any output available to it (D-R38): one fed only by
+    # input, params, literals and other admission reads binds at admission;
+    # one fed by runtime output is a late read (``late_state_taps``).
+    for node in definition.nodes:
+        _validate_node_references(node, available=available[node.node_id])
+
+    for node in definition.nodes:
+        if not isinstance(node, LayoutExtractNode):
+            continue
+        reader = alias_nodes.get(node.capture_alias)
+        if not isinstance(reader, CallNode) or node.capture_field not in reader.captures:
+            raise ProcedureGraphFormatError(
+                f"extract {node.node_id!r} reads {node.capture!r}, which names no capture "
+                "field of an acquiring call"
+            )
+
+    for node in definition.nodes:
+        if edges[node.node_id]:
+            continue
+        leaf_alias = _node_alias(node)
+        if not is_terminal_node(node) and leaf_alias != definition.returns:
+            raise ProcedureGraphFormatError(
+                f"Procedure leaf {node.node_id!r} neither halts, emits typed egress, nor "
+                f"returns the declared output alias {definition.returns!r}"
+            )
+
+    return ProcedureGraph(
+        node_ids=node_ids,
+        kinds=kinds,
+        edges=edges,
+        successors=successors,
+        predecessors=predecessors,
+        available_aliases=available,
+        reachable_aliases=reachable_aliases,
+        produced_alias=produced,
+    )
+
+
+def _read_aliases(node: ReadNode) -> frozenset[str]:
+    """The step aliases one read's selection (its parameters or Subject) names."""
+
+    return frozenset(
+        alias
+        for location, template in _reference_templates(node)
+        for alias in _step_alias_references(
+            template, location=f"Procedure node {node.node_id!r} field {location!r}"
+        )
+    )
+
+
+@sealed_memo
+def late_state_taps(definition: ProcedureDefinition) -> frozenset[str]:
+    """The aliases of the reads that run mid-run, in dataflow order (D-R38).
+
+    A read whose selection names only invocation input, params, literals and
+    other admission reads is an admission read: it binds before node one and is
+    part of the run's admission identity, exactly as before. A read whose
+    selection names any other output (a call's, a derive's, an extract's, a
+    computed value's, or a late read's) is late: it runs when its inputs are
+    ready, at the run's pinned accepted coordinate, and its result enters the
+    run's result digest instead of its admission.
+    """
+
+    admission: set[str] = set()
+    late: set[str] = set()
+    for node in definition.nodes:
+        if isinstance(node, ProjectNode) and node.literal is not None:
+            admission.add(node.as_)
+        if not isinstance(node, ReadNode):
+            continue
+        if _read_aliases(node) <= admission:
+            admission.add(node.as_)
+        else:
+            late.add(node.as_)
+    return frozenset(late)
+
+
+@sealed_memo
+def _procedure_edge_targets(definition: ProcedureDefinition) -> Mapping[tuple[str, str], str]:
+    graph = analyze_procedure(definition)
+    return MappingProxyType(
+        {
+            (node, label): target
+            for node, edges in graph.edges.items()
+            for label, target in edges.items()
+        }
+    )
+
+
+def procedure_edge_target(definition: ProcedureDefinition, node_id: str, label: str) -> str | None:
+    """One effective edge; immutable accepted definitions build the index once."""
+    return _procedure_edge_targets(definition).get((node_id, label))
+
+
+def _node_local_payload(node: ProcedureNode) -> dict[str, object]:
+    from cruxible_client.contracts.procedures.wire_v3 import compact_procedure
+
+    payload = compact_procedure(node)
+    payload.pop("id")
+    payload.pop("next", None)
+    payload.pop("on_true", None)
+    payload.pop("on_false", None)
+    return {"kind": node.kind, "spec": payload}
+
+
+def compute_procedure_node_digests(
+    definition: ProcedureDefinition,
+) -> dict[str, ProcedureNodeDigests]:
+    """Every node's local and subtree digests, keyed by node id (a fresh dict per call)."""
+
+    return dict(_procedure_node_digests(definition))
+
+
+@sealed_memo
+def _procedure_node_digests(
+    definition: ProcedureDefinition,
+) -> tuple[tuple[str, ProcedureNodeDigests], ...]:
+    graph = analyze_procedure(definition)
+    nodes = {node.node_id: node for node in definition.nodes}
+    result: dict[str, ProcedureNodeDigests] = {}
+    for node_id in reversed(graph.node_ids):
+        node = nodes[node_id]
+        local = typed_digest(
+            ArtifactDigest,
+            "cruxible-procedure-node-local-v11",
+            _node_local_payload(node),
+        ).tagged
+        successor_digests = {
+            label: (target if target == "$abort" else result[target].subtree_digest)
+            for label, target in graph.edges[node_id].items()
+        }
+        subtree = typed_digest(
+            ArtifactDigest,
+            "cruxible-procedure-node-subtree-v11",
+            {"local_digest": local, "successors": successor_digests},
+        ).tagged
+        result[node_id] = ProcedureNodeDigests(
+            node_id=node_id,
+            kind=node.kind,
+            local_digest=local,
+            subtree_digest=subtree,
+        )
+    return tuple(result.items())
+
+
+@sealed_memo
+def compute_procedure_definition_digest(definition: ProcedureDefinition) -> ArtifactDigest:
+    from cruxible_client.contracts.procedures.wire_v3 import compact_procedure
+
+    node_digests = dict(_procedure_node_digests(definition))
+    payload = compact_procedure(definition)
+    payload.pop("nodes")
+    return typed_digest(
+        ArtifactDigest,
+        "cruxible-procedure-definition-v11",
+        {
+            "definition": payload,
+            "entry_node_id": definition.nodes[0].node_id,
+            "entry_subtree_digest": node_digests[definition.nodes[0].node_id].subtree_digest,
+        },
+    )
+
+
+__all__ = [
+    "ProcedureGraph",
+    "ProcedureGraphFormatError",
+    "ProcedureNodeDigests",
+    "analyze_procedure",
+    "compute_procedure_definition_digest",
+    "compute_procedure_node_digests",
+    "late_state_taps",
+]

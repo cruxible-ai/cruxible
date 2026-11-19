@@ -1,0 +1,110 @@
+"""Regenerate the frozen authoring wire-model inventory and digest."""
+
+from __future__ import annotations
+
+import ast
+import hashlib
+import re
+import sys
+from pathlib import Path
+from typing import Any, cast
+
+from pydantic import BaseModel
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT))
+
+from tests.support.authoring_wire_catalog import (  # noqa: E402
+    AUTHORING_WIRE_CATALOG_VERSION,
+    discovered_authoring_wire_model_names,
+)
+from tests.support.claim_attestation_wire_catalog import (  # noqa: E402
+    claim_attestation_wire_contract_catalog_digest,
+)
+
+from cruxible_client.contracts.authoring import models  # noqa: E402
+from cruxible_client.contracts.primitives import canonical_json  # noqa: E402
+
+CATALOG_MODULE = REPO_ROOT / "tests/support/authoring_wire_catalog.py"
+CROSS_CHECK_TEST = REPO_ROOT / "tests/test_client/test_claim_attestation_contract_catalog.py"
+CLAIM_ATTESTATION_CATALOG_MODULE = REPO_ROOT / "tests/support/claim_attestation_wire_catalog.py"
+
+
+def _catalog_digest(model_names: tuple[str, ...]) -> str:
+    schemas: dict[str, Any] = {}
+    for name in model_names:
+        model = cast(type[BaseModel], getattr(models, name))
+        model.model_rebuild()
+        schemas[name] = model.model_json_schema(ref_template="#/$defs/{model}")
+    payload = {
+        "catalog_version": AUTHORING_WIRE_CATALOG_VERSION,
+        "module": models.__name__,
+        "models": schemas,
+    }
+    content = canonical_json(payload).encode("utf-8")
+    return "sha256:" + hashlib.sha256(content).hexdigest()
+
+
+def _assignment_lines(tree: ast.Module, name: str) -> tuple[int, int]:
+    for node in tree.body:
+        if (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and node.targets[0].id == name
+            and node.end_lineno is not None
+        ):
+            return node.lineno - 1, node.end_lineno
+    raise SystemExit(f"could not locate {name} in {CATALOG_MODULE.relative_to(REPO_ROOT)}")
+
+
+def main() -> None:
+    model_names = discovered_authoring_wire_model_names()
+    digest = _catalog_digest(model_names)
+    source = CATALOG_MODULE.read_text(encoding="utf-8")
+    tree = ast.parse(source, filename=str(CATALOG_MODULE))
+    lines = source.splitlines(keepends=True)
+    replacements = {
+        "AUTHORING_WIRE_CONTRACT_CATALOG_DIGEST": (
+            f'AUTHORING_WIRE_CONTRACT_CATALOG_DIGEST = (\n    "{digest}"\n)\n'
+        ),
+        "AUTHORING_WIRE_MODEL_NAMES": (
+            "AUTHORING_WIRE_MODEL_NAMES = (\n"
+            + "".join(f'    "{name}",\n' for name in model_names)
+            + ")\n"
+        ),
+    }
+    spans = [(_assignment_lines(tree, name), rendered) for name, rendered in replacements.items()]
+    for (start, end), rendered in sorted(spans, reverse=True):
+        lines[start:end] = [rendered]
+    CATALOG_MODULE.write_text("".join(lines), encoding="utf-8")
+    cross_check = CROSS_CHECK_TEST.read_text(encoding="utf-8")
+    cross_check, replacement_count = re.subn(
+        r'(?<=AUTHORING_WIRE_CONTRACT_CATALOG_DIGEST == \(\n        ")sha256:[0-9a-f]{64}',
+        digest,
+        cross_check,
+        count=1,
+    )
+    if replacement_count != 1:
+        raise SystemExit(f"could not update authoring digest in {CROSS_CHECK_TEST}")
+    CROSS_CHECK_TEST.write_text(cross_check, encoding="utf-8")
+    claim_attestation_digest = claim_attestation_wire_contract_catalog_digest()
+    claim_catalog = CLAIM_ATTESTATION_CATALOG_MODULE.read_text(encoding="utf-8")
+    claim_catalog, replacement_count = re.subn(
+        r'(?<=CLAIM_ATTESTATION_WIRE_CONTRACT_CATALOG_DIGEST = \(\n    ")sha256:[0-9a-f]{64}',
+        claim_attestation_digest,
+        claim_catalog,
+        count=1,
+    )
+    if replacement_count != 1:
+        raise SystemExit(
+            f"could not update Claim-attestation digest in {CLAIM_ATTESTATION_CATALOG_MODULE}"
+        )
+    CLAIM_ATTESTATION_CATALOG_MODULE.write_text(claim_catalog, encoding="utf-8")
+    print(f"Wrote {CATALOG_MODULE.relative_to(REPO_ROOT)}")
+    print(f"Wrote {CLAIM_ATTESTATION_CATALOG_MODULE.relative_to(REPO_ROOT)}")
+    print(f"Updated {CROSS_CHECK_TEST.relative_to(REPO_ROOT)}")
+
+
+if __name__ == "__main__":
+    main()

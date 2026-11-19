@@ -1,0 +1,251 @@
+"""Where each artifact family holds another artifact's digest, field by field.
+
+Moving a definition moves the digests that name it. Rewriting every string that
+equals an old digest would also rewrite literal data that merely holds one (a
+schema constant, a claimed value), so re-pinning reads and writes only the
+fields listed here. A family absent from the table has no automatic re-pinning.
+"""
+
+from __future__ import annotations
+
+import json
+from collections.abc import Iterator, Mapping
+from typing import Any
+
+from cruxible_client.contracts.capabilities import Capability
+from cruxible_client.contracts.repairs import HandEditInstruction, HandEditRepair
+from cruxible_client.contracts.shapes import Contract, all_field_refs
+from cruxible_core.errors import RequestRefusedError
+
+
+def immutable_contract_error(path: str) -> RequestRefusedError:
+    """A Contract version cannot acquire new bytes, pins or lifecycle."""
+
+    return RequestRefusedError(
+        "cruxible.contract.immutable",
+        f"{path} is immutable; author the next Contract version instead.",
+        repair=HandEditRepair(
+            hand_edit=HandEditInstruction(
+                target=path,
+                required_change="Preserve this version and author the next Contract version.",
+            )
+        ),
+    )
+
+
+def immutable_capability_error(path: str) -> RequestRefusedError:
+    """A capability version cannot acquire new bytes or pins."""
+
+    return RequestRefusedError(
+        "cruxible.capability.immutable",
+        f"{path} is immutable; author the next capability version instead.",
+        repair=HandEditRepair(
+            hand_edit=HandEditInstruction(
+                target=path,
+                required_change="Preserve this version and author the next capability version.",
+            )
+        ),
+    )
+
+
+_PIN = ("*", "artifact_digest")
+# A Claim's capture-contract pins are provenance -- the exact contract versions its
+# evidence used -- so a Claim's references skip them and they never move.
+_REQUIRED_CLAIM_PIN = ("*!role=capture-contract", "artifact_digest")
+
+# Paths are field names, with "*" stepping into each list element. For the
+# definition families every digest field is a reference; for Claims and
+# Documents only the fields naming other artifacts are, never content digests.
+REFERENCE_FIELDS: dict[str, tuple[tuple[str, ...], ...]] = {
+    "capture-contracts/": (
+        ("components", "pins", *_PIN),
+        ("components", "coordinate_schema_pins", *_PIN),
+        ("components", "selector_schema_pins", *_PIN),
+        ("components", "commitment_canonicalizer", "artifact_digest"),
+        (
+            "components",
+            "replay_policy_digest",
+        ),
+        (
+            "components",
+            "provenance_rule_digest",
+        ),
+        (
+            "components",
+            "source_subject_mapping_digest",
+        ),
+        ("pins", *_PIN),
+        ("coordinate_schema_pins", *_PIN),
+        ("selector_schema_pins", *_PIN),
+        ("commitment_canonicalizer", "artifact_digest"),
+        ("retention_erasure_policy", "erasure_rule_digest"),
+        ("replay_policy_digest",),
+        ("provenance_rule_digest",),
+        ("source_subject_mapping_digest",),
+    ),
+    "claim-types/": (
+        ("pins", *_PIN),
+        # Evidence rules name contracts by identity and need no re-pinning.
+        ("admission_policy", "corroboration_requirements", "*", "query_definition_digest"),
+    ),
+    # A Query names the ClaimTypes it reads by predicate and holds no digest.
+    "query-definitions/": (),
+    "claims/": (
+        ("statement", "claim_type_digest"),
+        ("pins", *_REQUIRED_CLAIM_PIN),
+        ("backing", "input_claim_digests", "*"),
+        ("backing", "reducer_digest"),
+    ),
+    "documents/": (("pins", "*", "target_digest"),),
+    # A Procedure names every dependency by identity and holds no digest. It
+    # names no provider build either: a Line binds builds, and ``provider
+    # move`` moves Lines.
+    "procedures/": (),
+    # A SubjectKind holds no digest: it names its key ClaimTypes by predicate.
+    "subject-kinds/": (),
+}
+
+
+# Where a definition names another governed definition by identity. These never
+# move -- an identity follows every version -- but whoever carries the naming
+# definition must carry what it names.
+IDENTITY_REFERENCE_FIELDS: dict[str, tuple[tuple[str, ...], ...]] = {
+    "claim-types/": (("evidence_admission_policy", "rules", "*", "capture_contracts", "*"),),
+}
+
+
+def referenced_identities(path: str, payload: Mapping[str, Any]) -> Iterator[tuple[str, str]]:
+    """The (kind, name) identities ``payload`` names by reference, never by digest."""
+
+    for prefix, fields in IDENTITY_REFERENCE_FIELDS.items():
+        if not path.startswith(prefix):
+            continue
+        for steps in fields:
+            yield from _identities_at(payload, steps)
+    if path.startswith("subject-kinds/"):
+        # A keyed SubjectKind names each key part's ClaimType by predicate.
+        rule = payload.get("identity_rule")
+        parts = rule.get("parts") if isinstance(rule, dict) else None
+        for part in parts if isinstance(parts, list) else ():
+            predicate = part.get("claim_type") if isinstance(part, dict) else None
+            if isinstance(predicate, str):
+                yield "ClaimType", predicate
+
+
+def _identities_at(value: object, steps: tuple[str, ...]) -> Iterator[tuple[str, str]]:
+    if not steps:
+        target = value.get("target") if isinstance(value, dict) else None
+        if isinstance(target, dict) and isinstance(target.get("kind"), str):
+            name = target.get("name")
+            if isinstance(name, str):
+                yield target["kind"], name
+        return
+    head, rest = steps[0], steps[1:]
+    if head == "*":
+        for item in value if isinstance(value, list) else ():
+            yield from _identities_at(item, rest)
+    elif isinstance(value, dict) and head in value:
+        yield from _identities_at(value[head], rest)
+
+
+def reference_fields(path: str) -> tuple[tuple[str, ...], ...] | None:
+    """This path's reference fields, or None when its family has no table entry."""
+
+    for prefix, fields in REFERENCE_FIELDS.items():
+        if path.startswith(prefix):
+            return fields
+    return None
+
+
+def _at(value: object, steps: tuple[str, ...], remap: Mapping[str, str] | None) -> Iterator[str]:
+    """Yield the digest at ``steps``; with ``remap``, rewrite it in place too."""
+
+    if not steps:
+        return
+    head, rest = steps[0], steps[1:]
+    if head.startswith("*!"):
+        # "*!field=value": every list element except those whose field equals value.
+        field, _, excluded = head[2:].partition("=")
+        if isinstance(value, list):
+            for item in value:
+                if not (isinstance(item, dict) and item.get(field) == excluded):
+                    yield from _at(item, rest, remap)
+        return
+    if head == "*":
+        if isinstance(value, list):
+            for index, item in enumerate(value):
+                if not rest and isinstance(item, str):
+                    yield item
+                    if remap is not None:
+                        value[index] = remap.get(item, item)
+                else:
+                    yield from _at(item, rest, remap)
+        return
+    if not isinstance(value, dict) or head not in value:
+        return
+    item = value[head]
+    if not rest:
+        if isinstance(item, str):
+            yield item
+            if remap is not None:
+                value[head] = remap.get(item, item)
+        return
+    yield from _at(item, rest, remap)
+
+
+def movable_references(path: str) -> bool:
+    """Whether ``move_references`` can re-pin an artifact at ``path``.
+
+    Contracts and capabilities support validation only: a remap changing a
+    commitment refuses.
+    """
+
+    return path.startswith(("contracts/", "capabilities/")) or reference_fields(path) is not None
+
+
+def referenced_digests(path: str, payload: Mapping[str, Any]) -> Iterator[str]:
+    if path.startswith("contracts/"):
+        contract = Contract.model_validate(payload)
+        for ref in all_field_refs(contract):
+            if ref.digest is not None:
+                yield ref.digest
+        # Historical commitment, needed for closure but never freely re-pinned.
+        if contract.predecessor_digest is not None:
+            yield contract.predecessor_digest
+        return
+    if path.startswith("capabilities/"):
+        # Its two exact Contract pins and its predecessor: commitments, never re-pinned.
+        capability = Capability.model_validate(payload)
+        for ref in capability.contract_refs():
+            if ref.digest is not None:
+                yield ref.digest
+        if capability.predecessor_digest is not None:
+            yield capability.predecessor_digest
+        return
+    for steps in reference_fields(path) or ():
+        yield from _at(payload, steps, None)
+
+
+def move_references(
+    path: str,
+    payload: Mapping[str, Any],
+    remap: Mapping[str, str],
+) -> dict[str, Any]:
+    """A copy of ``payload`` with its reference fields moved through ``remap``."""
+
+    if path.startswith("contracts/"):
+        if any(remap.get(digest, digest) != digest for digest in referenced_digests(path, payload)):
+            raise immutable_contract_error(path)
+        return Contract.model_validate(payload).model_dump(mode="json")
+    if path.startswith("capabilities/"):
+        if any(remap.get(digest, digest) != digest for digest in referenced_digests(path, payload)):
+            raise immutable_capability_error(path)
+        return Capability.model_validate(payload).model_dump(mode="json")
+    fields = reference_fields(path)
+    if fields is None:
+        raise ValueError(f"{path} has no reference table; it cannot be re-pinned automatically")
+    moved: dict[str, Any] = json.loads(json.dumps(payload))
+    for steps in fields:
+        for _ in _at(moved, steps, remap):
+            pass
+    return moved

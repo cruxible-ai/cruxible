@@ -1,0 +1,16 @@
+{
+  "citation_role": "evidence",
+  "kind": "claim",
+  "object": {
+    "kind": "literal",
+    "value": "ready"
+  },
+  "predicate": "project.work_item.status",
+  "rationale": "The release checklist for wi-103 is complete and it is ready to start.",
+  "role": "observation",
+  "source": {
+    "kind": "working_selection",
+    "source_id": "notes.scratch.md"
+  },
+  "subject": "project.work_item/wi-103"
+}

@@ -6,13 +6,14 @@ Usage:
 
 The publish workflow refuses to build unless the core package version, the
 ``cruxible-client`` package version, the core dependency pin on that client,
-the packaged kit manifest version, and the manifest's release ``base_url`` all
-name the same version. Those checks used to live only in the workflow, so the
-first thing that could see a mismatch was a pushed tag: 0.3.1 tagged with the
-client still at 0.3.0 and the publish failed at the gate. This script is the
-single implementation, invoked by both the workflow (with ``--tag``) and
-``scripts/ci_parity.sh`` (without one, since a local tree has no release tag),
-so a lockstep break fails on the workstation instead of at the tag.
+both packages' ``__version__`` and the MCP registry listing (``server.json``)
+all name the same version. Those
+checks used to live only in the workflow, so the first thing that could see a
+mismatch was a pushed tag: 0.3.1 tagged with the client still at 0.3.0 and the
+publish failed at the gate. This script is the single implementation, invoked by
+both the workflow (with ``--tag``) and ``scripts/ci_parity.sh`` (without one,
+since a local tree has no release tag), so a lockstep break fails on the
+workstation instead of at the tag.
 
 Stdlib only on purpose: the release workflow's verify-versions job runs it on a
 bare checkout with no dependency install.
@@ -21,6 +22,7 @@ bare checkout with no dependency install.
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import sys
 import tomllib
@@ -30,7 +32,11 @@ from typing import Any
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _CORE_PYPROJECT = _REPO_ROOT / "pyproject.toml"
 _CLIENT_PYPROJECT = _REPO_ROOT / "packages" / "cruxible-client" / "pyproject.toml"
-_MANIFEST_PATH = _REPO_ROOT / "src" / "cruxible_core" / "kit_distribution" / "manifest.json"
+_SERVER_JSON = _REPO_ROOT / "server.json"
+_CORE_INIT = _REPO_ROOT / "src" / "cruxible_core" / "__init__.py"
+_CLIENT_INIT = (
+    _REPO_ROOT / "packages" / "cruxible-client" / "src" / "cruxible_client" / "__init__.py"
+)
 
 
 def _project_table(path: Path) -> dict[str, Any]:
@@ -51,21 +57,55 @@ def _version(project: dict[str, Any], path: Path) -> str:
     return version
 
 
-def _manifest(path: Path) -> dict[str, Any]:
+def _module_version(path: Path) -> str | None:
+    """The literal ``__version__`` a package's ``__init__`` assigns, read without importing it."""
     try:
-        manifest = json.loads(path.read_text(encoding="utf-8"))
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    except (OSError, SyntaxError) as exc:
+        raise ValueError(f"could not read {path}: {exc}") from exc
+    for node in tree.body:
+        if (
+            isinstance(node, ast.Assign)
+            and any(isinstance(t, ast.Name) and t.id == "__version__" for t in node.targets)
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str)
+        ):
+            return node.value.value
+    return None
+
+
+def _server_listing_failures(path: Path, core_version: str) -> list[str]:
+    """The registry listing must launch the ``cruxible`` release being published."""
+    try:
+        listing = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        raise ValueError(f"could not read manifest {path}: {exc}") from exc
-    if not isinstance(manifest, dict):
-        raise ValueError(f"manifest {path} must contain a JSON object")
-    return manifest
+        raise ValueError(f"could not read {path}: {exc}") from exc
+    failures: list[str] = []
+    if listing.get("version") != core_version:
+        failures.append(f"{path.name} version {listing.get('version')} != cruxible {core_version}")
+    packages = [
+        package
+        for package in listing.get("packages") or ()
+        if isinstance(package, dict) and package.get("registryType") == "pypi"
+    ]
+    if [package.get("identifier") for package in packages] != ["cruxible"]:
+        failures.append(f"{path.name} must list exactly one PyPI package, cruxible")
+    for package in packages:
+        if package.get("version") != core_version:
+            failures.append(
+                f"{path.name} package {package.get('identifier')} version "
+                f"{package.get('version')} != cruxible {core_version}"
+            )
+    return failures
 
 
 def check_version_lockstep(
     *,
     core_pyproject: Path = _CORE_PYPROJECT,
     client_pyproject: Path = _CLIENT_PYPROJECT,
-    manifest_path: Path = _MANIFEST_PATH,
+    server_json: Path = _SERVER_JSON,
+    core_init: Path = _CORE_INIT,
+    client_init: Path = _CLIENT_INIT,
     tag: str | None = None,
 ) -> list[str]:
     """Return every lockstep violation, empty when the tree is releasable.
@@ -99,17 +139,15 @@ def check_version_lockstep(
             found = ", ".join(actual) if actual else "no cruxible-client dependency at all"
             failures.append(f"Missing exact dependency pin: {expected_pin} (found: {found})")
 
-    manifest = _manifest(manifest_path)
-    manifest_version = manifest.get("version")
-    base_url = manifest.get("base_url")
-    if manifest_version != core_version:
-        failures.append(f"Kit manifest version {manifest_version!r} does not match {core_version}")
-    expected_segment = f"/releases/download/v{core_version}/"
-    if not isinstance(base_url, str) or expected_segment not in base_url:
-        failures.append(
-            f"Kit manifest base_url {base_url!r} does not point at v{core_version} "
-            f"(expected to contain {expected_segment!r})"
-        )
+    for name, init, version in (
+        ("cruxible_core", core_init, core_version),
+        ("cruxible_client", client_init, client_version),
+    ):
+        declared = _module_version(init)
+        if declared != version:
+            failures.append(f"{name}.__version__ {declared} != package version {version}")
+
+    failures.extend(_server_listing_failures(server_json, core_version))
 
     # Only the release workflow knows the tag; locally there is none to check.
     if tag is not None and tag != f"v{core_version}":
@@ -122,7 +160,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--core-pyproject", type=Path, default=_CORE_PYPROJECT)
     parser.add_argument("--client-pyproject", type=Path, default=_CLIENT_PYPROJECT)
-    parser.add_argument("--manifest-path", type=Path, default=_MANIFEST_PATH)
+    parser.add_argument("--server-json", type=Path, default=_SERVER_JSON)
+    parser.add_argument("--core-init", type=Path, default=_CORE_INIT)
+    parser.add_argument("--client-init", type=Path, default=_CLIENT_INIT)
     parser.add_argument(
         "--tag",
         default=None,
@@ -134,7 +174,9 @@ def main(argv: list[str] | None = None) -> int:
         failures = check_version_lockstep(
             core_pyproject=args.core_pyproject,
             client_pyproject=args.client_pyproject,
-            manifest_path=args.manifest_path,
+            server_json=args.server_json,
+            core_init=args.core_init,
+            client_init=args.client_init,
             tag=args.tag,
         )
     except ValueError as exc:
@@ -147,7 +189,10 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     core_version = _version(_project_table(args.core_pyproject), args.core_pyproject)
-    print(f"version lockstep ok: core, client, dependency pin and kit manifest all {core_version}")
+    print(
+        "version lockstep ok: core, client, dependency pin, __version__ and server.json "
+        f"all {core_version}"
+    )
     return 0
 
 

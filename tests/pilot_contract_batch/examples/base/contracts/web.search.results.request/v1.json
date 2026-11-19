@@ -1,0 +1,14 @@
+{
+  "artifact_format": "cruxible-contract-v1",
+  "description": "One search response, as web.search returned it.",
+  "fields": {
+    "response": {
+      "type": {
+        "capture_kind": "*",
+        "kind": "capture"
+      }
+    }
+  },
+  "name": "web.search.results.request",
+  "version": 1
+}

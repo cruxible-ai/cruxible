@@ -1,0 +1,984 @@
+"""The three read verbs share one answer for what they all show.
+
+``orient``, ``query`` and ``get`` each show a ClaimType's accepted evidence as
+CaptureContract names, and each shows verdict problems as flags. Both come from
+one shared derivation, so on the same state the verbs agree.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from cruxible_client.contracts.compact_query import QueryRequest, QueryResultRecord
+from cruxible_client.contracts.get_reads import (
+    GetClaimCard,
+    GetRequest,
+    GetResult,
+    GetSubjectCard,
+)
+from cruxible_client.contracts.orient import ORIENT_KIND_FIELDS
+from cruxible_client.contracts.query.definitions import (
+    QueryDefinitionSpec,
+)
+from cruxible_core.service.discovery.compact_query import service_playbill_query
+from cruxible_core.service.discovery.get import service_playbill_get
+from cruxible_core.service.discovery.orient import service_playbill_orient
+from cruxible_core.storage.cas import BodyAccessContext
+from tests.core_support._bounded_content_support import VALUE_KIND, seed_bounded_content
+from tests.core_support._knowledge_loop_support import (
+    EVALUATION_TIME,
+    PREDICATE,
+    SUBJECT_KIND,
+    seed_claims,
+    work_item_query,
+)
+from tests.core_support._subject_kind_support import without_keys
+from tests.support.oid_prefixes import too_short_prefix
+
+_WHEN = datetime.fromisoformat(EVALUATION_TIME)
+_ACCESS = BodyAccessContext(principal_id="reader", can_read_body=True)
+
+
+@pytest.fixture
+def instance(tmp_path: Path) -> Any:
+    seeded, _owner = seed_claims(tmp_path)
+    return seeded
+
+
+def test_every_verb_names_the_same_capture_contracts(instance: Any) -> None:
+    query_row = service_playbill_query(
+        instance,
+        request=QueryRequest.model_validate(
+            {"kind": "ClaimType", "where": [{"field": "namespace", "eq": SUBJECT_KIND}]}
+        ),
+    ).rows
+    # The kind's key ClaimType (its slug) sits beside the one under test.
+    (query_row,) = [row for row in query_row if not str(row.get("predicate", "")).endswith(".slug")]
+    # The default map names fields only; orient(kind=...) carries the descriptors.
+    orient_kind = service_playbill_orient(instance, kind=SUBJECT_KIND).kind_detail
+    assert orient_kind is not None
+    orient_evidence = (
+        next(item.evidence for item in orient_kind.predicates if item.predicate == PREDICATE)
+        or orient_kind.evidence
+    )
+    card = service_playbill_get(
+        instance,
+        request=GetRequest(ref=f"ClaimType:{PREDICATE}", evaluation_time=_WHEN),
+        access=_ACCESS,
+    ).card
+    assert card is not None
+
+    assert query_row["evidence"]
+    assert tuple(query_row["evidence"]) == orient_evidence
+    assert card.model_dump()["evidence"] == tuple(
+        f"CaptureContract:{name}" for name in orient_evidence
+    )
+    assert not any(name.startswith("sha256:") for name in orient_evidence)
+
+
+def test_query_rows_and_get_cards_carry_the_same_flags_for_a_held_conflict(
+    tmp_path: Path,
+) -> None:
+    from datetime import timedelta
+
+    from cruxible_client.contracts.get_reads import (
+        GetClaimCard,
+        GetSubjectCard,
+    )
+    from tests.core_support._candidate_support import submit_query_definition_candidate
+    from tests.core_support._knowledge_loop_support import (
+        QUERY_NAME,
+        TIMESTAMP,
+        accept_proposal,
+        work_item_query,
+    )
+    from tests.test_integration.test_next_closed_loop import EVALUATION_TIME as LATER
+    from tests.test_integration.test_next_closed_loop import _current_claim
+    from tests.test_integration.test_next_holds import _all_claims, _attest
+    from tests.test_service.test_get_reads import _contend
+
+    instance, owner = seed_claims(tmp_path)
+    accept_proposal(
+        instance,
+        owner,
+        submit_query_definition_candidate(
+            instance,
+            query=work_item_query(),
+            actor_id="owner",
+            proposal_name="work-item-query",
+            timestamp=TIMESTAMP,
+        ),
+    )
+    first = _current_claim(instance)
+    _contend(instance, owner, first, "blocked", "hold-conflict")
+    contenders = [
+        claim
+        for claim in _all_claims(instance)
+        if claim.statement.subject.artifact_path.endswith("wi-42.json")
+        and not claim.statement.predicate.endswith(".slug")
+    ]
+    for offset, claim in enumerate(contenders):
+        _attest(instance, owner, claim, tmp_path, at=LATER - timedelta(minutes=2 - offset))
+
+    def get_card(ref: str) -> Any:
+        return service_playbill_get(
+            instance,
+            request=GetRequest(ref=ref, evaluation_time=LATER),
+            access=_ACCESS,
+        ).card
+
+    def query_row(**fields: Any) -> dict[str, Any]:
+        result = service_playbill_query(
+            instance,
+            request=QueryRequest.model_validate({**fields, "evaluation_time": LATER}),
+        )
+        return next(
+            row for row in result.rows if row.get("subject_id", row.get("item_id")) == "wi-42"
+        )
+
+    claim_card = get_card(first.identity.name)
+    subject_card = get_card(f"{SUBJECT_KIND}/wi-42")
+    assert isinstance(claim_card, GetClaimCard)
+    assert isinstance(subject_card, GetSubjectCard)
+    assert "unsure_hold" in claim_card.flags
+
+    compact = query_row(kind=SUBJECT_KIND, select=["status"])
+    named = query_row(name=QUERY_NAME)
+    (subject_row,) = without_keys(subject_card.claims)
+
+    assert tuple(compact["flags"]) == subject_row.flags
+    assert tuple(named["flags"]) == subject_row.flags
+    assert set(claim_card.flags) <= set(subject_row.flags)
+
+
+def test_governed_query_flags_are_derived_over_the_whole_slot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A named or spec query reads some Claims; their flags see every slot contender."""
+
+    from cruxible_core.service.discovery import compact_query as compact_module
+    from tests.test_integration.test_next_closed_loop import _current_claim
+    from tests.test_integration.test_next_holds import _all_claims
+    from tests.test_service.test_get_reads import _contend
+
+    instance, owner = seed_claims(tmp_path)
+    first = _current_claim(instance)
+    _contend(instance, owner, first, "blocked", "slot-contender")
+    slot = {
+        claim.identity.qualified
+        for claim in without_keys(_all_claims(instance))
+        if claim.statement.subject.artifact_path.endswith("wi-42.json")
+        and not claim.statement.predicate.endswith(".slug")
+    }
+    assert len(slot) == 2
+    seen: list[set[str]] = []
+
+    def capture(*_args: Any, identities: Any, **_kwargs: Any) -> dict[str, tuple[str, ...]]:
+        seen.append(set(identities))
+        return {identity: ("unsure_hold",) for identity in identities}
+
+    monkeypatch.setattr(compact_module, "claim_flags", capture)
+    from cruxible_client.contracts.claims import claim_path
+
+    flags = compact_module._flags_for_paths(
+        instance,
+        instance.accepted_coordinate(),
+        {claim_path(first.identity.name)},
+        _WHEN,
+    )
+
+    assert seen == [slot]
+    assert flags == {claim_path(first.identity.name): ("unsure_hold",)}
+
+
+def _accept_tree(instance: Any, tree: dict[str, bytes], name: str) -> None:
+    """Accept a hand-built tree as one generation (no authoring reuse review)."""
+
+    from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
+    from cruxible_core.proposals.settlement import ChangeActorBinding
+    from tests.core_support._support import client_material
+    from tests.test_ledger.test_activation import _sign
+
+    base = instance.accepted_coordinate()
+    proposed = instance.proposal_service().submit(
+        actor=AuthenticatedActor(actor_id="owner"),
+        request=ProposalAdmissionRequest(
+            target_ref=f"refs/proposals/owner/{name}", proposed_base_oid=base.git_oid
+        ),
+        candidate_tree=tree,
+        timestamp="2026-08-24T16:00:00.000000Z",
+    )
+    assert proposed.candidate is not None, proposed.evaluation
+    assert proposed.evaluation.evaluated_tree_oid is not None
+    bundle = instance.prepare_generation(
+        base=base,
+        candidate_tree=instance.proposal_tree(proposed.evaluation.evaluated_tree_oid),
+        candidate=proposed.candidate,
+        approvals=(
+            _sign(
+                client_material(instance.root.parent, instance),
+                proposed.candidate.candidate_digest,
+                base.semantic_root,
+            ),
+        ),
+        actor_binding=ChangeActorBinding(actor_id="owner"),
+        proposal_actor_id="owner",
+        sequence=len(instance.accepted_history()),
+    )
+    publisher = instance.activation_publisher()
+    projection = publisher.prebuild(bundle, base=base)
+    assert publisher.activate(bundle, projection, base=base).status == "accepted"
+    instance.refresh()
+
+
+def test_get_cards_name_predicates_by_the_shared_rule_as_orient_does(
+    tmp_path: Path,
+) -> None:
+    """Addendum 2 on get: no last-segment names, and the same names orient shows."""
+
+    from cruxible_client.contracts.artifacts import ArtifactIdentity
+    from cruxible_client.contracts.claim_types import (
+        ClaimType,
+        claim_type_digest,
+        claim_type_path,
+        render_claim_type,
+    )
+    from cruxible_client.contracts.get_reads import (
+        GetClaimCard,
+        GetSubjectCard,
+    )
+    from cruxible_core.service.discovery.field_names import resolve_field
+    from tests.core_support._claim_authoring_support import service_propose_playbill_claim
+    from tests.core_support._knowledge_loop_support import activate, authoring
+
+    instance, owner = seed_claims(tmp_path)
+    with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
+        template = projection.typed.source(f"ClaimType:{PREDICATE}")
+    assert isinstance(template, ClaimType)
+    collisions = {
+        predicate: template.model_copy(
+            update={
+                "identity": ArtifactIdentity(kind="ClaimType", name=predicate),
+                "predicate": predicate,
+            }
+        )
+        for predicate in (
+            "other.status",
+            "third.status",
+            f"{SUBJECT_KIND}.other.status",
+            f"{SUBJECT_KIND}.subject_id",
+        )
+    }
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    for predicate, claim_type in collisions.items():
+        tree[claim_type_path(predicate)] = render_claim_type(claim_type)
+    # The collision fixture is deliberately near-duplicate vocabulary (every leaf
+    # is ``status``), which current ClaimType laws accept as is.
+    _accept_tree(instance, tree, "collision-claim-types")
+    for index, (predicate, claim_type) in enumerate(collisions.items()):
+        request = authoring("wi-42", "ready", with_claim_type=False)
+        request = request.model_copy(
+            update={
+                "statement": request.statement.model_copy(
+                    update={
+                        "claim_type": claim_type.identity,
+                        "claim_type_digest": claim_type_digest(claim_type).tagged,
+                        "predicate": predicate,
+                    }
+                )
+            }
+        )
+        activate(
+            instance,
+            owner,
+            service_propose_playbill_claim(
+                instance,
+                authoring=request,
+                actor_id="owner",
+                proposal_name=f"collision-{index}",
+                timestamp=f"2026-08-24T17:00:0{index}.000000Z",
+            ),
+        )
+
+    subject = service_playbill_get(
+        instance,
+        request=GetRequest(ref=f"{SUBJECT_KIND}/wi-42", evaluation_time=_WHEN),
+        access=_ACCESS,
+    ).card
+    assert isinstance(subject, GetSubjectCard)
+    orient_kind = service_playbill_orient(instance, kind=SUBJECT_KIND).kind_detail
+    assert orient_kind is not None
+    advertised = {item.predicate: item.name for item in orient_kind.predicates}
+    # The default map's kind line names the same fields, in byte order, capped.
+    summary = next(
+        item for item in service_playbill_orient(instance).kinds or () if item.kind == SUBJECT_KIND
+    )
+    names = sorted(advertised.values())
+    assert summary.fields == tuple(names[:ORIENT_KIND_FIELDS])
+    assert summary.more_fields == max(len(names) - ORIENT_KIND_FIELDS, 0)
+
+    assert advertised == {
+        PREDICATE: "status",
+        "other.status": "other.status",
+        "third.status": "third.status",
+        f"{SUBJECT_KIND}.other.status": f"{SUBJECT_KIND}.other.status",
+        f"{SUBJECT_KIND}.subject_id": f"{SUBJECT_KIND}.subject_id",
+        f"{SUBJECT_KIND}.slug": "slug",
+    }
+    assert sorted(row.predicate for row in subject.claims) == sorted(advertised.values())
+    for predicate, name in advertised.items():
+        assert resolve_field(name, SUBJECT_KIND, frozenset(advertised)) == predicate
+
+    for row in subject.claims:
+        assert isinstance(row.claim, str)
+        claim = service_playbill_get(
+            instance,
+            request=GetRequest(ref=row.claim, evaluation_time=_WHEN),
+            access=_ACCESS,
+        ).card
+        assert isinstance(claim, GetClaimCard)
+        assert claim.predicate == advertised[claim.predicate_full] == row.predicate
+
+
+# -- exact-content values read as text on every verb --------------------------
+
+_RULING = b"The ruling, exactly as written."
+_LONG_RULING = b"reviewed"
+_BINARY = b"opaque"
+
+
+@pytest.fixture(scope="module")
+def exact_world(tmp_path_factory: pytest.TempPathFactory) -> tuple[Any, dict[str, Any]]:
+    return seed_bounded_content(
+        tmp_path_factory.mktemp("exact-content"),
+        {"wi-42": _RULING, "wi-long": _LONG_RULING, "wi-bin": _BINARY},
+    )
+
+
+def _exact_get(
+    instance: Any, ref: str, *, access: BodyAccessContext = _ACCESS, **fields: Any
+) -> GetResult:
+    return service_playbill_get(
+        instance,
+        request=GetRequest(ref=ref, evaluation_time=_WHEN, **fields),
+        access=access,
+    )
+
+
+def _bare(value: Any) -> Any:
+    """A shown value without the whole read a get preview names (a row cell has none)."""
+
+    from cruxible_client.contracts.read_values import TruncatedText
+
+    return (
+        value.model_copy(update={"read_whole": None}) if isinstance(value, TruncatedText) else value
+    )
+
+
+def _exact_query(instance: Any, **fields: Any) -> QueryResultRecord:
+    return service_playbill_query(
+        instance,
+        request=QueryRequest.model_validate({"evaluation_time": _WHEN, **fields}),
+    )
+
+
+def test_get_and_query_show_native_bounded_text(exact_world: tuple[Any, dict[str, Any]]) -> None:
+    instance, seeded = exact_world
+    declared = work_item_query("project.bounded").model_dump(mode="json")
+    compact = {
+        row["subject"]: row
+        for row in _exact_query(instance, kind=VALUE_KIND, select=["status"]).rows
+    }
+    spec = {
+        row["subject"]: row
+        for row in _exact_query(instance, spec=QueryDefinitionSpec.model_validate(declared)).rows
+    }
+    for item in seeded.values():
+        text = item.content.decode()
+        claim = _exact_get(instance, item.claim_id).card
+        assert isinstance(claim, GetClaimCard)
+        assert claim.value == text
+        assert "content_digest" not in claim.model_dump()
+        subject = _exact_get(instance, item.subject).card
+        assert isinstance(subject, GetSubjectCard)
+        (row,) = without_keys(subject.claims)
+        assert (row.claim, row.value) == (item.claim_id, text)
+        assert "content_digest" not in row.model_dump()
+        history = _exact_get(instance, item.claim_id, detail="history").history
+        assert history is not None
+        assert [revision.value for revision in history.revisions] == [text]
+        for rows in (compact, spec):
+            assert rows[item.subject]["status"] == text
+            assert not any("digest" in key for key in rows[item.subject])
+        assert row.flags == tuple(compact[item.subject]["flags"])
+
+
+def test_contains_matches_native_text(
+    exact_world: tuple[Any, dict[str, Any]],
+) -> None:
+    instance, seeded = exact_world
+    ruling = seeded["wi-42"]
+
+    (row,) = _exact_query(instance, contains="exactly as written").rows
+    assert (row["claim"], row["value"]) == (ruling.claim_id, _RULING.decode())
+    assert set(row) == {"subject", "subject_id", "kind", "predicate", "value", "claim", "flags"}
+    (kind_row,) = _exact_query(instance, kind=VALUE_KIND, contains="exactly as written").rows
+    assert kind_row["subject"] == ruling.subject
+    # A digest is proof, not a value: no search matches it.
+    assert _exact_query(instance, contains=ruling.digest.split(":")[1][:16]).rows == ()
+
+
+def test_native_text_values_need_no_body_access(
+    exact_world: tuple[Any, dict[str, Any]],
+) -> None:
+    """Ruling exact-content-read-only: the value is a Claim value, not a body read."""
+
+    instance, seeded = exact_world
+    ruling = seeded["wi-42"]
+    text = _RULING.decode()
+    reader = BodyAccessContext(principal_id="reader", can_read_body=False)
+
+    card = _exact_get(instance, ruling.claim_id, access=reader).card
+    assert isinstance(card, GetClaimCard)
+    assert card.value == text
+    assert "content_digest" not in card.model_dump()
+    history = _exact_get(instance, ruling.claim_id, access=reader, detail="history").history
+    assert history is not None
+    assert [item.value for item in history.revisions] == [text]
+    rows = _exact_query(instance, kind=VALUE_KIND, select=["status"]).rows
+    assert {row["subject"]: row["status"] for row in rows}[ruling.subject] == text
+    (found,) = _exact_query(instance, contains="exactly as written").rows
+    assert found["claim"] == ruling.claim_id
+
+
+def test_query_reserves_no_digest_row_key() -> None:
+    from cruxible_core.service.discovery.field_names import RESERVED_FIELD_NAMES
+
+    assert RESERVED_FIELD_NAMES == frozenset(
+        {"subject_id", "subject", "kind", "predicate", "claim", "flags"}
+    )
+
+
+def test_query_cuts_every_long_string_by_the_card_rule(tmp_path: Path) -> None:
+    from cruxible_client.contracts.read_values import TruncatedText, summary_value
+    from cruxible_client.contracts.shapes import claim_literal_problem, parse_type
+
+    text = "a long literal note " * 40
+    assert claim_literal_problem(text, parse_type("string{max_len: 256}")) == "out_of_range"
+    # The generic renderer still bounds values from other surfaces.
+    assert isinstance(summary_value(text), TruncatedText)
+
+
+def test_projected_native_text_follows_the_engines_visibility_policy(
+    exact_world: tuple[Any, dict[str, Any]],
+) -> None:
+    """Regression (Codex F-001): text is shown only for Claims the engine selected.
+
+    Under visible_verdicts=["contradicted"] the engine answers no value for a
+    supported ruling, so the row shows none: the reader never adds a value.
+    """
+
+    instance, seeded = exact_world
+    declared = work_item_query("project.exact.contradicted").model_dump(mode="json")
+    declared["evaluation_policy"]["visible_verdicts"] = ["contradicted"]
+    rows = _exact_query(instance, spec=QueryDefinitionSpec.model_validate(declared)).rows
+
+    assert {row["item_id"]: row["status"] for row in rows} == {
+        claim.subject.split("/", 1)[1]: None for claim in seeded.values()
+    }
+
+
+def test_retired_exact_content_spans_refuse_at_claim_parsing() -> None:
+    from pydantic import ValidationError
+
+    from cruxible_client.contracts.claims import ClaimStatementCard
+    from tests.test_authoring.test_authoring_preflight import _self_source_payload
+
+    raw = _self_source_payload().statement.model_dump(mode="json")
+    raw["object"] = {"kind": "exact_content", "content_digest": "sha256:" + "1" * 64}
+    with pytest.raises(ValidationError, match="exact_content_retired.*Documents"):
+        ClaimStatementCard.model_validate(raw)
+
+
+@pytest.fixture(scope="module")
+def competing_worlds(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
+    """One Subject whose one-cardinality status has two supported, competing Claims.
+
+    ``exact``: two different rulings; ``literal``: ``ready`` and ``blocked``.
+    """
+
+    from cruxible_client.contracts.captures import foreign_source_capture_contract
+    from tests.core_support._bounded_content_support import (
+        add_bounded_claim,
+        seed_bounded_content_into,
+    )
+    from tests.core_support._claim_authoring_support import service_propose_playbill_claim
+    from tests.core_support._knowledge_loop_support import activate, authoring
+    from tests.core_support._support import initialize_local
+    from tests.test_authoring.test_authoring_preflight import _seed_claim_surface
+
+    exact, owner = initialize_local(tmp_path_factory.mktemp("competing-exact"))
+    (first,) = seed_bounded_content_into(exact, owner, {"wi-42": b"first ruling"}).values()
+    add_bounded_claim(
+        exact,
+        owner,
+        "wi-42",
+        b"second ruling",
+        claim_id="CLM-" + "9" * 32,
+        existing=(first.claim_id,),
+    )
+    literal, literal_owner = initialize_local(tmp_path_factory.mktemp("competing-literal"))
+    _seed_claim_surface(
+        literal, literal_owner, contract=foreign_source_capture_contract("fixture.work-items")
+    )
+    for index, value in enumerate(("ready", "blocked")):
+        activate(
+            literal,
+            literal_owner,
+            service_propose_playbill_claim(
+                literal,
+                authoring=authoring("wi-42", value, with_claim_type=False),
+                actor_id="owner",
+                proposal_name=f"compete-{index}",
+                timestamp=f"2026-08-16T20:0{index}:00.000000Z",
+            ),
+        )
+    return {"exact": exact, "literal": literal}
+
+
+def _one_result_spec(conflict_behavior: str) -> QueryDefinitionSpec:
+    declared = work_item_query("project.one").model_dump(mode="json")
+    declared["result_cardinality"] = "one"
+    declared["default_budgets"]["max_results"] = 1
+    declared["maximum_budgets"]["max_results"] = 1
+    declared["evaluation_policy"]["conflict_behavior"] = conflict_behavior
+    return QueryDefinitionSpec.model_validate(declared)
+
+
+@pytest.mark.parametrize("conflict_behavior", ["surface_conflicts", "refuse_on_conflict"])
+def test_competing_native_text_follows_conflict_behavior(
+    competing_worlds: dict[str, Any], conflict_behavior: str
+) -> None:
+    """Regression (Codex F-003): the engine's conflict path decides exact content too.
+
+    Two supported, competing exact-content Claims answer a one-cardinality read
+    exactly as two literals do: ``refuse_on_conflict`` refuses with the engine's
+    ``cruxible.query.claim_conflict``, and ``surface_conflicts`` answers no value
+    with the ``contested`` flag. Neither shows both texts.
+    """
+
+    from cruxible_core.service.read_refusals import ReadRefusalError
+
+    def answer(kind: str) -> object:
+        try:
+            rows = _exact_query(
+                competing_worlds[kind], spec=_one_result_spec(conflict_behavior)
+            ).rows
+        except ReadRefusalError as refusal:
+            return ("refused", refusal.error_code)
+        return [(row["status"], row["flags"]) for row in rows]
+
+    exact, literal = answer("exact"), answer("literal")
+
+    assert exact == literal
+    if conflict_behavior == "refuse_on_conflict":
+        assert exact == ("refused", "cruxible.query.claim_conflict")
+    else:
+        assert exact == [(None, ["contested"])]
+
+
+def test_the_compact_coordinate_a_get_prints_is_a_valid_at_for_every_verb(
+    instance: Any,
+) -> None:
+    """Ruling at-accepts-oid-prefix: the 12-hex git oid a read prints can be passed back."""
+
+    history = instance.accepted_history()
+    earlier = history[-2]
+    compact = service_playbill_get(
+        instance,
+        request=GetRequest(ref=f"ClaimType:{PREDICATE}", at=earlier.oid, evaluation_time=_WHEN),
+        access=_ACCESS,
+    ).coordinate.git_oid
+    assert len(compact) == 12 and earlier.oid.startswith(compact)
+    assert instance.accepted_coordinate().git_oid != earlier.oid
+
+    again = service_playbill_get(
+        instance,
+        request=GetRequest(ref=f"ClaimType:{PREDICATE}", at=compact, evaluation_time=_WHEN),
+        access=_ACCESS,
+    )
+    assert again.coordinate.git_oid == compact
+    queried = service_playbill_query(
+        instance,
+        request=QueryRequest.model_validate(
+            {"kind": "ClaimType", "at": compact, "evaluation_time": EVALUATION_TIME}
+        ),
+    )
+    assert queried.receipt.coordinate.git_oid == earlier.oid
+    oriented = service_playbill_orient(instance, at=compact)
+    assert (oriented.coordinate.git_oid, oriented.generation) == (earlier.oid, earlier.sequence)
+    # A longer prefix and the full oid name the same generation.
+    assert service_playbill_orient(instance, at=earlier.oid[:20]).generation == earlier.sequence
+    assert service_playbill_orient(instance, at=earlier.oid).generation == earlier.sequence
+    assert service_playbill_orient(instance, at=oriented.coordinate).generation == earlier.sequence
+
+
+def test_a_short_unknown_or_ambiguous_at_refuses_with_a_coded_read_refusal(
+    instance: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from types import SimpleNamespace
+
+    from cruxible_client.contracts.errors import ReadRefusalError
+
+    head = instance.accepted_history()[-1]
+
+    def refusal(at: str) -> ReadRefusalError:
+        with pytest.raises(ReadRefusalError) as refused:
+            service_playbill_orient(instance, at=at)
+        # get and query refuse the same way: one resolver serves all three verbs.
+        for read in (
+            lambda: service_playbill_get(
+                instance,
+                request=GetRequest(ref=f"ClaimType:{PREDICATE}", at=at),
+                access=_ACCESS,
+            ),
+            lambda: service_playbill_query(
+                instance,
+                request=QueryRequest.model_validate({"kind": "ClaimType", "at": at}),
+            ),
+        ):
+            with pytest.raises(ReadRefusalError) as same:
+                read()
+            assert same.value.error_code == refused.value.error_code
+        assert refused.value.context["field_path"] == "at"
+        return refused.value
+
+    short = refusal(too_short_prefix(head.oid))
+    assert short.error_code == "cruxible.read.coordinate_prefix_too_short"
+    assert short.http_status == 400 and "at least 12" in str(short)
+
+    # One hex digit off: nothing starts with it, and a full accepted oid is named.
+    # A letter makes the twelve characters a prefix even when the oid starts
+    # with eleven digits.
+    typo = head.oid[:11] + ("a" if head.oid[11] != "a" else "b")
+    unknown = refusal(typo)
+    assert unknown.error_code == "cruxible.read.coordinate_not_accepted"
+    assert unknown.http_status == 404
+    assert head.oid in unknown.candidates
+
+    unrelated = refusal("0" * 12)
+    accepted = {generation.oid for generation in instance.accepted_history()}
+    assert unrelated.error_code == "cruxible.read.coordinate_not_accepted"
+    assert 0 < len(unrelated.candidates) <= 5
+    assert set(unrelated.candidates) <= accepted
+
+    # Two accepted generations sharing a 12-hex prefix: a git collision the
+    # fixture fakes rather than brute-forcing a real collision.
+    twin_oid = head.oid[:12] + ("0" * 28 if head.oid[12:40] != "0" * 28 else "1" * 28)
+    twin = SimpleNamespace(oid=twin_oid, sequence=head.sequence + 1)
+    real = instance.accepted_history()
+    monkeypatch.setattr(instance, "accepted_history", lambda: (*real, twin))
+    ambiguous = refusal(head.oid[:12])
+    assert ambiguous.error_code == "cruxible.read.coordinate_ambiguous"
+    assert ambiguous.http_status == 409
+    assert set(ambiguous.candidates) == {head.oid, twin_oid}
+    assert ambiguous.context["matches"] == 2
+    # The full oid still tells them apart.
+    assert service_playbill_orient(instance, at=head.oid).generation == head.sequence
+
+    # Refusals stay bounded even when more than five accepted oids match.
+    twins = tuple(SimpleNamespace(oid=head.oid[:12] + f"{index:028x}") for index in range(8))
+    monkeypatch.setattr(instance, "accepted_history", lambda: (*real, *twins))
+    bounded = refusal(head.oid[:12])
+    assert len(bounded.candidates) == 5
+    assert bounded.context["matches"] == 9
+    assert set(bounded.candidates) <= {item.oid for item in (*real, *twins)}
+
+
+def test_an_all_digit_at_of_eleven_or_fewer_characters_is_a_generation(
+    instance: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The rule is by shape: up to 11 digits is a generation number, even when it
+    is also the start of an accepted oid; 12 or more digits are an oid prefix."""
+
+    from types import SimpleNamespace
+
+    from cruxible_client.contracts.errors import ReadRefusalError
+    from cruxible_core.service.read_refusals import resolve_read_coordinate
+
+    history = instance.accepted_history()
+    first = history[0]
+    for spelled in (str(first.sequence), f"{first.sequence:011d}"):
+        resolved = resolve_read_coordinate(instance, spelled)
+        assert resolved.git_oid == first.oid, spelled
+    for spelled in ("9" * 8, "0" * 8 + "9", "9" * 11):
+        with pytest.raises(ReadRefusalError) as refused:
+            resolve_read_coordinate(instance, spelled)
+        assert refused.value.error_code == "cruxible.read.coordinate_not_accepted"
+        assert "no generation" in str(refused.value), spelled
+        assert refused.value.http_status == 404
+    # Never "too short", and never an oid, even where an accepted oid starts
+    # with those digits (faked: a real oid is all digits by chance).
+    digit_oid = "12345678" + "a" * 32
+    monkeypatch.setattr(
+        instance,
+        "accepted_history",
+        lambda: (*history, SimpleNamespace(oid=digit_oid, sequence=history[-1].sequence + 1)),
+    )
+    with pytest.raises(ReadRefusalError) as refused:
+        resolve_read_coordinate(instance, "12345678")
+    assert refused.value.error_code == "cruxible.read.coordinate_not_accepted"
+    assert "no generation 12345678" in str(refused.value)
+    # Twelve digits are an oid prefix, matched against accepted oids.
+    with pytest.raises(ReadRefusalError) as refused:
+        resolve_read_coordinate(instance, "9" * 12)
+    assert refused.value.error_code == "cruxible.read.coordinate_not_accepted"
+    assert "no accepted git oid starts with" in str(refused.value)
+
+
+def test_overlong_oid_is_not_misreported_as_too_short(instance: Any) -> None:
+    from cruxible_client.contracts.errors import ReadRefusalError
+
+    with pytest.raises(ReadRefusalError) as refused:
+        service_playbill_orient(instance, at="a" * 65)
+    assert refused.value.error_code == "cruxible.read.coordinate_not_accepted"
+
+
+def test_an_oid_outside_accepted_history_cannot_resolve(
+    instance: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_client.contracts.errors import ReadRefusalError
+    from cruxible_core.service.read_refusals import resolve_read_coordinate
+
+    head = instance.accepted_history()[-1]
+    # The real Git object and coordinate still exist, but it is not accepted.
+    earlier_history = instance.accepted_history()[:-1]
+    monkeypatch.setattr(instance, "accepted_history", lambda: earlier_history)
+    assert instance.coordinate_for_oid(head.oid).git_oid == head.oid
+    for at in (head.oid, head.oid[:12]):
+        with pytest.raises(ReadRefusalError) as refused:
+            resolve_read_coordinate(instance, at)
+        assert refused.value.error_code == "cruxible.read.coordinate_not_accepted"
+
+
+def test_a_many_valued_native_text_projection_matches_compact_mode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review F-001: a projected many-valued exact-content field is every selected value.
+
+    A spec and a named query project the field as a list -- a singleton too,
+    binary markers included -- holding exactly what compact mode shows, never
+    only its first value as a scalar.
+    """
+
+    from cruxible_client.contracts.claim_types import claim_type_path, parse_claim_type
+    from cruxible_client.contracts.policies import ClaimResolutionPolicy
+    from cruxible_client.contracts.query.definitions import (
+        QueryDefinitionSpec,
+    )
+    from tests.core_support import _bounded_content_support as support
+    from tests.core_support._candidate_support import submit_query_definition_candidate
+    from tests.core_support._knowledge_loop_support import TIMESTAMP, accept_proposal
+    from tests.core_support._support import initialize_local
+
+    original = support._claim_type
+    monkeypatch.setattr(
+        support,
+        "_claim_type",
+        lambda: original().model_copy(
+            update={
+                "cardinality": "many",
+                "resolution_policy": ClaimResolutionPolicy(
+                    cardinality="many", eligible_verdicts=("supported",), selector="all"
+                ),
+            }
+        ),
+    )
+    instance, owner = initialize_local(tmp_path)
+    seeded = support.seed_bounded_content_into(
+        instance, owner, {"wi-42": b"first ruling", "wi-one": b"the only ruling"}
+    )
+    support.add_bounded_claim(
+        instance,
+        owner,
+        "wi-42",
+        _BINARY,
+        claim_id="CLM-" + "9" * 32,
+        existing=(seeded["wi-42"].claim_id,),
+    )
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    path = claim_type_path(support.VALUE_PREDICATE)
+    claim_type = parse_claim_type(tree[path], path=path)
+    query = work_item_query("project.exact.many", claim_type=claim_type)
+    accept_proposal(
+        instance,
+        owner,
+        submit_query_definition_candidate(
+            instance,
+            query=query,
+            actor_id="owner",
+            proposal_name="exact-many-query",
+            timestamp=TIMESTAMP,
+        ),
+    )
+
+    def by_subject(rows: Any, key: str) -> dict[str, Any]:
+        return {row.get("subject_id", row.get("item_id")): row[key] for row in rows}
+
+    compact = by_subject(
+        _exact_query(instance, kind=support.VALUE_KIND, select=["status"]).rows, "status"
+    )
+    spec = QueryDefinitionSpec.model_validate(query.model_dump(mode="json"))
+    projected = _exact_query(instance, spec=spec)
+    named = _exact_query(instance, name="project.exact.many")
+    (status_column,) = (item for item in projected.columns if item.name == "status")
+    assert status_column.cardinality == "many"
+    for answer in (projected, named):
+        rows = by_subject(answer.rows, "status")
+        assert rows["wi-one"] == ["the only ruling"] == compact["wi-one"]
+        many = rows["wi-42"]
+        assert isinstance(many, list) and len(many) == 2
+        assert many == compact["wi-42"]
+        assert "first ruling" in many
+        assert "opaque" in many
+        assert all(row["flags"] == [] for row in answer.rows)
+
+
+def test_only_subject_references_lose_their_prefix_in_a_projection(tmp_path: Path) -> None:
+    """Review F-004: a literal that starts with "Subject:" is shown exactly.
+
+    A many-valued string literal holding "Subject:literal data" and a genuine
+    many-valued Subject reference are projected by a spec and by a named query.
+    The literal is unchanged and the references read kind/id, both exactly as
+    compact mode shows them.
+    """
+
+    from datetime import UTC, timedelta
+
+    from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+    from cruxible_client.contracts.claim_types import (
+        claim_type_digest,
+        claim_type_path,
+        parse_claim_type,
+        render_claim_type,
+    )
+    from cruxible_client.contracts.query.grammar import (
+        QueryClaimValueRef,
+        QueryProjection,
+        QueryProjectionField,
+        QuerySubjectFieldRef,
+    )
+    from cruxible_client.contracts.write import WriteRequest
+    from cruxible_core.proposals.proposals import ProposalAdmissionRequest
+    from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
+    from cruxible_core.service.authoring.write_verbs import service_playbill_write
+    from tests.core_support._candidate_support import submit_query_definition_candidate
+    from tests.core_support._knowledge_loop_support import TIMESTAMP, accept_proposal
+    from tests.core_support._write_support import (
+        KIND,
+        OWNER,
+        _claim_type,
+        caller,
+        seed_write_surface,
+    )
+
+    instance, owner = seed_write_surface(tmp_path)
+    notes = _claim_type("notes", value_type={"type": "string"}, cardinality="many")
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    tree[claim_type_path(notes.predicate)] = render_claim_type(notes)
+    proposed = instance.proposal_service().submit(
+        actor=OWNER,
+        request=ProposalAdmissionRequest(
+            target_ref="refs/proposals/owner/notes-field",
+            proposed_base_oid=instance.accepted_coordinate().git_oid,
+        ),
+        candidate_tree=tree,
+        timestamp="2026-09-29T11:59:30.000000Z",
+    )
+    assert proposed.candidate is not None, proposed.evaluation
+    service_activate_playbill_proposal(
+        instance, proposal_id=proposed.admission.proposal_id, activated_by="owner"
+    )
+    changes = [
+        {"op": "add", "subject": f"{KIND}/wi-1", "field": "notes", "value": "Subject:literal data"},
+        {"op": "add", "subject": f"{KIND}/wi-1", "field": "notes", "value": "plain"},
+        {"op": "add", "subject": f"{KIND}/wi-1", "field": "governs", "value": f"{KIND}/wi-2"},
+        {"op": "add", "subject": f"{KIND}/wi-1", "field": "governs", "value": f"{KIND}/wi-3"},
+    ]
+    written = service_playbill_write(
+        instance,
+        request=WriteRequest.model_validate({"because": "Recorded.", "changes": changes}),
+        caller=caller(),
+    )
+    assert written.refusal is None, written.refusal
+
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+
+    def pin(field: str) -> ArtifactPin:
+        path = claim_type_path(f"{KIND}.{field}")
+        accepted = parse_claim_type(tree[path], path=path)
+        return ArtifactPin(
+            role="claim-type",
+            target=accepted.identity,
+            artifact_digest=claim_type_digest(accepted).tagged,
+        )
+
+    query = work_item_query("project.notes-and-governs").model_copy(
+        update={
+            "projection": QueryProjection(
+                fields=(
+                    QueryProjectionField(
+                        name="governs",
+                        value=QueryClaimValueRef(binding="item", predicate=f"{KIND}.governs"),
+                    ),
+                    QueryProjectionField(
+                        name="item_id",
+                        value=QuerySubjectFieldRef(binding="item", field="subject_id"),
+                    ),
+                    QueryProjectionField(
+                        name="notes",
+                        value=QueryClaimValueRef(binding="item", predicate=f"{KIND}.notes"),
+                    ),
+                )
+            ),
+            "pins": tuple(
+                sorted(
+                    (pin("governs"), pin("notes")),
+                    key=lambda item: item.target.qualified.encode("utf-8"),
+                )
+            ),
+            "identity": ArtifactIdentity(kind="QueryDefinition", name="project.notes-and-governs"),
+        }
+    )
+    accept_proposal(
+        instance,
+        owner,
+        submit_query_definition_candidate(
+            instance,
+            query=query,
+            actor_id="owner",
+            proposal_name="notes-and-governs",
+            timestamp=TIMESTAMP,
+        ),
+    )
+    later = datetime.now(UTC) + timedelta(minutes=1)
+
+    def row_of(**fields: Any) -> dict[str, Any]:
+        result = service_playbill_query(
+            instance, request=QueryRequest.model_validate({"evaluation_time": later, **fields})
+        )
+        return next(
+            row for row in result.rows if row.get("subject_id", row.get("item_id")) == "wi-1"
+        )
+
+    compact = row_of(kind=KIND, select=["notes", "governs"])
+    assert sorted(compact["notes"]) == ["Subject:literal data", "plain"]
+    assert sorted(compact["governs"]) == [f"{KIND}/wi-2", f"{KIND}/wi-3"]
+    spec = QueryDefinitionSpec.model_validate(query.model_dump(mode="json"))
+    for projected in (row_of(spec=spec), row_of(name="project.notes-and-governs")):
+        assert sorted(projected["notes"]) == sorted(compact["notes"])
+        assert sorted(projected["governs"]) == sorted(compact["governs"])

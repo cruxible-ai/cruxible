@@ -15,7 +15,6 @@ import cruxible_core.cli.commands.credentials as credential_commands
 from cruxible_core.cli.main import cli
 from cruxible_core.mcp.handlers import reset_client_cache
 from cruxible_core.mcp.permissions import reset_permissions
-from cruxible_core.runtime.instance_manager import get_manager
 from cruxible_core.runtime.permissions import PermissionMode
 from cruxible_core.server.app import create_app
 from cruxible_core.server.credentials import (
@@ -23,7 +22,6 @@ from cruxible_core.server.credentials import (
     reset_runtime_credential_store,
 )
 from cruxible_core.server.registry import get_registry, reset_registry
-from tests.test_cli.conftest import CAR_PARTS_YAML
 
 
 @pytest.fixture
@@ -39,13 +37,11 @@ def isolated_runtime(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     reset_registry()
     reset_runtime_credential_store()
     reset_client_cache()
-    get_manager().clear()
     yield
     reset_permissions()
     reset_registry()
     reset_runtime_credential_store()
     reset_client_cache()
-    get_manager().clear()
 
 
 def _seed_admin_state(
@@ -55,14 +51,16 @@ def _seed_admin_state(
     instance_count: int = 1,
 ) -> tuple[Path, list[str]]:
     state_dir = tmp_path / "server-state"
-    monkeypatch.setenv("CRUXIBLE_SERVER_STATE_DIR", str(state_dir))
+    monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(state_dir))
     reset_registry()
     reset_runtime_credential_store()
     instance_ids: list[str] = []
     for index in range(instance_count):
         workspace_root = tmp_path / f"workspace-{index}"
         workspace_root.mkdir()
-        registered = get_registry().create_governed_instance(workspace_root=workspace_root)
+        registered = get_registry().create_governed_instance_with_id(
+            f"inst_recover_{index}", workspace_root=workspace_root
+        )
         get_runtime_credential_store().create_credential(
             instance_id=registered.record.instance_id,
             label=f"existing-admin-{index}",
@@ -74,7 +72,7 @@ def _seed_admin_state(
 
 
 def _credential_rows(state_dir: Path) -> list[sqlite3.Row]:
-    conn = sqlite3.connect(state_dir / "runtime_credentials.db")
+    conn = sqlite3.connect(state_dir / "daemon" / "runtime_credentials.db")
     conn.row_factory = sqlite3.Row
     try:
         return list(
@@ -91,7 +89,7 @@ def _credential_rows(state_dir: Path) -> list[sqlite3.Row]:
 
 
 def _recovery_event_rows(state_dir: Path) -> list[sqlite3.Row]:
-    conn = sqlite3.connect(state_dir / "runtime_credentials.db")
+    conn = sqlite3.connect(state_dir / "daemon" / "runtime_credentials.db")
     conn.row_factory = sqlite3.Row
     try:
         return list(
@@ -116,7 +114,7 @@ def test_recover_admin_mints_new_admin_and_records_audit(
 
     result = runner.invoke(
         cli,
-        ["credential", "recover-admin", "--state-dir", str(state_dir), "--json"],
+        ["credential", "recover-admin", "--state-root", str(state_dir), "--json"],
     )
 
     assert result.exit_code == 0, result.output
@@ -126,6 +124,8 @@ def test_recover_admin_mints_new_admin_and_records_audit(
     assert payload["credential"] == {
         "credential_id": payload["credential"]["credential_id"],
         "instance_id": instance_id,
+        # Local recovery restores operator authority; it never names a principal.
+        "principal_id": None,
         "label": "recovered-admin",
         "permission_mode": "admin",
         "created_at": payload["credential"]["created_at"],
@@ -154,6 +154,34 @@ def test_recover_admin_mints_new_admin_and_records_audit(
     assert events[0]["hostname"]
 
 
+def test_recover_admin_uses_the_state_root_environment_default(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+    tmp_path: Path,
+) -> None:
+    _state_dir, (instance_id,) = _seed_admin_state(tmp_path, monkeypatch)
+
+    result = runner.invoke(cli, ["credential", "recover-admin", "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["credential"]["instance_id"] == instance_id
+
+
+def test_recover_admin_refuses_obsolete_and_empty_state_root(
+    runner: CliRunner,
+) -> None:
+    obsolete = runner.invoke(
+        cli,
+        ["credential", "recover-admin", "--state-dir", "/" + "tmp/old-state"],
+    )
+    empty = runner.invoke(cli, ["credential", "recover-admin", "--state-root", ""])
+
+    assert obsolete.exit_code == 2
+    assert "--state-dir is obsolete; use --state-root" in obsolete.output
+    assert empty.exit_code == 2
+    assert "--state-root may not be empty" in empty.output
+
+
 def test_recover_admin_refuses_non_owner_without_writing(
     monkeypatch: pytest.MonkeyPatch,
     runner: CliRunner,
@@ -177,11 +205,11 @@ def test_recover_admin_refuses_non_owner_without_writing(
 
     result = runner.invoke(
         cli,
-        ["credential", "recover-admin", "--state-dir", str(state_dir), "--json"],
+        ["credential", "recover-admin", "--state-root", str(state_dir), "--json"],
     )
 
     assert result.exit_code == 2
-    assert "State dir must be owned by invoking uid 123456" in result.output
+    assert "State root must be owned by invoking uid 123456" in result.output
     assert len(_credential_rows(state_dir)) == 1
     assert _recovery_event_rows(state_dir) == []
 
@@ -195,7 +223,7 @@ def test_recover_admin_requires_instance_id_for_multi_instance_db(
 
     result = runner.invoke(
         cli,
-        ["credential", "recover-admin", "--state-dir", str(state_dir)],
+        ["credential", "recover-admin", "--state-root", str(state_dir)],
     )
 
     assert result.exit_code == 2
@@ -219,7 +247,7 @@ def test_recover_admin_selects_instance_in_multi_instance_db(
         [
             "credential",
             "recover-admin",
-            "--state-dir",
+            "--state-root",
             str(state_dir),
             "--instance-id",
             target_instance_id,
@@ -244,12 +272,14 @@ def test_recover_admin_refuses_instance_without_admin_credential(
     tmp_path: Path,
 ) -> None:
     state_dir = tmp_path / "server-state"
-    monkeypatch.setenv("CRUXIBLE_SERVER_STATE_DIR", str(state_dir))
+    monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(state_dir))
     reset_registry()
     reset_runtime_credential_store()
     workspace_root = tmp_path / "workspace-no-admin"
     workspace_root.mkdir()
-    registered = get_registry().create_governed_instance(workspace_root=workspace_root)
+    registered = get_registry().create_governed_instance_with_id(
+        "inst_recover_no_admin", workspace_root=workspace_root
+    )
     get_runtime_credential_store().create_credential(
         instance_id=registered.record.instance_id,
         label="writer-only",
@@ -259,7 +289,7 @@ def test_recover_admin_refuses_instance_without_admin_credential(
 
     result = runner.invoke(
         cli,
-        ["credential", "recover-admin", "--state-dir", str(state_dir)],
+        ["credential", "recover-admin", "--state-root", str(state_dir)],
     )
 
     assert result.exit_code == 2
@@ -274,12 +304,12 @@ def test_recover_admin_refuses_busy_credentials_db(
     tmp_path: Path,
 ) -> None:
     state_dir, _ = _seed_admin_state(tmp_path, monkeypatch)
-    lock_conn = sqlite3.connect(state_dir / "runtime_credentials.db")
+    lock_conn = sqlite3.connect(state_dir / "daemon" / "runtime_credentials.db")
     lock_conn.execute("BEGIN IMMEDIATE")
     try:
         result = runner.invoke(
             cli,
-            ["credential", "recover-admin", "--state-dir", str(state_dir)],
+            ["credential", "recover-admin", "--state-root", str(state_dir)],
         )
     finally:
         lock_conn.rollback()
@@ -303,7 +333,7 @@ def test_recover_admin_refuses_server_mode_invocation(
             "http://server",
             "credential",
             "recover-admin",
-            "--state-dir",
+            "--state-root",
             str(tmp_path / "server-state"),
         ],
     )
@@ -321,7 +351,7 @@ def test_recovered_admin_token_authenticates_against_server(
     state_dir, _ = _seed_admin_state(tmp_path, monkeypatch)
     result = runner.invoke(
         cli,
-        ["credential", "recover-admin", "--state-dir", str(state_dir), "--json"],
+        ["credential", "recover-admin", "--state-root", str(state_dir), "--json"],
     )
     assert result.exit_code == 0, result.output
     token = json.loads(result.stdout)["token"]
@@ -331,14 +361,135 @@ def test_recovered_admin_token_authenticates_against_server(
     reset_registry()
     reset_runtime_credential_store()
     reset_client_cache()
-    get_manager().clear()
     client = TestClient(create_app())
 
-    response = client.post(
-        "/api/v1/validate",
-        json={"config_yaml": CAR_PARTS_YAML},
+    instance_id = json.loads(result.stdout)["credential"]["instance_id"]
+    response = client.get(
+        f"/api/v1/{instance_id}/runtime/credentials",
         headers={"Authorization": f"Bearer {token}"},
     )
 
     assert response.status_code == 200
-    assert response.json()["valid"] is True
+    assert any(item["created_by"] == "local_recovery" for item in response.json()["credentials"])
+
+
+def test_recover_admin_ignores_a_remembered_cli_context(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+    tmp_path: Path,
+) -> None:
+    from cruxible_core.cli.context import CliContextState, save_cli_context
+
+    state_dir, instance_ids = _seed_admin_state(tmp_path, monkeypatch)
+    save_cli_context(
+        CliContextState(
+            server_url="http://remembered.invalid",
+            instance_id="inst_remembered",
+            instance_transport="http://remembered.invalid",
+        )
+    )
+
+    result = runner.invoke(
+        cli,
+        ["credential", "recover-admin", "--state-root", str(state_dir), "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["credential"]["instance_id"] == instance_ids[0]
+
+
+def test_recover_admin_names_the_environment_transport_it_refuses(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("CRUXIBLE_SERVER_URL", "http://server")
+
+    result = runner.invoke(
+        cli,
+        ["credential", "recover-admin", "--state-root", str(tmp_path / "server-state")],
+    )
+
+    assert result.exit_code == 2
+    assert "unset CRUXIBLE_SERVER_URL/CRUXIBLE_SERVER_SOCKET" in result.output
+
+
+def test_recover_admin_infers_the_one_instance_present_under_the_state_root(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+    tmp_path: Path,
+) -> None:
+    state_dir, instance_ids = _seed_admin_state(tmp_path, monkeypatch, instance_count=2)
+    (state_dir / "instances" / instance_ids[1]).mkdir(parents=True, exist_ok=True)
+    for other in instance_ids[:1]:
+        assert not (state_dir / "instances" / other).exists()
+
+    result = runner.invoke(
+        cli,
+        ["credential", "recover-admin", "--state-root", str(state_dir), "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["credential"]["instance_id"] == instance_ids[1]
+
+
+def test_a_recover_admin_preview_refuses_where_the_recovery_would(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+    tmp_path: Path,
+) -> None:
+    """F-009: the dry run runs the recovery's own transaction, lock included."""
+
+    state_dir, _ = _seed_admin_state(tmp_path, monkeypatch)
+    lock_conn = sqlite3.connect(state_dir / "daemon" / "runtime_credentials.db")
+    lock_conn.execute("BEGIN IMMEDIATE")
+    try:
+        outcomes = [
+            runner.invoke(
+                cli, ["credential", "recover-admin", "--state-root", str(state_dir), *flag]
+            )
+            for flag in (["--dry-run"], [])
+        ]
+    finally:
+        lock_conn.rollback()
+        lock_conn.close()
+
+    for result in outcomes:
+        assert result.exit_code == 2, result.output
+        assert "Runtime credentials DB is locked" in result.output
+
+
+def test_a_recover_admin_preview_writes_nothing_and_its_coordinate_pins_the_commit(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+    tmp_path: Path,
+) -> None:
+    from tests.support.store_snapshot import assert_writes_nothing
+
+    state_dir, (instance_id,) = _seed_admin_state(tmp_path, monkeypatch)
+    command = ["credential", "recover-admin", "--state-root", str(state_dir), "--json"]
+
+    previewed = assert_writes_nothing(
+        [state_dir], lambda: runner.invoke(cli, [*command, "--dry-run"])
+    )
+    assert previewed.exit_code == 0, previewed.output
+    preview = json.loads(previewed.stdout)
+    assert (preview["status"], preview["token"]) == ("would_recover", None)
+    assert preview["credential"]["instance_id"] == instance_id
+    assert preview["coordinate"]["subject"] == f"runtime_credentials:{instance_id}/all"
+
+    # Another credential lands: the preview's coordinate no longer confirms.
+    get_runtime_credential_store().create_credential(
+        instance_id=instance_id, label="late", permission_mode=PermissionMode.ADMIN
+    )
+    stale = runner.invoke(cli, [*command, "--commit", "--at", preview["coordinate"]["digest"]])
+    assert stale.exit_code != 0
+    assert "cruxible.preview.state_moved" in stale.output
+    assert _recovery_event_rows(state_dir) == []
+
+    fresh = json.loads(runner.invoke(cli, [*command, "--dry-run"]).stdout)
+    committed = runner.invoke(cli, [*command, "--commit", "--at", fresh["coordinate"]["digest"]])
+    assert committed.exit_code == 0, committed.output
+    payload = json.loads(committed.stdout)
+    assert payload["status"] == "recovered" and payload["token"].startswith("crt_")
+    assert len(_recovery_event_rows(state_dir)) == 1

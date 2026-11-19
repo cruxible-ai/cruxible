@@ -1,0 +1,199 @@
+"""Accepted Line trigger evaluation shares exact binding semantics with admission."""
+
+from datetime import timedelta
+from pathlib import Path
+
+import pytest
+
+from cruxible_client.contracts.captures import (
+    COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
+    builtin_contract_for_write,
+    capture_contract_digest,
+    capture_contract_path,
+    render_capture_contract,
+)
+from cruxible_client.contracts.line_dispatch import LineEvaluateRequest
+from cruxible_client.contracts.procedure_mandates import (
+    procedure_mandate_path,
+    render_procedure_mandate,
+)
+from cruxible_client.contracts.procedures.line_specs import line_spec_path, render_line_spec
+from cruxible_client.contracts.procedures.windows import (
+    CaptureEventNameSelector,
+    CaptureEventNameWindow,
+)
+from cruxible_client.contracts.projection import AcceptedCoordinate
+from cruxible_client.contracts.triggers import CaptureLandingSchedule, WindowCloseSchedule
+from cruxible_core.exhaust import ProcedureExhaustWriter
+from cruxible_core.service.procedures.line_dispatch import service_evaluate_line
+from cruxible_core.service.procedures.procedure_runs import (
+    PROCEDURE_RUN_FENCING_TOKEN,
+    _activate_writer,
+    _journal,
+    _stream,
+)
+from tests.support.lines import line_trigger, trigger_members
+from tests.support.procedures import procedure_members
+from tests.test_indexes.test_resolution_contracts import _accept_tree
+from tests.test_procedures.test_independent_resolution_contracts import contract_world
+from tests.test_procedures.test_procedure_run_surface import READ_TIME, _actor, _slotless_procedure
+from tests.test_server.test_playbill_line_run_refusals import (
+    _line_mandate,
+    _served_line,
+)
+
+TRIGGER_CONTRACT = builtin_contract_for_write(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT, None)
+
+SELECTOR = CaptureEventNameSelector(
+    capture_contract_identity=TRIGGER_CONTRACT.identity,
+)
+
+TRIGGER = "trigger-test-trigger"
+
+
+def line_world(tmp_path, schedule, *, with_owner=False, triggers=None):
+    """An accepted Line and the Trigger aimed at it on `schedule`.
+
+    `triggers` replaces the one default Trigger with several (or none).
+    """
+
+    instance, owner, contract = contract_world(tmp_path)
+    accepted = _slotless_procedure("trigger-method")
+    procedure = accepted.procedure
+    profile = TRIGGER_CONTRACT
+    line = _served_line("trigger-test", accepted=accepted)
+    mandate = _line_mandate(accepted, line)
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    tree[capture_contract_path(profile.identity.name)] = render_capture_contract(profile)
+    tree.update(
+        {
+            **procedure_members(procedure),
+            procedure_mandate_path(mandate.identity.name): render_procedure_mandate(mandate),
+            line_spec_path(line.identity.name): render_line_spec(line),
+            **trigger_members(
+                *(
+                    (
+                        line_trigger(
+                            TRIGGER,
+                            line=line.identity.name,
+                            schedule=schedule,
+                        ),
+                    )
+                    if triggers is None
+                    else triggers
+                )
+            ),
+        }
+    )
+    _accept_tree(
+        instance, owner, tree, timestamp="2026-08-24T15:00:00.000000Z", proposal_name="trigger"
+    )
+    return (instance, line, accepted, owner) if with_owner else (instance, line, accepted)
+
+
+def capture(
+    instance,
+    procedure,
+    *,
+    at=READ_TIME,
+    partition="run:anchor",
+    digest=None,
+    observed_at="2000-01-01T00:00:00Z",
+    capture_digest=None,
+):
+    if digest is None:
+        from cruxible_client.contracts.captures import COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1
+        from cruxible_core.compiler.compiler import CURRENT_COMPILER
+
+        digest = capture_contract_digest(
+            TRIGGER_CONTRACT
+            if instance.accepted_coordinate().compiler == CURRENT_COMPILER
+            else COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1
+        ).tagged
+    journal, _ = _journal(instance)
+    stream = _stream(instance)
+    _activate_writer(journal, stream, partition)
+    return ProcedureExhaustWriter(
+        journal=journal, bodies=instance.body_store(), fencing_token=PROCEDURE_RUN_FENCING_TOKEN
+    ).append(
+        stream=stream,
+        partition_id=partition,
+        event_kind="produced_capture",
+        accepted_coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+        procedure_artifact_digest=procedure.artifact_digest,
+        definition_digest=procedure.procedure.definition_digest,
+        actor_context=_actor(instance),
+        recorded_at=at,
+        run_id="RUN-" + partition,
+        payload={
+            "tag": "playbill-procedure-produced-capture-v1",
+            "capture_contract_digest": digest,
+            "observed_at": observed_at,
+            **({"capture_digest": capture_digest} if capture_digest is not None else {}),
+        },
+    )
+
+
+def _dry_run(instance, line, request, *, now):  # type: ignore[no-untyped-def]
+    """The public read of what a range makes eligible: evaluate --dry-run, no actor."""
+
+    return service_evaluate_line(instance, line.identity.name, request, actor=None, now=now)
+
+
+def test_indexed_capture_check_is_read_only_scoped_and_paginated(tmp_path: Path, monkeypatch):
+    instance, line, procedure = line_world(tmp_path, CaptureLandingSchedule(event=SELECTOR))
+    assert (
+        _dry_run(instance, line, LineEvaluateRequest(dry_run=True), now=READ_TIME).status
+        == "not_met"
+    )
+    capture(instance, procedure, digest="sha256:" + "b" * 64)
+    first = capture(instance, procedure)
+    second = capture(instance, procedure, at=READ_TIME + timedelta(seconds=1))
+    journal, _ = _journal(instance)
+    before = journal.read_head(_stream(instance), first.record.partition_id)
+    until = READ_TIME + timedelta(seconds=2)
+    request = LineEvaluateRequest(until=until, limit=1, dry_run=True)
+    result = _dry_run(instance, line, request, now=until)
+    assert result.status == "incomplete" and result.cursor
+    assert result.occurrences[0].binding.event.record_digest == second.record_digest
+    page = _dry_run(instance, line, request.model_copy(update={"cursor": result.cursor}), now=until)
+    assert page.status == "met" and page.cursor is None
+    assert page.occurrences[0].binding.event.record_digest == first.record_digest
+    assert not page.occurrences[0].pending and page.occurrences[0].admitted_run_id is None
+    assert journal.read_head(_stream(instance), first.record.partition_id) == before
+    assert not (instance.root / instance.descriptor.storage.exhaust / "line-dispatch").exists()
+    # Warm checks may not fall back to enumerating all partitions or parsing their logs.
+    monkeypatch.setattr(type(journal), "all_records", lambda *a: pytest.fail("full journal scan"))
+    monkeypatch.setattr(type(journal), "partition_ids", lambda *a: pytest.fail("partition walk"))
+    assert (
+        _dry_run(instance, line, LineEvaluateRequest(until=until, dry_run=True), now=until).status
+        == "met"
+    )
+
+
+def test_window_eligibility_uses_fixed_event_boundary_and_missing_evidence_is_incomplete(tmp_path):
+    policy = WindowCloseSchedule(window=CaptureEventNameWindow(event=SELECTOR, duration_seconds=60))
+    instance, line, procedure = line_world(tmp_path, policy)
+    stored = capture(instance, procedure)
+    before = _dry_run(
+        instance,
+        line,
+        LineEvaluateRequest(dry_run=True),
+        now=READ_TIME + timedelta(seconds=59),
+    )
+    assert before.status == "not_met"
+    end = READ_TIME + timedelta(seconds=60)
+    after = _dry_run(
+        instance,
+        line,
+        LineEvaluateRequest(since=end, until=end + timedelta(seconds=1), dry_run=True),
+        now=end + timedelta(days=1),
+    )
+    assert after.status == "met"
+    assert after.occurrences[0].binding.window.ends_at == end
+    journal, _ = _journal(instance)
+    path = journal._record_log_path_for_testing(_stream(instance), stored.record.partition_id)
+    path.unlink()
+    assert (
+        _dry_run(instance, line, LineEvaluateRequest(dry_run=True), now=end).status == "incomplete"
+    )

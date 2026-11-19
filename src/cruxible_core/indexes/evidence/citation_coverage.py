@@ -1,0 +1,244 @@
+"""Coverage's retained full export, assembled from the shared SQL relationships.
+
+The historical digest commits the complete accepted citation set. Exporting it
+must visit that set, but does not decode all Claims or rebuild a second reverse
+index. Capture availability and contract trust are checked for this read.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Literal, overload
+
+from cruxible_client.contracts.captures import (
+    CaptureEnvelopeAny,
+    capture_contract_digest,
+    capture_contract_is_self_asserted,
+    parse_capture_contract,
+)
+from cruxible_client.contracts.cas_contracts import BodyAccessContext, BodyProjectionProtocol
+from cruxible_client.contracts.claim_verdicts import ObservationTrustGrade, observation_trust_grade
+from cruxible_client.contracts.claims import (
+    ClaimCitation,
+)
+from cruxible_client.contracts.errors import CasError, ProjectionFormatError
+from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_core.coverage.contracts import CoverageClaimCitationV2
+from cruxible_core.coverage.indexes import (
+    EvidenceCitationIndexV1,
+    EvidenceCitationIndexV2,
+    EvidenceCitationV1,
+    EvidenceCitationV2,
+    accepted_logical_source,
+)
+from cruxible_core.indexes.projection import AcceptedCoordinate
+
+if TYPE_CHECKING:
+    from cruxible_core.indexes.evidence.citation_sql import CitationReader
+
+
+@dataclass(frozen=True)
+class CitationAccess:
+    """How one read classifies cited Captures (C14), from maintained metadata only.
+
+    ``restricted`` names the restricted Captures among those asked (unknown
+    kinds included: fail closed); ``self_asserted`` grades an exact kind
+    version, superseded ones included (None: unresolved); ``withhold`` says
+    whether this reader is denied restricted Captures, whose envelopes and
+    bodies are then never read: their rows come from the index alone.
+    """
+
+    restricted: Callable[[Sequence[str]], set[str]]
+    self_asserted: Callable[[str], bool | None]
+    withhold: bool
+
+
+@overload
+def coverage_rows(
+    reader: CitationReader,
+    *,
+    bodies: BodyProjectionProtocol,
+    at: AcceptedCoordinate,
+    version: Literal[1],
+    access: CitationAccess | None = None,
+) -> tuple[EvidenceCitationIndexV1, dict[str, CaptureEnvelopeAny]]: ...
+
+
+@overload
+def coverage_rows(
+    reader: CitationReader,
+    *,
+    bodies: BodyProjectionProtocol,
+    at: AcceptedCoordinate,
+    version: Literal[2] = 2,
+    access: CitationAccess | None = None,
+) -> tuple[EvidenceCitationIndexV2, dict[str, CaptureEnvelopeAny]]: ...
+
+
+def coverage_rows(
+    reader: CitationReader,
+    *,
+    bodies: BodyProjectionProtocol,
+    at: AcceptedCoordinate,
+    version: Literal[1, 2] = 2,
+    access: CitationAccess | None = None,
+) -> tuple[EvidenceCitationIndexV1 | EvidenceCitationIndexV2, dict[str, CaptureEnvelopeAny]]:
+    """Reproduce retained V1/V2 bytes using indexed joins and exact CAS envelopes.
+
+    V1 groups Captures by their commitment. V2 groups them by observed content
+    (``captures.observed_content_digest``), which is the digest of the exact
+    payload a Capture committed. With ``access`` (every served read), a row's
+    access class is its Captures' kinds' (restricted if any is), and a Capture
+    withheld from the reader contributes from the index without being read.
+    Without it (index-level tests) every row is ``instance`` and trust reads
+    the current contract.
+    """
+    group_column = "evidence_commitment_digest" if version == 1 else "observed_content_digest"
+    groups = reader._rows(
+        f"SELECT DISTINCT p.{group_column} AS group_digest,s.kind,p.logical_source_id "
+        "FROM captures p JOIN source_references s USING(source_ref_key) WHERE EXISTS "
+        "(SELECT 1 FROM citation_uses u WHERE u.capture_digest=p.capture_digest "
+        "AND u.owner_kind='Claim') "
+        f"ORDER BY p.{group_column},s.kind,p.logical_source_id"
+    )
+    body_access = BodyAccessContext(principal_id="playbill-coverage", can_read_body=True)
+    envelopes: dict[str, CaptureEnvelopeAny] = {}
+    trust_by_contract: dict[str, ObservationTrustGrade] = {}
+    citations: list[EvidenceCitationV1] = []
+
+    def trust_of(contract_digest: str) -> ObservationTrustGrade:
+        known_trust = trust_by_contract.get(contract_digest)
+        if known_trust is not None:
+            return known_trust
+        if access is not None:
+            asserted = access.self_asserted(contract_digest)
+            if asserted is None:
+                raise ProjectionFormatError("accepted CaptureContract is unavailable")
+        else:
+            path = reader.capture_contract_path(contract_digest)
+            if path is None:
+                raise ProjectionFormatError("accepted CaptureContract is unavailable")
+            contract = parse_capture_contract(reader.exact_source(path), path=path)
+            if capture_contract_digest(contract).tagged != contract_digest:
+                raise ProjectionFormatError("accepted CaptureContract differs from its digest")
+            asserted = capture_contract_is_self_asserted(contract)
+        known_trust = observation_trust_grade("self-asserted" if asserted else "daemon-fetched")
+        trust_by_contract[contract_digest] = known_trust
+        return known_trust
+
+    for group in groups:
+        captures = reader._rows(
+            "SELECT p.capture_digest,p.contract_digest,p.evidence_commitment_digest,"
+            "p.commitment_byte_length_decimal,p.commitment_digest_kind,"
+            "s.kind AS source_kind,s.source_identity,s.ledger_path FROM captures p "
+            "JOIN source_references s USING(source_ref_key) "
+            f"WHERE p.{group_column}=? AND s.kind=? AND p.logical_source_id IS ? "
+            "AND EXISTS (SELECT 1 FROM citation_uses u WHERE u.capture_digest=p.capture_digest "
+            "AND u.owner_kind='Claim') ORDER BY p.capture_digest",
+            (group["group_digest"], group["kind"], group["logical_source_id"]),
+        )
+        digests = [str(capture["capture_digest"]) for capture in captures]
+        restricted = set() if access is None else access.restricted(digests)
+        withheld = restricted if access is not None and access.withhold else set()
+        addresses: set[str] = set()
+        associations: dict[tuple[bytes, bytes], CoverageClaimCitationV2] = {}
+        first: CaptureEnvelopeAny | None = None
+        first_row: dict[str, object] | None = None
+        listed: list[str] = []
+        for capture in captures:
+            digest = str(capture["capture_digest"])
+            if digest in withheld:
+                # C14: described from the index; its envelope is not read.
+                first_row = first_row or capture
+            else:
+                try:
+                    envelope = reader._envelope(digest, bodies, envelopes, access=body_access)
+                except CasError:
+                    continue
+                if first is None:
+                    first = envelope
+            listed.append(digest)
+            trust: ObservationTrustGrade = "proposer_observed"
+            if version == 2:
+                trust = trust_of(str(capture["contract_digest"]))
+            for use in reader._rows(
+                "SELECT u.*,c.path FROM citation_uses u JOIN claims c ON c.identity=u.owner_key "
+                "WHERE u.capture_digest=? AND u.owner_kind='Claim' AND c.lifecycle='live' "
+                "ORDER BY c.path,u.use_key",
+                (digest,),
+            ):
+                path = str(use["path"])
+                addresses.add(path)
+                if version == 1:
+                    continue
+                reference = ClaimCitation.model_validate(
+                    {
+                        "citation_id": use["use_key"],
+                        "capture_digest": digest,
+                        "role": use["role"],
+                        "origin": use["origin"],
+                    }
+                )
+                association = CoverageClaimCitationV2(
+                    claim_address=SemanticAddress.claim_statement(path),
+                    capture_digest=digest,
+                    reference=reference,
+                    observation_trust=trust,
+                )
+                associations[association.sort_key] = association
+        if first is not None:
+            described: dict[str, object] = dict(
+                commitment_digest=first.commitment.digest,
+                digest_kind=first.commitment.digest_kind,
+                byte_length=first.commitment.byte_length,
+                accepted_source=accepted_logical_source(first.source),
+            )
+        elif first_row is not None:
+            described = _indexed_description(first_row)
+        else:
+            continue
+        values = dict(
+            **described,
+            access_class="restricted" if restricted & set(listed) else "instance",
+            capture_digests=tuple(listed),
+            claim_addresses=tuple(
+                SemanticAddress.claim_statement(path) for path in sorted(addresses)
+            ),
+        )
+        if version == 2:
+            citations.append(
+                EvidenceCitationV2.model_validate(
+                    {
+                        **values,
+                        "citation_associations": tuple(
+                            associations[key] for key in sorted(associations)
+                        ),
+                    }
+                )
+            )
+        else:
+            citations.append(EvidenceCitationV1.model_validate(values))
+    ordered = tuple(sorted(citations, key=lambda item: item.sort_key))
+    if version == 2:
+        return EvidenceCitationIndexV2.model_validate({"at": at, "citations": ordered}), envelopes
+    return EvidenceCitationIndexV1(at=at, citations=ordered), envelopes
+
+
+def _indexed_description(row: dict[str, object]) -> dict[str, object]:
+    """A withheld Capture's row described by the citation index alone (no envelope read)."""
+
+    from cruxible_core.coverage.contracts import LogicalSourceIdentity
+
+    length = row["commitment_byte_length_decimal"]
+    source: LogicalSourceIdentity | None = None
+    if row["source_kind"] == "external":
+        source = LogicalSourceIdentity(plane="external", identity=str(row["source_identity"]))
+    elif row["source_kind"] == "ledger":
+        source = LogicalSourceIdentity(plane="ledger", identity=str(row["ledger_path"]))
+    return dict(
+        commitment_digest=str(row["evidence_commitment_digest"]),
+        digest_kind=str(row["commitment_digest_kind"]),
+        byte_length=None if length is None else int(str(length)),
+        accepted_source=source,
+    )

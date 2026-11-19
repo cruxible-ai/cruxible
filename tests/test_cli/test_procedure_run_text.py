@@ -1,0 +1,137 @@
+"""A refused `procedure run` or `line run` prints its code and repair in text mode."""
+
+from types import SimpleNamespace
+
+from cruxible_client.contracts.procedures.results import (
+    ProcedureAdmissionRefusal,
+    ProcedureNodeRefusal,
+)
+from cruxible_client.contracts.repairs import served_repair_for_refusal
+from cruxible_core.cli.commands.playbill import _echo_run_outcome
+
+
+def _echo(capsys, **state) -> str:  # type: ignore[no-untyped-def]
+    values = {"result": None, "terminal": None, "next_operation": {"kind": "terminal"}, **state}
+    _echo_run_outcome(SimpleNamespace(**values), "audit.sign-line")  # type: ignore[arg-type]
+    return capsys.readouterr().out
+
+
+def test_a_refused_line_run_names_the_code_and_the_runnable_repair(capsys) -> None:
+    refusal = ProcedureAdmissionRefusal(
+        code="line_mandate_required",
+        message="This Line can propose or settle and has no mandate.",
+        repair=served_repair_for_refusal("line_mandate_required"),
+    )
+    out = _echo(capsys, status="admission_refused", terminal=refusal)
+    assert out == (
+        "audit.sign-line: admission_refused\n"
+        "Refused: line_mandate_required: This Line can propose or settle and has no mandate.\n"
+        "Repair: cruxible authoring example procedure-mandate\n"
+        "Next: terminal\n"
+    )
+
+
+def test_an_input_refusal_names_the_offending_field(capsys) -> None:
+    refusal = ProcedureNodeRefusal(
+        code="contract_input_refused",
+        message="The Procedure node input contract refused its value.",
+        node_id="procedure",
+        details={"field_path": "count"},
+        repair=served_repair_for_refusal("contract_input_refused"),
+    )
+    out = _echo(capsys, status="node_refused", terminal=refusal)
+    assert "Refused: contract_input_refused:" in out
+    assert "Field: count\n" in out
+    assert "Repair: hand edit refusal/contract_input_refused:" in out
+
+
+def test_a_successful_run_leads_with_its_result(capsys) -> None:
+    out = _echo(capsys, status="succeeded", result={"count": 1}, next_operation={"kind": "done"})
+    assert out == 'audit.sign-line: succeeded\nResult: {"count": 1}\nNext: done\n'
+
+
+def test_an_operational_failure_names_the_providers_cause(capsys) -> None:
+    from cruxible_client.contracts.procedures.results import (
+        ProcedureFailureCause,
+        ProcedureOperationalFailure,
+    )
+
+    failure = ProcedureOperationalFailure(
+        code="provider_execution_error",
+        message="Provider execution failed for an operational reason.",
+        last_node_id="fetch",
+        cause=ProcedureFailureCause(
+            node_id="fetch",
+            provider_code="provider_execution_error",
+            kind="HttpStatus",
+            message="GET https://feed.test/kev.json returned 404",
+        ),
+    )
+    out = _echo(capsys, status="operational_failed", terminal=failure)
+    assert "Cause: fetch: HttpStatus: GET https://feed.test/kev.json returned 404\n" in out
+    untyped = failure.model_copy(
+        update={"cause": failure.cause.model_copy(update={"kind": None})}  # type: ignore[union-attr]
+    )
+    assert "Cause: fetch: provider_execution_error: GET" in _echo(
+        capsys, status="operational_failed", terminal=untyped
+    )
+
+
+def test_a_refused_or_failed_run_exits_1_and_the_rest_exit_0() -> None:
+    import pytest
+
+    from cruxible_core.cli.commands.playbill import _exit_for_run
+
+    for status in ("admission_refused", "node_refused", "operational_failed", "internal_failed"):
+        with pytest.raises(SystemExit) as stopped:
+            _exit_for_run(SimpleNamespace(status=status))  # type: ignore[arg-type]
+        assert stopped.value.code == 1
+    for status in ("succeeded", "halted", "running"):
+        _exit_for_run(SimpleNamespace(status=status))  # type: ignore[arg-type]
+
+
+def test_a_succeeded_line_run_with_an_incomplete_source_says_it_needs_attention(capsys) -> None:
+    from cruxible_client.contracts.claim_evidence import CompletenessReason, RunCompleteness
+    from cruxible_client.contracts.procedures.node_summary import run_counts
+
+    counts = run_counts(
+        [],
+        completeness=RunCompleteness(
+            reasons=(CompletenessReason(node="scores", kind="count_mismatch"),)
+        ),
+    )
+    out = _echo(capsys, status="succeeded", counts=counts, next_operation={"kind": "done"})
+    assert out.splitlines()[:2] == [
+        "audit.sign-line: succeeded  (needs attention)",
+        "Counts: written 0 (settled 0, proposed 0); unchanged 0; refused 0; inbox 0; "
+        "INCOMPLETE (scores count_mismatch)",
+    ]
+
+
+def test_a_run_that_only_sees_inbox_items_again_says_so_and_needs_no_attention(capsys) -> None:
+    from cruxible_client.contracts.procedures.node_summary import EgressRunSummary, run_counts
+
+    post = EgressRunSummary(kind="post_inbox", emitted=100)
+    resighted = run_counts([post], inbox=100, inbox_new=0)
+    out = _echo(capsys, status="succeeded", counts=resighted, next_operation={"kind": "done"})
+    assert out.splitlines()[:2] == [
+        "audit.sign-line: succeeded",
+        "Counts: written 0 (settled 0, proposed 0); unchanged 0; refused 0; "
+        "inbox 0 new, 100 seen again",
+    ]
+    mixed = run_counts([post], inbox=100, inbox_new=4)
+    assert mixed.needs_attention and mixed.inbox_seen_again == 96
+
+
+def test_counts_recorded_before_the_split_still_read_and_keep_their_flag() -> None:
+    """A stored Runbook step from before the split: the total alone, flagged as it was."""
+
+    from cruxible_client.contracts.procedures.node_summary import RunCounts
+    from cruxible_core.cli.commands.playbill import _counts_text
+
+    legacy = RunCounts.model_validate({"complete": True, "inbox": 100, "needs_attention": True})
+    assert (legacy.inbox_new, legacy.inbox_seen_again) == (None, None)
+    assert _counts_text(legacy).endswith("; inbox 100")
+    quiet = RunCounts.model_validate({"complete": True, "inbox": 0, "needs_attention": False})
+    assert not quiet.needs_attention
+    assert RunCounts.model_validate(legacy.model_dump(mode="json")) == legacy

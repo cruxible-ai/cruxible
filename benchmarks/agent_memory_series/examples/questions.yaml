@@ -1,0 +1,27 @@
+# No rubric: the reviewer reads each answer by eye and records notes plus
+# stale_as_current / wrong / missing flags. "Needs validation" with the named
+# blocker is a valid answer. reviewer_context_by_session goes only to the
+# review sheet (fill it against the frozen change script before running).
+- id: live-findings
+  kind: recall
+  prompt: Which findings are live now? Give severity and evidence for each.
+  after_sessions: [1, 2, 3, 4, 5, 6, 7]
+- id: changed-judgments
+  kind: change
+  prompt: What changed since the previous session, and why did each affected judgment move?
+  after_sessions: [2, 3, 4, 5, 6, 7]
+- id: contradictions
+  kind: contradiction
+  prompt: What have we learned that is now contradicted, and what depends on it?
+  after_sessions: [3, 5, 6, 7]
+  reviewer_context_by_session:
+    5: The session-3 fix was reverted; findings it closed are live again.
+    6: The refactor removed a reachable path; judgments that relied on it no longer hold.
+- id: unchecked-scope
+  kind: coverage
+  prompt: What has never been checked, or has drifted since it was checked?
+  after_sessions: [1, 4, 7]
+- id: version-control
+  kind: control
+  prompt: Which version of the main web framework does the dependency manifest declare? Cite the line.
+  after_sessions: [1, 4, 7]

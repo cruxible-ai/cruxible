@@ -1,0 +1,272 @@
+"""Frozen Ed25519 approval preimage, key-history, and quorum tests."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+from cruxible_client.contracts.attestations import (
+    ApprovalAttestation,
+    ApprovalStatement,
+    ApprovalSubmission,
+    approval_digest,
+    approval_statement_bytes,
+    verify_approval,
+    verify_candidate_approvals,
+)
+from cruxible_client.contracts.candidates import CandidateRecord, candidate_digest
+from cruxible_client.contracts.errors import ApprovalIntegrityError
+from cruxible_client.contracts.governance import (
+    INDEPENDENT_APPROVAL_REQUIREMENTS,
+    ApprovalRequirement,
+)
+from cruxible_client.contracts.principals import PrincipalRegistrySnapshot
+from cruxible_client.contracts.types import PrincipalRecord
+from cruxible_core.proposals.settlement import parse_change_set_record
+
+ROOT = "sha256:" + "11" * 32
+
+
+def _key(principal_id: str, roles: tuple[str, ...]):
+    private = Ed25519PrivateKey.generate()
+    record = PrincipalRecord(
+        principal_id=principal_id,
+        public_key=private.public_key().public_bytes_raw().hex(),
+        kind=roles[0] if roles[0] in {"daemon", "recovery"} else "ordinary",
+    )
+    return private, record
+
+
+def _candidate(
+    *,
+    parent: str = ROOT,
+    approval_requirements: tuple[ApprovalRequirement, ...] = (),
+) -> CandidateRecord:
+    """The golden current candidate, re-parented onto ``parent``."""
+
+    golden = json.loads(
+        (Path(__file__).parents[1] / "goldens" / "playbill" / "changeset-v3.json").read_bytes()
+    )
+    record = parse_change_set_record(
+        golden["canonical_bytes"].encode(), path="changesets/cs-00000000000000000001.json"
+    )
+    semantic = record.candidate.model_copy(update={"parent_semantic_root": parent})
+    return CandidateRecord(
+        candidate=semantic,
+        candidate_digest=candidate_digest(semantic).tagged,
+        required_tier=record.required_tier,
+        approval_requirements=approval_requirements,
+        activation_policy=record.activation_policy,
+        closure_proof=record.closure_proof,
+        members=record.members,
+        law_evidence=record.law_evidence,
+        law_digests=record.law_digests,
+        compiler_digest=record.compiler_digest,
+    )
+
+
+def _submission(
+    private: Ed25519PrivateKey,
+    candidate: CandidateRecord,
+    *,
+    signer_id: str,
+    submitted_by: str = "api-client",
+) -> ApprovalSubmission:
+    statement = ApprovalStatement(
+        signer_id=signer_id,
+        signing_semantic_root=candidate.candidate.parent_semantic_root,
+        payload_digest=candidate.candidate_digest,
+    )
+    signature = private.sign(approval_statement_bytes(statement)).hex()
+    return ApprovalSubmission(
+        submitted_by=submitted_by,
+        attestation=ApprovalAttestation(**statement.model_dump(), sig=signature),
+    )
+
+
+def _registry(*records: PrincipalRecord) -> PrincipalRegistrySnapshot:
+    daemon_private, daemon = _key("daemon", ("daemon",))
+    del daemon_private
+    return PrincipalRegistrySnapshot(
+        semantic_root=ROOT,
+        principals=tuple(sorted((daemon, *records), key=lambda item: item.principal_id)),
+    )
+
+
+def test_exact_public_attestation_verifies_and_keeps_submitter_separate() -> None:
+    private, owner = _key("owner", ("owner",))
+    candidate = _candidate()
+    submission = _submission(private, candidate, signer_id="owner", submitted_by="relay")
+
+    verified = verify_approval(
+        submission,
+        candidate=candidate.candidate,
+        principals=_registry(owner),
+    )
+
+    assert verified.signer_id == "owner"
+    assert verified.submission.submitted_by == "relay"
+    assert verified.digest == approval_digest(submission.attestation)
+    assert verified.signer_key_history_ref == f"principals/owner.json@{ROOT}"
+    assert approval_statement_bytes(submission.attestation) == approval_statement_bytes(
+        submission.attestation.statement
+    )
+
+
+def test_attestation_preimage_and_complete_envelope_digest_match_golden() -> None:
+    fixture = json.loads(
+        (Path(__file__).parents[1] / "goldens" / "playbill" / "attestation-v1.json").read_bytes()
+    )
+    attestation = ApprovalAttestation(
+        signer_id="reviewer",
+        signing_semantic_root="sha256:" + "66" * 32,
+        payload_digest="sha256:" + "11" * 32,
+        sig=fixture["signature"],
+    )
+
+    assert approval_statement_bytes(attestation).decode() == fixture["statement_preimage"]
+    assert approval_digest(attestation).tagged == fixture["attestation_digest"]
+
+
+def test_tampered_stale_foreign_revoked_and_recovery_approvals_refuse() -> None:
+    private, owner = _key("owner", ("owner",))
+    candidate = _candidate()
+    valid = _submission(private, candidate, signer_id="owner")
+
+    bad_sig = valid.model_copy(
+        update={"attestation": valid.attestation.model_copy(update={"sig": "00" * 64})}
+    )
+    with pytest.raises(ApprovalIntegrityError, match="does not verify"):
+        verify_approval(bad_sig, candidate=candidate.candidate, principals=_registry(owner))
+
+    rebased = _candidate(parent="sha256:" + "99" * 32)
+    with pytest.raises(ApprovalIntegrityError, match="registry"):
+        verify_approval(valid, candidate=rebased.candidate, principals=_registry(owner))
+
+    foreign_private, _foreign = _key("foreign", ("owner",))
+    foreign = _submission(foreign_private, candidate, signer_id="foreign")
+    with pytest.raises(ApprovalIntegrityError, match="absent"):
+        verify_approval(foreign, candidate=candidate.candidate, principals=_registry(owner))
+
+    revoked = owner.model_copy(update={"status": "revoked"})
+    with pytest.raises(ApprovalIntegrityError, match="not active"):
+        verify_approval(valid, candidate=candidate.candidate, principals=_registry(revoked))
+
+    recovery_private, recovery = _key("recovery", ("recovery",))
+    recovery_submission = _submission(recovery_private, candidate, signer_id="recovery")
+    with pytest.raises(ApprovalIntegrityError, match="cannot approve"):
+        verify_approval(
+            recovery_submission,
+            candidate=candidate.candidate,
+            principals=_registry(recovery),
+        )
+
+
+def test_noncreator_voluntary_approval_verifies_without_default_requirement() -> None:
+    owner_private, owner = _key("owner", ("owner",))
+    reviewer_private, reviewer = _key("reviewer", ("reviewer",))
+    candidate = _candidate()
+    del owner_private
+    submission = (_submission(reviewer_private, candidate, signer_id="reviewer"),)
+    verified = verify_candidate_approvals(
+        candidate,
+        submission,
+        principals=_registry(owner, reviewer),
+        creator_principal_id="owner",
+    )
+    assert tuple(item.signer_id for item in verified) == ("reviewer",)
+
+
+def test_creator_may_approve_the_empty_self_approval_profile() -> None:
+    owner_private, owner = _key("owner", ("owner",))
+    reviewer_private, reviewer = _key("reviewer", ("reviewer",))
+    candidate = _candidate()
+    creator = _submission(owner_private, candidate, signer_id="owner")
+    verified = verify_candidate_approvals(
+        candidate,
+        (creator,),
+        principals=_registry(owner, reviewer),
+        creator_principal_id="owner",
+    )
+    assert tuple(item.signer_id for item in verified) == ("owner",)
+
+
+def test_creator_cannot_satisfy_or_join_independent_approvals() -> None:
+    owner_private, owner = _key("owner", ("owner",))
+    reviewer_private, reviewer = _key("reviewer", ("reviewer",))
+    candidate = _candidate(approval_requirements=INDEPENDENT_APPROVAL_REQUIREMENTS)
+    creator = _submission(owner_private, candidate, signer_id="owner")
+    with pytest.raises(
+        ApprovalIntegrityError,
+        match="creator_forbidden.*other than the candidate creator, whose approval activates it",
+    ):
+        verify_candidate_approvals(
+            candidate,
+            (creator,),
+            principals=_registry(owner, reviewer),
+            creator_principal_id="owner",
+        )
+
+    submissions = tuple(
+        sorted(
+            (
+                creator,
+                _submission(reviewer_private, candidate, signer_id="reviewer"),
+            ),
+            key=lambda item: item.attestation.signer_id,
+        )
+    )
+    with pytest.raises(ApprovalIntegrityError, match="creator_forbidden"):
+        verify_candidate_approvals(
+            candidate,
+            submissions,
+            principals=_registry(owner, reviewer),
+            creator_principal_id="owner",
+        )
+
+
+def test_principal_lifecycle_allows_creator_key_binding_without_a_quorum() -> None:
+    owner_private, owner = _key("owner", ("owner",))
+    reviewer_private, reviewer = _key("reviewer", ("reviewer",))
+    candidate = _candidate()
+    creator = _submission(owner_private, candidate, signer_id="owner")
+    verified = verify_candidate_approvals(
+        candidate,
+        (creator,),
+        principals=_registry(owner, reviewer),
+        creator_principal_id="owner",
+        purpose="principal-lifecycle",
+    )
+    assert tuple(item.signer_id for item in verified) == ("owner",)
+
+    voluntary = (_submission(reviewer_private, candidate, signer_id="reviewer"),)
+    assert tuple(
+        item.signer_id
+        for item in verify_candidate_approvals(
+            candidate,
+            voluntary,
+            principals=_registry(owner, reviewer),
+            creator_principal_id="owner",
+            purpose="principal-lifecycle",
+        )
+    ) == ("reviewer",)
+
+
+def test_only_the_two_installed_requirement_profiles_cross_the_wire_boundary() -> None:
+    independent = _candidate(approval_requirements=INDEPENDENT_APPROVAL_REQUIREMENTS)
+    assert independent.approval_requirements == INDEPENDENT_APPROVAL_REQUIREMENTS
+    with pytest.raises(ValueError, match="not one installed profile"):
+        _candidate(approval_requirements=(ApprovalRequirement(role="reviewer"),))
+
+
+def test_principal_kind_is_closed_and_retired_role_wire_refuses() -> None:
+    _, ordinary = _key("ordinary", ("owner",))
+    payload = ordinary.model_dump(mode="json")
+    payload["authority_roles"] = ["owner"]
+    with pytest.raises(ValueError, match="authority_roles"):
+        PrincipalRecord.model_validate(payload)
+    with pytest.raises(ValueError, match="kind"):
+        PrincipalRecord.model_validate({**ordinary.model_dump(mode="json"), "kind": "owner"})

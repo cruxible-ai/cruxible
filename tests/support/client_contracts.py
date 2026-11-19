@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from pydantic_core import PydanticUndefined
 
 from cruxible_client import contracts
-from cruxible_core.primitives import canonical_json
+from cruxible_client.contracts.primitives import canonical_json
 
 CONTRACT_MANIFEST_VERSION = 1
 
@@ -96,14 +96,44 @@ def compare_contract_manifests(
 
 
 def _public_models() -> dict[str, Any]:
+    """Every model the `contracts` namespace publishes, wherever it is defined.
+
+    The filter used to be `__module__ == contracts.__name__`, which covered
+    exactly the models written inside `contracts/__init__.py` and silently
+    dropped every one imported into it -- including the twenty-seven exported
+    deliberately with the `X as X` idiom, which is the ONLY thing that defines
+    this package's export surface, since there is no `__all__`. So the snapshot
+    said nothing about `SourceReadReceipt.requested_path`: a field real
+    clients see, moving no pin. That one is now covered.
+
+    Two neighbours named alongside it in the card are NOT, and neither becomes
+    covered by this filter. `Descriptor.decommissioned` lives in
+    `contracts/types.py`, which the namespace does not re-export, so the model
+    is reachable by importing the submodule but is not published and moves no
+    pin here. `PlaybillSearchOrientationV1` is not a client contract at all --
+    it is `cruxible_core.query.search`, server-side, and this snapshot has
+    never had an opinion about it.
+
+    The namespace is the law, and it is the WHOLE law: what it publishes is
+    covered, what it does not is not. A model reachable only by importing a
+    submodule is reachable but not published, and stays where the authoring and
+    claim-attestation wire catalogs pin it -- or, as with the two above, is
+    pinned nowhere in this snapshot by design.
+    """
+
     models: dict[str, Any] = {}
     for name, value in sorted(vars(contracts).items()):
         if name.startswith("_"):
             continue
         if not inspect.isclass(value):
             continue
-        if not issubclass(value, BaseModel) or value.__module__ != contracts.__name__:
+        if not issubclass(value, BaseModel):
             continue
+        if not value.__module__.startswith(f"{contracts.__name__}."):
+            if value.__module__ != contracts.__name__:
+                # `pydantic.BaseModel` itself reaches the namespace as an import
+                # artifact; it is pydantic's contract, not this package's.
+                continue
         value.model_rebuild()
         schema = _json_roundtrip(value.model_json_schema(ref_template="#/$defs/{model}"))
         required_fields = [

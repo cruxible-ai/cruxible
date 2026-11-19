@@ -1,0 +1,33 @@
+{
+  "artifact_format": "cruxible-contract-v1",
+  "description": "One Capture per page, in page order: each member is the exact body that page's origin sent, with web.fetch's HTTP coordinate for that exchange (url is the page's built URL, request_digest covers it) plus page_index (0-based) and page_count. A page without a Capture is listed in failed_pages, and the result is then incomplete (D-R37 a4): absence never retires on it. A request with no values to page over has no pages: captures is empty and the result is complete.",
+  "fields": {
+    "captures": {
+      "type": {
+        "item": {
+          "capture_kind": "*",
+          "kind": "capture"
+        },
+        "kind": "list",
+        "max_items": 64
+      }
+    },
+    "failed_pages": {
+      "optional": true,
+      "type": {
+        "item": {
+          "contract": {
+            "digest": "sha256:67bf0a00b7f614fbe3c0d6579ac0cd4a5690b30bff1cf2a63caa712d0821cb38",
+            "name": "web.fetch.pages.failure",
+            "version": 1
+          },
+          "kind": "contract"
+        },
+        "kind": "list",
+        "max_items": 64
+      }
+    }
+  },
+  "name": "web.fetch.pages.result",
+  "version": 1
+}

@@ -1,0 +1,396 @@
+"""Exact contract and event binding shared by direct runs and Lines."""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from datetime import datetime
+from typing import cast
+
+from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.claims import (
+    ClaimArtifact,
+    claim_artifact_digest,
+    claim_path,
+    claim_statement_digest,
+    parse_claim,
+)
+from cruxible_client.contracts.errors import (
+    ClaimNotFoundError,
+    ExecutionError,
+    FormatError,
+    JournalIntegrityError,
+)
+from cruxible_client.contracts.procedures.results import ProcedureAdmissionRefusalCode
+from cruxible_client.contracts.procedures.windows import (
+    BoundObservationWindow,
+    CaptureEventNameSelector,
+    CaptureEventNameWindow,
+    CaptureEventSelector,
+    CaptureEventWindow,
+    FixedWindow,
+    LineTriggerBinding,
+    ObservationWindow,
+    TriggerEventReference,
+    bind_observation_window,
+)
+from cruxible_client.contracts.projection import AcceptedCoordinate
+from cruxible_client.contracts.resolution_contracts import (
+    ClaimVersionReference,
+    InvestigationBinding,
+    ResolutionContract,
+    ResolutionContractReference,
+    ResolutionContractsRequest,
+    ResolutionContractsResult,
+    ResolutionContractView,
+    parse_resolution_contract,
+    resolution_contract_digest,
+    resolution_contract_path,
+)
+from cruxible_core.exhaust.capture_selectors import landing_logical_source
+from cruxible_core.exhaust.payloads import UnavailablePayload, read_payload_bytes
+from cruxible_core.exhaust.records import ProcedureJournalRecordV1, parse_journal_payload
+from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
+from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.storage.cas import BodyAccessContext
+
+
+class TriggerCaptureRefused(ExecutionError):
+    def __init__(
+        self,
+        code: ProcedureAdmissionRefusalCode,
+        message: str,
+        *,
+        retryable: bool = False,
+        details: dict[str, object] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.refusal_code = code
+        self.retryable = retryable
+        self.details = details or {}
+
+
+def read_claim_reference(
+    instance: PlaybillInstance, reference: ClaimVersionReference
+) -> ClaimArtifact:
+    coordinate = instance.resolve_accepted_coordinate(
+        **reference.coordinate.model_dump(exclude={"tag"})
+    )
+    path = claim_path(reference.identity.name)
+    raw = instance.blob_at(coordinate.git_oid, path)
+    if raw is None:
+        raise FormatError("exact accepted Claim is absent")
+    claim = parse_claim(raw, path=path)
+    reference.verify(claim)
+    return claim
+
+
+def resolve_claim_version(
+    instance: PlaybillInstance,
+    value: str | ClaimVersionReference,
+    *,
+    at: AcceptedProjectionCoordinate | None = None,
+) -> ClaimVersionReference:
+    """Turn a Claim ID into the exact reference of its version accepted at ``at``.
+
+    The reference names the generation that first accepted that version, not
+    the lookup coordinate, so the same Claim version always yields the same
+    reference. An exact reference passes through untouched.
+    """
+
+    if isinstance(value, ClaimVersionReference):
+        return value
+    claim_id = value.removeprefix("Claim:")
+    coordinate = instance.accepted_coordinate() if at is None else at
+    path = claim_path(claim_id)
+    raw = instance.blob_at(coordinate.git_oid, path)
+    if raw is None:
+        raise ClaimNotFoundError(
+            f"Claim {claim_id} is not accepted at the requested coordinate; "
+            "find it with `cruxible query KIND --claims`"
+        )
+    claim = parse_claim(raw, path=path)
+    artifact_digest = claim_artifact_digest(claim).tagged
+    with instance.accepted_history_reader(
+        at=AcceptedCoordinate.from_internal(coordinate)
+    ) as history:
+        occurrence = history.artifact(artifact_digest, identity=claim.identity.qualified)
+        if occurrence is None:
+            raise ExecutionError("Claim version has no accepted occurrence")
+        generation = history.generation(occurrence.occurrence_sequence)
+    return ClaimVersionReference(
+        identity=claim.identity,
+        artifact_digest=artifact_digest,
+        statement_digest=claim_statement_digest(claim.statement).tagged,
+        coordinate=AcceptedCoordinate(
+            git_oid=generation.git_oid,
+            semantic_root=generation.semantic_root,
+            generation_root=generation.generation_root,
+            compiler_digest=generation.compiler_digest,
+        ),
+    )
+
+
+def read_resolution_contract(
+    instance: PlaybillInstance, reference: ResolutionContractReference
+) -> ResolutionContract:
+    coordinate = instance.resolve_accepted_coordinate(
+        **reference.coordinate.model_dump(exclude={"tag"})
+    )
+    path = resolution_contract_path(reference.identity.name)
+    with instance.bind_accepted_projection(coordinate) as projection:
+        row = projection.typed.envelope(reference.identity.qualified)
+        if row is None or row.path != path or row.artifact_digest != reference.artifact_digest:
+            raise ExecutionError("resolution contract does not match its accepted binding")
+        contract = parse_resolution_contract(
+            projection.typed.member_bytes(path),
+            path=path,
+        )
+    if resolution_contract_digest(contract).tagged != reference.artifact_digest:
+        raise ExecutionError("resolution contract digest does not reproduce")
+    with instance.accepted_history_reader(at=reference.coordinate) as history:
+        if history.generation_for_oid(contract.hypothesis.coordinate.git_oid) is None:
+            raise ExecutionError("hypothesis is not accepted before its contract")
+    contract.verify_hypothesis(read_claim_reference(instance, contract.hypothesis))
+    return contract
+
+
+def capture_contract_name(instance: PlaybillInstance, digest: str) -> str | None:
+    with instance.accepted_history_reader() as history:
+        version = history.artifact(digest)
+    return (
+        None
+        if version is None or not version.identity.startswith("CaptureContract:")
+        else version.identity
+    )
+
+
+def read_capture_event(
+    instance: PlaybillInstance,
+    selector: CaptureEventSelector | CaptureEventNameSelector,
+    reference: TriggerEventReference,
+    *,
+    now: datetime,
+) -> tuple[ProcedureJournalRecordV1, Mapping[str, object]]:
+    from cruxible_core.service.procedures.procedure_runs import _journal, _stream
+
+    journal, _ = _journal(instance)
+    # The indexed reader verifies the retained frame and chain. Read this exact
+    # position once; an absent event is distinct from a broken journal backend.
+    selected = journal.select_records(
+        _stream(instance),
+        partition_id=reference.partition_id,
+        first_sequence=reference.sequence,
+        last_sequence=reference.sequence,
+    )
+    if not selected:
+        raise TriggerCaptureRefused(
+            "trigger_capture_unavailable", "The exact trigger event is no longer retained."
+        )
+    (stored,) = selected
+    if stored.record_digest != reference.record_digest:
+        raise TriggerCaptureRefused(
+            "trigger_capture_invalid", "trigger event does not reproduce its retained record"
+        )
+    record = stored.record
+    if record.run_id != reference.run_id or record.event_kind != "produced_capture":
+        raise TriggerCaptureRefused(
+            "trigger_capture_invalid", "trigger requires a produced Capture from the exact run"
+        )
+    bodies = instance.body_store()
+    access = BodyAccessContext(principal_id="trigger-binding", can_read_body=True)
+    raw = read_payload_bytes(bodies, record.payload_digest, access=access)
+    if isinstance(raw, UnavailablePayload):
+        raise TriggerCaptureRefused(
+            "trigger_capture_unavailable", "The exact trigger event payload is unavailable."
+        )
+    try:
+        payload = parse_journal_payload(raw)
+    except JournalIntegrityError as exc:
+        raise TriggerCaptureRefused(
+            "trigger_capture_invalid", "The exact trigger event payload is malformed."
+        ) from exc
+    if (
+        not isinstance(payload, dict)
+        or payload.get("tag") != "playbill-procedure-produced-capture-v1"
+        or not isinstance(payload.get("capture_contract_digest"), str)
+        or (
+            isinstance(selector, CaptureEventSelector)
+            and payload["capture_contract_digest"] != selector.capture_contract_digest
+        )
+        or capture_contract_name(instance, cast(str, payload["capture_contract_digest"]))
+        != selector.capture_contract_identity.qualified
+    ):
+        raise TriggerCaptureRefused(
+            "trigger_capture_invalid", "trigger event does not match its CaptureContract selector"
+        )
+    if selector.logical_sources:
+        source = landing_logical_source(bodies, payload, access=access)
+        if isinstance(source, UnavailablePayload):
+            raise TriggerCaptureRefused(
+                "trigger_capture_unavailable", "The exact trigger Capture envelope is unavailable."
+            )
+        if source not in selector.logical_sources:
+            raise TriggerCaptureRefused(
+                "trigger_capture_invalid",
+                "trigger event does not match its logical_sources selector",
+            )
+    if record.recorded_at > now:
+        raise TriggerCaptureRefused(
+            "trigger_capture_not_yet_observed",
+            "trigger event has not occurred at the evaluation instant",
+            retryable=True,
+        )
+    return record, payload
+
+
+def capture_event_time(
+    instance: PlaybillInstance,
+    selector: CaptureEventSelector | CaptureEventNameSelector,
+    reference: TriggerEventReference,
+    *,
+    now: datetime,
+) -> datetime:
+    record, _ = read_capture_event(instance, selector, reference, now=now)
+    return record.recorded_at
+
+
+def bind_window(
+    instance: PlaybillInstance,
+    policy: ObservationWindow | CaptureEventNameWindow,
+    event: TriggerEventReference | None,
+    *,
+    now: datetime,
+) -> BoundObservationWindow:
+    if isinstance(policy, CaptureEventWindow | CaptureEventNameWindow):
+        if event is None:
+            raise ExecutionError("window is waiting for its retained capture event")
+        instant = capture_event_time(instance, policy.event, event, now=now)
+        return bind_observation_window(policy, event=event, event_time=instant)
+    return bind_observation_window(policy, event=event)
+
+
+def bind_investigation(
+    instance: PlaybillInstance,
+    reference: ResolutionContractReference,
+    *,
+    event: TriggerEventReference | None,
+    now: datetime,
+    trigger_binding: LineTriggerBinding | None = None,
+) -> InvestigationBinding:
+    contract = read_resolution_contract(instance, reference)
+    reference = canonical_contract_reference(instance, reference)
+    if now < artifact_accepted_time(instance, reference):
+        raise ExecutionError("investigation cannot precede acceptance of its contract")
+    # A capture can trigger a Line without defining the contract's fixed window.
+    # Only ignore it here when that same event is already bound to the trigger.
+    window_event = event
+    if (
+        isinstance(contract.window, FixedWindow)
+        and trigger_binding is not None
+        and trigger_binding.event == event
+    ):
+        window_event = None
+    return InvestigationBinding(
+        contract=reference,
+        hypothesis=contract.hypothesis,
+        window=bind_window(instance, contract.window, window_event, now=now),
+    )
+
+
+def canonical_contract_reference(
+    instance: PlaybillInstance, reference: ResolutionContractReference
+) -> ResolutionContractReference:
+    """An unchanged contract keeps its identity across later lookup snapshots."""
+    with instance.accepted_history_reader(at=reference.coordinate) as history:
+        occurrence = history.artifact(
+            reference.artifact_digest, identity=reference.identity.qualified
+        )
+        if occurrence is None:
+            raise ExecutionError("contract version has no accepted occurrence")
+        generation = history.generation(occurrence.occurrence_sequence)
+    return reference.model_copy(
+        update={
+            "coordinate": AcceptedCoordinate(
+                git_oid=generation.git_oid,
+                semantic_root=generation.semantic_root,
+                generation_root=generation.generation_root,
+                compiler_digest=generation.compiler_digest,
+            )
+        }
+    )
+
+
+def artifact_accepted_time(
+    instance: PlaybillInstance, reference: ResolutionContractReference | ClaimVersionReference
+) -> datetime:
+    """Use the actual occurrence, not an arbitrary later snapshot containing it."""
+    with instance.accepted_history_reader(at=reference.coordinate) as history:
+        occurrence = history.artifact(
+            reference.artifact_digest, identity=reference.identity.qualified
+        )
+        if occurrence is None:
+            raise ExecutionError("artifact version has no accepted occurrence")
+        generation = history.generation(occurrence.occurrence_sequence)
+    return instance.accepted_evaluation_time(generation.git_oid)
+
+
+def require_current_investigation(
+    instance: PlaybillInstance, binding: InvestigationBinding
+) -> None:
+    """Admission gate for a new attempt; retained run replay uses its original binding."""
+    current = instance.accepted_coordinate()
+    with instance.bind_accepted_projection(current) as projection:
+        state = projection.typed.dependency_state(binding.contract.identity.qualified)
+        if (
+            state is None
+            or state.artifact_digest != binding.contract.artifact_digest
+            or state.lifecycle.state != "live"
+        ):
+            raise ExecutionError("new investigation requires the current live contract version")
+
+
+def service_resolution_contracts(
+    instance: PlaybillInstance, request: ResolutionContractsRequest
+) -> ResolutionContractsResult:
+    """Index lookup by exact hypothesis; only matching contract bodies are loaded."""
+    at = (
+        instance.accepted_coordinate()
+        if request.at is None
+        else instance.resolve_accepted_coordinate(**request.at.model_dump(exclude={"tag"}))
+    )
+    coordinate = AcceptedCoordinate.from_internal(at)
+    hypothesis = resolve_claim_version(instance, request.hypothesis, at=at)
+    with instance.accepted_history_reader(at=coordinate) as history:
+        if history.generation_for_oid(hypothesis.coordinate.git_oid) is None:
+            raise ExecutionError("hypothesis is outside the requested accepted history")
+    read_claim_reference(instance, hypothesis)
+    with instance.bind_accepted_projection(at) as projection:
+        rows = projection.typed.connection.execute(
+            "SELECT identity,artifact_digest,path FROM resolution_contracts WHERE "
+            "hypothesis_identity=? AND hypothesis_artifact_digest=? ORDER BY identity",
+            (hypothesis.identity.qualified, hypothesis.artifact_digest),
+        ).fetchall()
+        projection.typed.prefetch_members(tuple(row[2] for row in rows))
+        views = []
+        for identity, digest, path in rows:
+            kind, name = identity.split(":", 1)
+            ref = ResolutionContractReference(
+                identity=ArtifactIdentity(kind=kind, name=name),
+                artifact_digest=digest,
+                coordinate=coordinate,
+            )
+            contract = parse_resolution_contract(
+                projection.typed.member_bytes(path),
+                path=path,
+            )
+            if (
+                resolution_contract_digest(contract).tagged != digest
+                or contract.hypothesis.statement_digest != hypothesis.statement_digest
+            ):
+                raise ExecutionError("indexed contract differs from its exact hypothesis")
+            views.append(
+                ResolutionContractView(
+                    reference=canonical_contract_reference(instance, ref), contract=contract
+                )
+            )
+    return ResolutionContractsResult(coordinate=coordinate, contracts=tuple(views))

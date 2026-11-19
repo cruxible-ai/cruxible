@@ -1,0 +1,44 @@
+{
+  "expected": {
+    "empty_root": "merkle-sha256:56ecf4bfdd961afa4c51687b04fbef43c77afaa013ec613b74056649f8b3f52d",
+    "leaf_preimage": "{\"member_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"path\":\"documents/playbill-design.json\",\"tag\":\"playbill-merkle-leaf-v1\"}",
+    "nodes": {
+      "": "sha256:9a89f6c8011d19aa93a5c26f29b7c1cead14b69c0b868a7d8036022cf50e82ec",
+      "documents": "sha256:0e8369daa4804a4fe7c04bde1325e4a4a4ba7dbe6679bc00c91b7649d583b522",
+      "documents/nested": "sha256:080a59c716ea87e785b844ab748c3ad2324e477b3caa495eaf8630140b7fd154",
+      "documents/nested/deep": "sha256:c68eb936fe5e023ea898c8d2b03d9315532cf6d7a74c7533493eb70156758ff3",
+      "documents/nested/deep/leaf.json": "sha256:666dd6ce7f84d2429e4f1bf4c390a3d1cf5eee5e75aa565903bc669bd3cd5abd",
+      "documents/playbill-design.json": "sha256:3967e84e0d232342125b6646f7bffbbbbee0f858808377b7a20e22cae506b86e",
+      "principals": "sha256:d390068e248c37a3cc0ae39c153da7ddfbce4b118b3f01e1b4dfbdbc93edbf81",
+      "principals/daemon.json": "sha256:d1cbc155c8c296d09540db4046d5108c2719178f7efa98a4a5cf4a4c1675603d",
+      "subjects": "sha256:0c2d6979764781736f9c2af2dd4f6c3e0f5c546e4ad233517844eb4da8fa2494",
+      "subjects/alpha.json": "sha256:6d6bb3019718830ec98895da2cc8a40605d299884cfad81019fe90e4bfbe70af"
+    },
+    "root": "merkle-sha256:84b2bb4e9a2ba58ea1c8f01c39ccc8ab98deccf838b46f1ef81f487ca9719e77",
+    "root_preimage": "{\"node\":\"9a89f6c8011d19aa93a5c26f29b7c1cead14b69c0b868a7d8036022cf50e82ec\",\"tag\":\"playbill-merkle-root-v1\"}"
+  },
+  "format": "playbill-merkle-manifest-golden-v1",
+  "input": {
+    "change_set": {
+      "removed": [
+        "documents/retired.json"
+      ],
+      "updated": {
+        "documents/playbill-design.json": "1111111111111111111111111111111111111111111111111111111111111111",
+        "subjects/alpha.json": "4444444444444444444444444444444444444444444444444444444444444444"
+      }
+    },
+    "members": {
+      "documents/nested/deep/leaf.json": "2222222222222222222222222222222222222222222222222222222222222222",
+      "documents/playbill-design.json": "1111111111111111111111111111111111111111111111111111111111111111",
+      "principals/daemon.json": "3333333333333333333333333333333333333333333333333333333333333333",
+      "subjects/alpha.json": "4444444444444444444444444444444444444444444444444444444444444444"
+    },
+    "parent_members": {
+      "documents/nested/deep/leaf.json": "2222222222222222222222222222222222222222222222222222222222222222",
+      "documents/playbill-design.json": "0000000000000000000000000000000000000000000000000000000000000000",
+      "documents/retired.json": "9999999999999999999999999999999999999999999999999999999999999999",
+      "principals/daemon.json": "3333333333333333333333333333333333333333333333333333333333333333"
+    }
+  }
+}

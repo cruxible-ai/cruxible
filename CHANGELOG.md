@@ -7,6 +7,729 @@ that lands it; entries move under a version heading when the release is
 tagged. Work items for these changes live on the active release line in
 the project's own state instance.
 
+## [0.5.0] - 2026-11-18
+
+This release replaces the 0.3 configuration graph with a new state model.
+Values are Claims about Subjects under ClaimTypes; every change is a proposal
+checked deterministically, accepted under an approval policy with signed
+approvals, and recorded in a Git ledger. Procedures and Lines automate work
+over that state. One daemon owns accepted state; the CLI, the MCP server and
+the Python SDK are its clients. The [docs](docs/index.md) start at the
+quickstart and concepts pages.
+
+### Breaking changes and upgrading
+
+- **0.3 instances and configurations do not carry over.** Nothing converts a
+  0.3 config-authority instance (`instance.json`, `state.db`, `config.yaml`)
+  into this release's state, and this release's daemon does not open one. The
+  CLI, SDK and MCP server refuse a folder whose `.cruxible/` holds a 0.3
+  instance until you move that directory aside. To upgrade,
+  install this release, run `cruxible init` in the project, and re-import what
+  you need as Subjects, Claims and Documents (a kit can supply the
+  vocabulary). See [Upgrading](docs/upgrading.md).
+- **Instances made by unpublished development builds are refused, not
+  converted.** An instance whose genesis seeds or compiler this release does
+  not know answers `cruxible.instance.reseed_required`, and `cruxible host
+  show` reports it `reseed_required`. Move it aside and re-import its content
+  into a fresh instance.
+- **The 0.3 surface is gone.** Entity types, relationships, workflows,
+  feedback (`accept`, `approve`, `flag`), groups and `group_override`, outcome
+  records and profiles, config kits, and their CLI commands, MCP tools,
+  HTTP routes and client methods are removed with no aliases. Some names are
+  reused with a new meaning (`cruxible init`, `kit`, `instance`, `query`,
+  `procedure`, `.cruxible/`); review 0.3 scripts against
+  [Same name, new meaning](docs/upgrading.md#same-name-new-meaning).
+- **One public name.** The CLI is one flat `cruxible` group, MCP tools are
+  `cruxible_*`, HTTP routes are `/api/v1/{instance_id}/...`, the SDK entry is
+  `Cruxible` (`cx = Cruxible.connect()`; `CruxibleClient` stays the low-level
+  client), refusal codes are `cruxible.<family>.<name>`, and the workspace
+  directory is `.cruxible/`. Stored format tags keep their `playbill-*-vN`
+  spelling, because digests and signatures cover them.
+- **The MCP server is in the base install.** `mcp` is a base dependency, so
+  `uvx cruxible mcp` works on a plain install; the `mcp` extra is gone
+  (`cruxible[mcp]` still installs, with an installer warning). `cruxible mcp`
+  is the same server as `cruxible-mcp`.
+- **Supported platforms are Linux x86-64 and macOS on Apple silicon.** On
+  Windows use WSL2; the `cruxible` and `cruxible-mcp` launchers refuse native
+  Windows. Python 3.11 or later is required.
+- **A fresh ledger is SHA-1 unless the workspace says otherwise.** An attached
+  Git workspace's object format wins; `cruxible init --object-format` chooses
+  explicitly and refuses `cruxible.init.object_format_conflict` when it
+  contradicts the workspace.
+
+### State, reads and writes
+
+- **A daemon owns accepted state.** `cruxible server start` serves the HTTP
+  API over a Unix socket or TCP from one state root (`~/.cruxible`, or
+  `CRUXIBLE_STATE_ROOT`). The CLI finds it at the state root's default socket
+  and starts a local daemon when a command needs one (`--no-autostart` to
+  refuse instead). A second daemon over the same state root refuses
+  `cruxible.server.state_root_locked`.
+- **`cruxible init` sets up a project in one command.** It creates a host,
+  writes a signed genesis with the owner principal, generates the owner's
+  Ed25519 key outside the workspace, attaches the folder (Git or not) and
+  installs the base kit. Rerunning it is safe; `--workspace` acts on another
+  folder; `--require-independent-approval` adds a second principal's approval
+  to every governed change.
+- **Reads are `orient`, `query` and `get`, on every surface.** `orient` maps
+  accepted state, one `--kind`, or one `--section` (documents, procedures,
+  claim types, Subject kinds, queries, contracts, capabilities, runs, lines,
+  runbooks, captures, principals, policies, generations, graph, pins,
+  `activity` for what just happened, `sources` for when each logical source
+  last landed, and more). `query` filters, follows relations and runs named
+  QueryDefinitions, with `--status`, `--claims` and full replay receipts.
+  `get REF` reads one thing at a chosen `--detail` (evidence, why, history,
+  incoming, pairs, runs, backlinks, proof, body). Every read takes `--at` a
+  generation. `get` accepts a built-in's printed `cruxible.` spelling
+  (`CaptureContract:cruxible.coordinator-self-source-v1`).
+- **A query filter shifts `now` by a fixed offset.** `opened_at < now - 3d`
+  and `due_at < now + 12h` compare a `datetime` field with the evaluation time
+  moved by a duration in `d`, `h`, `m` or `s` (fixed length, UTC). Calendar
+  units refuse `cruxible.query.time_offset_unit_unsupported`; `now - 72h` and
+  `now - 3d` are one definition. A saved query that shifts `now` is stored as
+  `cruxible-query-definition-v4`; every other definition keeps its bytes.
+- **The write verbs change values directly.** `cruxible set`, `add`, `retire`
+  and `write` (a file of create, set, add, retire and document edits) lower
+  into an ordinary change set and accept it when the approval policy and your
+  tier allow; `--no-accept` only proposes. Each takes `--because`, evidence
+  options, `--expect`/`--expect-absent` compare-and-set, and `--dry-run`.
+  `@kind/id` names a Subject anywhere a Subject is taken. A `create` change's
+  `key` takes `{field: value}` (CLI write files, MCP `cruxible_write`, the
+  SDK) beside the full `[{predicate, value}]` form.
+- **A write catalogues the workspace files it cites.** A file or section
+  citation by path (in `write`, or `set`/`add` with file evidence) of a file
+  `.cruxible/files.yaml` does not name catalogues it once the write is
+  admitted, and the outcome lists it (`catalogued`). The catalog's derived
+  name is a stable handle mapped to the file's current path; `files add NAME
+  PATH` chooses one (NAME is now optional). A derived name already bound to
+  another file refuses `cruxible.doc.catalog_name_exists`.
+- **Cruxible names every new Subject.** A SubjectKind declares how a kind's
+  Subjects are named: by key ClaimTypes (`unique` or `hint`), or minted
+  (`sub-<32 hex>`). A creation names the kind and key; Cruxible assigns the id.
+  A new Subject of an undeclared kind refuses
+  `cruxible.subject.kind_undeclared`, and creating by a key several Subjects
+  hold refuses `key_ambiguous`. Pair Subjects whose key parts are other
+  Subjects have their own reads (`get --detail pairs`).
+- **`set` accepts key values.** A `key<K>` field takes a canonical key, as
+  authoring does.
+- **A revision may not move a Claim's subject or predicate.** `revises=`
+  refuses `cruxible.claim.revision_subject_moved` and
+  `cruxible.claim.revision_predicate_moved`; retire the Claim and author a new
+  one about the Subject you mean.
+- **`next` is the repair queue.** Each row names its reason, its severity
+  (`blocking`, `repair`, `warning`, or `setup` for a choice the operator owns,
+  such as `line_not_enabled`), the command that repairs it, and `since` when
+  its condition began. `--delta` returns only rows new since a prior result.
+  `orient` counts problems and setup rows apart (`Attention: next=N setup=M`).
+- **More reads for agents.** `cruxible since GENERATION` pages accepted
+  change sets; `cruxible audit` ranks Claim verification work; `cruxible
+  backlinks REF` lists the notes, Documents and cited sections pointing into a
+  Subject; and `cruxible whoami` explains the active writer identity.
+- **The floor is a greppable copy of accepted state.** The daemon writes
+  `.cruxible/floor/current/<kind>/<id>.yaml` (each field's value with its
+  `CLM-` and `CAP-` handles) and Documents as readable files after every
+  accepted change. Grep it to find things, then `get` the ref for live
+  verdicts. `workspace attach --no-floor-delivery` or `floor delivery off`
+  opts out of daemon delivery.
+- **`cruxible console` opens a read-only console in a browser.** It listens
+  on loopback only and serves read routes; MCP `cruxible_console` opens it
+  without handing the sign-in link to the agent.
+
+### Evidence, documents and vocabulary
+
+- **Claims cite Captures.** A Capture is retained evidence under a
+  CaptureContract: a file passage (`--evidence-file PATH#ANCHOR`), a source a
+  Procedure read, or your own words. A note citation stores one Capture, and
+  the CLI labels it "own words in FILE". `cruxible capture read` and `get
+  CAP-...` read one; `cruxible capture erase` destroys a body and keeps the
+  record. `cruxible rebind` re-cites a drifted Claim on the text it rests on
+  now.
+- **Evidence never comes from a projection block.** A citation whose span
+  touches a stamped block refuses `cruxible.projection.evidence_from_projection`
+  at lowering and at proposal evaluation.
+- **Documents and notes live beside the facts.** `cruxible files add/remove`
+  edit the workspace catalog `.cruxible/files.yaml`; `files compile`, `check`
+  and `propose` turn catalogued files into governed Documents. `write` edits
+  sections and cites them in one call; `cruxible note` appends a section
+  linked about Subjects. Projection blocks (`block repin`, `sync`, `detach`,
+  `depublish`) hold page prose to accepted Claims; `block sync` reports drift
+  and never rewrites prose.
+- **`cruxible link` links existing text.** `link FILE#Heading/Path --about
+  kind/id --because WHY` links a section that already exists about Subjects, as
+  a note (`backlinks` lists it, and `get NOTE-...` reads it); `link FILE
+  --guides ClaimType:NAME` (or `Procedure:NAME`) links a whole registered page
+  to a definition as its review guidance, recorded in `.cruxible/files.yaml`
+  and carried into the Document's next revision. `--unlink` removes either.
+  SDK `cx.link(...)`; MCP `cruxible_link` (full profile). A page that is not in
+  the file catalog refuses `--guides` with `cruxible files add` as the repair.
+- **Evidence rules are for shaped payloads; workspace citations need none.**
+  Every field that is not `captured` admits its author's own words and
+  workspace file and section citations by default. A field's `evidence:
+  [CONTRACT, ...]` (ClaimType input, vocabulary file, SDK `field(...,
+  evidence=)`) names the shaped CaptureContracts it admits, and `captured`
+  means such a payload is required: a file or section quote alone refuses
+  `cruxible.write.evidence_required`. A rule that names one workspace file's
+  contract or only a contract family can no longer be authored
+  (`cruxible.claim_type.per_file_evidence_rule`,
+  `cruxible.claim_type.family_rule_not_authored`; `kit build` refuses
+  `cruxible.kit.per_file_evidence_rule`), and `anticipated_source_ids` and the
+  SDK's `sources=` are retired. Accepted ClaimTypes that hold such rules keep
+  them.
+- **The vocabulary file states kinds and fields as YAML.** `cruxible vocabulary
+  export|plan|apply` (SDK `cx.vocabulary.export()/.plan()/.apply()`, MCP
+  `cruxible_vocabulary_export|plan|apply` in the full profile) works on
+  `.cruxible/vocabulary.yaml`. Shorthands are `enum` (a list or
+  `{member: meaning}`), `link`, `many`, `key` and `retired`; an enum member
+  written `{becomes: other}` moves its live Claims, and `{retire: reason}`
+  retires them. The YAML is strict, and a kind or field left out is
+  untouched. `next` reports `vocabulary_file_behind` and
+  `vocabulary_file_baseline_invalid` and `orient` shows the file's status;
+  `vocabulary export` repairs both, and refuses to replace a file holding
+  changes not yet accepted unless `--force`. Export writes a ClaimType with an
+  `inverse` faithfully, and a refusal names every definition it cannot write.
+  When `apply` is refused because a definition changed since the export, it
+  lists the changed definitions (`moved`) and the repair.
+- **ClaimTypes evolve through governed change.** `claim-type propose`,
+  `claim-type migrate` (a successor plus every dependent Claim's
+  disposition) and `claim-type retire` (CLI; SDK
+  `ChangeSetDraft.retire_claim_type`) retire fields with their live Claims
+  as one change set. A Claim can be retired as `superseded` beside
+  `was-wrong` and `was-rescinded`. Prose belongs in Documents: a ClaimType
+  cannot hold exact content (`cruxible.claim.exact_content_retired`).
+- **Attestations and predictions.** `cruxible claim attest` signs that a
+  principal examined the current exact Claim; ClaimTypes may require
+  attestation thresholds, which `next` tracks. `cruxible prediction
+  propose|settle|list` tests a Claim against a later accepted observation.
+
+### Governance and review
+
+- **Every change is a proposal under an approval policy.** The policy is a
+  governed singleton in the genesis tree: one ordinary principal suffices by
+  default, and `--require-independent-approval` requires a second principal,
+  never the creator (`cruxible.approval.creator_forbidden`). Tightening is an
+  ordinary change; loosening must satisfy the current policy.
+- **Proposal verbs cover the whole lifecycle.** `cruxible proposal list`,
+  `review` (with each item's own reason), `approve` (signs with your key;
+  the completing approval activates), `activate`, `reject`, `readmit` (a
+  stale proposal, by its author) and `withdraw` (an open proposal that will
+  never activate). A change set's `rationale` becomes the candidate commit's
+  subject.
+- **`proposal review` reads like the write that made it.** Each value change
+  prints as a write outcome, with its role and the Captures it cites and their
+  text (an erased body says who erased it, when and why; a missing one says
+  `unavailable`); each definition gets a typed block (a Line's bindings and
+  parameters, a mandate's ClaimType table, a Runbook's steps, a Trigger's
+  schedule). `--changes-from` and `--definitions-from` page them; grouped
+  rows moved to `--json` (MCP: `groups=true`). The same text is `str()` of
+  the SDK summary and the `proposal approve` prompt. A withheld summary also
+  leaves out definition fields.
+- **A second agent reviews.** A `--no-accept` proposal under a policy that
+  needs no approval waits as `ready_to_activate` and `next` lists it; the
+  agent guidance says a different agent reviews it and approves or activates.
+- **Review is Git.** Candidate commits carry a readable summary, and the
+  daemon's evaluation and signed approvals ride as notes
+  (`refs/notes/cruxible-eval`, `refs/notes/cruxible-approval`). `cruxible
+  ledger set-mirror URL` (or `init --mirror-url`) publishes the ledger to a
+  remote after every write; `ledger publish` waits for it. The URL never
+  carries a credential: the daemon reads `CRUXIBLE_MIRROR_TOKEN`.
+- **Principals sign; credentials authenticate.** `cruxible principal
+  add|rotate|revoke|recover` govern principals (`--kind ordinary|recovery`);
+  `cruxible credential mint|rotate|revoke|claim-bootstrap|recover-admin`
+  manage bearer credentials over four tiers (`read_only`, `governed_write`,
+  `graph_write`, `admin`). `--capability-ceiling` caps a daemon; a
+  `read_only` daemon refuses every run and dispatch.
+- **Compiler upgrades are governed and one-way.** `cruxible compiler upgrade`
+  previews, then proposes, signs and activates when nothing else is needed.
+  This release installs one compiler and no upgrade path, so it answers
+  `already_current`; back up before any future upgrade (see
+  [Upgrading](docs/upgrading.md#back-up-first)).
+- **An approval bound to the reviewed candidate signs that candidate or
+  nothing.** When accepted state moved and the proposal was proposed again at
+  the head, an approval that names the reviewed candidate digest (CLI
+  `proposal approve --candidate-digest`, new; MCP `candidate_digest`; the SDK's
+  `approve(reviewed=...)`) refuses
+  `cruxible.approval.reviewed_candidate_changed`, naming the new proposal and
+  whether its members are identical. MCP used to sign the new candidate, and
+  the SDK returned it unsigned. With no digest, the CLI and MCP sign the new
+  candidate when its members are identical, as before, and refuse the same
+  way when a landing for a late-registered signer changed them. The HTTP approval
+  challenge and approval requests take an optional
+  `reviewed_candidate_digest`; against a daemon too old to accept it, a bound
+  approval refuses `cruxible.approval.reviewed_binding_unsupported` and signs
+  nothing (it is never sent unbound instead).
+- **A proposal proposed again at the head closes as `superseded`, not
+  `withdrawn`.** `get` and `proposal list` show `superseded_by` and
+  `closed_by`, the principal whose approval, activation or readmit closed it;
+  it used to read as withdrawn by its author. `proposal approve` prints the
+  proposal beside the candidate it signed.
+- **`orient` says its `next=` count leaves out workspace rows.** The count is
+  accepted state only (`attention.next_scope: accepted_state`; the text line
+  ends `(workspace rows not counted: next)`), so `next=0` is no longer read as
+  an empty queue while `next` lists Claims whose cited files changed.
+- **A review shows the guidance of every guided field it touches.** A large
+  change set asked guidance for the first 20 ClaimTypes it met in member order,
+  so a guidance line could be missing, and differ between two submissions of
+  the same change. The cap now counts guided definitions, in name order.
+- **Two pending writes that cite the same new file no longer conflict.** Each
+  carries the file's CaptureContract; when the first landed, the second went
+  `awaiting_readmit` on that identical contract and left the open list. A path
+  the head holds exactly as a proposal proposes it is no longer stale.
+
+### Automation: Procedures, Lines and capabilities
+
+- **Procedures, Lines, Triggers, Mandates and Runbooks.** A Procedure is a
+  fixed graph of steps: read accepted state, read a source through a slot,
+  extract records, and end in a `claims` terminal, an inbox post or a
+  proposal. A Line runs one with inputs, budgets and an authority ceiling
+  (`observe`, `propose`, `settle`); Triggers fire it (cron, cadence, Capture
+  landing, window close, generation accepted); a Mandate grants propose or
+  settle within a scope. `cruxible line enable|disable|run|evaluate|dispatch`
+  operates Lines, `cruxible runbook preview|run` runs an ordered list of
+  them, and `cruxible inbox` judges findings a Line could not decide.
+  Procedures never read the clock: time enters only through Triggers.
+- **`next` shows the instants a scheduled Trigger missed.** A cron or cadence
+  Trigger fires only while the daemon runs, and an instant that fell due while
+  it was down is not fired late. After a restart `next` lists one
+  `trigger_instants_missed` row per such Trigger (first and last missed
+  instant, count, target) with the repair for its target: `cruxible runbook
+  run NAME`, `cruxible action run NAME`, or a Line evaluation over the range.
+  The row stands until the target has run.
+- **Claims are declared as templates.** A `claims` terminal declares the
+  Subject key and the ClaimTypes it may write; the Line's Mandate decides
+  whether the change is proposed or settled. Records an extract cannot read
+  are refused alone (`extract_refused`), and their siblings still write.
+- **Measurements resolve from real evidence.** `cruxible procedure measure`,
+  `readings` and `dispose` evaluate a Procedure's declared measurements inside
+  their window and credit the grain a run reached.
+- **Capabilities name what a slot needs.** A Capability is a versioned
+  artifact (`cruxible-capability-v1`: name, version, description, effect, in
+  Contract, out Contract). A Procedure slot names one, never a provider
+  binding: `slots: {read: {capability: workspace.file@1}}`, with optional
+  `may_truncate`. `orient --section capabilities` and `get
+  Capability:NAME@N` read them.
+- **A Line binds each slot by capability and fit.** A provider operation
+  declares the capability names it `serves`; a Line binds each slot to an
+  operation that serves its capability and whose request and result fit
+  structurally (and whose CaptureKind layouts cover the slot's). Refusals:
+  `cruxible.line.slot_unfilled`, `cruxible.line.slot_ambiguous`,
+  `cruxible.line.binding_unfit` (declares it but does not fit, naming the
+  first failing path), `cruxible.line.binding_undeclared` and
+  `cruxible.line.binding_builtin_mismatch`. Each binding refusal, with
+  `binding_unavailable`, ends with its repair.
+- **`authoring example` prints templates that compile.** The Procedure example
+  calls a `workspace.file@1` slot and extracts over its CaptureKind's layout.
+- **`runbook preview` names builds and capabilities.** A provider build prints
+  as `Provider:NAME/<12 hex>`, and each call ends `(capability NAME@N)`.
+- **CaptureKind layouts and a thin EXTRACT step.** A CaptureContract may
+  declare a `layout` over a json or csv decoding: header fields and named
+  record sets (`at`, `key`, `row: name@N`, `fields`, `count_at`). A successor
+  may only add header fields, record sets and optional row fields. The
+  EXTRACT step names a set, `{capture, records: <set>, header: [names]}`,
+  plus `duplicates`, `only_keys` and a key-type override; acceptance pins the
+  row Contract. Full extract specs inside Procedures are gone. SDK:
+  `Sequence.extract(name, capture=..., records="set", header=...)`.
+- **Every Capture a call returns is a named field of its result.** Each is a
+  `capture<K>` field of the result Contract; a result Contract that is itself
+  the Capture wire refuses `cruxible.provider.result_is_capture`.
+- **Reading workspace files is two builtin capabilities.** `workspace.file@1`
+  takes `{logical_source, relative_path}` (optional `workspace`, `revision`);
+  `workspace.files@1` takes `{logical_source, glob, max_files?}` and returns a
+  sorted list of Captures. Only Cruxible's builtin (`cruxible-builtin`) serves
+  them; a provider package declaring a `workspace.` capability refuses
+  `cruxible.provider.capability_reserved`.
+
+### Kits and providers
+
+- **Kits distribute definitions as governed change sets.** `cruxible kit
+  build` exports owned definitions (ClaimTypes, SubjectKinds, Contracts,
+  capabilities, CaptureContracts, queries, Procedures and Documents), the
+  provider packages they need, and an automation template adopters tailor, as
+  one self-contained release. Authority, Lines and state are never kit
+  content. `kit add` takes
+  `base`, a kit directory, an OCI image layout or a registry reference
+  (bare names resolve under `ghcr.io/cruxible-ai/kits`), diffs it against the
+  instance and proposes the difference as one change set. `kit pull` fetches
+  and verifies without installing; `kit status` lists installed kits, local
+  edits and newer releases; `kit remove` retires what a kit owns.
+- **`kit build --file PATH` carries plain files.** A README or reference page
+  (repeatable) is copied into the built kit at its workspace-relative path and
+  listed in the manifest's `files` with its sha256. Such files are for the
+  reader: they are never installed and stay outside the content digest. A
+  missing file or a path outside the workspace refuses
+  `cruxible.kit.file_refused`. MCP `cruxible_kit_build` takes `files`.
+- **The base kit ships inside Cruxible.** Kit `base` 1.0.0 owns the `web.` and
+  `workspace.` names and holds 8 capabilities (`web.fetch`,
+  `web.fetch.pages`, `web.render`, `web.render.dom`, `web.search`,
+  `web.search.results`, `workspace.file`, `workspace.files`), their request
+  and result Contracts, and the CaptureKind `web.search-results` with a
+  layout. `cruxible init` installs it as the instance's first change (`Base
+  kit: base 1.0.0 installed`); under `--require-independent-approval` it stops
+  at a proposal a second principal approves. `kit status` lists it (`source:
+  bundled`); `cruxible kit add base` installs or upgrades it offline.
+- **No web provider is installed at init.** Run `cruxible provider install
+  cruxible-provider-web` to add one.
+- **A kit can require a kit.** The manifest's `requires: [{kit_id,
+  min_version}]` is written by `kit build` when the kit pins another installed
+  kit's definitions, which are left out of the bundle. `kit add` refuses
+  `cruxible.kit.requires_missing` (repair: `cruxible kit add base`) and
+  `cruxible.kit.requires_unresolved`; `kit remove` refuses
+  `cruxible.kit.remove_required` while another kit requires it. `kit status`
+  and the `kit add` preview show `requires base >= 1.0.0: met`.
+- **`kit status` says what is installed.** It labels the digest `content
+  sha256:`, says when installed content differs from the available release of
+  the same version, and shows a pending base kit add with the command that
+  approves it. `kit remove base` refuses `cruxible.kit.base_required`: the
+  bundled base kit cannot be removed.
+- **Provider registration schema 3.** Each operation declares `description`,
+  `source` (`path`, optional `repository`, `revision`), `serves` (capability
+  names without versions, at most 16), its own `in` and `out` Contracts,
+  `effect`, optional `may_truncate`, refusals and entrypoint. The package
+  carries copies of every Contract and CaptureKind its operations reach in
+  `declares`, plus `built_against` as a record. A provider installs without
+  any kit present. Schema 2 packages are refused; rebuild them against
+  schema 3.
+- **Providers install by name.** `cruxible provider install NAME[==VERSION]`
+  (or a local wheel) proposes the registration; `provider list`, `move`
+  (re-pin Lines to another build) and `retire` manage builds.
+
+### SDK, MCP and plugin
+
+- **The SDK reads as typed Python.** `cx.world()` returns the accepted
+  vocabulary as objects (`w.sec.package`, enum members as values),
+  `World.describe()` lists verbs, kinds and fields, and `cruxible stub
+  [--out]` writes a `.pyi` so a misspelled kind or field is a type error.
+  `ChangeSetDraft.subject(...)` and `.claim_type(...)` return references
+  usable elsewhere in the same set.
+- **SDK first use is shorter.** `print()` of `cx.orient()`, write outcomes,
+  query pages and vocabulary results shows the text the CLI prints.
+  `ChangeSetDraft.field(...)` and `cx.claim_type(...)` take a short form
+  with defaults; `cx.files.add/remove` edit `.cruxible/files.yaml`;
+  `cx.next()` takes the CLI's default window; `accept=` takes a bool. World
+  drafts accepted in one write are references in the next, and a key
+  starting with a digit gets an `x`-prefixed id and the write says why.
+  `Cruxible.connect(workspace=...)` refuses a folder that does not exist.
+- **MCP has a default and a full profile.** `CRUXIBLE_MCP_PROFILE` selects
+  `default` (reads, writes and everyday work) or `full`; `CRUXIBLE_MODE` caps
+  the tier. `cruxible_init` sets up a bare folder. `cruxible mcp` logs
+  warnings and errors only; `FASTMCP_LOG_LEVEL` or `CRUXIBLE_DEBUG` turn
+  request logs on.
+- **SDK write batches create Subjects.** `batch.create(kind, key=...)` returns
+  a handle usable as `subject=` or a value in the same write, and a
+  `cx.new_subject(...)` draft works in the same places.
+- **A plugin for Claude Code and Codex.** `plugins/cruxible` ships five
+  general skills (`survey`, `adopt-kit`, `create-state`, `automate-state`,
+  `review-state`) and a lean MCP catalog; see `plugins/README.md`.
+
+### Operations
+
+- **Daemon lifecycle verbs.** `cruxible server start|stop|restart|status` and
+  `server install-service` (a user service). `server stop` reports what it
+  observed and exits non-zero with `cruxible.server.stop_not_confirmed` when
+  the state root was not released. A restart logs each startup step and
+  `server status` says which one is running.
+- **Instance lifecycle.** `cruxible instance decommission` ends one
+  instance's governed writes without deleting a byte; reads keep serving.
+  `cruxible instance rebuild-next` rebuilds the `next` worker's state from
+  nothing. `cruxible host create|show` allocates and inspects hosts.
+- **Provider-lane detail.** `server status` reports a degraded Provider
+  lane's reason; transient process-table failures surface their
+  bounded count, retained ring occupancy, and last typed message in the
+  lane's detail.
+- **Client timeouts.** `CRUXIBLE_CLIENT_TIMEOUT_S` sets the client's read
+  budget; a value that is not a positive number is refused.
+- **Runtime image and isolated executors.** A container image is published
+  per release (see `docs/hosted-runtime-image.md`). The daemon registers the
+  isolated Provider executors advertised under the `cruxible.isolated_executors`
+  entry-point group, all or nothing, and `server status` lists them; Cruxible
+  registers none.
+
+### Security
+
+- **The shared hosted profile executes no customer code.** Under
+  `CRUXIBLE_HOSTED_SERVER_PROFILE=shared`, Provider execution is refused
+  (`customer_code_execution_unsupported`) before any secret is resolved
+  unless an isolated executor is registered; an unknown profile value refuses
+  `hosted_profile_unknown`.
+- **Workspace reads stay inside authorized roots.** The daemon decides on
+  each path component's real on-disk name and denies Git metadata, Cruxible
+  control paths, custody and key files, and the daemon state root,
+  case-insensitively. Each read is journaled with a receipt of the exact bytes.
+- **A decommissioned instance closes its whole write plane** (approvals,
+  attestations, runs and every other governed write), and the state-root
+  lock file is kept at `0600`.
+- **Bearer auth is required on TCP** and off by default on a Unix socket.
+  With auth off, a principal ID is a claim of identity, not authentication;
+  see `SECURITY.md` for the trust boundary and reporting.
+- **Releases carry PyPI attestations and per-wheel CycloneDX SBOMs**, and
+  dependency floors (`mcp`, `certifi`, `uv`, PyJWT) are raised past known
+  advisories.
+
+### Fixed during the release candidate
+
+- **A closed proposal says who closed it, when and why.** `get PROPOSAL`
+  printed `reason: rejected` and none of the reviewer's `proposal reject
+  --reason` text, so an author could not read why. The card (CLI, SDK
+  `cx.get`, MCP `cruxible_get`) and each `proposal list` entry now carry
+  `closed_by`, `closed_at` and `closed_reason` for a rejected or withdrawn
+  proposal; `proposal list` prints them under the row (the reason cut at 200
+  characters), and `get` prints the reason whole.
+- **`get` takes a proposal id without `sha256:`.** The bare hex id, whole or
+  a prefix of at least 8 characters (also after `Proposal:`), answered
+  `cruxible.get.ref_not_found`; it now names the proposal when no artifact has
+  that name.
+- **A proposal proposed again at the head reviews the verdicts it lands
+  with.** A pending write that an earlier-written sibling overtook was judged,
+  when approval proposed it again at the head, at the sibling's time, before
+  its own evidence existed: `proposal review` (CLI, SDK, MCP) showed every
+  value `verdict uncovered`, then it landed `supported`. It is now judged no
+  earlier than its source.
+- **An explicit none reaches the daemon.** `cruxible set --none`, MCP
+  `cruxible_set`, SDK `cx.set` and write files sending a none on a one-valued
+  field failed request validation (`body.value.NoneValue.none: Field
+  required`) before any check. The none now arrives; a field with no declared
+  inverse refuses it with `cruxible.write.inverse_undeclared`.
+- **A refused preflight reads refused.** A one-shot `authoring submit` whose
+  payload failed preflight answered `proposed` with no proposal and exited 0.
+  It now answers `refused` (reason `preflight_refused`, SDK
+  `AuthoringRefused`), exits 1, and names a revised payload as the next step.
+- **Intent commands refuse caller faults by code.** An unknown, malformed or
+  other actor's intent ID, or a revision of a submitted intent or of another
+  kind, answered 500. They now refuse `cruxible.authoring.intent_not_found`,
+  `intent_other_actor`, `intent_submitted` or `intent_kind_changed`, each with
+  a repair.
+- **`block repin` renders a still-rendered block again.** The repair `next`
+  and `block sync --check` name for a stale rendered block kept the old table
+  and stamped it current. Repin now renders a block whose body is still its
+  query's rendering (other backings kept), and refuses, writing nothing, when
+  it cannot prove or render it. `block repin` and MCP `cruxible_block_repin`
+  take the page's workspace path or its catalog name; MCP block repairs use
+  the tools' own argument names; `block detach` with nothing to detach reads
+  `unchanged`.
+- **`workspace attach` attaches an uninitialized host,** as its help says:
+  the registration, config and `--no-floor-delivery` choice land, and it ends
+  `next: cruxible init`.
+- **`kit remove` removes a kit.** It refused even on a fresh instance
+  (`cruxible.query.pair_hop_invalid`). A query's traversal checks now apply
+  only to a live query (compiler revision 73, `retiring-query-traversal`;
+  revision 72 instances are refused for reseed), and removal keeps a pair
+  kind's endpoint ClaimTypes beside Contracts, capabilities and Documents. A
+  removal blocked by dependents now counts them by kind with a repair instead
+  of printing every one, records nothing, and exits 1; so does a blocked
+  `kit add` commit.
+- **`get` reads a `.json` id as its Subject.** A `kind/id` ref ending in
+  `.json` (an SBOM file name as an inventory id) resolves as the Subject when
+  its kind is declared. A cut value's hint says `--json for all`, and a cut
+  many-valued field adds one `cruxible get SUBJECT --json` line instead of one
+  per Claim.
+- **`server restart` returns.** The old Unix-socket listener was carried
+  across the re-exec, so a waiting restart could hang past `--timeout`. The
+  listener is no longer inherited, and each wait probe is bounded by the time
+  left (at most 5 seconds).
+- **`ledger publish` exits 1 when publication ends `behind`,** and prints
+  Git's multi-line reason one line at a time.
+- **Every attributed write needs a named principal.** A request naming no
+  principal (the auth-off implicit `operator`, such as an MCP server with only
+  `CRUXIBLE_MCP_KEY_DIR`) approved, activated, rejected and withdrew
+  proposals, and could erase a Capture, attest a Claim, propose and settle a
+  prediction, decommission an instance, rebuild `next`, install, move or
+  retire providers, build, add or remove kits, propose a compiler upgrade or
+  a principal change, measure and dispose, and start runs, with records naming
+  `operator`. Every write whose record names who did it now refuses such a
+  request with `cruxible.identity.principal_unconfigured` (repair: name a
+  principal). `init`, Line enable and disable and Capture uploads are
+  excepted. Readmit by anyone but the author refuses
+  `cruxible.proposal.readmit_not_author`.
+- **Activation waits for approvals.** Activating an unapproved proposal whose
+  base moved landed it at the head; it now refuses
+  `cruxible.approval.requirement_unsatisfied`, naming who may sign, and
+  changes nothing. Acting again on an accepted proposal (approve, activate,
+  withdraw or reject) refuses `cruxible.proposal.already_accepted`, with its
+  git oid and generation, instead of calling it stale, and a repeated approval
+  stores nothing.
+- **A landed proposal names its source.** Approval and activation receipts
+  carry `readmits`; acting on the replaced proposal refuses as superseded,
+  naming the replacement. While approvals remain, the approval receipt names
+  `required_signers` and `eligible_signers`, and `proposal approve` prints
+  whose signatures are outstanding.
+- **A reviewer registered after the proposal can approve it.** Its approval
+  lands the proposal at the head first (the signer's eligibility is checked
+  before anything lands), instead of refusing `principal is absent`; a change
+  set holding a ClaimType lands as its author's readmit would. A caller
+  without approval rights gets `cruxible.approval.signer_after_base`; the SDK
+  names the landed proposal to review. A kit change or a generated ClaimType
+  migration refuses `cruxible.proposal.readmit_requires_resubmission` for such
+  a reviewer, naming its author and the command that remakes it, and publishes
+  nothing.
+- **The MCP mode cap is enforced by the daemon.** A client may send a ceiling
+  with each request that can only lower its tier; the MCP server sends its
+  `CRUXIBLE_MODE` cap. Activation inside writes, `kit add`, `kit remove` and
+  `provider move` (proposed below `graph_write`) and a Line's later automatic
+  runs respect it. `cruxible_whoami` reports `mode_cap` and
+  `effective_permission_mode`; a tool above the cap refuses
+  `cruxible.mcp.mode_insufficient`.
+- **An unchanged Procedure run stores far less.** Item dependency records cite
+  their terminal's shared set by digest, a Query read's stored result leaves
+  out its evaluation instant, a claims terminal's evidence item list is a
+  run-free body cited by digest, and a run-journal head move that matched
+  nothing journals no Line coverage.
+  A run in which no source changed stores no new document and fires no
+  Trigger, and its values are counted `unchanged`. It still appends its run
+  records to the instance's journal: the journal grows with every run by
+  design, no command prunes it, and it is part of the instance, backed up with
+  the ledger. When a source's raw response changes without changing what is
+  derived from it (a vulnerability database editing an advisory's metadata,
+  say), the derived document is recorded again with its new inputs and its
+  Trigger runs once more; that run changes no Claim and adds no new inbox item.
+- **Repairs and next lines run as written, in each client's spelling.** A
+  refusal's repair printed an operation id and JSON on the CLI (`Repair:
+  cruxible.proposal.readmit {"dry_run":true}`), and MCP and SDK results named
+  CLI commands. One renderer now prints a `cruxible ...` command on the CLI
+  (a retry repeats the caller's own command and selectors), the tool call with
+  its own argument names on MCP, and the `Cruxible` call in the SDK (as a
+  traceback note on a refusal); an operation a client lacks names the client
+  that has it. Operands only the caller holds show as quoted placeholders
+  (`'<TEXT>'`, `<SIGNER_ID>`) that refuse if sent unchanged, and a line left
+  with only a content placeholder renders as a preview. Writes name their
+  required `--because`; a stale retire repairs with a retire; a dry run's next
+  line keeps `--no-accept`; an approval stop names its signer; `since` and
+  `audit` print a runnable next page; `credential rotate` repairs with
+  `rotate --key-dir`; a revoked bearer token refuses
+  `cruxible.auth.credential_unrecognized`; `next` dispatches a Line by name;
+  `kit add`'s missing requirement names a release or local build. The `next`
+  state rebuilds once (format 16).
+- **A change set landed at the head keeps its reason.** A write approved or
+  activated after the head moved landed by its own bytes with no rationale, so
+  `get --detail history` and the successor's review showed no `reason:` for
+  it. The landed proposal now carries its source's `--because`.
+- **Query cards and `now` refusals read plainly.** `get query:NAME` printed a
+  cut Python repr of its definition (`from_=`, `params_contract=none`); it now
+  prints each authored clause (`from`, `where` with any `now - 3d`, `fields`,
+  ...) on its own line. `now` against a `date`, string or enum field refuses
+  `cruxible.query.value_type_mismatch` with "now compares only with a datetime
+  field", instead of `cannot compare string with timestamp` or the field's
+  operator list; a field type of `timestamp` (or `integer`, `boolean`, ...)
+  names the type meant (`datetime`); and a refused preflight's CLI line no
+  longer repeats a refusal code or adds the blocked check that refusal caused.
+- **A Runbook's schedule shows on the Lines it runs.** `orient --section
+  lines` read `manual` for a Line only a Runbook's Trigger runs; it now reads
+  `runbook Trigger:NAME`, and the text prints the section under a header row
+  with `-` for an empty cell. A live cadence or cron Trigger's card carries
+  `next_fire`, its next instant after the read.
+- **SDK results print short text.** `print()` on `cx.whoami()`, `cx.kits()`,
+  `cx.proposals()`, a Runbook's `preview()` and `run()`, an approval or
+  activation receipt, a Line enablement and `inbox().get()` (and an inbox
+  disposition) showed a one-line model dump thousands of characters long. Each
+  prints what the CLI prints for it (whoami, kit status and receipts a short
+  text of their own), and `repr()` is its first line. An approval receipt
+  names who signed and who sent it: `approved ... by reviewer (sent by
+  owner)`, then who activated.
+- **`get RUN-...` prints a short card.** A finished run's text listed every
+  outcome and terminal detail (120-380 KB on a security kit run). It now
+  prints the nodes block, outcome counts by kind, one line per terminal and a
+  cut result; `--detail proof` (and `--json`) keep everything.
+- **History and review name a re-cite one way.** `get SUBJECT --detail history
+  --field F` no longer prints the Subject's own `rev 1` line above the field.
+  A same-value `set` on new evidence prints `reobserve ... (value unchanged)`
+  in the write outcome and review (history: `reobserved`), and `rebind` is
+  used only when a held citation was replaced (history: `rebound`).
+- **One `write` re-cites every Claim an edited section drifted.** A `write`
+  file (CLI or MCP `cruxible_write`) holding `rebind` changes refused
+  `cruxible.write.file_evidence_unobserved`; the rebind's new text is now read
+  on the writer's side as a `set`'s evidence is, so N drifted Claims land as
+  one proposal.
+- **CLI `proposal approve` with no principal refuses as every proposal act
+  does** (`cruxible.identity.principal_unconfigured` or `credential_unbound`),
+  adding that `--principal-id ID --key FILE` signs as that principal.
+- **One lookup for the key that signs as a principal, on the CLI, the SDK and
+  the MCP server.** `--key`; `CRUXIBLE_PRINCIPAL_KEY`, unless
+  `CRUXIBLE_PRINCIPAL_ID` names another principal; the settings remembered for
+  that principal on this instance; the folder's identity record when it names
+  it; the default key directory. It is never another principal's key.
+  `CRUXIBLE_PRINCIPAL_ID=reviewer cruxible proposal approve ID --yes` and
+  `--signer-id reviewer` now sign wherever the reviewer's settings are
+  remembered (the first found no key; the second signed with the owner's key
+  and failed in `SigningKeyError`). With no key the refusal names the repair
+  of the client that printed it. `next` lines that name a signer print
+  `--signer-id ID` with no `--key FILE`. MCP `cruxible_proposal_approve` reads
+  `CRUXIBLE_PRINCIPAL_KEY` as a principal's `cruxible.env` sets it, beside
+  `CRUXIBLE_MCP_KEY_DIR`, and signs as `CRUXIBLE_PRINCIPAL_ID` by default. SDK
+  `cx.signer(ID)` opens a principal's approval signer from the same lookup
+  (`cx.signer()` for the connection's own principal); the SDK's `next` spells
+  `approve(signer=cx.signer("reviewer"), ...)`.
+- **A kit repair names the base kit, and never invents a reference.**
+  `cruxible.kit.requires_missing` for the bundled base kit and a stale base
+  kit proposal's `readmit_requires_resubmission` printed `cruxible kit add
+  '<KIT>'`; they now print `kit add base`, recognized by the kit's id and
+  content. Any other kit keeps the placeholder, because the daemon holds the
+  kit's bytes and a free-form source label, not a reference it can vouch for;
+  the message names the release and that label. A kit that requires a kit
+  whose own add awaits approval, in a release that meets the requirement, is
+  refused with that proposal's approval as the repair.
+- **`link --guides` on an unregistered page names the caller's own repair**:
+  `cx.files.add(...)` on the SDK, and on MCP the CLI command marked as the
+  CLI's (no MCP tool edits the file catalog).
+- **`kit status` stops saying `kit add proposed` once the proposal closes.**
+  A kit add that stopped at its proposal (the base kit under independent
+  approval, or a resumed kit add) was listed as proposed after it was accepted,
+  rejected or the kit was removed; it is now listed only while its proposal is
+  open or awaits readmission, on the CLI (`--offline` too), SDK and MCP alike.
+  One awaiting readmission says so and names the `kit add` to re-run: `kit add
+  base` only for the bundled base kit (by id and content digest), otherwise a
+  placeholder with the recorded origin beside it.
+- **A kit add whose provider installs await an approver says so.** Its preview
+  and its `awaiting_providers` commit answered `approval_required: false`
+  under `independent_approval_required`; both now answer true.
+- **Removing and re-adding a kit say what happens.** The removal preview says
+  the definitions it retires cannot be added back in this release (or
+  `retires nothing`). A `kit add` refused for
+  re-adding retired definitions prints each refusal once with a count, plus the
+  repair, instead of one refusal per definition. A refused kit change prints
+  no `Proposal:` line (`--json` keeps the id); one left open because accepted
+  state moved after admission names it and how to withdraw it
+  (`proposal_open`). The plan says `re-adds a retired definition` rather than
+  `you retired`.
+- **`vocabulary export` keeps what a field means in sight.** It left out
+  `evidence_requirement: captured` and `permitted_roles` whenever lowering
+  could derive them, and spelled reserved contracts `playbill.`; it now writes
+  `captured`, every field's `permitted_roles` (a sole `[normative]` too), and
+  `cruxible.` names, and export then plan on an untouched vocabulary
+  still changes nothing. `proposal list` names an awaiting-readmit proposal's
+  changed paths by their public kind-qualified names (`--json` keeps the
+  paths).
+- **One note reads one status.** `get REF --detail backlinks` (CLI, MCP
+  `cruxible_get`, SDK `get`) said `[unknown]` for a note section that
+  `backlinks` called `[unchanged]`; it now checks section rows against the
+  workspace the same way.
+- **Reviews show what a new field, guidance link or note says.** `proposal
+  review` printed only `created` for them. A new ClaimType now shows its value
+  type, cardinality, kinds, roles, evidence requirement and admitted contracts
+  (public names); a Document its title and links (`guides ClaimType:...`); a
+  note its section and the Subjects it is about. A note's section Capture now
+  counts in the review's access decision, so a reader it is withheld from sees
+  neither version's file or heading path. The review cache rebuilds once
+  (format 6).
+- **A note's handle reads with `get`.** `get NOTE-...` (or `Note:NOTE-...`),
+  the handle `link` and `backlinks` print, answered `ref_not_found`; it now
+  answers a note card (file, section, the Subjects it is about, the Capture of
+  its bytes) on the CLI, MCP `cruxible_get` and SDK `get`, with `history` and
+  `proof` too. A reader the section's Capture is withheld from sees the note,
+  its Subjects and the Capture handle without the file, heading path or section
+  digest, with a `withheld` notice, as `backlinks` does.
+- **A lost or replaced re-observation journal no longer fails reads.** When
+  the journal under `exhaust/claim-reobservations/` is behind its projection,
+  or is not the one the projection was built from, the projection rebuilds
+  from the journal instead of applying new records under reused sequences or
+  refusing `orient`, `next`, `get` and `query` with
+  `cruxible.claim.reobservation_journal_corrupt`.
+- **`next` follows a new typing of a cited Capture.** A row map recorded
+  after `next` stored a Claim's facts can withdraw the Claim's row evidence;
+  the Claims citing that Capture are now derived again, so `next` and a direct
+  read agree. The `next` state rebuilds once after the upgrade (format 20),
+  so the first `next` is slower.
+- **A re-observation record whose stored payload was lost no longer fails
+  reads.** The record is skipped as unavailable evidence when the projection
+  is rebuilt (after an upgrade, for one), and every other record is served.
+
 ## [0.3.2] - 2026-08-06
 
 - **Procedure reads show their run-ledger track record.** List and detail
@@ -165,7 +888,6 @@ the project's own state instance.
   post-push job pulls that digest and runs the runtime image suite against
   the published artifact via the new `CRUXIBLE_RUNTIME_IMAGE_REF` test
   override. Deployments pin the digest, not the tag.
-
 ## [0.3.1] - 2026-08-05
 
 - **Entity types can declare deterministic identity keys at write time.**

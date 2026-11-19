@@ -1,0 +1,122 @@
+"""ClaimType/Subject marker backing succession and compiler-pinned block sync."""
+
+from __future__ import annotations
+
+import hashlib
+from pathlib import Path
+
+import pytest
+from pydantic import ValidationError
+
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
+from cruxible_client.contracts.authoring.models import BlockSyncReadRequest
+from cruxible_client.contracts.claim_types import (
+    claim_type_digest,
+    claim_type_path,
+    render_claim_type,
+)
+from cruxible_client.contracts.declared_blocks import (
+    ProjectionArtifactBacking,
+    ProjectionBlockStampV1,
+)
+from cruxible_client.contracts.projection import AcceptedCoordinate
+from cruxible_core.service.authoring.projection_sync import (
+    service_read_playbill_block_sync_backing,
+)
+from tests.core_support._knowledge_loop_support import TIMESTAMP
+from tests.support.claim_types import claim_type_changes
+from tests.test_claims.test_claims import vocabulary_claim_type
+from tests.test_indexes.test_resolution_contracts import _accept_tree
+from tests.test_query.test_query_execution_service import _instance_with_query
+
+
+def test_artifact_backing_accepts_only_governed_vocabulary_and_entity_kinds() -> None:
+    for kind, name in (
+        ("ClaimType", "sec.vuln.severity"),
+        ("Subject", "sec.vulnerability/cve-2026-69247"),
+    ):
+        backing = ProjectionArtifactBacking(
+            identity=ArtifactIdentity(kind=kind, name=name),
+            artifact_digest="sha256:" + "a" * 64,
+        )
+        assert ProjectionArtifactBacking.model_validate_json(backing.model_dump_json()) == backing
+
+    with pytest.raises(ValidationError, match="ClaimType or Subject"):
+        ProjectionArtifactBacking(
+            identity=ArtifactIdentity(kind="Claim", name="CLM-" + "a" * 32),
+            artifact_digest="sha256:" + "a" * 64,
+        )
+
+
+def test_claim_type_block_sync_checks_current_artifact_without_rendering(
+    tmp_path: Path,
+) -> None:
+    instance, owner = _instance_with_query(tmp_path)
+    predicate = "sec.vuln.severity"
+    claim_type = vocabulary_claim_type().model_copy(
+        update=claim_type_changes(
+            predicate=predicate,
+            value_type={"enum": ["high", "low", "medium"], "type": "string"},
+            identity=ArtifactIdentity(kind="ClaimType", name=predicate),
+            allowed_subject_kinds=("sec.vulnerability",),
+        )
+    )
+    path = claim_type_path(predicate)
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    tree[path] = render_claim_type(claim_type)
+    _accept_tree(
+        instance,
+        owner,
+        tree,
+        timestamp=TIMESTAMP,
+        proposal_name="seed-sync-vulnerability-severity-vocabulary",
+    )
+    declared = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    original_digest = claim_type_digest(claim_type).tagged
+    stamp = ProjectionBlockStampV1(
+        source_id="corpus.ontology",
+        block_id="severity-vocabulary",
+        declared_generation=instance.accepted_history()[-1].sequence,
+        declared_coordinate=declared,
+        backing=(
+            ProjectionArtifactBacking(
+                identity=claim_type.identity,
+                artifact_digest=original_digest,
+            ),
+        ),
+        body_digest="sha256:" + hashlib.sha256(b"old vocabulary\n").hexdigest(),
+    )
+
+    successor = claim_type.model_copy(
+        update=claim_type_changes(
+            value_type={
+                "enum": ["critical", "high", "low", "medium"],
+                "type": "string",
+            },
+            lifecycle=ArtifactLifecycle(predecessor_digest=original_digest),
+        )
+    )
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    tree[path] = render_claim_type(successor)
+    _accept_tree(
+        instance,
+        owner,
+        tree,
+        timestamp=TIMESTAMP,
+        proposal_name="migrate-sync-vulnerability-severity-vocabulary",
+    )
+
+    result = service_read_playbill_block_sync_backing(
+        instance,
+        request=BlockSyncReadRequest(stamp=stamp),
+    )
+
+    assert result.status == "successor"
+    assert result.artifact_digest == claim_type_digest(successor).tagged
+    # Nothing renders. The read used to hand back the candidate card this block
+    # would be rewritten to; a projection block is prose an agent wrote, so the
+    # only thing accepted state can say about a governed vocabulary the block
+    # holds is that it moved, and the current spelling to re-stamp it with.
+    assert isinstance(result.backing, ProjectionArtifactBacking)
+    assert result.backing.artifact_digest == result.artifact_digest
+    assert result.moved_backings == (result.backing,)

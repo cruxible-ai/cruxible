@@ -1,0 +1,122 @@
+"""Materialize one request's review groups from a single proposal snapshot."""
+
+from __future__ import annotations
+
+from collections.abc import Iterable
+
+from cruxible_client.contracts.errors import ProposalIntegrityError
+from cruxible_client.contracts.projection import AcceptedCoordinate
+from cruxible_client.contracts.proposal_models import (
+    ProposalAdmissionRecord,
+    ProposalEvaluationRecord,
+)
+from cruxible_core.indexes.proposals.proposal_note_projection import ProposalNoteIndex
+from cruxible_core.proposals.proposal_evidence import ProposalEvidenceStore
+from cruxible_core.proposals.proposal_notes import admission_bytes
+
+_COMPLETE = (
+    "admission_path IS NOT NULL AND evaluation_status!='missing' AND "
+    "(candidate_digest IS NULL OR candidate_parent_semantic_root IS NOT NULL)"
+)
+
+
+def proposal_note_snapshot(
+    evidence: ProposalEvidenceStore,
+    *,
+    oids: Iterable[str] | None = None,
+    candidate_digests: Iterable[str] = (),
+    open_at: AcceptedCoordinate | None = None,
+) -> ProposalNoteIndex:
+    """Read exact groups once; approvals remain fresh under their existing locks.
+
+    Publication selects open proposals at one accepted coordinate. Ordinary note
+    operations select aliases/candidates; neither scans closed proposal records.
+    Omitting both selectors requests the complete inventory explicitly.
+    """
+    assert evidence.index is not None
+    with evidence.index.read(evidence, review_context=True) as connection:
+        active_ids = None
+        if open_at is not None:
+            generation = connection.execute(
+                "SELECT sequence,semantic_root,generation_root,compiler_digest "
+                "FROM accepted_generations "
+                "WHERE git_oid=?",
+                (open_at.git_oid,),
+            ).fetchone()
+            if generation is None or tuple(generation)[1:] != (
+                open_at.semantic_root,
+                open_at.generation_root,
+                open_at.compiler_digest,
+            ):
+                raise ProposalIntegrityError("review projection history binding differs")
+            active = connection.execute(
+                f"SELECT * FROM proposals p WHERE {_COMPLETE} AND "
+                "evaluation_status='candidate' AND withdrawal_path IS NULL "
+                "AND candidate_parent_semantic_root=? AND NOT EXISTS "
+                "(SELECT 1 FROM accepted_generations g WHERE g.candidate_digest=p.candidate_digest "
+                "AND g.sequence<=?)",
+                (open_at.semantic_root, generation[0]),
+            ).fetchall()
+            active_ids = frozenset(row["proposal_id"] for row in active)
+            # Notes sharing an active alias keep the complete group, including
+            # a withdrawn admission with exactly the same commit identity.
+            oids = {
+                row[key]
+                for row in active
+                for key in ("candidate_commit_oid", "review_commit_oid")
+                if row[key] is not None
+            }
+        if oids is None:
+            rows = connection.execute(f"SELECT * FROM proposals WHERE {_COMPLETE}").fetchall()
+        else:
+            aliases = set(oids)
+            for digest in sorted(set(candidate_digests)):
+                for row in connection.execute(
+                    "SELECT candidate_commit_oid,review_commit_oid FROM proposals "
+                    f"WHERE {_COMPLETE} AND candidate_digest=?",
+                    (digest,),
+                ):
+                    aliases.update(value for value in row if value is not None)
+            # Each branch uses its owned commit index. UNION coalesces proposals
+            # whose submitted and advisory aliases both belong to this request.
+            selected = {}
+            for oid in sorted(aliases):
+                for row in connection.execute(
+                    f"SELECT * FROM proposals WHERE {_COMPLETE} AND candidate_commit_oid=? "
+                    f"UNION SELECT * FROM proposals WHERE {_COMPLETE} AND review_commit_oid=?",
+                    (oid, oid),
+                ):
+                    selected[row["proposal_id"]] = row
+            rows = list(selected.values())
+        admissions = {}
+        evaluations = {}
+        candidates = {}
+        review_oids = {}
+        groups: dict[str, set[str]] = {}
+        for located in rows:
+            row = dict(located)
+            pid = row["proposal_id"]
+            admission = evidence._read_located(
+                row, "admission", ProposalAdmissionRecord, render=admission_bytes
+            )
+            evaluation = evidence._read_located(row, "evaluation", ProposalEvaluationRecord)
+            candidate_digest = evaluation.candidate_digest
+            if candidate_digest is not None and candidate_digest not in candidates:
+                candidate = evidence.read_candidate_review_summary_if_present(candidate_digest)
+                if candidate is None:
+                    raise ProposalIntegrityError("selected proposal candidate evidence is missing")
+                candidates[candidate_digest] = candidate
+            admissions[pid], evaluations[pid] = admission, evaluation
+            groups.setdefault(admission.candidate_commit_oid, set()).add(pid)
+            if row["review_commit_oid"] is not None:
+                review_oids[pid] = row["review_commit_oid"]
+                groups.setdefault(row["review_commit_oid"], set()).add(pid)
+    return ProposalNoteIndex(
+        evidence,
+        admissions,
+        evaluations,
+        candidates,
+        review_oids,
+        groups,
+        active_proposal_ids=active_ids,
+    )

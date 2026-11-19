@@ -1,0 +1,889 @@
+"""Request-owned SQL evaluation views over a bound accepted publication.
+
+The only retained derived structures are the existing Merkle tries. Membership,
+owner resolution, Claim membership and reverse edges come from typed SQL. A
+candidate owns temporary changed rows and never mutates its accepted base.
+"""
+
+# ruff: noqa: E501
+
+from __future__ import annotations
+
+from collections.abc import Callable, Iterable, Iterator, Mapping
+from contextlib import ExitStack, contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast
+
+from cruxible_client.contracts.candidates import DependencyProofReference
+from cruxible_client.contracts.canonical import (
+    canonical_bytes,
+    file_digest,
+    is_candidate_card_path,
+)
+from cruxible_client.contracts.errors import ProjectionIntegrityError
+from cruxible_core.claims.closure import (
+    ArtifactDependencyStateV1,
+    DependencyIndexV1,
+    _outgoing_edges,
+    _sorted_edges,
+    build_dependency_edge_tree,
+    dependency_proof,
+    update_dependency_edge_tree,
+)
+from cruxible_core.indexes.claims.claim_subject_index import ClaimSubjectIndex
+from cruxible_core.indexes.typed_sqlite import insert_members
+from cruxible_core.indexes.typed_state import OWNER_BY_KIND, OWNER_CODECS, insert_owners, schema_sql
+
+if TYPE_CHECKING:
+    from cruxible_core.derived.derived_state import ClaimPredicateKey
+
+T = TypeVar("T")
+
+_UNRESOLVED = object()
+_ABSENT = object()
+
+
+class SelectedRows(Mapping[str, T], Generic[T]):
+    """A lookup function with an explicit, separately charged enumeration path."""
+
+    def __init__(
+        self,
+        get: Callable[[str], T],
+        keys: Callable[[], Iterable[str]],
+        *,
+        owner: EvaluationRows | SelectionSpec | None = None,
+        prefetch: Callable[[tuple[str, ...]], None] | None = None,
+    ) -> None:
+        self._get, self._keys = get, keys
+        self.owner = owner
+        self._prefetch = prefetch
+
+    def __getitem__(self, key: str) -> T:
+        return self._get(key)
+
+    def prefetch(self, keys: tuple[str, ...]) -> None:
+        """Batch the sources of ``keys`` ahead of their per-key reads, when supported."""
+        if self._prefetch is not None:
+            self._prefetch(keys)
+
+    def _selected(self) -> tuple[str, ...]:
+        keys = tuple(self._keys())
+        # Reading every value: batch their sources instead of one read per key.
+        self.prefetch(keys)
+        return keys
+
+    def values(self) -> Any:
+        return [self._get(key) for key in self._selected()]
+
+    def items(self) -> Any:
+        return [(key, self._get(key)) for key in self._selected()]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._keys())
+
+    def __len__(self) -> int:
+        return sum(1 for _ in self._keys())
+
+
+@dataclass(frozen=True)
+class EvaluationProofs:
+    members: Any
+    edges: Any
+
+
+# One slot's live Claim paths. ``+lifecycle`` keeps the planner on
+# ``claims_by_subject_predicate`` (one seek); ordered by ``path`` in SQL, it
+# walked ``claims_by_predicate`` over every live Claim of the predicate to skip a
+# sort of the slot's few rows. The paths are sorted by the caller instead.
+LIVE_SLOT_CLAIM_PATHS_SQL = (
+    "SELECT path FROM {claims} WHERE subject_path=? AND predicate=? "
+    "AND subject_selector_scheme=? AND subject_selector_value=? AND +lifecycle='live'"
+)
+
+
+def pin_sources_sql(prefix: str, *, consumed: bool) -> str:
+    """The paths of the artifacts pinning one target identity (required pins unless ``consumed``)."""
+    kind = "" if consumed else " AND edge_kind='required_pin'"
+    return (
+        f"SELECT path FROM {prefix}artifact_lookup WHERE identity IN "
+        f"(SELECT source_identity FROM {prefix}pins WHERE target_identity=?{kind})"
+    )
+
+
+class EvaluationRows:
+    """One accepted or candidate selection, valid only inside its owning request."""
+
+    def __init__(self, projection: Any) -> None:
+        authenticate = getattr(projection, "require_source_authentication", None)
+        if authenticate is not None:
+            try:
+                authenticate()
+            except BaseException:
+                projection.close()
+                raise
+        self.by_name = True
+        self.projection = projection
+        self.connection = projection._connection
+        self.reader = projection.typed
+        self.prefix = "main."
+        self.parent: EvaluationRows | None = None
+        self.changed: Mapping[str, bytes | None] = {}
+        self.children: list[EvaluationRows] = []
+        self.binding = canonical_bytes(projection.accepted.model_dump(mode="json"))
+        # Every row this selection reads is fixed for its lifetime (an overlay's
+        # changed rows are written when it is created), so one evaluation reads,
+        # parses and builds each resolved row once, however many members consult it.
+        self._resolved: dict[tuple[object, ...], Any] = {}
+        self.states = SelectedRows(
+            self.state, lambda: self.keys("artifact_lookup", "path", "1"), owner=self
+        )
+        self.identities = SelectedRows(
+            self.identity_path, lambda: self.keys("artifact_lookup", "identity", "1")
+        )
+        self.members = SelectedRows(
+            self.member_digest, lambda: self.keys("members", "path", "path NOT LIKE 'changesets/%'")
+        )
+
+    def table(self, name: str) -> str:
+        return self.prefix + name
+
+    def keys(self, table: str, key: str, predicate: str = "1") -> tuple[str, ...]:
+        return tuple(
+            row[0]
+            for row in self.connection.execute(
+                f"SELECT DISTINCT {key} FROM {self.table(table)} WHERE {predicate} ORDER BY {key}"
+            )
+        )
+
+    def one(self, sql: str, key: str) -> Any:
+        row = self.connection.execute(sql, (key,)).fetchone()
+        if row is None:
+            raise KeyError(key)
+        return row
+
+    def member_digest(self, path: str) -> str:
+        row = self.one(
+            f"SELECT file_digest FROM {self.table('members')} WHERE path=? AND path NOT LIKE 'changesets/%'",
+            path,
+        )
+        return str(row[0]).removeprefix("sha256:")
+
+    def source_bytes(self, path: str) -> bytes:
+        if path in self.changed:
+            value = self.changed[path]
+            if value is None:
+                raise KeyError(path)
+            return value
+        return bytes(self.reader.member_bytes(path))
+
+    def _memo(self, key: tuple[object, ...], compute: Callable[[], T]) -> T:
+        """One evaluation's answer for ``key``: computed once, an absent row included."""
+        held = self._resolved.get(key, _UNRESOLVED)
+        if held is _UNRESOLVED:
+            try:
+                held = compute()
+            except KeyError:
+                held = _ABSENT
+            self._resolved[key] = held
+        if held is _ABSENT:
+            raise KeyError(key[-1])
+        return cast(T, held)
+
+    def identity_path(self, identity: str) -> str:
+        return self._memo(
+            ("identity_path", identity),
+            lambda: str(
+                self.one(
+                    f"SELECT path FROM {self.table('artifact_lookup')} WHERE identity=?",
+                    identity,
+                )[0]
+            ),
+        )
+
+    def source(self, identity: str) -> Any:
+        row = self.connection.execute(
+            f"SELECT kind,path FROM {self.table('artifact_lookup')} WHERE identity=?", (identity,)
+        ).fetchone()
+        if row is None:
+            return None
+        return OWNER_BY_KIND[row[0]].parse(self.source_bytes(row[1]), path=row[1])
+
+    def claim_type_names(self, names: Iterable[str]) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        from cruxible_core.indexes.typed_state import select_claim_type_names
+
+        return select_claim_type_names(self.connection, names, table=self.table("claim_type_names"))
+
+    def claim_types_naming_subject_kind(self, kind: str) -> tuple[str, ...]:
+        from cruxible_core.indexes.typed_state import select_claim_types_naming_subject_kind
+
+        return select_claim_types_naming_subject_kind(
+            self.connection, kind, table=self.table("claim_type_names")
+        )
+
+    def provider_sibling_domains(self, name: str, path: str) -> frozenset[str]:
+        """Name-domain counts plus changed providers; never enumerate retained builds."""
+
+        def compute() -> frozenset[str]:
+            counts = dict(
+                self.connection.execute(
+                    "SELECT control_domain,build_count FROM main.provider_control_domains WHERE provider_name=?",
+                    (name,),
+                )
+            )
+            replaced = set(self.changed)
+            replaced.add(path)
+            for changed_path in replaced:
+                if not changed_path.startswith("providers/"):
+                    continue
+                old = self.connection.execute(
+                    "SELECT provider_name,control_domain FROM main.providers WHERE path=?",
+                    (changed_path,),
+                ).fetchone()
+                if old is not None and old[0] == name:
+                    counts[old[1]] -= 1
+                content = self.changed.get(changed_path)
+                if changed_path != path and content is not None:
+                    from cruxible_client.contracts.providers import parse_provider
+
+                    provider = parse_provider(content, path=changed_path)
+                    if provider.provider_name == name:
+                        counts[provider.control_domain] = counts.get(provider.control_domain, 0) + 1
+            return frozenset(domain for domain, count in counts.items() if count)
+
+        return self._memo(("provider_sibling_domains", name, path), compute)
+
+    def state(self, path: str) -> ArtifactDependencyStateV1:
+        return self._memo(("state", path), lambda: self._state(path))
+
+    def _state(self, path: str) -> ArtifactDependencyStateV1:
+        row = self.one(
+            f"SELECT kind,format_tag,artifact_digest FROM {self.table('artifact_lookup')} WHERE path=?",
+            path,
+        )
+        from cruxible_core.claims.closure import parse_dependency_artifact
+
+        state = parse_dependency_artifact(path, self.source_bytes(path), by_name=self.by_name)
+        if state is None or (
+            state.artifact_kind,
+            state.artifact_tag,
+            state.artifact_digest,
+        ) != tuple(row):
+            raise ProjectionIntegrityError("dependency state differs from its selected owner")
+        return state
+
+    def pin_sources(self, identity: str, *, consumed: bool = False) -> frozenset[str]:
+        # An IN-subquery, not a JOIN: SQLite pushes the identity list into every
+        # branch of the artifact_lookup UNION view (one primary-key seek each),
+        # where a JOIN materializes the whole view first.
+        return frozenset(
+            row[0]
+            for row in self.connection.execute(
+                pin_sources_sql(self.prefix, consumed=consumed), (identity,)
+            )
+        )
+
+    def outgoing(self, path: str) -> tuple[Any, ...]:
+        def compute() -> tuple[Any, ...]:
+            state = self.states.get(path)
+            return (
+                ()
+                if state is None
+                else _outgoing_edges(
+                    state,
+                    states=self.states,
+                    paths_by_identity=self.identities,
+                    by_name=self.by_name,
+                )
+            )
+
+        return self._memo(("outgoing", path), compute)
+
+    def incoming(self, path: str) -> tuple[Any, ...]:
+        state = self.states.get(path)
+        if state is None:
+            return ()
+        return _sorted_edges(
+            edge
+            for source in self.pin_sources(state.identity.qualified)
+            for edge in self.outgoing(source)
+            if edge.target_path == path
+        )
+
+    def dependencies(self, edge_tree: Any = None) -> DependencyIndexV1:
+        outgoing = SelectedRows(self.outgoing, lambda: self.resolved_edge_paths("source"))
+        incoming = SelectedRows(self.incoming, lambda: self.resolved_edge_paths("target"))
+        pin_sources = SelectedRows(
+            self.pin_sources,
+            lambda: self.keys("pins", "target_identity", "edge_kind='required_pin'"),
+        )
+        if edge_tree is None and not self.changed:
+            # The authenticated projection holds every resolved pin with its
+            # role; joined to the exact target version it pins, each is one
+            # edge, so a cold build of an unedited tree parses no member.
+            edge_tree = build_dependency_edge_tree(self.projected_edges())
+        elif edge_tree is None:
+            # A cold proof build already enumerates the graph. Fetch its sources
+            # together; incremental overlays keep using selected point reads.
+            self.reader.prefetch_members(
+                tuple(
+                    path
+                    for path in self.keys("artifact_lookup", "path")
+                    if path not in self.changed
+                )
+            )
+            edge_tree = build_dependency_edge_tree(
+                tuple(edge for values in outgoing.values() for edge in values)
+            )
+        return DependencyIndexV1(
+            self.states, self.identities, pin_sources, outgoing, incoming, edge_tree, self.by_name
+        )
+
+    def edge_match(self) -> str:
+        return (
+            "(target.artifact_digest=p.target_digest OR p.target_digest IS NULL OR source.kind IN ('procedure','blueprint','query-definition','trigger','line','source-acquisition-policy','capture-contract','provider'))"
+            if self.by_name
+            else "target.artifact_digest=p.target_digest"
+        )
+
+    def projected_edges(self) -> tuple[DependencyProofReference, ...]:
+        """Every dependency edge of the projected tree, from its pin rows."""
+        return _sorted_edges(
+            dependency_proof(
+                source_path=row[0],
+                source_artifact_digest=row[1],
+                target_path=row[2],
+                target_artifact_digest=row[3],
+                pin_role=row[4],
+            )
+            for row in self.connection.execute(
+                f"SELECT source.path, source.artifact_digest, target.path, "
+                f"target.artifact_digest, p.pin_role FROM {self.table('pins')} p "
+                f"JOIN {self.table('artifact_lookup')} source ON source.identity=p.source_identity "
+                f"JOIN {self.table('artifact_lookup')} target ON target.identity=p.target_identity "
+                f"AND {self.edge_match()} WHERE p.edge_kind='required_pin'"
+            )
+        )
+
+    def resolved_edge_paths(self, side: str) -> tuple[str, ...]:
+        return tuple(
+            row[0]
+            for row in self.connection.execute(
+                f"SELECT DISTINCT {side}.path FROM {self.table('pins')} p JOIN {self.table('artifact_lookup')} source ON source.identity=p.source_identity JOIN {self.table('artifact_lookup')} target ON target.identity=p.target_identity AND {self.edge_match()} WHERE p.edge_kind='required_pin' ORDER BY {side}.path"
+            )
+        )
+
+    def claim_subjects(self) -> ClaimSubjectIndex:
+        def subject(path: str) -> str:
+            return str(
+                self.one(f"SELECT subject_path FROM {self.table('claims')} WHERE path=?", path)[0]
+            )
+
+        def claims(subject_path: str) -> frozenset[str]:
+            return frozenset(
+                row[0]
+                for row in self.connection.execute(
+                    f"SELECT path FROM {self.table('claims')} WHERE subject_path=?", (subject_path,)
+                )
+            )
+
+        return ClaimSubjectIndex(
+            SelectedRows(subject, lambda: self.keys("claims", "path")),
+            SelectedRows(claims, lambda: self.keys("claims", "subject_path")),
+        )
+
+    def claim_type_items(self, identity: str) -> tuple[tuple[str, bytes], ...]:
+        paths = self.connection.execute(
+            f"SELECT DISTINCT c.path FROM {self.table('pins')} p "
+            f"JOIN {self.table('claims')} c ON c.identity=p.source_identity "
+            "WHERE p.edge_kind='required_pin' AND p.target_identity=? "
+            "AND c.claim_type_identity=? ORDER BY c.path",
+            (identity, identity),
+        )
+        return tuple((row[0], self.source_bytes(row[0])) for row in paths)
+
+    def claim_items(self, statement: ClaimPredicateKey) -> tuple[tuple[str, bytes], ...]:
+        subject = statement.subject
+        paths = sorted(
+            str(row[0])
+            for row in self.connection.execute(
+                LIVE_SLOT_CLAIM_PATHS_SQL.format(claims=self.table("claims")),
+                (
+                    subject.artifact_path,
+                    statement.predicate,
+                    subject.selector.scheme,
+                    subject.selector.value,
+                ),
+            )
+        )
+        return tuple((path, self.source_bytes(path)) for path in paths)
+
+    def artifact_rows(
+        self, kind: str, convert: Callable[[str, bytes, str], T], *, path_key: bool = False
+    ) -> SelectedRows[T]:
+        table = self.table(OWNER_BY_KIND[kind].table)
+        key = "path" if path_key else "identity"
+
+        def read(value: str) -> T:
+            row = self.one(f"SELECT path,artifact_digest FROM {table} WHERE {key}=?", value)
+            return convert(row[0], self.source_bytes(row[0]), row[1])
+
+        # Keyed by the converter too: one row may be read as two different models.
+        def get(value: str) -> T:
+            return self._memo(("artifact", table, key, convert, value), lambda: read(value))
+
+        def listed() -> tuple[str, ...]:
+            return self._memo(
+                ("artifact_keys", table, key),
+                lambda: tuple(
+                    row[0]
+                    for row in self.connection.execute(f"SELECT {key} FROM {table} ORDER BY {key}")
+                ),
+            )
+
+        def prefetch(values: tuple[str, ...]) -> None:
+            values = tuple(
+                value
+                for value in values
+                if ("artifact", table, key, convert, value) not in self._resolved
+            )
+            paths: list[str] = []
+            for start in range(0, len(values), 500):
+                selected = values[start : start + 500]
+                paths.extend(
+                    row[0]
+                    for row in self.connection.execute(
+                        f"SELECT path FROM {table} WHERE {key} IN ("
+                        + ",".join("?" for _ in selected)
+                        + ")",
+                        selected,
+                    )
+                )
+            self.reader.prefetch_members(tuple(p for p in paths if p not in self.changed))
+
+        return SelectedRows(get, listed, prefetch=prefetch)
+
+    def overlay(self, edits: Mapping[str, bytes | None]) -> EvaluationRows:
+        """Create a bound changed-row selection; exact source identity suppresses edges."""
+        if self.parent is not None or self.children:
+            raise ProjectionIntegrityError(
+                "each candidate selection requires its own accepted handle"
+            )
+        candidate = EvaluationRows(self.projection)
+        candidate.parent = self
+        # TEMP rows live on the already authenticated SQLite connection. Reopening
+        # its pathname could bind a replacement inode between authentication and
+        # ATTACH, even while the original verified connection remains sound.
+        self.children.append(candidate)
+        candidate.connection.executescript(
+            schema_sql()
+            .replace("CREATE TABLE", "CREATE TEMP TABLE")
+            .replace("CREATE VIEW", "CREATE TEMP VIEW")
+        )
+        candidate.connection.executescript(
+            "CREATE TEMP TABLE changed_paths(path TEXT PRIMARY KEY); CREATE TEMP TABLE changed_sources(identity TEXT PRIMARY KEY);"
+        )
+        candidate.changed = {
+            path: content for path, content in edits.items() if not is_candidate_card_path(path)
+        }
+        edits = candidate.changed
+        candidate.binding = canonical_bytes(
+            {
+                "base": self.binding.decode(),
+                "edits": [
+                    [path, None if content is None else file_digest(content).tagged]
+                    for path, content in sorted(edits.items())
+                ],
+            }
+        )
+        candidate.connection.execute("CREATE TEMP TABLE overlay_binding(binding BLOB NOT NULL)")
+        candidate.connection.execute("INSERT INTO overlay_binding VALUES (?)", (candidate.binding,))
+        candidate.connection.executemany(
+            "INSERT INTO changed_paths VALUES (?)", ((path,) for path in edits)
+        )
+        candidate.connection.execute(
+            "INSERT INTO changed_sources SELECT identity FROM main.artifact_lookup WHERE path IN (SELECT path FROM changed_paths)"
+        )
+        blobs = {path: content for path, content in edits.items() if content is not None}
+        insert_members(candidate.connection, blobs, self.reader.accepted.git_object_format)
+        # A transition is evaluated under its source compiler, whose frozen
+        # registry cannot yet recognize the target's control member. Its own
+        # acceptance law validates it; it introduces no typed owners or pins.
+        from cruxible_client.contracts.compiler_upgrade import COMPILER_UPGRADE_PATH
+        from cruxible_core.indexes.typed_sqlite import parse_static_owners
+
+        parsed = parse_static_owners(
+            {path: body for path, body in blobs.items() if path != COMPILER_UPGRADE_PATH},
+            accepted=self.reader.accepted,
+        )
+        for row in parsed.envelopes:
+            old = candidate.connection.execute(
+                "SELECT path FROM main.artifact_lookup WHERE identity=?", (row.identity,)
+            ).fetchone()
+            if old is not None and old[0] not in edits and old[0] != row.path:
+                raise ValueError("candidate tree contains a duplicate semantic artifact identity")
+        insert_owners(
+            candidate.connection,
+            parsed=parsed,
+            blobs=blobs,
+            resolve_digest=self.resolve_claim_digest,
+        )
+        candidate.connection.execute(
+            "INSERT OR IGNORE INTO changed_sources SELECT identity FROM artifact_lookup"
+        )
+        for table in ("members", *(owner.table for owner in OWNER_CODECS)):
+            candidate.connection.execute(
+                f"CREATE TEMP VIEW selected_{table} AS SELECT * FROM main.{table} WHERE path NOT IN (SELECT path FROM changed_paths) UNION ALL SELECT * FROM temp.{table}"
+            )
+        branches = [
+            f"SELECT identity,'{owner.kind}' AS kind,format_tag,path,artifact_digest,{('predecessor_digest,revision' if owner.versioned else 'NULL AS predecessor_digest,1 AS revision')},{('lifecycle' if owner.lifecycle else 'NULL AS lifecycle')} FROM selected_{owner.table}"
+            for owner in OWNER_CODECS
+        ]
+        candidate.connection.execute(
+            "CREATE TEMP VIEW selected_artifact_lookup AS " + " UNION ALL ".join(branches)
+        )
+        candidate.connection.execute(
+            "CREATE TEMP VIEW selected_pins AS SELECT * FROM main.pins WHERE source_identity NOT IN (SELECT identity FROM changed_sources) UNION ALL SELECT * FROM temp.pins"
+        )
+        candidate.connection.execute(
+            "CREATE TEMP VIEW selected_claim_type_names AS SELECT * FROM main.claim_type_names WHERE source_identity NOT IN (SELECT identity FROM changed_sources) UNION ALL SELECT * FROM temp.claim_type_names"
+        )
+        candidate.connection.execute(
+            "CREATE TEMP VIEW selected_vocabulary_terms AS SELECT * FROM main.vocabulary_terms WHERE source_identity NOT IN (SELECT identity FROM changed_sources) UNION ALL SELECT * FROM temp.vocabulary_terms"
+        )
+        candidate.prefix = "selected_"
+        return candidate
+
+    def has_artifact_digest(self, digest: str) -> bool:
+        """Whether any selected artifact has exactly this digest (a by-digest lookup)."""
+        return (
+            self.connection.execute(
+                f"SELECT 1 FROM {self.table('artifact_lookup')} WHERE artifact_digest=? LIMIT 1",
+                (digest,),
+            ).fetchone()
+            is not None
+        )
+
+    def resolve_claim_digest(self, digest: str) -> tuple[str, ...]:
+        identities = {
+            row[0]
+            for row in self.connection.execute(
+                f"SELECT identity FROM {self.table('claims')} WHERE artifact_digest=?",
+                (digest,),
+            )
+        }
+        if self.reader.history is not None:
+            with self.reader.history() as history:
+                identities.update(history.identities_for_digest(digest))
+        return tuple(sorted(identities))
+
+    def reverse_neighbors(
+        self, identity: str
+    ) -> tuple[tuple[ArtifactDependencyStateV1, tuple[str, ...]], ...]:
+        values = []
+        for path in sorted(self.pin_sources(identity, consumed=True)):
+            state = self.state(path)
+            roles = {pin.role for pin in state.pins if pin.target.qualified == identity}
+            consumed = self.connection.execute(
+                f"SELECT 1 FROM {self.table('pins')} WHERE source_identity=? AND edge_kind='consumed_claim_input' AND target_identity=? LIMIT 1",
+                (state.identity.qualified, identity),
+            ).fetchone()
+            if consumed is not None:
+                roles.add("backing-input")
+            values.append((state, tuple(sorted(roles))))
+        return tuple(values)
+
+    def close(self) -> None:
+        for child in self.children:
+            child.close()
+        if self.parent is None:
+            self.projection.close()
+
+    def advanced_dependencies(
+        self, previous: DependencyIndexV1, changed: Iterable[str]
+    ) -> DependencyIndexV1:
+        affected = set(changed)
+        identities = set()
+        for path in tuple(affected):
+            for states in (previous.states, self.states):
+                row = states.get(path)
+                if row is not None:
+                    identities.add(row.identity.qualified)
+        for identity in identities:
+            affected.update(previous.sources_by_pinned_identity.get(identity, ()))
+            affected.update(self.pin_sources(identity))
+        updates = {path: self.outgoing(path) for path in affected}
+        return self.dependencies(update_dependency_edge_tree(previous.edge_tree, updated=updates))
+
+
+def mapped_values(rows: Mapping[str, T], transform: Callable[[T], Any]) -> Mapping[str, Any]:
+    return SelectedRows(lambda key: transform(rows[key]), lambda: rows)
+
+
+class MerkleMembers(Mapping[str, str]):
+    """Read the member leaves already required by the existing Merkle algorithm."""
+
+    def __init__(self, tree: Any) -> None:
+        self.tree = tree
+
+    def __getitem__(self, key: str) -> str:
+        node = self.tree.nodes.get(key)
+        if node is None or not node.is_leaf:
+            raise KeyError(key)
+        return str(node.member_digest)
+
+    def __iter__(self) -> Iterator[str]:
+        return (path for path in self.tree.nodes if self.tree.nodes[path].is_leaf)
+
+    def __len__(self) -> int:
+        return sum(1 for _ in self)
+
+
+class ChangedMembers(Mapping[str, str]):
+    """The pre-parse commitment phase reads only the complete changed region."""
+
+    def __init__(self, parent: Mapping[str, str], changed: Mapping[str, str | None]) -> None:
+        self.parent, self.changed = parent, changed
+
+    def __getitem__(self, key: str) -> str:
+        if key not in self.changed:
+            return self.parent[key]
+        value = self.changed[key]
+        if value is None:
+            raise KeyError(key)
+        return value
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(
+            sorted(
+                {path for path in self.parent if path not in self.changed}
+                | {path for path, value in self.changed.items() if value is not None}
+            )
+        )
+
+    def __len__(self) -> int:
+        return sum(1 for _ in self)
+
+
+_ACTIVE_SELECTIONS: ContextVar[tuple[ExitStack, dict[SelectionSpec, EvaluationRows]] | None] = (
+    ContextVar("evaluation_selections", default=None)
+)
+
+
+@dataclass(eq=False, frozen=True)
+class SelectionSpec:
+    """Detached selection recipe: no connection, compiled owner map or result cache."""
+
+    reader_factory: Callable[[], Any]
+    edits: Mapping[str, bytes | None] | None = None
+
+    def __post_init__(self) -> None:
+        if self.edits is not None:
+            object.__setattr__(self, "edits", MappingProxyType(dict(self.edits)))
+
+    def call(self, operation: Callable[[EvaluationRows], T]) -> T:
+        active = _ACTIVE_SELECTIONS.get()
+        if active is not None:
+            stack, selections = active
+            selected = selections.get(self)
+            if selected is None:
+                base = EvaluationRows(self.reader_factory())
+                stack.callback(base.close)
+                selected = base if self.edits is None else base.overlay(self.edits)
+                selections[self] = selected
+            return operation(selected)
+        base = EvaluationRows(self.reader_factory())
+        try:
+            return operation(base if self.edits is None else base.overlay(self.edits))
+        finally:
+            base.close()
+
+    @contextmanager
+    def scope(self) -> Iterator[None]:
+        if _ACTIVE_SELECTIONS.get() is not None:
+            yield
+            return
+        with ExitStack() as stack:
+            token = _ACTIVE_SELECTIONS.set((stack, {}))
+            try:
+                yield
+            finally:
+                _ACTIVE_SELECTIONS.reset(token)
+
+    def rows(
+        self,
+        table: str,
+        getter: Callable[[EvaluationRows, str], T],
+        key: str,
+        predicate: str = "1",
+        *,
+        owner: bool = False,
+    ) -> SelectedRows[T]:
+        return SelectedRows(
+            lambda value: self.call(lambda rows: getter(rows, value)),
+            lambda: self.call(lambda rows: rows.keys(table, key, predicate)),
+            owner=self if owner else None,
+        )
+
+    def dependencies(self, edge_tree: Any) -> DependencyIndexV1:
+        states = self.rows(
+            "artifact_lookup",
+            lambda rows, path: rows.state(path),
+            "path",
+            "1",
+            owner=True,
+        )
+        identities = self.rows(
+            "artifact_lookup",
+            lambda rows, identity: rows.identity_path(identity),
+            "identity",
+            "1",
+        )
+        sources = self.rows(
+            "pins",
+            lambda rows, identity: rows.pin_sources(identity),
+            "target_identity",
+            "edge_kind='required_pin'",
+        )
+        outgoing = SelectedRows(
+            lambda path: self.call(lambda rows: rows.outgoing(path)),
+            lambda: self.call(lambda rows: rows.resolved_edge_paths("source")),
+        )
+        incoming = SelectedRows(
+            lambda path: self.call(lambda rows: rows.incoming(path)),
+            lambda: self.call(lambda rows: rows.resolved_edge_paths("target")),
+        )
+        return DependencyIndexV1(
+            states,
+            identities,
+            sources,
+            outgoing,
+            incoming,
+            edge_tree,
+            self.call(lambda rows: rows.by_name),
+        )
+
+    def claim_subjects(self) -> ClaimSubjectIndex:
+        by_claim = self.rows(
+            "claims", lambda rows, path: rows.claim_subjects().subject_by_claim[path], "path"
+        )
+        by_subject = self.rows(
+            "claims",
+            lambda rows, subject: rows.claim_subjects().claims_by_subject[subject],
+            "subject_path",
+        )
+        return ClaimSubjectIndex(by_claim, by_subject)
+
+    def artifact_rows(
+        self, kind: str, convert: Callable[[str, bytes, str], T], *, path_key: bool = False
+    ) -> Mapping[str, T]:
+        return SelectedRows(
+            lambda value: self.call(
+                lambda rows: rows.artifact_rows(kind, convert, path_key=path_key)[value]
+            ),
+            lambda: self.call(
+                lambda rows: tuple(rows.artifact_rows(kind, convert, path_key=path_key))
+            ),
+            prefetch=lambda keys: self.call(
+                lambda rows: rows.artifact_rows(kind, convert, path_key=path_key).prefetch(keys)
+            ),
+        )
+
+    def has_artifact_digest(self, digest: str) -> bool:
+        return self.call(lambda rows: rows.has_artifact_digest(digest))
+
+    def overlay(self, edits: Mapping[str, bytes | None]) -> SelectionSpec:
+        merged = dict(self.edits or {})
+        merged.update(edits)
+        return SelectionSpec(self.reader_factory, merged)
+
+
+def derive_indexed_state(tree: Any) -> Any:
+    from cruxible_client.contracts.merkle import build_merkle_manifest, update_merkle_manifest
+    from cruxible_core.proposals.proposals import build_tree_state
+
+    if getattr(tree, "_accepted_reader", None) is None:
+        return build_tree_state(tree)
+    selection = SelectionSpec(tree._accepted_reader)
+    if tree._parent is not None:
+        selection = selection.overlay(tree._edits)
+    with selection.scope(), tree._lock:
+        proofs = tree._proofs
+        if proofs is None:
+            seed = tree._proof_seed
+            if seed is None and tree._parent is not None:
+                with tree._parent._lock:
+                    if tree._parent._proofs is not None:
+                        seed = (tree._parent._proofs, tree._accepted_reader, tree._edits)
+            if seed is None:
+                dependencies = selection.call(lambda rows: rows.dependencies())
+                merkle = selection.call(lambda rows: build_merkle_manifest(rows.members))
+            else:
+                previous_proofs, previous_reader, seeded_edits = seed
+                # An accepted advance carries blob references; read just the
+                # changed blobs the Merkle update hashes.
+                from cruxible_core.derived.derived_state import resolve_blobs
+
+                changed = [path for path, body in seeded_edits.items() if body is not None]
+                contents = dict(
+                    zip(changed, resolve_blobs([seeded_edits[p] for p in changed]), strict=True)
+                )
+                edits = {path: contents.get(path) for path in seeded_edits}
+                previous = SelectionSpec(previous_reader)
+                dependencies = selection.call(
+                    lambda rows: rows.advanced_dependencies(
+                        previous.dependencies(previous_proofs.edges), edits
+                    )
+                )
+                merkle = update_merkle_manifest(
+                    previous_proofs.members,
+                    updated={
+                        path: file_digest(body).value
+                        for path, body in edits.items()
+                        if body is not None
+                        and not path.startswith("changesets/")
+                        and not is_candidate_card_path(path)
+                    },
+                    removed=[
+                        path
+                        for path, body in edits.items()
+                        if body is None
+                        and not path.startswith("changesets/")
+                        and not is_candidate_card_path(path)
+                    ],
+                )
+            proofs = EvaluationProofs(merkle, dependencies.edge_tree)
+            tree._proofs = proofs
+            tree._proof_seed = None
+        return indexed_state(selection, proofs.members, proofs.edges)
+
+
+def indexed_state(selection: SelectionSpec, merkle: Any, edge_tree: Any) -> Any:
+    from cruxible_client.contracts.merkle import detach_merkle_tree
+    from cruxible_core.proposals.proposals import EvaluatedTreeState
+
+    merkle = detach_merkle_tree(merkle)
+    edge_tree = detach_merkle_tree(edge_tree)
+
+    @dataclass(frozen=True)
+    class IndexedTreeState(EvaluatedTreeState):
+        selection: SelectionSpec
+
+        def scope(self) -> Any:
+            return self.selection.scope()
+
+        def advance(self, tree: Mapping[str, bytes], advanced: Any) -> Any:
+            candidate = self.selection.overlay({path: tree.get(path) for path in advanced.scope})
+            dependencies = candidate.call(
+                lambda rows: rows.advanced_dependencies(self.dependencies, advanced.scope)
+            )
+            return indexed_state(candidate, advanced.merkle, dependencies.edge_tree)
+
+    return IndexedTreeState(
+        MerkleMembers(merkle),
+        merkle,
+        selection.dependencies(edge_tree),
+        selection.claim_subjects(),
+        selection,
+    )

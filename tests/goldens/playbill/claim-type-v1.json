@@ -1,0 +1,72 @@
+{
+  "artifact_digest": "sha256:086d30be223b0a7fbfd9f7af075bfa7cfe14a066afd0be7c47451843f8f7e566",
+  "canonical_wire": "{\n  \"admission_policy\": {\n    \"corroboration_requirements\": [],\n    \"freeze_requirements\": [],\n    \"tag\": \"playbill-claim-admission-policy-v1\"\n  },\n  \"allowed_subject_kinds\": [\n    \"project.work_item\"\n  ],\n  \"artifact_format\": \"cruxible-claim-type-v11\",\n  \"canonical_form\": [],\n  \"cardinality\": \"one\",\n  \"evidence_admission_policy\": {\n    \"rules\": [],\n    \"tag\": \"cruxible-claim-evidence-admission-policy-v4\"\n  },\n  \"evidence_requirement\": \"self\",\n  \"identity\": {\n    \"kind\": \"ClaimType\",\n    \"name\": \"project.work_item.status\"\n  },\n  \"lifecycle\": {\n    \"predecessor_digest\": null,\n    \"state\": \"live\"\n  },\n  \"member_descriptions\": [],\n  \"permitted_roles\": [\n    \"normative\",\n    \"observation\"\n  ],\n  \"pins\": [],\n  \"precedence\": {\n    \"revisable_by_procedures\": [\n      \"environment_binding\",\n      \"observation\",\n      \"derivation\"\n    ],\n    \"roles\": [\n      \"normative\",\n      \"environment_binding\",\n      \"observation\",\n      \"derivation\"\n    ]\n  },\n  \"predicate\": \"project.work_item.status\",\n  \"referent_sensitivity\": \"identity\",\n  \"requires_complete_input\": [],\n  \"resolution_policy\": {\n    \"cardinality\": \"one\",\n    \"conflict_result\": \"unresolved\",\n    \"eligible_verdicts\": [\n      \"supported\"\n    ],\n    \"require_current\": true,\n    \"required_basis_kinds\": [],\n    \"selector\": \"only_contender\",\n    \"tag\": \"playbill-claim-resolution-policy-v1\"\n  },\n  \"revision_evidence\": \"accumulate\",\n  \"value\": {\n    \"kind\": \"enum\",\n    \"members\": [\n      \"blocked\",\n      \"done\",\n      \"ready\"\n    ]\n  }\n}\n",
+  "claim_type": {
+    "admission_policy": {
+      "corroboration_requirements": [],
+      "freeze_requirements": [],
+      "tag": "playbill-claim-admission-policy-v1"
+    },
+    "allowed_subject_kinds": [
+      "project.work_item"
+    ],
+    "artifact_format": "cruxible-claim-type-v11",
+    "canonical_form": [],
+    "cardinality": "one",
+    "evidence_admission_policy": {
+      "rules": [],
+      "tag": "cruxible-claim-evidence-admission-policy-v4"
+    },
+    "evidence_requirement": "self",
+    "identity": {
+      "kind": "ClaimType",
+      "name": "project.work_item.status"
+    },
+    "lifecycle": {
+      "predecessor_digest": null,
+      "state": "live"
+    },
+    "member_descriptions": [],
+    "permitted_roles": [
+      "normative",
+      "observation"
+    ],
+    "pins": [],
+    "precedence": {
+      "revisable_by_procedures": [
+        "environment_binding",
+        "observation",
+        "derivation"
+      ],
+      "roles": [
+        "normative",
+        "environment_binding",
+        "observation",
+        "derivation"
+      ]
+    },
+    "predicate": "project.work_item.status",
+    "referent_sensitivity": "identity",
+    "requires_complete_input": [],
+    "resolution_policy": {
+      "cardinality": "one",
+      "conflict_result": "unresolved",
+      "eligible_verdicts": [
+        "supported"
+      ],
+      "require_current": true,
+      "required_basis_kinds": [],
+      "selector": "only_contender",
+      "tag": "playbill-claim-resolution-policy-v1"
+    },
+    "revision_evidence": "accumulate",
+    "value": {
+      "kind": "enum",
+      "members": [
+        "blocked",
+        "done",
+        "ready"
+      ]
+    }
+  }
+}

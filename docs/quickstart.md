@@ -1,226 +1,220 @@
 # Quickstart
 
-Get from install to your first Crux — a governed, kit-backed state model — in
-a few minutes.
+Point Cruxible at one of your projects, read in its dependencies, and find out
+which of them carry a known vulnerability, which of those attackers are
+exploiting (CISA's KEV catalog) and how likely exploitation is (FIRST's EPSS
+score). Every answer traces back to its source, and every change waits for a
+second principal's approval before it counts.
 
-The recommended shape is a local Cruxible daemon, launched with
-`cruxible server start`. The daemon
-owns state; the CLI, MCP server, client SDK, GUI, and agent harness talk to it
-through Cruxible surfaces.
+You'll need Python 3.11+, Git, a project in a Git repository, a tool that
+writes a CycloneDX SBOM for it (step 3), and network access to `pypi.org`,
+`api.osv.dev`, `www.cisa.gov` and `api.first.org`. Until the security kit's
+registry release, you also need a clone of the
+[kits repository](https://github.com/cruxible-ai/cruxible-kits); the commands
+below assume it sits beside your project as `../cruxible-kits`.
 
-This guide assumes a **fresh daemon** with no instance yet. If you already
-have a daemon from the README's Get Started, it holds that instance — leave
-it running and start a second daemon alongside it, on its own port and
-state directory:
+## Supported platforms
 
-```bash
-CRUXIBLE_SERVER_STATE_DIR="$HOME/.cruxible/server-quickstart" \
-  cruxible server start --port 8101
-```
+Supported: Linux x86-64 and macOS on Apple silicon; on Windows, use WSL2.
+Cruxible does not run natively on Windows yet: install Python and Cruxible
+inside your WSL2 Linux distribution and run every command there.
 
-Then use `http://127.0.0.1:8101` wherever the commands below say
-`http://127.0.0.1:8100`. See
-[Runtime Auth And Agent Roles](runtime-auth-and-agent-roles.md#one-daemon-one-instance-02)
-for the model behind this.
+## 1. Install Cruxible and attach your project
 
-## Prerequisites
+~~~bash
+pip install cruxible        # or: uv tool install cruxible
+cd your-project
+cruxible init --principal-id owner \
+  --reviewer-key-dir ../reviewer-keys --require-independent-approval
+~~~
 
-- Python 3.11 or later (with pip)
-- An MCP-capable AI agent if you want agent orchestration
-- [git](https://git-scm.com/) and [uv](https://docs.astral.sh/uv/) only if
-  you develop from source
+`init` starts a daemon if none is running (`cruxible server stop` stops it),
+creates this project's instance with you as its owner, and remembers the
+connection, so later commands in this folder need no flags. The two reviewer
+options set up **cosign**: a second principal, `reviewer`, with its key in a
+directory outside the repository, and the approval policy
+`independent_approval_required`, under which nothing its author proposed
+activates until a different principal approves it. `init` proposes the base
+kit and prints the proposal; the reviewer approves it:
 
-## Install And Start The Daemon
+~~~bash
+CRUXIBLE_PRINCIPAL_ID=reviewer cruxible next                                 # what waits for the reviewer
+CRUXIBLE_PRINCIPAL_ID=reviewer cruxible proposal approve PROPOSAL_ID --yes   # the base kit proposal init printed
+~~~
 
-```bash
-pip install cruxible
-```
+`CRUXIBLE_PRINCIPAL_ID=reviewer` makes one command act as the reviewer, with
+the reviewer's key; `cruxible context use --principal reviewer` switches every
+later command until you switch back to `owner`. The reviewer is normally a
+second agent that reads each proposal (`cruxible proposal review PROPOSAL_ID`)
+before approving it. Cosign between agents on one machine is a convention,
+not a security boundary: both keys are files your OS user can read.
 
-The daemon ships in the default install, and the built-in kit aliases
-(`init --kit agent-operation`, `--kit supply-chain-blast-radius`, ...)
-resolve from digest-pinned release bundles — no checkout needed. To hack on
-kits instead, clone the repo and run from the checkout
-(`uv sync --all-extras`); a source tree's `kits/` always wins over the
-published bundles.
+**One owner, no reviewer.** To approve everything yourself, run `cruxible
+init --principal-id owner` instead. The policy is then
+`self_approval_allowed`: `init` installs the base kit at once, a `kit add
+--commit` lands in one step, and your own `proposal approve` activates what
+you propose. Skip the reviewer commands below. To add cosign later, see
+[Review and governance](review-and-governance.md).
 
-Start the local daemon:
+## 2. Install the security kit
 
-```bash
-CRUXIBLE_SERVER_STATE_DIR="$HOME/.cruxible/server" cruxible server start
-```
+<!-- publish: kit tag -->
+~~~bash
+cruxible kit add ../cruxible-kits/kits/security                   # shows what it would install; writes nothing
+cruxible kit add ../cruxible-kits/kits/security --commit --at OID # OID: the coordinate the preview printed
+~~~
 
-Without auth, this is sandbox mode: writes are attributed to a built-in
-`operator` identity, visible as such in provenance. Turn auth on (below)
-when agents join and identity should be credential-backed.
+After the registry release, `cruxible kit add security:1.3.0` does the same.
+The commit proposes the kit's three provider packages (OSV, a web fetcher for
+KEV and EPSS, a SARIF reader), one proposal each, and prints them. Once the
+reviewer has approved all three, the kit's definitions are proposed
+automatically, as a fourth proposal for the reviewer:
 
-The daemon runs in the foreground — run the commands below from another activated
-shell, or start it in the background.
+~~~bash
+cruxible proposal list --status open                                         # the three provider installs
+CRUXIBLE_PRINCIPAL_ID=reviewer cruxible proposal approve PROPOSAL_ID --yes   # once for each
+cruxible kit status --offline                                                # names the definitions proposal
+CRUXIBLE_PRINCIPAL_ID=reviewer cruxible proposal approve PROPOSAL_ID --yes
+~~~
 
-Use a durable state directory such as `~/.cruxible/server` or
-`/var/lib/cruxible`. Do not put long-lived daemon state under `/tmp`,
-`/var/tmp`, or macOS private temp directories; Cruxible warns at startup when
-the configured server state path resolves under a known volatile temp location.
+## 3. Write an SBOM
 
-The daemon binds locally by default. For a simple local hardening layer, start
-it with:
+The kit reads your dependencies from a CycloneDX JSON SBOM in the repository.
+For a `requirements.txt`:
 
-```bash
-CRUXIBLE_SERVER_AUTH=true \
-CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET=change-me-once \
-CRUXIBLE_SERVER_STATE_DIR="$HOME/.cruxible/server" cruxible server start
-```
+~~~bash
+uvx --from cyclonedx-bom cyclonedx-py requirements requirements.txt --of JSON -o sbom.cdx.json
+~~~
 
-Claim the bootstrap secret with `cruxible credential claim-bootstrap` to create
-an admin runtime credential, then use that runtime credential as
-`CRUXIBLE_SERVER_BEARER_TOKEN` for authenticated CLI or client calls. See
-[Runtime Auth And Agent Roles](runtime-auth-and-agent-roles.md) for the full
-bootstrap and agent-role flow.
+[Step 3 of the walkthrough](security-walkthrough.md#step-3-describe-your-dependencies)
+names generators for other ecosystems.
 
-Use `cruxible-client` in a separate agent environment when the agent should not
-import the runtime directly:
+## 4. Adopt the automation
 
-```bash
-pip install cruxible-client
-```
+The kit brings definitions only. The checks that run on their own, called
+**Lines**, come as a template, `automation.json` in the kit directory, which
+you copy and tailor: the SBOM path (`relative_path`, `sbom.cdx.json` as
+shipped), each **Mandate**'s `valid_from` and `expires_at`, and the daily cron
+time (14:00 UTC as shipped). Then submit it; the reviewer reads it and
+approves it:
 
-## First Instance: The Supply-Chain Demo
+~~~bash
+cp ../cruxible-kits/kits/security/automation.json .
+# edit relative_path, the Mandate dates and the cron time
+cruxible authoring submit automation.json --no-accept --brief
+CRUXIBLE_PRINCIPAL_ID=reviewer cruxible proposal review PROPOSAL_ID          # the proposal the submit printed
+CRUXIBLE_PRINCIPAL_ID=reviewer cruxible proposal approve PROPOSAL_ID --yes
+~~~
 
-Create an instance from two kits — the agent-operation base and the
-supply-chain demo domain — and connect the CLI context so commands stop
-needing per-call flags. (agent-operation is optional: it is the work-item
-and review operations layer for teams running agents on the loop; for a
-domain-only instance, pass just the domain kit.)
+Approving it lets the four source Lines (SBOM import, OSV, KEV, EPSS) settle
+what they copy from their sources; no Mandate settles a judgment.
 
-```bash
-cruxible --server-url http://127.0.0.1:8100 init --kit agent-operation --kit supply-chain-blast-radius
-cruxible context connect --server-url http://127.0.0.1:8100 --instance-id <instance-id>
-```
+## 5. Run it once, then keep it current
 
-Build the seeded world. Canonical workflows are preview-first: `run` executes
-against a clone and returns an apply digest; `apply` re-verifies it against
-the current config, lockfile, and head snapshot before committing:
+~~~bash
+cruxible runbook preview security.start     # what each step reads, writes and calls; runs nothing
+for l in sbom-import.app osv-query osv-unkeyed kev-triage epss-triage exposure-attention.unjudged exposure-attention.contested; do
+  cruxible line enable security.$l
+done
+cruxible runbook run security.start         # SBOM import, OSV, KEV, EPSS, then the attention Lines
+~~~
 
-```bash
-cruxible run --workflow build_seed_state
-cruxible apply --workflow build_seed_state --from-last-preview
-cruxible run --workflow ingest_incidents
-cruxible apply --workflow ingest_incidents --from-last-preview
-```
+The run's calls are real and took about half a minute on the project below.
+With the seven Lines enabled, the `security.maintain-daily` Trigger runs OSV,
+KEV, EPSS and the attention Lines once a day while the daemon is running, and
+`security.osv-unkeyed` runs whenever an OSV result lands (enable it before the
+first run, or that run's result posts nothing). The SBOM import is not on the
+clock: rerun `cruxible runbook run security.start` when the SBOM changes.
 
-Incident-to-supplier impact is a governed relationship: every live direct
-write is refused, at any permission tier, and in this kit it is minted only
-through proposal and review. The proposal workflow bridges its output into
-a candidate group, each member carrying the signals and evidence that
-matched it:
+## 6. Ask the first question
 
-```bash
-cruxible propose --workflow propose_incident_impacts_supplier
-cruxible group list --status pending_review
-cruxible group get --group <group-id>
-```
+**Which vulnerabilities do we look at first?**
 
-Review the thesis, member signals, and pending version, then resolve. The
-`--expected-pending-version` flag pins your decision to the exact pending
-state you reviewed — a group that changed underneath you refuses to resolve:
+~~~text
+$ cruxible query --name security.urgent_exposures --limit 5
+subject                                component            cve_id          epss_percentile  epss_score  inventory      kev_date_added  kev_due_date  kev_ransomware_use  occurrence                          scope     flags
+security.vulnerability/cve-2023-46695  pkg:pypi/django@4.2  CVE-2023-46695  0.99008          0.53447     sbom.cdx.json  -               -             -                   sbom.cdx.json--pkg-pypi-django-4.2  required  -
+security.vulnerability/cve-2024-39614  pkg:pypi/django@4.2  CVE-2024-39614  0.98169          0.28637     sbom.cdx.json  -               -             -                   sbom.cdx.json--pkg-pypi-django-4.2  required  -
+security.vulnerability/cve-2025-57833  pkg:pypi/django@4.2  CVE-2025-57833  0.98149          0.28271     sbom.cdx.json  -               -             -                   sbom.cdx.json--pkg-pypi-django-4.2  required  -
+...
+~~~
 
-```bash
-cruxible group resolve --group <group-id> --action approve \
-  --rationale "Confirmed against supplier geography" \
-  --expected-pending-version <pending-version>
-```
+This lists every exposure nobody has judged: each vulnerability OSV lists for
+a release your SBOM names, KEV-listed first (the `kev_` columns), then by EPSS
+score. On [pygoat](https://github.com/adeyosemanputra/pygoat), the project the
+walkthrough uses, none is on KEV, and Django 4.2's CVE-2023-46695 is the most
+likely to be exploited. `cruxible next` lists what needs attention: here the
+exposures the attention Line posted to your inbox, and one summary item for
+the OSV advisories that have no CVE id yet.
 
-Ask the questions those edges now answer:
+Whether the vulnerable code is reachable in your project is a judgment: a
+write that cites the code and waits for the reviewer.
+[Step 7 of the walkthrough](security-walkthrough.md#step-7-judge-an-exposure)
+records one.
 
-```bash
-cruxible query run open_incident_impacts --json
-cruxible query run incident_impacted_suppliers --param incident_id=INC-TW-RAIL-2026-07 --json
-```
+## 7. Bring in your agent
 
-Every query returns a receipt ID: the deterministic path from parameters to
-traversed edges to rows. Render it with `cruxible explain --receipt
-<receipt-id>`, or in MCP with `cruxible_receipt(instance_id, "<receipt-id>")`.
+Connect a coding agent to the same instance through MCP or the CLI
+([For AI agents](for-ai-agents.md)). Started in this project, it acts as the
+owner with no further setup. `cruxible orient` and `cruxible next` show it
+what is there and what needs attention, and the kit's governed guidance
+(`cruxible get Document:security.guidance.dependency`) says how to judge an
+exposure. What it proposes waits for the reviewer: a second agent that runs
+the CLI as `reviewer`, as above. The agent plugin for Claude Code and Codex
+adds five general skills (`survey`, `adopt-kit`, `create-state`,
+`automate-state` and `review-state`); [For AI agents](for-ai-agents.md#connect)
+says where to find it.
 
-The approved supplier impacts unlock the next cascade:
-`cruxible propose --workflow propose_incident_impacts_component` fills the
-queue with component-level candidates, and once judged,
-`single_source_components_for_incident` names exposed components with no
-alternative supplier.
+## 8. Look around in the console
 
-To consume a published reference state instead of a seeded demo (the KEV
-vulnerability brain), see the [KEV Guide](kev-guide.md). To publish states
-of your own, see [Publishing And Subscribing To States](publishing-states.md).
+~~~bash
+cruxible console
+~~~
 
-## Point An Agent At Cruxible
+This opens a read-only console in your browser: the dashboard, what each kind
+of thing holds, open proposals, the Lines and their runs, the ledger. It runs
+on your machine only (`127.0.0.1`), reads from the daemon `init` started, and
+cannot change anything; approving and the like stay on the command line. The
+link it prints signs one browser in, once; Ctrl-C stops it.
 
-Bootstrap and canonical apply usually require an admin surface. Day-to-day
-agent work should use `governed_write` unless the agent is explicitly acting as
-an administrator.
+## If something goes wrong
 
-**Claude Code / Cursor**:
+- **The daemon warns `Provider lane unavailable` when it starts.** The daemon
+  runs the kit's providers in a separate process reached through a Unix socket
+  under its state root, and that path is too long, with no `TMPDIR` (macOS) or
+  `XDG_RUNTIME_DIR` (Linux) to fall back on. Everything else works, but
+  `kit add` and the runs refuse with the same cause. The warning names the
+  budget: the directory may be at most 57 bytes long. Set
+  `TMPDIR=$(getconf DARWIN_USER_TEMP_DIR)` on macOS or
+  `XDG_RUNTIME_DIR=/run/user/$UID` on Linux (any short private directory you
+  own, mode 0700, works), or use a shorter `--state-root`, and restart the
+  daemon.
+- **A proposal does not activate.** Under `independent_approval_required` its
+  author's own `proposal approve` is refused
+  (`cruxible.approval.creator_forbidden`): the reviewer approves it.
+  `CRUXIBLE_PRINCIPAL_ID=reviewer cruxible next` lists what waits.
+- **The daily run stops at its first step.** A run the Trigger starts runs
+  each step under its Line's own enablement, and a step whose Line is not
+  enabled stops the run there; `next` lists a Line that was never enabled as
+  `line_not_enabled`. Enable the Lines (step 5). (A `runbook run` you start
+  yourself runs every step as you, enabled or not.)
+- **The daily run did not happen.** A scheduled Trigger fires only while the
+  daemon is running, and an instant missed while it was down is not run
+  afterwards: `next` shows a `trigger_instants_missed` row for
+  `security.maintain-daily`. Run `cruxible runbook run security.maintain` to
+  catch up.
+- **New dependencies have no answer yet.** OSV is asked once a day. After
+  writing a new SBOM, run `cruxible runbook run security.start`.
 
-```json
-{
-  "mcpServers": {
-    "cruxible": {
-      "command": "cruxible-mcp",
-      "env": {
-        "CRUXIBLE_MODE": "governed_write",
-        "CRUXIBLE_SERVER_URL": "http://127.0.0.1:8100"
-      }
-    }
-  }
-}
-```
+## What's next
 
-**Codex**:
+<!-- publish: kit tag -->
 
-```toml
-[mcp_servers.cruxible]
-command = "cruxible-mcp"
-
-[mcp_servers.cruxible.env]
-CRUXIBLE_MODE = "governed_write"
-CRUXIBLE_SERVER_URL = "http://127.0.0.1:8100"
-```
-
-With auth on, add `CRUXIBLE_INSTANCE_ID` and `CRUXIBLE_SERVER_BEARER_TOKEN` to
-the same `env` blocks so every session starts authenticated as its role — the
-natural shape for synchronous harnesses that run each task in their own
-session. See [Agent Environment](runtime-auth-and-agent-roles.md#agent-environment)
-for choosing between harness-configured and orchestrator-managed credentials,
-and treat any config file carrying a token as credential material.
-
-If the agent should not have direct state access, keep
-`CRUXIBLE_SERVER_STATE_DIR` outside the workspace and install only
-`cruxible-client` in the agent environment. See
-[Isolated Deployment](isolated-deployment.md) for stronger local separation.
-
-## Build Your Own
-
-Use kits for repeatable work:
-
-- A **base kit** supplies cross-domain operating state. Kit initialization uses
-  the configured default base (`agent-operation`) unless you pass `--bare`.
-- A **standalone kit** creates a domain state model without requiring another
-  domain kit.
-- An **overlay kit** extends a published reference state.
-- Provider refs use `kit://...::callable`.
-- Deterministic state loading should be workflow-based: parse source artifacts,
-  shape/filter/join/dedupe rows, make graph objects, preview, then apply.
-- Inference, matching, classification, and reviewable judgment should go
-  through proposal workflows and candidate groups.
-
-For hands-on kit creation, see [Kit Walkthroughs](kit-walkthroughs.md). For the
-manifest and distribution rules, see [Kit Authoring And Distribution](kit-authoring.md).
-
-## Next Steps
-
-- [Concepts](concepts.md) - Architecture and vocabulary
-- [KEV Guide](kev-guide.md) - Subscribe to the vulnerability reference and work the triage queue
-- [Publishing And Subscribing To States](publishing-states.md) - Build, publish, and track reference states
-- [Guide For AI Agents](for-ai-agents.md) - Agent operating recipes
-- [Kit Walkthroughs](kit-walkthroughs.md) - Build and customize kits
-- [Local State And Backups](local-state-and-backups.md) - SQLite and droplet operations
-- [Config Reference](config-reference.md) - YAML schema
-- [MCP Tools Reference](mcp-tools.md) - MCP surface
-- [CLI Reference](cli-reference.md) - Terminal commands
+- The [Security walkthrough](security-walkthrough.md) goes through the same
+  steps with their outputs, then judges three exposures, from the SDK, the CLI
+  and MCP, each approved by the reviewer.
+- [Concepts](concepts.md) explains the ideas behind what you just did.
+- The [security kit's README](https://github.com/cruxible-ai/cruxible-kits/blob/security-1.3.0/kits/security/README.md)
+  covers everything else it answers, including the audit loop for findings in
+  your own code.
+- [For AI agents](for-ai-agents.md) covers connecting an agent in depth.

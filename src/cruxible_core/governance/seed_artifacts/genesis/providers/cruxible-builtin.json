@@ -1,0 +1,360 @@
+{
+  "artifact_format": "playbill-provider-v3",
+  "capture_contract_digests": [],
+  "control_domain": "cruxible-builtin",
+  "declares": {
+    "contracts": [
+      {
+        "artifact_format": "cruxible-contract-v1",
+        "description": "The bytes the daemon read for one workspace file, handed to core's builtin. Core builds it; a Procedure never writes or reads it.",
+        "fields": {
+          "byte_length": {
+            "type": {
+              "kind": "int",
+              "min": 0
+            }
+          },
+          "bytes": {
+            "type": {
+              "kind": "string"
+            }
+          },
+          "bytes_digest": {
+            "type": {
+              "kind": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            }
+          },
+          "commitment_digest": {
+            "type": {
+              "kind": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            }
+          },
+          "content_encoding": {
+            "type": {
+              "kind": "enum",
+              "members": [
+                "base64"
+              ]
+            }
+          },
+          "logical_source": {
+            "type": {
+              "kind": "string",
+              "min_len": 1
+            }
+          }
+        },
+        "name": "workspace.file.handoff",
+        "version": 1
+      },
+      {
+        "artifact_format": "cruxible-contract-v1",
+        "description": "Detail of an invalid_parameter refusal: the offending field(s).",
+        "fields": {
+          "content_encoding": {
+            "optional": true,
+            "type": {
+              "kind": "string"
+            }
+          },
+          "declared": {
+            "optional": true,
+            "type": {
+              "item": {
+                "kind": "string"
+              },
+              "kind": "list",
+              "max_items": 16
+            }
+          },
+          "field": {
+            "optional": true,
+            "type": {
+              "kind": "string"
+            }
+          },
+          "missing": {
+            "optional": true,
+            "type": {
+              "item": {
+                "kind": "string"
+              },
+              "kind": "list",
+              "max_items": 16
+            }
+          },
+          "supported": {
+            "optional": true,
+            "type": {
+              "item": {
+                "kind": "string"
+              },
+              "kind": "list",
+              "max_items": 16
+            }
+          },
+          "unknown": {
+            "optional": true,
+            "type": {
+              "item": {
+                "kind": "string"
+              },
+              "kind": "list",
+              "max_items": 16
+            }
+          }
+        },
+        "name": "workspace.file.refusal.invalid_parameter",
+        "version": 1
+      },
+      {
+        "artifact_format": "cruxible-contract-v1",
+        "description": "Detail of a mismatched_lengths refusal: declared vs decoded byte length.",
+        "fields": {
+          "declared": {
+            "optional": true,
+            "type": {
+              "kind": "int",
+              "min": 0
+            }
+          },
+          "decoded": {
+            "optional": true,
+            "type": {
+              "kind": "int",
+              "min": 0
+            }
+          }
+        },
+        "name": "workspace.file.refusal.mismatched_lengths",
+        "version": 1
+      },
+      {
+        "artifact_format": "cruxible-contract-v1",
+        "description": "Detail of a provider_declined refusal: the declared and computed digests.",
+        "fields": {
+          "computed": {
+            "optional": true,
+            "type": {
+              "kind": "string"
+            }
+          },
+          "declared": {
+            "optional": true,
+            "type": {
+              "kind": "string"
+            }
+          }
+        },
+        "name": "workspace.file.refusal.provider_declined",
+        "version": 1
+      },
+      {
+        "artifact_format": "cruxible-contract-v1",
+        "description": "The exact bytes the daemon read, as one Capture.",
+        "fields": {
+          "capture": {
+            "type": {
+              "capture_kind": "*",
+              "kind": "capture"
+            }
+          }
+        },
+        "name": "workspace.file.result",
+        "version": 1
+      },
+      {
+        "artifact_format": "cruxible-contract-v1",
+        "description": "The exact bytes the daemon read, one Capture per matched file, sorted by the files' names. A glob that matches nothing returns an empty list.",
+        "fields": {
+          "captures": {
+            "type": {
+              "item": {
+                "capture_kind": "*",
+                "kind": "capture"
+              },
+              "kind": "list",
+              "max_items": 1000
+            }
+          }
+        },
+        "name": "workspace.files.result",
+        "version": 1
+      }
+    ]
+  },
+  "identity": {
+    "kind": "Provider",
+    "name": "cruxible-builtin"
+  },
+  "implementations": [
+    {
+      "backend_kinds": [
+        "local_env"
+      ],
+      "entrypoint": "cruxible_core.providers.builtin_workspace_file:WorkspaceFile",
+      "implementation_digest": "sha256:18e9bddcd464531c616b69e2899c1e548215480ee5beae723aa6bf4d24a84ac1",
+      "materialization_references": [
+        {
+          "environment_pin_key": "builtin",
+          "kind": "local_env",
+          "materialization_digest": "sha256:6f662776ce35eb3b27acedfa2b881d3b5370c1178a8e1da527107ec71e809a91",
+          "tag": "playbill-provider-local-materialization-reference-v1"
+        }
+      ],
+      "tag": "cruxible-provider-implementation-v2"
+    }
+  ],
+  "lifecycle": {
+    "predecessor_digest": null,
+    "state": "live"
+  },
+  "operations": [
+    {
+      "description": "Reads one file from an authorized workspace and returns its exact bytes as one Capture. Built into Cruxible and present on every instance; only it serves the workspace.file and workspace.files capabilities.",
+      "effect": "pure",
+      "entrypoint": "cruxible_core.providers.builtin_workspace_file:WorkspaceFile",
+      "in": {
+        "digest": "sha256:db3a93ed5c9ee7164c4e2505ad2ee2885a708a2e427f19023b017386df6a11da",
+        "name": "workspace.file.handoff",
+        "version": 1
+      },
+      "name": "workspace.file",
+      "out": {
+        "digest": "sha256:e0ebd7475a603ba3942a86e8742d9d2fde6c17157ffd9a6ad04797c0d652edf9",
+        "name": "workspace.file.result",
+        "version": 1
+      },
+      "refusals": {
+        "invalid_parameter": {
+          "absorbable": true,
+          "contract": {
+            "digest": "sha256:5e6c3b6b882421a4b102983822a3d31a30f75594be20be15a10f086d727130ca",
+            "name": "workspace.file.refusal.invalid_parameter",
+            "version": 1
+          }
+        },
+        "mismatched_lengths": {
+          "absorbable": true,
+          "contract": {
+            "digest": "sha256:59106e6033c7107e3d435225545fce2c93eeb69a9208bc74bc084a5c70739f3e",
+            "name": "workspace.file.refusal.mismatched_lengths",
+            "version": 1
+          }
+        },
+        "provider_declined": {
+          "absorbable": true,
+          "contract": {
+            "digest": "sha256:93f543bb0165e0d8938886edf1fdda0ea8be1463d80ceede3c3c3296f367ddb2",
+            "name": "workspace.file.refusal.provider_declined",
+            "version": 1
+          }
+        }
+      },
+      "serves": [
+        "workspace.file"
+      ],
+      "source": {
+        "path": "src/cruxible_core/providers/builtin_workspace_file.py",
+        "repository": "https://github.com/cruxible-ai/cruxible"
+      }
+    },
+    {
+      "description": "Reads every file a glob matches in an authorized workspace and returns their exact bytes as a list of Captures, sorted by name; more matches than max_files refuses the read before any file is read. Built into Cruxible and present on every instance; only it serves the workspace.file and workspace.files capabilities.",
+      "effect": "pure",
+      "entrypoint": "cruxible_core.providers.builtin_workspace_file:WorkspaceFile",
+      "in": {
+        "digest": "sha256:db3a93ed5c9ee7164c4e2505ad2ee2885a708a2e427f19023b017386df6a11da",
+        "name": "workspace.file.handoff",
+        "version": 1
+      },
+      "name": "workspace.files",
+      "out": {
+        "digest": "sha256:94a02051ca920df020b187f3c1c297a803fe312b944bdbc23e533835a5781531",
+        "name": "workspace.files.result",
+        "version": 1
+      },
+      "refusals": {
+        "invalid_parameter": {
+          "absorbable": true,
+          "contract": {
+            "digest": "sha256:5e6c3b6b882421a4b102983822a3d31a30f75594be20be15a10f086d727130ca",
+            "name": "workspace.file.refusal.invalid_parameter",
+            "version": 1
+          }
+        },
+        "mismatched_lengths": {
+          "absorbable": true,
+          "contract": {
+            "digest": "sha256:59106e6033c7107e3d435225545fce2c93eeb69a9208bc74bc084a5c70739f3e",
+            "name": "workspace.file.refusal.mismatched_lengths",
+            "version": 1
+          }
+        },
+        "provider_declined": {
+          "absorbable": true,
+          "contract": {
+            "digest": "sha256:93f543bb0165e0d8938886edf1fdda0ea8be1463d80ceede3c3c3296f367ddb2",
+            "name": "workspace.file.refusal.provider_declined",
+            "version": 1
+          }
+        }
+      },
+      "serves": [
+        "workspace.files"
+      ],
+      "source": {
+        "path": "src/cruxible_core/providers/builtin_workspace_file.py",
+        "repository": "https://github.com/cruxible-ai/cruxible"
+      }
+    }
+  ],
+  "pins": [],
+  "runtime_artifact": {
+    "container": null,
+    "distribution": {
+      "filename": "cruxible-builtin-workspace-file",
+      "materialization_source": "local",
+      "name": "cruxible-builtin",
+      "sha256": "sha256:04922994e7747b10f7a84726512d7b537d89d37655ca63a926bbb216dfdc25a5",
+      "version": "1"
+    },
+    "local_env": {
+      "lock_sha256": "sha256:22d16068376d20ac9d8b2a031343225778d59c0b8c702b060636f37cfd10c1bc",
+      "materialization_digests": {
+        "builtin": "sha256:6f662776ce35eb3b27acedfa2b881d3b5370c1178a8e1da527107ec71e809a91"
+      }
+    },
+    "manifest": {
+      "distribution": {
+        "name": "cruxible-builtin",
+        "version": "1"
+      },
+      "entrypoint_group": "cruxible.providers",
+      "implementations": [
+        {
+          "backends": [
+            "local_env"
+          ],
+          "declared_endpoints": [],
+          "deterministic": true,
+          "entrypoint": "cruxible_core.providers.builtin_workspace_file:WorkspaceFile",
+          "requires_extras": []
+        }
+      ],
+      "provider_id": "cruxible-builtin",
+      "schema_version": 2,
+      "supported_protocol_majors": [
+        2
+      ]
+    },
+    "manifest_digest": "sha256:e244e53d928ba0f8c51e4699b4b0e8d0a2594df353a4b02812c2ab76e5db7a74",
+    "provider_id": "cruxible-builtin",
+    "schema_version": 2,
+    "status": "accepted"
+  },
+  "signing_keys": [],
+  "upstream_provenance": []
+}

@@ -1,0 +1,283 @@
+"""Read-only external acquisition seam."""
+
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Literal, Protocol, runtime_checkable
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.canonical import (
+    Sha256Value,
+    normalize_canonical,
+    typed_digest,
+)
+from cruxible_client.contracts.captures import (
+    CaptureContractAny as CaptureContract,
+)
+from cruxible_client.contracts.captures import (
+    CaptureContractV1,
+    CaptureEnvelope,
+    CaptureEnvelopeAny,
+    CaptureEnvelopeV1,
+    CaptureObjectStoreProtocol,
+    CaptureRunCoordinateV1,
+    CaptureSelectionBudget,
+    SourceEffectiveTime,
+    capture_components,
+    capture_digest,
+    capture_retention_policy,
+    contract_materialization_modes,
+    contract_source_kinds,
+)
+from cruxible_client.contracts.errors import FormatError
+from cruxible_client.contracts.providers import ProviderV1, provider_declares_capture_contract
+from cruxible_client.contracts.source_references import (
+    EvidenceCommitment,
+    ExternalSourceReference,
+)
+
+
+class ExternalSourceError(FormatError):
+    """An external source could not satisfy its accepted acquisition contract."""
+
+
+class _StrictSourceReaderModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class ProducerBindingV1(_StrictSourceReaderModel):
+    """Locator-free public description of a secret/runtime binding."""
+
+    tag: Literal["playbill-producer-binding-v1"] = "playbill-producer-binding-v1"
+    provider: ArtifactIdentity
+    logical_source_identity: str
+    adapter_digest: str
+    binding_epoch: int = 0
+
+    @field_validator("adapter_digest")
+    @classmethod
+    def _digest(cls, value: str) -> str:
+        Sha256Value.from_tagged(value)
+        return value
+
+    @model_validator(mode="after")
+    def _shape(self) -> "ProducerBindingV1":
+        if self.provider.kind != "Provider":
+            raise ValueError("producer binding must name a Provider")
+        # Reuse the locator/secret-free source identity validation.
+        ExternalSourceReference(
+            source_identity=self.logical_source_identity,
+            producer_binding_digest="sha256:" + "00" * 32,
+            coordinate_type="binding-check-v1",
+            coordinate={},
+            selector_type="binding-check-v1",
+            selector={},
+            replayability="attested_only",
+        )
+        if self.binding_epoch < 0:
+            raise ValueError("producer binding epoch must be nonnegative")
+        return self
+
+    @property
+    def digest(self) -> str:
+        payload = self.model_dump(mode="json")
+        payload.pop("tag")
+        return typed_digest(
+            Sha256Value,
+            "playbill-producer-binding-v1",
+            payload,
+        ).tagged
+
+
+class ExternalSourceReadRequestV1(_StrictSourceReaderModel):
+    tag: Literal["playbill-external-source-read-v1"] = "playbill-external-source-read-v1"
+    contract: CaptureContract
+    provider: ProviderV1
+    binding: ProducerBindingV1
+    coordinate_type: str
+    coordinate: object
+    selector_type: str
+    selector: object
+    materialization: Literal["external", "none", "cas"]
+    run_coordinate: CaptureRunCoordinateV1
+    observed_at: datetime
+    resource_budget: CaptureSelectionBudget
+
+    @field_validator("coordinate", "selector", mode="before")
+    @classmethod
+    def _canonical(cls, value: object) -> object:
+        return normalize_canonical(value)
+
+    @field_validator("observed_at")
+    @classmethod
+    def _time(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("external acquisition time must be timezone-aware")
+        return value
+
+    @model_validator(mode="after")
+    def _binding(self) -> "ExternalSourceReadRequestV1":
+        if self.binding.provider != self.provider.identity:
+            raise ValueError("producer binding names a different Provider")
+        if (
+            isinstance(self.contract, CaptureContractV1)
+            and self.binding.logical_source_identity not in self.contract.logical_source_identities
+        ):
+            raise ValueError("producer binding source is absent from its CaptureContract")
+        if not provider_declares_capture_contract(self.provider, self.contract.identity):
+            raise ValueError("Provider does not declare this CaptureContract")
+        if self.materialization not in contract_materialization_modes(self.contract):
+            raise ValueError("requested materialization is absent from the CaptureContract")
+        if "external" not in contract_source_kinds(self.contract):
+            raise ValueError("CaptureContract does not permit external sources")
+        if self.run_coordinate.executable_identity != self.provider.identity:
+            raise ValueError("external acquisition run must name its Provider")
+        if self.run_coordinate.executable_digest != self.provider_digest:
+            raise ValueError("external acquisition run names a different Provider digest")
+        if self.resource_budget.max_bytes > self.contract.selection_budget.max_bytes or (
+            self.resource_budget.max_rows > self.contract.selection_budget.max_rows
+            or self.resource_budget.max_items > self.contract.selection_budget.max_items
+        ):
+            raise ValueError("runtime resource budget cannot widen the CaptureContract")
+        coordinate_types = {
+            pin.target.name for pin in capture_components(self.contract).coordinate_schema_pins
+        }
+        selector_types = {
+            pin.target.name for pin in capture_components(self.contract).selector_schema_pins
+        }
+        if self.coordinate_type not in coordinate_types:
+            raise ValueError("external coordinate type is not pinned by the CaptureContract")
+        if self.selector_type not in selector_types:
+            raise ValueError("external selector type is not pinned by the CaptureContract")
+        ExternalSourceReference(
+            source_identity=self.binding.logical_source_identity,
+            producer_binding_digest=self.binding.digest,
+            coordinate_type=self.coordinate_type,
+            coordinate=self.coordinate,
+            selector_type=self.selector_type,
+            selector=self.selector,
+            replayability=("attested_only" if self.materialization == "none" else "exact"),
+        )
+        privacy = capture_retention_policy(self.contract).selector_privacy
+        if privacy == "pseudonymous_required" and not self.selector_type.startswith(
+            "pseudonymous-"
+        ):
+            raise ValueError("CaptureContract requires a pseudonymous selector schema")
+        return self
+
+    @property
+    def provider_digest(self) -> str:
+        from cruxible_client.contracts.providers import provider_digest
+
+        return provider_digest(self.provider).tagged
+
+
+class CaptureAcquisitionReceiptV1(_StrictSourceReaderModel):
+    tag: Literal["playbill-capture-acquisition-receipt-v1"] = (
+        "playbill-capture-acquisition-receipt-v1"
+    )
+    capture_contract_digest: str
+    producer: ArtifactIdentity
+    producer_binding_digest: str
+    source_identity: str
+    coordinate_type: str
+    coordinate: object
+    selector_type: str
+    selector: object
+    commitment: EvidenceCommitment
+    observed_at: datetime = Field(description="Reads EVALUATION INSTANT.")
+    replayability: Literal["exact", "attested_only"]
+    source_effective_time: SourceEffectiveTime | None = None
+
+    @field_validator("capture_contract_digest", "producer_binding_digest")
+    @classmethod
+    def _digest(cls, value: str) -> str:
+        Sha256Value.from_tagged(value)
+        return value
+
+    @property
+    def digest(self) -> str:
+        payload = self.model_dump(mode="json")
+        payload.pop("tag")
+        return typed_digest(
+            Sha256Value,
+            "playbill-capture-acquisition-receipt-v1",
+            payload,
+        ).tagged
+
+
+class ExternalCaptureAcquisitionV1(_StrictSourceReaderModel):
+    tag: Literal["playbill-external-capture-acquisition-v1"] = (
+        "playbill-external-capture-acquisition-v1"
+    )
+    receipt: CaptureAcquisitionReceiptV1
+    envelope: CaptureEnvelopeAny
+    capture_digest: str
+    epistemic_grade: Literal["observed", "derived", "predicted"]
+    provenance_grade: Literal["self-asserted", "daemon-fetched", "provider-signed", "witnessed"]
+    canonical_material: object | None = None
+
+    @field_validator("capture_digest")
+    @classmethod
+    def _capture_digest(cls, value: str) -> str:
+        Sha256Value.from_tagged(value)
+        return value
+
+    @field_validator("canonical_material", mode="before")
+    @classmethod
+    def _material(cls, value: object | None) -> object | None:
+        return None if value is None else normalize_canonical(value)
+
+    @model_validator(mode="after")
+    def _correspondence(self) -> "ExternalCaptureAcquisitionV1":
+        envelope = self.envelope
+        if isinstance(envelope, CaptureEnvelopeV1):
+            if envelope.run_receipt_digest != self.receipt.digest:
+                raise ValueError("Capture envelope differs from its acquisition receipt")
+        else:
+            assert isinstance(envelope, CaptureEnvelope)
+            source = envelope.source
+            if not isinstance(source, ExternalSourceReference) or (
+                self.receipt.capture_contract_digest != envelope.capture_contract_digest
+                or self.receipt.producer != envelope.producer
+                or self.receipt.producer_binding_digest != envelope.producer_binding_digest
+                or self.receipt.source_identity != source.source_identity
+                or self.receipt.coordinate_type != source.coordinate_type
+                or self.receipt.coordinate != source.coordinate
+                or self.receipt.selector_type != source.selector_type
+                or self.receipt.selector != source.selector
+                or self.receipt.commitment != envelope.commitment
+                or self.receipt.observed_at != envelope.observed_at
+                or self.receipt.replayability != source.replayability
+                or self.receipt.source_effective_time != envelope.source_effective_time
+            ):
+                raise ValueError("Capture v2 differs from its acquisition receipt")
+        if capture_digest(self.envelope).tagged != self.capture_digest:
+            raise ValueError("external Capture digest does not reproduce")
+        return self
+
+
+@runtime_checkable
+class ExternalSourceReaderProtocol(Protocol):
+    """The complete production-facing surface: observe and dereference only."""
+
+    def acquire(
+        self,
+        request: ExternalSourceReadRequestV1,
+        *,
+        store: CaptureObjectStoreProtocol,
+    ) -> ExternalCaptureAcquisitionV1: ...
+
+    def replay_available(self, source: ExternalSourceReference) -> bool: ...
+
+
+__all__ = [
+    "CaptureAcquisitionReceiptV1",
+    "ExternalCaptureAcquisitionV1",
+    "ExternalSourceError",
+    "ExternalSourceReadRequestV1",
+    "ExternalSourceReaderProtocol",
+    "ProducerBindingV1",
+]

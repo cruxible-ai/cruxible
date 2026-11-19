@@ -1,0 +1,526 @@
+# Evidence and admission
+
+Cruxible holds what your team believes, not what is true, and every belief is
+only as good as what it rests on. Each Claim records its evidence, and each
+field (each ClaimType) says which evidence it accepts. The result is a
+**verdict** on every Claim that says how well its evidence holds up, so a
+person or an agent can tell a checked fact from a guess before acting on it.
+
+This guide covers what counts as evidence, how a field decides what to admit,
+what verdicts and flags mean, how evidence goes stale, when to cite a passage
+and when to govern a whole Document, and what attestations do. It uses the
+car parts example from [Concepts](concepts.md#knowledge-as-claims).
+
+## What counts as evidence
+
+A Claim rests on one or more of these:
+
+- **Your own words**: the `because` text every write carries. Right for what
+  you state on your own authority: a decision, an owner, a category the team
+  assigned.
+- **A passage you wrote**: a section of a Markdown document written in the
+  same `write` as the Claim that cites it. It is still your own words, with a
+  location people can read.
+- **A citation**: a passage quoted from a workspace file, such as a
+  supplier's catalog saved in the repository (`--evidence-file PATH#ANCHOR`).
+  A file the catalog does not name yet is catalogued when the write is
+  admitted, so there is no need to catalogue it first. The anchor is text on
+  one line, found exactly once in the file: for a multi-line passage, anchor
+  the line that decides it; a line repeated in the file cannot be anchored
+  ([write](cli-reference.md#set-add-retire-rebind-and-write)).
+- **A Capture**: retained bytes recorded under a CaptureContract, typically a
+  response that a Procedure fetched from the outside world, or a file it read
+  from the workspace or from an upload (a hosted instance's way in for scans and
+  logs; see [the hosted runtime image](hosted-runtime-image.md#evidence-uploads)).
+
+`get --detail evidence` shows what a Claim rests on and whether each piece
+counts. Here, a fitment the shop checked and wrote up, and a fitment cited from
+the supplier's catalog:
+
+~~~text
+$ cruxible get CLM-25f7a8f4… --detail evidence
+value: catalog.vehicle/honda-civic-2019
+capture CAP-14a1f5f34e57  CaptureContract:cruxible.coordinator-self-source-v1 v1  source=docs/fitment.md  ...  own words in docs/fitment.md (91 bytes): admitted
+rationale: Fitment check at the shop.
+
+$ cruxible get CLM-bbf833c5… --detail evidence
+value: catalog.vehicle/honda-civic-2020
+capture CAP-9226692cedaa  CaptureContract:cruxible.foreign-source.catalog v1  source=supplier/acme-2026.txt  ...  evidence: admitted
+rationale: Acme's 2026 catalog lists bp-2210 for the 2020 Civic.
+~~~
+
+Each line ends with how the verdict reads it. A copy is labeled by where it
+came from (`own words`, `own words in` the file they were written in, each
+with its size in bytes, or `location in` a catalogued file), and anything else
+as `evidence`. A note a write produces and cites is one Capture: your own
+words, located at the section they were written in. Each is then `admitted` (the field's rules accept it), `not
+admitted` (offered as evidence, refused by the field's rules) or `not
+evidence` (a copy the rules don't count).
+
+### Reading a Capture's bytes
+
+`cruxible capture read CAP-…` verifies a Capture and returns the bytes it
+retained, without fetching the source again. Today it prints JSON only: the
+envelope, the contract, the grade, and under `material.body_access` the body
+itself, base64-encoded (`body_base64`, with `byte_length` and
+`content_digest`). Decode it to read it:
+
+~~~bash
+cruxible capture read CAP-1794680ef26b | jq -r .material.body_access.body_base64 | base64 -d
+~~~
+
+`--max-bytes` bounds the bytes returned (4 MiB by default). In the SDK,
+`cx.capture("CAP-…").text()` or `.json()` decodes them for you. Over MCP,
+`cruxible_capture_read` (the `full` profile) returns the same JSON and takes
+its arguments under `request` (`{"request": {"capture_digest": "CAP-…"}}`). A
+document a provider derived (a list of OSV matches, an SBOM's components) is
+JSON in its CaptureKind's layout, and holds only the fields that layout
+declares.
+
+## How a field admits evidence
+
+### Rules are per role
+
+A Claim has a role: **normative** for what someone states should be (a
+decision, an assignment), **observation** for what was seen in the world. A
+field's evidence rules are set per role, and the two want different evidence.
+Your own words are good evidence for a normative statement you make; they
+aren't evidence that a brake pad fits a car. A field whose rules don't match
+the role its Claims are written with records every value as `uncovered`
+([Building team knowledge](building-team-knowledge.md#use-the-normative-role-for-what-you-state-yourself)
+shows that mistake).
+
+### Requiring captured evidence
+
+A field can require captured evidence, so that your own words are never
+enough. A price the supplier quoted shouldn't rest on someone's memory of a
+phone call:
+
+~~~text
+$ cruxible set catalog.part/bp-2210 price 39 --because "Acme quoted 39 on the phone."
+refused (generation 30, d80df8c8c768)
+cruxible.write.evidence_required (change 0): price declares evidence_requirement 'captured' (catalog.quotes); your own words cannot back it
+  nearest: catalog.quotes
+  repair: Cite a Capture under catalog.quotes: contract evidence naming it (--evidence-contract) or a Capture handle (--capture); or add a shaped CaptureContract to price's evidence (evidence: [<contract name>, ...] in the vocabulary file)
+
+$ cruxible set catalog.part/bp-1142 price 42 --because "Acme quote of 2026-10-21." \
+    --evidence-file 'quotes/acme-2026-10-21.md#bp-1142 Front brake pads: 42 USD'
+refused (generation 30, d80df8c8c768)
+cruxible.write.evidence_required (change 0): price declares evidence_requirement 'captured' (catalog.quotes): a shaped payload under a declared contract; a file quote does not satisfy it
+  ...
+~~~
+
+"Captured" means a shaped payload under a declared contract: neither your own
+words nor a quote from a workspace file satisfies it. Workspace files are files
+an agent can write, so they are the right evidence for documented reasoning,
+not for facts about the outside world. A captured field lists the shaped
+CaptureContracts that back it in `evidence:` (here `catalog.quotes`, whose
+Captures a run fetches). A fetched Capture counts only when the daemon's
+journal records the run that produced it, so its bytes can't be passed off as
+something a run observed.
+
+### Seeing a field's settings
+
+Fields are queryable like everything else:
+
+~~~text
+$ cruxible query ClaimType --where 'name~catalog.part' --select role,stale_after,captured_required
+predicate              role         stale_after  captured_required
+catalog.part.category  observation  -            false
+catalog.part.fits      observation  -            false
+catalog.part.name      normative    -            false
+catalog.part.price     observation  2m           true
+catalog.part.replaces  observation  -            false
+catalog.part.title     observation  -            false
+~~~
+
+### Writing a field's rules
+
+A field's evidence rules are part of its definition, and the short form says
+them in one line. Every field that does not require captured evidence admits
+the writer's own words and citations of catalogued workspace files and
+sections: no rule is needed for those. What a field lists is the shaped
+CaptureContracts whose Captures back it, in `evidence:`. A supplier's lead
+time, which must come from a fetched quote and goes stale after 30 days:
+
+~~~yaml
+predicate: catalog.part.lead_time_days
+description: Days from order to delivery, as the supplier quotes it.
+allowed_subject_kinds: [catalog.part]
+value: int{min: 0}
+cardinality: one
+permitted_roles: [observation]
+evidence_requirement: captured
+evidence_freshness: {stale_after: P30D}
+evidence: [catalog.quotes]
+~~~
+
+~~~text
+$ cruxible claim-type propose --input lead-time.yaml --name add-lead-time
+admitted  sha256:5f33eb98…  verdict=candidate
+landed: accepted at f91d19c76229
+~~~
+
+Each contract in `evidence` is admitted for the field's permitted roles
+(derivationally for `derivation` Claims), directly, about the Claim's own
+Subject. The vocabulary file and the SDK's `field(..., evidence=[...])` take
+the same list. The full `evidence_admission_policy` rule form stays accepted
+for what the list cannot say. A rule never newly names one workspace file's
+own contract (`cruxible.foreign-source.NAME`, which stands for a single file of
+this workspace): authoring refuses `cruxible.claim_type.per_file_evidence_rule`,
+a rule naming only a capture-contract family refuses
+`cruxible.claim_type.family_rule_not_authored`, and `kit build` refuses to carry
+a per-file rule. A field that already holds such a rule keeps it and stays
+editable. Durations are ISO 8601 (`P30D`, `PT12H`).
+[Evolving your vocabulary](evolving-your-vocabulary.md#add-a-field) covers
+fields in general.
+
+## Define captured evidence
+
+A CaptureContract (a CaptureKind) states what evidence is: its shape, grade,
+replay promise, retention, erasure policy and byte budget, and, for a kind a
+Procedure extracts records from, how its bytes decode and its layout. Start
+with the authored form:
+
+~~~json
+{"name": "catalog.fetched", "shape": "http_response"}
+~~~
+
+`cruxible capture-contract propose --template` prints this form;
+`--template --expanded` includes its defaults. Propose it with `--input FILE`.
+The shapes are `http_response`, `procedure_output`, `foreign_span` and
+`database_snapshot`. Grade defaults to `observed`; a `derived` kind (a
+provider derive's output) is declared on `http_response` with `replay:
+attested`, and declares `json` or `csv` decoding, so an extract can read it.
+A provider's output cannot land as a `procedure_output` kind in this release:
+the run fails with `provider_protocol_violation`. Replay
+defaults to `attested` for HTTP responses and `exact` otherwise. Retention defaults to `P30D`, `erasable` to `false`,
+`max_bytes` to 16777216, and `selector_privacy` to `direct_allowed`.
+The engine supplies the component definitions. An edit keeps omitted fields;
+raise `max_bytes` or retire it with `lifecycle: retired`. A change to what the
+evidence means needs a new name.
+
+`decoding` says how an extract decodes the bytes (`format`: `json`, `csv`,
+`text` or `bytes`; `encoding`: `identity` or `gzip`; for CSV its dialect; and
+`limits` on decoded bytes, depth and records). `layout` declares the
+document's shape over a `json` or `csv` decoding: its `header` fields and its
+named `records` sets, each with `at`, `key`, `row` (a Contract, `name@N`),
+`fields` and an optional `count_at`. Cruxible never checks a Capture's bytes
+against a layout when it admits the Capture; the layout is read when a
+Procedure is authored, when a Line binds a provider, and when an extract runs.
+A successor may add header fields, record sets and optional row fields, and
+nothing else. [Lines and
+automation](lines-and-automation.md#declare-what-the-file-looks-like) has a
+worked example.
+
+A **derive** is a call whose capture output is a `derived` kind: its
+capability is `pure`, its result names the kind (`capture<K>`), and every
+operation that serves it must carry a copy of that kind's layout that covers
+yours. A `capture<K>` (or `capture<*>`) request field
+receives a Capture this run fetched or was admitted, as Capture wire: the exact
+bytes with the envelope's coordinate. The run's identity commits only the
+Capture digest. The derived Capture records its inputs (the Captures, their
+receipts and the state reads) and its reducer (provider build, operation and the
+node's input template); `get` on it shows them. A Claim cites one root Capture:
+a derived one covers the Captures it records, while two unrelated Captures are
+still refused. A derived Capture inherits the most restrictive `body_access` of
+its inputs.
+
+A fetch can return a **list of Captures**: its capability's result Contract
+declares a `list<capture<*>>{max_items: N}` field and the call's `captures`
+names the kind.
+Each member is its own Capture, identified by the `request_digest` its
+coordinate carries; the list's order is the provider's. More than `max_items`
+members, or more bytes than the run's Capture budget, refuses the call with
+nothing kept. A member that is oversized or off the Line's permitted origins is
+dropped and the list is incomplete. An extract over the list merges every
+member's records (it selects no header field and only a record set with no `count_at`); each Claim cites
+the member its record came from, and a key in two members writes nothing.
+Absence over the list infers only when every member is complete, and its
+witness cites all of them. A Trigger never substitutes a list field, and a
+list's records narrowed by filter/dedupe cannot feed claims: narrow in a
+derive, which can take the list as a `list<capture<*>>` input.
+
+A rule can restrict a shared contract to specific logical sources:
+
+~~~yaml
+capture_contracts:
+  - contract: catalog.fetched
+    logical_sources: [supplier.quotes]
+~~~
+
+The source is the provider's recorded label on the Capture. A bare contract
+name, or `logical_sources: []`, accepts any source. A CAS Capture has no logical
+source and therefore matches only an unrestricted entry. The Capture's exact
+contract version remains part of its provenance.
+
+## Verdicts and flags
+
+Every Claim has a verdict:
+
+| Verdict | Means |
+|---|---|
+| `supported` | Admitted evidence backs it. |
+| `uncovered` | Nothing it cites is admitted by the field's rules. |
+| `stale_evidence` | Its evidence is older than the field allows (see below). |
+| `stale` | Its evidence no longer describes the period the Claim is about. |
+| `contradicted`, `unresolved` | Admitted evidence both supports and contradicts it; the field's rules decide which of the two it reads as. |
+
+Reads carry **flags** beside each value (`stale`, `contested`,
+`contradicted`, `uncovered`, `unsure_hold`), so weak knowledge looks weak
+wherever it's read. Check the verdict on every write: most writes land even
+when their evidence isn't admitted (a field that requires captured evidence is
+the exception, and refuses), and anything other than `supported` comes with a
+warning.
+
+## Freshness
+
+Some facts go out of date by themselves: a price, a stock level, a supplier's
+lead time. A field can set how long its evidence stays fresh (`stale_after`).
+The age counts from the most recent observation, so re-checking a source and
+finding the same value keeps the Claim fresh without changing it.
+
+Shortly before a Claim's evidence expires, `next` warns with
+`evidence_expiring`. Once it has expired, the verdict becomes
+`stale_evidence`, reads flag the value `stale`, and `next` lists the Claim as
+`claim_stale_evidence`:
+
+~~~text
+$ cruxible query catalog.part --select title,price
+subject               title                     price  flags
+catalog.part/bp-1142  Front brake pads          42     stale
+catalog.part/bp-2210  Ceramic front brake pads  -      -
+~~~
+
+Citing a fresh observation of the same value restores it, and records the
+re-check rather than a new change:
+
+~~~text
+$ cruxible set catalog.part/bp-1142 price 42 --because "Acme quote of 2026-10-21, re-checked." \
+    --evidence-file 'quotes/acme-2026-10-21.md#bp-1142 Front brake pads: 42 USD'
+accepted (generation 15, 65a4644294d3)
+  set catalog.part/bp-1142 price: 42 -> 42  [CLM-…; verdict supported]
+~~~
+
+A Line can do the re-checking on a schedule; see [Lines and
+automation](lines-and-automation.md).
+
+### What freshness does and does not do in 0.5.0
+
+Freshness windows and prediction settlement have known limits in this
+release, and both are being redesigned. What the build does today:
+
+- **Only fields that declare a window age.** `stale_after` applies to the
+  fields whose ClaimType sets `evidence_freshness`; a field without one never
+  goes stale from age. A none (an inverse) uses its own `stale_after` when it
+  declares one, else its field's.
+- **What counts as seen again.** A Claim's age counts from the latest of
+  these, and none of them revises the Claim or makes a generation:
+  - a fetch that returns exactly the bytes a cited Capture holds, under the
+    same contract, whichever run made it and whether or not that run restated
+    the Claim;
+  - for a Claim a Procedure extracted from a record, an extract step that
+    reads a row set still holding the Claim's row (the same contract, source,
+    record key and typed values), in whatever bytes;
+  - a per-Claim re-check: a run restating the Claim from a record whose other
+    fields changed, a write restating it on a new Capture of content it
+    already cites, or a complete run reconfirming a held none.
+- **What does not.** Nothing refreshes a Claim on its own. When the Line that
+  re-reads its source stops (disabled, failing, or no longer reaching the
+  record), the Claim ages: `next` warns `evidence_expiring`, then lists
+  `claim_stale_evidence`. A value computed by `derive` or `aggregate`, or
+  parsed by a provider, refreshes only when the exact bytes it cites are
+  observed again. A record's typed values come from the definitions its
+  extract reads; if a definition changes between runs so that the same
+  record types differently, the row observations of that record stop
+  counting for its Claims, which then refresh only from identical bytes or a
+  per-Claim re-check.
+- **Where it is kept.** These observations are recorded in the instance's
+  `exhaust/` journal, not in the ledger. A deleted journal cannot be
+  recovered; freshness then counts from when each cited Capture was first
+  observed. Back up `exhaust/` with the ledger.
+- **Predictions.** A prediction settles on the observation Claim version
+  accepted inside its window, or on that version's own per-Claim re-checks
+  observed by the window's close. Identical bytes and identical row sets keep
+  a Claim fresh but do not settle a prediction, so an unchanged value
+  refreshed only that way settles nothing until a per-Claim re-check or a new
+  version lands inside the window ([Predictions](concepts.md#predictions)).
+
+## Citation or Document
+
+A **citation** commits to the exact bytes it quotes. It stays current as long
+as those bytes still occur in the file unchanged, even if the file grows
+around them: adding a filters section to the supplier's catalog leaves the
+brake pad citation alone. When the quoted passage itself changes, `next`
+reports `citation_drifted` for every Claim that cites it.
+
+Sometimes a Claim depends on a whole file saying exactly what it says and
+nothing else: a returns policy, a specification. Make that file a governed
+**Document**. Its exact bytes become a versioned artifact with review history,
+and any change to the file is reported, even an added line:
+
+~~~bash
+cruxible files add returns docs/returns-policy.md --document-id returns-policy \
+  --document-kind policy --title "Returns policy" --scope policies
+cruxible files propose --file returns --name returns-policy-v1
+~~~
+
+~~~text
+$ cruxible next
+warning  document_modified  document:returns-policy  next=cruxible.files.propose
+  repair: cruxible files propose --file returns --name revise-returns
+~~~
+
+Most usage is citations. [Evidence](concepts.md#evidence) has the comparison
+in full.
+
+## Attestations
+
+Anyone can **attest** to a Claim with a signature: support it, contradict it,
+or say they're unsure. When a mechanic finds that a part the catalog lists
+doesn't actually fit:
+
+~~~text
+$ cruxible claim attest CLM-9482bb3b… --contradict \
+    --because "Tried bp-2210 on a 2019 Civic at the shop: the caliper bracket doesn't match."
+Recorded contradict on CLM-9482bb3b… at 2026-10-21T18:38:28Z (event sha256:…)
+counts toward verdict: no (recorded, not accepted: the verdict reads accepted attestations)
+~~~
+
+The attestation is recorded and shown on the Claim (`get --detail evidence`
+lists it, with whether it counts and why), and `next` brings the
+contradiction back for review:
+
+~~~text
+$ cruxible next
+repair  claim_contradicting_evidence_available  Claim:CLM-ef7f11e2…  next=cruxible.authoring.example
+  repair: cruxible authoring example claim-revision
+  or: cruxible retire CLM-ef7f11e2…
+~~~
+
+The verdict doesn't move on its own: Cruxible shows the disagreement, and a
+person or an agent decides whether to revise the Claim, retire it, or leave
+it. An
+attestation counts toward the verdict only when it is accepted citing a
+Capture the Claim admits, or when the field's attestation consequence policy
+says so.
+
+Record disagreement this way, or record what you observed instead, rather
+than creating an inverse field ("does not fit").
+
+## Predictions
+
+A prediction turns "we expect this" into a test: which later observation
+settles a Claim, by what rule, within what window. A supplier's promised
+delivery date can be predicted and later settled from when the part is
+recorded as received. Settled predictions are how a team learns which
+sources and which agents to trust. See
+[Predictions](concepts.md#predictions) and the [CLI
+reference](cli-reference.md) for `prediction propose` and `prediction
+settle`.
+
+## Erasing a Capture that holds a secret
+
+A Capture keeps the exact bytes a source returned; that is what makes it
+evidence. Sometimes those bytes include something that must not be kept: a
+token a tool printed, a password left in an exported file. If the Capture's
+contract allows it, erase them.
+
+Whether a Capture can be erased is decided by its CaptureContract, when the
+contract is defined: only a contract that declares `erasure:
+authorized_by_rule`, with Cruxible's built-in erasure rule pinned, allows it,
+and the declaration is fixed for that contract. Give a source that may capture
+secrets such a contract before it runs; anything captured under another
+contract keeps its bytes (`cruxible.capture.erasure_prohibited`).
+
+Erasing can't be undone, so it previews first and names the Claims it affects:
+
+~~~text
+$ cruxible capture erase CAP-539c9a14cf08 --because "The export included a portal token; rotated."
+Would erase the retained body of CAP-539c9a14cf08 (1 object) under CaptureContract:catalog.supplier-file-v1
+Because: The export included a portal token; rotated.
+Cited by 2 live Claims: CLM-15e54314…, CLM-49fa0894…
+Left with no retained evidence (next lists them as claim_evidence_erased): CLM-15e54314…, CLM-49fa0894…
+Verdicts will read it as no longer replayable; each field's rules decide the rest.
+Preview at 030a6ce5…; nothing was written.
+Commit it: rerun the same command with --commit --at 030a6ce5…
+
+$ cruxible capture erase CAP-539c9a14cf08 --because "…" --commit --at 030a6ce5…
+Erased the retained body of CAP-539c9a14cf08 (1 object) under CaptureContract:catalog.supplier-file-v1
+By: YOUR_ID at 2026-10-22T03:21:44.502579+00:00
+...
+~~~
+
+It needs the `graph_write` tier. Never put the secret itself in `--because`:
+the reason is kept.
+
+**What goes, and what stays.** The bytes go: erasing deletes the body and
+appends one erasure record of who erased it, when, why, under which contract,
+and which bodies. The Capture's record stays (what was observed, when, by
+which run, under which contract). The ledger and its Git mirror never held
+those bytes, so nothing there changes, and a value a Claim states is accepted
+state, not evidence, so it isn't erased. Erasing bytes that are present again
+(the same bytes observed anew, or an erase that was interrupted) appends
+another record. A missing body reads as erased only when an authorized
+erasure record names it; missing with no record, it is a defect.
+
+**What happens to the Claims that cite it.** Each keeps standing on its
+evidence digest and source pointer: its history and its accepted judgments are
+unchanged, and it can still be revised or retired. Its evidence can no longer
+be checked, though, so a field that requires current evidence (the default)
+reads it `stale (evidence erased)`, its read status is `ineligible`, and
+`next` lists each live Claim left with no retained evidence:
+
+~~~text
+$ cruxible get CLM-49fa0894… --detail evidence
+value: true
+capture CAP-539c9a14cf08  CaptureContract:catalog.supplier-file-v1 v1  source=acme.discontinued  ...  body erased 2026-10-22T03:21:44.502579+00:00 by YOUR_ID: The export included a portal token; rotated.
+
+$ cruxible next
+warning  claim_evidence_erased  Claim:CLM-49fa0894…  next=cruxible.rebind
+  repair: cruxible rebind CLM-49fa0894… --citation af0b0fd761f3 --capture CAP --because TEXT
+  fill in: CAP (the fresh Capture's handle), TEXT (why, in your words)
+~~~
+
+If the fact still holds, read the source again (once the secret is gone from
+it) and re-bind the Claim onto the fresh Capture, under the same contract:
+
+~~~text
+$ cruxible line run catalog.acme-discontinued
+...
+$ cruxible rebind CLM-49fa0894… --capture CAP-afbdc9616895 \
+    --because "Re-read Acme's list after the token was rotated; af-208 is still listed."
+accepted (generation 24, 742b8eb57ed1)
+  rebind catalog.part/af-208 discontinued: true (value unchanged)  [CLM-49fa0894…; verdict supported]
+~~~
+
+`cruxible rebind --from-capture CAP-539c9a14cf08 --capture CAP-afbdc9616895
+--because "..."` re-binds every live Claim citing the erased Capture in one
+write. If the fact no longer holds, retire the Claim as usual; a new citation
+of the erased Capture is refused, since it has no bytes to check.
+
+## Pitfalls
+
+- **Own words for outside facts.** A fact about the world should rest on what
+  was observed. Require captured evidence, and for facts that must come from
+  outside, admit only fetched contracts.
+- **Treating a workspace file as a fetched source.** A file in the repository
+  is something an agent can edit. Cite it for documented reasoning, not as
+  proof about the world.
+- **Ignoring the verdict.** A write that lands `uncovered` or `stale_evidence`
+  is a signal, not a success.
+- **Inverse fields for disagreement.** Attest, or record the observation; don't
+  add "does not fit" beside "fits".
+- **A citation where a Document is needed.** If the Claim depends on the file
+  saying nothing else, govern the file as a Document.
+- **A source that may print secrets, under a contract that can't erase.**
+  Decide erasure when you define the contract; it can't be added later.
+
+## Where to go next
+
+- [Building team knowledge](building-team-knowledge.md): what to model, and how.
+- [Keeping knowledge current](keeping-knowledge-current.md): working
+  through drift, expiry and contradictions as they come up.
+- [Evidence](concepts.md#evidence): the concepts behind this guide.
+- The [CLI reference](cli-reference.md) for `claim attest`, `files` and
+  `get --detail evidence`.

@@ -1,0 +1,1133 @@
+"""PC-F QueryDefinition artifact, grammar, verdict-policy, and closure tests."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+from pydantic import ValidationError
+
+from cruxible_client.contracts.artifacts import (
+    ArtifactIdentity,
+    ArtifactLifecycle,
+    ArtifactPin,
+)
+from cruxible_client.contracts.captures import CanonicalDuration
+from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest, render_claim_type
+from cruxible_client.contracts.errors import CanonicalEncodingError, ProjectionFormatError
+from cruxible_client.contracts.laws import ACCEPTANCE_LAWS, QUERY_DEFINITION_V3_ACCEPTANCE_LAW
+from cruxible_client.contracts.policies import (
+    ClaimResolutionPolicy,
+)
+from cruxible_client.contracts.query.definitions import (
+    AcceptedQueryDefinition,
+    QueryDefinition,
+    QueryDefinitionFormatError,
+    QueryEvaluationPolicy,
+    evaluate_query_definition_law,
+    parse_query_definition,
+    query_definition_address,
+    query_definition_digest,
+    query_definition_path,
+    query_definition_wire,
+    render_query_definition,
+)
+from cruxible_client.contracts.query.grammar import (
+    QueryBudgets,
+    QueryClaimPresenceFilter,
+    QueryClaimValueRef,
+    QueryComparisonFilter,
+    QueryConjunctionFilter,
+    QueryDiscriminatorMissingError,
+    QueryEntry,
+    QueryInclude,
+    QueryLiteralRef,
+    QueryOrdering,
+    QueryParameterDeclaration,
+    QueryParameterRef,
+    QueryProjection,
+    QueryProjectionField,
+    QuerySubjectFieldRef,
+    QueryTraversalStep,
+)
+from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_core.claims.closure import evaluate_dependency_closure, parse_dependency_artifact
+from cruxible_core.compiler.projection_artifacts import (
+    parse_projection_tree,
+    registered_path_kind,
+)
+from cruxible_core.proposals.proposals import (
+    AuthenticatedActor,
+    ProposalAdmissionRequest,
+    evaluate_proposal_tree,
+)
+from tests.core_support._support import initialize_local
+from tests.support.claim_types import claim_type as build_claim_type
+
+GOLDEN = Path(__file__).parents[1] / "goldens" / "playbill" / "query-definition-v1.json"
+QUERY_PATH = "query-definitions/project.active_work.json"
+STATUS_PREDICATE = "project.work_item.status"
+REVIEWER_PREDICATE = "project.work_item.reviewed_by"
+STATUS_CLAIM_TYPE_PATH = "claim-types/project.work_item/status.json"
+REVIEWER_CLAIM_TYPE_PATH = "claim-types/project.work_item/reviewed_by.json"
+TIMESTAMP = "2026-08-16T14:00:00.000000Z"
+
+
+def claim_type(predicate: str, *, object_kind: str = "literal") -> ClaimType:
+    return build_claim_type(
+        predicate=predicate,
+        allowed_subject_kinds=("project.work_item",),
+        value_type={"type": "string"} if object_kind == "literal" else ("project.person",),
+        cardinality="one" if object_kind == "literal" else "many",
+        permitted_roles=("normative",),
+        resolution_policy=ClaimResolutionPolicy(
+            cardinality="one" if object_kind == "literal" else "many",
+            eligible_verdicts=("supported",),
+            selector="only_contender" if object_kind == "literal" else "all",
+        ),
+    )
+
+
+def claim_type_pin(predicate: str, *, object_kind: str = "literal") -> ArtifactPin:
+    return ArtifactPin(
+        role="claim-type",
+        target=ArtifactIdentity(kind="ClaimType", name=predicate),
+        artifact_digest=claim_type_digest(claim_type(predicate, object_kind=object_kind)).tagged,
+    )
+
+
+def active_work_query(**overrides: object) -> QueryDefinition:
+    """The reviewed reference query: entry, traversal, filter, include, budgets."""
+
+    fields: dict[str, object] = {
+        "identity": ArtifactIdentity(kind="QueryDefinition", name="project.active_work"),
+        "description": "Active work items with their reviewers and latest status.",
+        "entry": QueryEntry(binding="item", subject_kinds=("project.work_item",)),
+        "traversal": (
+            QueryTraversalStep(
+                binding="reviewer",
+                from_binding="item",
+                predicate=REVIEWER_PREDICATE,
+                direction="forward",
+                target_subject_kinds=("project.person",),
+            ),
+        ),
+        "where": QueryConjunctionFilter(
+            filters=(
+                QueryClaimPresenceFilter(binding="item", predicate=STATUS_PREDICATE),
+                QueryComparisonFilter(
+                    left=QueryClaimValueRef(binding="item", predicate=STATUS_PREDICATE),
+                    operator="eq",
+                    right=QueryParameterRef(parameter="status"),
+                    value_type="string",
+                ),
+            ),
+        ),
+        "result_binding": "reviewer",
+        "result_shape": "path",
+        "result_cardinality": "many",
+        "dedupe": "path",
+        "projection": QueryProjection(
+            fields=(
+                QueryProjectionField(
+                    name="item_id",
+                    value=QuerySubjectFieldRef(binding="item", field="subject_id"),
+                ),
+                QueryProjectionField(
+                    name="reviewer_id",
+                    value=QuerySubjectFieldRef(binding="reviewer", field="subject_id"),
+                ),
+            )
+        ),
+        "orderings": (
+            QueryOrdering(
+                key=QuerySubjectFieldRef(binding="item", field="subject_id"),
+                value_type="string",
+            ),
+        ),
+        "includes": (
+            QueryInclude(
+                name="status",
+                binding="status_holder",
+                from_binding="item",
+                predicate=STATUS_PREDICATE,
+                direction="forward",
+                max_items=1,
+            ),
+        ),
+        "parameters": (QueryParameterDeclaration(name="status", value_type="string"),),
+        "evaluation_policy": QueryEvaluationPolicy(
+            visible_verdicts=("supported",),
+            visible_currency=("current",),
+            conflict_behavior="surface_conflicts",
+            result_expiry=CanonicalDuration(microseconds=3_600_000_000),
+        ),
+        "default_budgets": QueryBudgets(
+            max_results=50,
+            max_traversal_depth=2,
+            max_paths=200,
+            max_paths_per_result=5,
+        ),
+        "maximum_budgets": QueryBudgets(
+            max_results=500,
+            max_traversal_depth=4,
+            max_paths=2000,
+            max_paths_per_result=50,
+        ),
+        "pins": (
+            claim_type_pin(REVIEWER_PREDICATE, object_kind="subject"),
+            claim_type_pin(STATUS_PREDICATE),
+        ),
+    }
+    fields.update(overrides)
+    fields.pop("pins", None)
+    return QueryDefinition.model_validate(fields)
+
+
+def single_status_query(**overrides: object) -> QueryDefinition:
+    """A one-cardinality Subject read that refuses rather than picking a winner."""
+
+    fields: dict[str, object] = {
+        "identity": ArtifactIdentity(kind="QueryDefinition", name="project.work_item_status"),
+        "entry": QueryEntry(
+            binding="item",
+            subject_kinds=("project.work_item",),
+            subject_id=QueryParameterRef(parameter="item_id"),
+        ),
+        "result_binding": "item",
+        "result_shape": "subject",
+        "result_cardinality": "one",
+        "dedupe": "subject",
+        "projection": QueryProjection(
+            fields=(
+                QueryProjectionField(
+                    name="status",
+                    value=QueryClaimValueRef(binding="item", predicate=STATUS_PREDICATE),
+                ),
+            )
+        ),
+        "parameters": (QueryParameterDeclaration(name="item_id", value_type="string"),),
+        "evaluation_policy": QueryEvaluationPolicy(
+            visible_verdicts=("supported",),
+            visible_currency=("current",),
+            conflict_behavior="refuse_on_conflict",
+        ),
+        "default_budgets": QueryBudgets(max_results=1, max_traversal_depth=0),
+        "maximum_budgets": QueryBudgets(max_results=1, max_traversal_depth=0),
+        "pins": (claim_type_pin(STATUS_PREDICATE),),
+    }
+    fields.update(overrides)
+    fields.pop("pins", None)
+    return QueryDefinition.model_validate(fields)
+
+
+def accepted_query(query: QueryDefinition) -> AcceptedQueryDefinition:
+    return AcceptedQueryDefinition(
+        path=query_definition_path(query.identity.name),
+        query=query,
+        artifact_digest=query_definition_digest(query).tagged,
+    )
+
+
+# -- frozen wire ---------------------------------------------------------
+
+
+def test_query_definition_parse_render_digest_and_path_match_frozen_golden() -> None:
+    fixture = json.loads(GOLDEN.read_bytes())
+    query = QueryDefinition.model_validate(fixture["query_definition"])
+    assert query == active_work_query()
+    assert query_definition_path(query.identity.name) == QUERY_PATH
+    rendered = render_query_definition(query)
+    assert rendered.decode() == fixture["canonical_wire"]
+    assert query_definition_digest(query).tagged == fixture["artifact_digest"]
+    assert parse_query_definition(rendered, path=QUERY_PATH) == query
+    assert b'"tag"' not in rendered
+
+
+@pytest.mark.parametrize(
+    "artifact_format", ["playbill-query-definition-v1", "playbill-query-definition-v2"]
+)
+def test_query_definition_refuses_removed_formats(artifact_format) -> None:
+    payload = active_work_query().model_dump(mode="json")
+    payload["artifact_format"] = artifact_format
+    with pytest.raises(QueryDefinitionFormatError, match="unsupported"):
+        parse_query_definition(json.dumps(payload).encode(), path=QUERY_PATH)
+
+
+def test_query_definition_digest_uses_the_shared_envelope_domain() -> None:
+    from cruxible_client.contracts.canonical import ArtifactDigest, typed_digest
+
+    query = active_work_query()
+    assert query_definition_digest(query) == typed_digest(
+        ArtifactDigest,
+        "playbill-envelope-v1",
+        query_definition_wire(query),
+    )
+
+
+def test_query_definition_refuses_noncanonical_wire_unknown_format_and_wrong_path() -> None:
+    query = active_work_query()
+    rendered = render_query_definition(query)
+
+    with pytest.raises(QueryDefinitionFormatError, match="canonical wire form"):
+        parse_query_definition(rendered.replace(b"\n", b" \n"), path=QUERY_PATH)
+    with pytest.raises(QueryDefinitionFormatError, match="unsupported QueryDefinition"):
+        parse_query_definition(b'{"artifact_format":"playbill-named-query-v1"}', path=QUERY_PATH)
+    with pytest.raises(QueryDefinitionFormatError, match="strict JSON"):
+        parse_query_definition(b"not json", path=QUERY_PATH)
+    with pytest.raises(QueryDefinitionFormatError, match="identity/path disagreement"):
+        parse_query_definition(rendered, path="query-definitions/other.json")
+
+
+def test_query_definition_identity_and_semantic_address_follow_the_pc_a1_grammar() -> None:
+    query = active_work_query()
+
+    assert query.identity.qualified == "QueryDefinition:project.active_work"
+    assert query_definition_address(QUERY_PATH) == SemanticAddress.whole_artifact(QUERY_PATH)
+    assert query_definition_address(QUERY_PATH).selector.scheme == "artifact-v1"
+    with pytest.raises(ValidationError, match="kind QueryDefinition"):
+        active_work_query(identity=ArtifactIdentity(kind="NamedQuery", name="project.active_work"))
+    with pytest.raises(QueryDefinitionFormatError, match="path-addressable"):
+        query_definition_path("Project.Active")
+
+
+# -- registry activation -------------------------------------------------
+
+
+def test_pc_f_activates_the_query_definition_path_kind_and_fails_closed_elsewhere() -> None:
+    assert registered_path_kind(QUERY_PATH) == "query-definition"
+    with pytest.raises(ProjectionFormatError, match="no registered format"):
+        registered_path_kind("query-definitions/Project.json")
+    with pytest.raises(ProjectionFormatError, match="no registered format"):
+        registered_path_kind("queries/project.active_work.yaml")
+    assert (
+        ACCEPTANCE_LAWS.resolve_member(artifact_tag="cruxible-query-definition-v3")
+        == QUERY_DEFINITION_V3_ACCEPTANCE_LAW
+    )
+
+
+# -- closed-union grammar ------------------------------------------------
+
+
+def test_query_grammar_refuses_unknown_filter_ref_and_policy_kinds() -> None:
+    payload = active_work_query().model_dump(mode="json")
+
+    unknown_filter = json.loads(json.dumps(payload))
+    unknown_filter["where"] = {
+        "tag": "playbill-query-regex-filter-v1",
+        "kind": "regex",
+        "binding": "item",
+        "pattern": ".*",
+    }
+    with pytest.raises(ValidationError):
+        QueryDefinition.model_validate(unknown_filter)
+
+    unknown_ref = json.loads(json.dumps(payload))
+    unknown_ref["orderings"][0]["key"] = {
+        "tag": "playbill-query-entity-property-ref-v1",
+        "kind": "entity_property",
+        "entity": "item",
+        "property": "status",
+    }
+    with pytest.raises(ValidationError):
+        QueryDefinition.model_validate(unknown_ref)
+
+    unknown_policy = json.loads(json.dumps(payload))
+    unknown_policy["evaluation_policy"]["conflict_behavior"] = "last_write_wins"
+    with pytest.raises(ValidationError):
+        QueryDefinition.model_validate(unknown_policy)
+
+    unknown_tag = json.loads(json.dumps(payload))
+    unknown_tag["evaluation_policy"]["tag"] = "playbill-query-evaluation-policy-v2"
+    with pytest.raises(ValidationError):
+        QueryDefinition.model_validate(unknown_tag)
+
+    extra_field = json.loads(json.dumps(payload))
+    extra_field["relationship_state"] = "pending"
+    with pytest.raises(ValidationError):
+        QueryDefinition.model_validate(extra_field)
+
+
+def test_query_grammar_requires_canonical_ordering_and_unique_declarations() -> None:
+    with pytest.raises(ValidationError, match="at least two operands"):
+        QueryConjunctionFilter(
+            filters=(QueryClaimPresenceFilter(binding="item", predicate=STATUS_PREDICATE),)
+        )
+    with pytest.raises(ValidationError, match="sorted"):
+        QueryConjunctionFilter(
+            filters=(
+                QueryClaimPresenceFilter(binding="item", predicate=STATUS_PREDICATE),
+                QueryClaimPresenceFilter(binding="item", predicate=STATUS_PREDICATE),
+            )
+        )
+    with pytest.raises(ValidationError, match="not repeat an ordering key"):
+        active_work_query(
+            orderings=(
+                QueryOrdering(
+                    key=QuerySubjectFieldRef(binding="item", field="subject_id"),
+                    value_type="string",
+                ),
+                QueryOrdering(
+                    key=QuerySubjectFieldRef(binding="item", field="subject_id"),
+                    direction="descending",
+                    value_type="string",
+                ),
+            )
+        )
+
+
+def test_query_grammar_closes_binding_parameter_and_predicate_references() -> None:
+    with pytest.raises(ValidationError, match="undeclared parameter"):
+        active_work_query(parameters=())
+    with pytest.raises(ValidationError, match="extend an earlier declared binding"):
+        active_work_query(
+            traversal=(
+                QueryTraversalStep(
+                    binding="reviewer",
+                    from_binding="missing",
+                    predicate=REVIEWER_PREDICATE,
+                    direction="forward",
+                ),
+            )
+        )
+    with pytest.raises(ValidationError, match="result_binding"):
+        active_work_query(result_binding="status_holder")
+    with pytest.raises(ValidationError, match="own source and target binding"):
+        QueryInclude(
+            name="status",
+            binding="status_holder",
+            from_binding="item",
+            predicate=STATUS_PREDICATE,
+            direction="forward",
+            max_items=1,
+            where=QueryClaimPresenceFilter(binding="reviewer", predicate=STATUS_PREDICATE),
+        )
+
+
+def test_query_definition_uses_named_dependencies_and_refuses_authored_pins() -> None:
+    query = active_work_query()
+    assert query.referenced_predicates == (REVIEWER_PREDICATE, STATUS_PREDICATE)
+    assert query.subject_kinds == ("project.person", "project.work_item")
+    payload = query.model_dump(mode="json")
+    assert "pins" not in payload
+    payload["pins"] = []
+    with pytest.raises(ValidationError, match="Extra inputs"):
+        QueryDefinition.model_validate(payload)
+
+
+# -- shape, cardinality, conflict, and budget law -------------------------
+
+
+def test_query_result_shape_dedupe_and_traversal_rules_stay_consistent() -> None:
+    with pytest.raises(ValidationError, match="Subject dedupe"):
+        single_status_query(dedupe="none")
+    with pytest.raises(ValidationError, match="at least one traversal step"):
+        single_status_query(
+            result_shape="path",
+            dedupe="path",
+            default_budgets=QueryBudgets(
+                max_results=1, max_traversal_depth=0, max_paths=1, max_paths_per_result=1
+            ),
+            maximum_budgets=QueryBudgets(
+                max_results=1, max_traversal_depth=0, max_paths=1, max_paths_per_result=1
+            ),
+        )
+    with pytest.raises(ValidationError, match="path or none dedupe"):
+        active_work_query(dedupe="subject")
+    with pytest.raises(ValidationError, match="resolve to a traversal binding"):
+        active_work_query(result_shape="relation_claim", result_binding="item")
+    with pytest.raises(ValidationError, match="optional traversal steps"):
+        active_work_query(
+            result_shape="subject",
+            result_binding="item",
+            dedupe="subject",
+            traversal=(
+                QueryTraversalStep(
+                    binding="reviewer",
+                    from_binding="item",
+                    predicate=REVIEWER_PREDICATE,
+                    direction="forward",
+                    required=False,
+                ),
+            ),
+        )
+
+
+def test_one_cardinality_queries_refuse_or_surface_conflicts_but_never_pick_a_winner() -> None:
+    query = single_status_query()
+
+    assert query.result_cardinality == "one"
+    assert query.evaluation_policy.conflict_behavior == "refuse_on_conflict"
+    assert query.default_budgets.max_results == 1
+    with pytest.raises(ValidationError, match="bound both budgets to one result"):
+        single_status_query(
+            default_budgets=QueryBudgets(max_results=2, max_traversal_depth=0),
+            maximum_budgets=QueryBudgets(max_results=2, max_traversal_depth=0),
+        )
+    surfaced = single_status_query(
+        evaluation_policy=QueryEvaluationPolicy(
+            visible_verdicts=("contradicted", "supported"),
+            visible_currency=("current",),
+            conflict_behavior="surface_conflicts",
+        )
+    )
+    assert surfaced.evaluation_policy.conflict_behavior == "surface_conflicts"
+
+
+def test_many_cardinality_queries_must_surface_rather_than_refuse_conflicts() -> None:
+    with pytest.raises(ValidationError, match="surface conflicts rather than refuse"):
+        active_work_query(
+            evaluation_policy=QueryEvaluationPolicy(
+                visible_verdicts=("supported",),
+                visible_currency=("current",),
+                conflict_behavior="refuse_on_conflict",
+            )
+        )
+
+
+def test_verdict_policy_reuses_the_accepted_claim_verdict_and_currency_vocabulary() -> None:
+    policy = QueryEvaluationPolicy(
+        visible_verdicts=("contradicted", "stale", "supported", "unresolved"),
+        visible_currency=("current", "stale"),
+        conflict_behavior="surface_conflicts",
+    )
+
+    assert policy.visible_verdicts == ("contradicted", "stale", "supported", "unresolved")
+    assert policy.visible_currency == ("current", "stale")
+    with pytest.raises(ValidationError):
+        QueryEvaluationPolicy(
+            visible_verdicts=("believed",),
+            visible_currency=("current",),
+            conflict_behavior="surface_conflicts",
+        )
+    with pytest.raises(ValidationError):
+        QueryEvaluationPolicy(
+            visible_verdicts=("supported",),
+            visible_currency=("fresh",),
+            conflict_behavior="surface_conflicts",
+        )
+    with pytest.raises(ValidationError, match="at least one Claim verdict"):
+        QueryEvaluationPolicy(
+            visible_verdicts=(),
+            visible_currency=("current",),
+            conflict_behavior="surface_conflicts",
+        )
+    with pytest.raises(ValidationError, match="sorted"):
+        QueryEvaluationPolicy(
+            visible_verdicts=("supported", "contradicted"),
+            visible_currency=("current",),
+            conflict_behavior="surface_conflicts",
+        )
+
+
+def test_execution_must_bind_an_explicit_accepted_coordinate_and_evaluation_time() -> None:
+    policy = active_work_query().evaluation_policy
+
+    assert policy.requires_accepted_coordinate is True
+    assert policy.requires_explicit_evaluation_time is True
+    assert policy.result_expiry == CanonicalDuration(microseconds=3_600_000_000)
+    payload = policy.model_dump(mode="json")
+    with pytest.raises(ValidationError):
+        QueryEvaluationPolicy.model_validate({**payload, "requires_accepted_coordinate": False})
+    with pytest.raises(ValidationError):
+        QueryEvaluationPolicy.model_validate(
+            {**payload, "requires_explicit_evaluation_time": False}
+        )
+    assert (
+        QueryEvaluationPolicy.model_validate({**payload, "result_expiry": None}).result_expiry
+        is None
+    )
+
+
+def test_query_budgets_are_explicit_bounded_and_ceilinged() -> None:
+    with pytest.raises(ValidationError, match="exceed their declared ceiling"):
+        active_work_query(
+            default_budgets=QueryBudgets(
+                max_results=5000,
+                max_traversal_depth=2,
+                max_paths=200,
+                max_paths_per_result=5,
+            )
+        )
+    with pytest.raises(ValidationError, match="exceeds its declared depth budget"):
+        active_work_query(
+            default_budgets=QueryBudgets(
+                max_results=50,
+                max_traversal_depth=0,
+                max_paths=200,
+                max_paths_per_result=5,
+            )
+        )
+    with pytest.raises(ValidationError, match="path budgets"):
+        single_status_query(
+            default_budgets=QueryBudgets(
+                max_results=1, max_traversal_depth=0, max_paths=2, max_paths_per_result=1
+            ),
+            maximum_budgets=QueryBudgets(
+                max_results=1, max_traversal_depth=0, max_paths=2, max_paths_per_result=1
+            ),
+        )
+    with pytest.raises(ValidationError, match="path budgets"):
+        active_work_query(
+            default_budgets=QueryBudgets(max_results=50, max_traversal_depth=2),
+            maximum_budgets=QueryBudgets(max_results=500, max_traversal_depth=4),
+        )
+    with pytest.raises(ValidationError, match="declared together"):
+        QueryBudgets(max_results=1, max_traversal_depth=0, max_paths=2)
+
+
+# -- acceptance law ------------------------------------------------------
+
+
+def test_query_definition_law_accepts_a_genesis_declaration_with_resolved_pins() -> None:
+    query = active_work_query()
+    accepted_artifacts = {
+        pin.target.qualified: (pin.target, pin.artifact_digest)
+        for pin in (
+            claim_type_pin(REVIEWER_PREDICATE, object_kind="subject"),
+            claim_type_pin(STATUS_PREDICATE),
+        )
+    }
+
+    result = evaluate_query_definition_law(
+        query,
+        path=QUERY_PATH,
+        predecessor=None,
+        accepted_artifacts=accepted_artifacts,
+    )
+
+    assert result.verdict == "accepted"
+    assert result.artifact_digest == query_definition_digest(query).tagged
+    assert result.required_tier == "governed_write"
+    assert result.approval_scope == ()
+    assert result.diagnostics == ()
+
+
+def test_query_definition_law_refuses_path_pin_and_predecessor_drift() -> None:
+    query = active_work_query()
+    codes: list[str] = []
+
+    for candidate, kwargs in (
+        (query, {"path": "query-definitions/other.json"}),
+        (
+            active_work_query(
+                lifecycle=ArtifactLifecycle(
+                    state="live",
+                    predecessor_digest=query_definition_digest(query).tagged,
+                )
+            ),
+            {},
+        ),
+    ):
+        result = evaluate_query_definition_law(
+            candidate,
+            path=str(kwargs.get("path", QUERY_PATH)),
+            predecessor=None,
+        )
+        assert result.verdict == "refused"
+        assert result.artifact_digest is None
+        codes.extend(item.code for item in result.diagnostics)
+
+    unresolved = evaluate_query_definition_law(
+        query,
+        path=QUERY_PATH,
+        predecessor=None,
+        accepted_artifacts={},
+    )
+    codes.append(unresolved.diagnostics[0].code)
+
+    assert codes == [
+        "cruxible.query_definition.path_mismatch",
+        "cruxible.query_definition.unexpected_predecessor",
+        "cruxible.query_definition.pin_unresolved",
+    ]
+    assert all(
+        item.subject == SemanticAddress.whole_artifact(QUERY_PATH)
+        for item in unresolved.diagnostics
+    )
+
+
+def test_query_definition_successor_law_binds_the_exact_live_predecessor() -> None:
+    original = active_work_query()
+    predecessor = accepted_query(original)
+    successor = active_work_query(
+        description="Active work items, reviewers, and status, ordered by item.",
+        lifecycle=ArtifactLifecycle(
+            state="live",
+            predecessor_digest=predecessor.artifact_digest,
+        ),
+    )
+
+    accepted_result = evaluate_query_definition_law(
+        successor,
+        path=QUERY_PATH,
+        predecessor=predecessor,
+    )
+    assert accepted_result.verdict == "accepted"
+
+    stale = evaluate_query_definition_law(
+        active_work_query(
+            description="Drifted successor.",
+            lifecycle=ArtifactLifecycle(state="live", predecessor_digest="sha256:" + "11" * 32),
+        ),
+        path=QUERY_PATH,
+        predecessor=predecessor,
+    )
+    assert stale.diagnostics[0].code == "cruxible.query_definition.stale_predecessor"
+
+    resubmitted = evaluate_query_definition_law(
+        original,
+        path=QUERY_PATH,
+        predecessor=predecessor,
+    )
+    assert resubmitted.diagnostics[0].code == "cruxible.query_definition.no_semantic_change"
+
+    other_identity = evaluate_query_definition_law(
+        successor,
+        path=QUERY_PATH,
+        predecessor=accepted_query(
+            active_work_query(
+                identity=ArtifactIdentity(kind="QueryDefinition", name="project.other_work")
+            )
+        ),
+    )
+    assert other_identity.diagnostics[0].code == (
+        "cruxible.query_definition.predecessor_identity_mismatch"
+    )
+
+    retired = accepted_query(
+        active_work_query(
+            lifecycle=ArtifactLifecycle(
+                state="retired",
+                predecessor_digest=predecessor.artifact_digest,
+            )
+        )
+    )
+    revived = evaluate_query_definition_law(
+        active_work_query(
+            description="Revived.",
+            lifecycle=ArtifactLifecycle(
+                state="live",
+                predecessor_digest=retired.artifact_digest,
+            ),
+        ),
+        path=QUERY_PATH,
+        predecessor=retired,
+    )
+    assert revived.diagnostics[0].code == "cruxible.query_definition.lifecycle_invalid"
+
+    reauthorized = evaluate_query_definition_law(
+        active_work_query(
+            lifecycle=ArtifactLifecycle(
+                state="live",
+                predecessor_digest=predecessor.artifact_digest,
+            ),
+        ),
+        path=QUERY_PATH,
+        predecessor=predecessor,
+    )
+    assert reauthorized.verdict == "accepted"
+    assert reauthorized.approval_scope == ()
+
+
+def test_accepted_query_definition_refuses_a_digest_or_path_that_does_not_reproduce() -> None:
+    query = active_work_query()
+
+    with pytest.raises(ValidationError, match="does not reproduce|differs from its exact envelope"):
+        AcceptedQueryDefinition(
+            path=QUERY_PATH,
+            query=query,
+            artifact_digest="sha256:" + "22" * 32,
+        )
+    with pytest.raises(QueryDefinitionFormatError, match="identity/path disagreement"):
+        AcceptedQueryDefinition(
+            path="query-definitions/other.json",
+            query=query,
+            artifact_digest=query_definition_digest(query).tagged,
+        )
+
+
+# -- closure and projection ----------------------------------------------
+
+
+def test_query_definition_participates_in_dependency_closure_with_its_claim_types() -> None:
+    query = active_work_query()
+    tree = {
+        QUERY_PATH: render_query_definition(query),
+        REVIEWER_CLAIM_TYPE_PATH: render_claim_type(
+            claim_type(REVIEWER_PREDICATE, object_kind="subject")
+        ),
+        STATUS_CLAIM_TYPE_PATH: render_claim_type(claim_type(STATUS_PREDICATE)),
+    }
+
+    state = parse_dependency_artifact(QUERY_PATH, tree[QUERY_PATH])
+    assert state is not None
+    assert state.artifact_kind == "query-definition"
+    assert state.artifact_tag == "cruxible-query-definition-v3"
+    assert state.identity == query.identity
+    assert state.address == SemanticAddress.whole_artifact(QUERY_PATH)
+
+    closure = evaluate_dependency_closure(
+        parent_tree={},
+        candidate_tree=tree,
+        scope=(REVIEWER_CLAIM_TYPE_PATH, STATUS_CLAIM_TYPE_PATH, QUERY_PATH),
+    )
+    assert closure.verdict == "complete"
+    assert tuple((item.target_path, item.pin_role) for item in closure.proofs_for(QUERY_PATH)) == (
+        # canonical proof order (dependency_proof_order: sorted canonical bytes, digests included)
+        (STATUS_CLAIM_TYPE_PATH, "claim-type"),
+        (REVIEWER_CLAIM_TYPE_PATH, "claim-type"),
+    )
+
+    incomplete = evaluate_dependency_closure(
+        parent_tree={},
+        candidate_tree={
+            QUERY_PATH: tree[QUERY_PATH],
+            STATUS_CLAIM_TYPE_PATH: tree[STATUS_CLAIM_TYPE_PATH],
+        },
+        scope=(QUERY_PATH,),
+    )
+    assert incomplete.verdict == "refused"
+    assert tuple(item.target_identity.name for item in incomplete.unresolved_pins) == (
+        REVIEWER_PREDICATE,
+    )
+    assert incomplete.unresolved_pins[0].reason == "missing_or_digest_mismatch"
+
+
+def test_query_definition_closure_refuses_a_retired_claim_type_under_a_live_query() -> None:
+    query = active_work_query()
+    retired_status = claim_type(STATUS_PREDICATE).model_copy(
+        update={
+            "lifecycle": ArtifactLifecycle(
+                state="retired",
+                predecessor_digest="sha256:" + "33" * 32,
+            )
+        }
+    )
+    tree = {
+        QUERY_PATH: render_query_definition(
+            active_work_query(
+                pins=(
+                    claim_type_pin(REVIEWER_PREDICATE, object_kind="subject"),
+                    ArtifactPin(
+                        role="claim-type",
+                        target=retired_status.identity,
+                        artifact_digest=claim_type_digest(retired_status).tagged,
+                    ),
+                )
+            )
+        ),
+        REVIEWER_CLAIM_TYPE_PATH: render_claim_type(
+            claim_type(REVIEWER_PREDICATE, object_kind="subject")
+        ),
+        STATUS_CLAIM_TYPE_PATH: render_claim_type(retired_status),
+    }
+    assert query.lifecycle.state == "live"
+
+    closure = evaluate_dependency_closure(
+        parent_tree={},
+        candidate_tree=tree,
+        scope=(QUERY_PATH,),
+    )
+
+    assert closure.verdict == "refused"
+    assert closure.unresolved_pins[0].reason == "live_source_targets_retired"
+
+
+def test_query_definition_projects_its_declaration_policy_and_references() -> None:
+    query = active_work_query()
+
+    projection = parse_projection_tree(
+        {QUERY_PATH: render_query_definition(query)},
+    )
+
+    assert tuple((row.kind, row.identity) for row in projection.envelopes) == (
+        ("query-definition", "QueryDefinition:project.active_work"),
+    )
+    assert projection.envelopes[0].artifact_digest == query_definition_digest(query).tagged
+    assert tuple((row.source_identity, row.target_identity) for row in projection.pins) == (
+        ("QueryDefinition:project.active_work", f"ClaimType:{REVIEWER_PREDICATE}"),
+        ("QueryDefinition:project.active_work", f"ClaimType:{STATUS_PREDICATE}"),
+    )
+    facts = {fact.schema_id: fact for fact in projection.semantic_facts}
+    assert {
+        "cruxible.query_definition.definition",
+        "cruxible.query_definition.policy",
+        "cruxible.query_definition.references",
+    } <= set(facts)
+    declaration = facts["cruxible.query_definition.definition"].value
+    assert isinstance(declaration, dict)
+    assert declaration["address"] == SemanticAddress.whole_artifact(QUERY_PATH).model_dump(
+        mode="json"
+    )
+    assert declaration["referenced_predicates"] == [REVIEWER_PREDICATE, STATUS_PREDICATE]
+    assert declaration["subject_kinds"] == ["project.person", "project.work_item"]
+    policy = facts["cruxible.query_definition.policy"].value
+    assert isinstance(policy, dict)
+    assert policy["result_cardinality"] == "many"
+    assert policy["evaluation_policy"] == query.evaluation_policy.model_dump(mode="json")
+
+
+def test_query_definition_projection_refuses_a_malformed_registered_artifact() -> None:
+    with pytest.raises(QueryDefinitionFormatError):
+        parse_projection_tree(
+            {QUERY_PATH: b'{"artifact_format":"cruxible-query-definition-v3"}\n'},
+        )
+
+
+# -- proposal admission --------------------------------------------------
+
+
+def test_a_query_definition_change_set_is_authorable_and_law_evaluated(tmp_path: Path) -> None:
+    instance, _owner = initialize_local(tmp_path)
+    current = instance.accepted_coordinate()
+    base_tree = instance.tree_at(current.git_oid)
+    query = single_status_query(artifact_format="cruxible-query-definition-v3")
+    query_path = query_definition_path(query.identity.name)
+    candidate_tree = {
+        **base_tree,
+        STATUS_CLAIM_TYPE_PATH: render_claim_type(claim_type(STATUS_PREDICATE)),
+        query_path: render_query_definition(query),
+    }
+
+    evaluation = evaluate_proposal_tree(
+        base_tree=base_tree,
+        current_tree=base_tree,
+        proposed_tree=candidate_tree,
+        current=current,
+        bodies=instance.body_store(),
+        timestamp=TIMESTAMP,
+        rebased=False,
+        actor_id="owner",
+    )
+
+    assert evaluation.diagnostics == ()
+    assert evaluation.candidate is not None
+    members = {item.path: item for item in evaluation.candidate.members}
+    assert set(members) == {STATUS_CLAIM_TYPE_PATH, query_path}
+    member = members[query_path]
+    assert member.artifact_kind == "query-definition"
+    assert member.law_identifier == "cruxible.query-definition.named.v1"
+    assert (
+        QUERY_DEFINITION_V3_ACCEPTANCE_LAW.coordinate.identifier
+        == "cruxible.query-definition.named.v1"
+    )
+    assert member.candidate_artifact_digest == query_definition_digest(query).tagged
+    law_result = next(
+        item.result for item in evaluation.candidate.law_evidence if item.path == query_path
+    )
+    assert law_result["verdict"] == "accepted"
+    assert law_result["result_cardinality"] == "one"
+
+
+def test_a_query_definition_proposal_is_admitted_as_an_authorable_path(tmp_path: Path) -> None:
+    instance, _owner = initialize_local(tmp_path)
+    base = instance.accepted_coordinate()
+    query = single_status_query(artifact_format="cruxible-query-definition-v3")
+    tree = {
+        **instance.tree_at(base.git_oid),
+        STATUS_CLAIM_TYPE_PATH: render_claim_type(claim_type(STATUS_PREDICATE)),
+        query_definition_path(query.identity.name): render_query_definition(query),
+    }
+
+    proposed = instance.proposal_service().submit(
+        actor=AuthenticatedActor(actor_id="owner"),
+        request=ProposalAdmissionRequest(
+            target_ref="refs/proposals/owner/query-definition",
+            proposed_base_oid=base.git_oid,
+        ),
+        candidate_tree=tree,
+        timestamp=TIMESTAMP,
+    )
+
+    assert proposed.candidate is not None
+    assert query_definition_path(query.identity.name) in {
+        item.path for item in proposed.candidate.members
+    }
+
+
+def test_query_definition_grammar_never_imports_donor_query_symbols() -> None:
+    import cruxible_client.contracts.query.definitions as definitions
+    import cruxible_client.contracts.query.grammar as grammar
+
+    for module in (grammar, definitions):
+        source = Path(module.__file__ or "").read_text(encoding="utf-8")
+        assert "cruxible_core.query" not in source
+        assert "cruxible_core.config" not in source
+        assert "cruxible_core.graph" not in source
+        assert "cruxible_core.runtime.instance" not in source
+
+
+def test_query_literal_values_stay_inside_the_canonical_value_set() -> None:
+    assert QueryLiteralRef(value={"nested": ["a", 1, True, None]}).value == {
+        "nested": ["a", 1, True, None]
+    }
+    with pytest.raises(CanonicalEncodingError, match="floating-point"):
+        QueryLiteralRef(value=1.5)
+
+
+def test_unsorted_projection_fields_name_the_exact_canonical_order() -> None:
+    """A natural authoring order (not byte-sorted) must say exactly how to fix it."""
+
+    with pytest.raises(ValidationError, match=r"use this order: \['item_id', 'status'\]"):
+        QueryProjection(
+            fields=(
+                QueryProjectionField(
+                    name="status", value=QuerySubjectFieldRef(binding="item", field="subject_id")
+                ),
+                QueryProjectionField(
+                    name="item_id", value=QuerySubjectFieldRef(binding="item", field="subject_id")
+                ),
+            )
+        )
+    with pytest.raises(ValidationError, match=r"repeated: item_id"):
+        QueryProjection(
+            fields=(
+                QueryProjectionField(
+                    name="item_id", value=QuerySubjectFieldRef(binding="item", field="subject_id")
+                ),
+                QueryProjectionField(
+                    name="item_id", value=QuerySubjectFieldRef(binding="item", field="subject_id")
+                ),
+            )
+        )
+
+
+@pytest.mark.parametrize("mode", ["python", "json"])
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"exclude_defaults": True},
+        {"exclude_unset": True},
+        {"exclude_defaults": True, "exclude": {"fields": {0}}},
+        {"exclude_unset": True, "include": {"fields": {1: {"name", "value"}}}},
+    ],
+)
+def test_a_compact_dump_missing_its_discriminator_refuses_typed_on_parse(
+    mode: str, options: dict[str, object]
+) -> None:
+    """Variant ``kind`` fields default, so a compact dump drops them; parsing must say so.
+
+    Dumps stay pydantic's own (no re-insertion pass): whatever the selection
+    and mode, re-parsing the result either round-trips or refuses with the
+    typed error naming the field and the fix -- never a different variant.
+    """
+
+    projection = QueryProjection(
+        fields=(
+            QueryProjectionField(name="a", value=QueryLiteralRef(value="x")),
+            QueryProjectionField(
+                name="b", value=QuerySubjectFieldRef(binding="item", field="subject_id")
+            ),
+        )
+    )
+    dumped = (
+        projection.model_dump(**options)
+        if mode == "python"
+        else json.loads(projection.model_dump_json(**options))
+    )
+    with pytest.raises(QueryDiscriminatorMissingError) as raised:
+        QueryProjection.model_validate(dumped)
+    assert raised.value.error_code == "cruxible.query.discriminator_missing"
+    assert raised.value.model == "QueryProjectionField"
+    assert raised.value.field_path == "value"
+    assert "literal" in raised.value.tags and "subject_field" in raised.value.tags
+    assert "exclude_defaults=True" in str(raised.value)
+    # A plain dump keeps every discriminator and round-trips in both modes.
+    assert QueryProjection.model_validate(projection.model_dump()) == projection
+    assert QueryProjection.model_validate_json(projection.model_dump_json()) == projection
+
+
+def test_discriminator_refusal_names_sequence_and_optional_union_positions() -> None:
+    comparison = {"kind": "comparison", "operator": "eq", "left": {"kind": "literal", "value": 1}}
+    with pytest.raises(QueryDiscriminatorMissingError) as raised:
+        QueryConjunctionFilter.model_validate(
+            {"kind": "conjunction", "filters": [comparison, {"operator": "eq"}]}
+        )
+    assert raised.value.model == "QueryConjunctionFilter"
+    assert raised.value.field_path == "filters[1]"
+    with pytest.raises(QueryDiscriminatorMissingError) as raised:
+        QueryTraversalStep.model_validate(
+            {
+                "binding": "item",
+                "from_binding": "root",
+                "predicate": "work.status",
+                "direction": "forward",
+                "where": {"operator": "eq"},
+            }
+        )
+    assert (raised.value.model, raised.value.field_path) == ("QueryTraversalStep", "where")
+
+
+def test_a_minimal_query_spec_takes_the_defaults_a_spelled_out_one_states() -> None:
+    from cruxible_client.authoring.examples import (
+        query_claims_by_type_example,
+        query_ontology_example,
+    )
+    from cruxible_client.contracts.query.definitions import (
+        SPEC_DEFAULTED_FIELDS,
+        QueryDefinitionSpec,
+    )
+
+    for full in (
+        query_claims_by_type_example().query_definition,
+        query_ontology_example().query_definition,
+    ):
+        dumped = full.model_dump(mode="json")
+        minimal = {
+            key: value
+            for key, value in dumped.items()
+            if key not in (*SPEC_DEFAULTED_FIELDS, "artifact_format")
+        }
+        assert QueryDefinitionSpec.model_validate(minimal) == full
+    # The served schema says so: only what no default fills is required.
+    assert QueryDefinitionSpec.model_json_schema()["required"] == [
+        "identity",
+        "entry",
+        "result_binding",
+    ]
+    # An accepted definition stays strict: every field is stated.
+    assert {
+        "result_shape",
+        "dedupe",
+        "evaluation_policy",
+        "default_budgets",
+        "maximum_budgets",
+    } <= set(QueryDefinition.model_json_schema()["required"])
+
+
+def test_typed_specs_with_traversals_keep_subject_defaults_and_digests():
+    from cruxible_client.contracts.query.definitions import (
+        QueryDefinitionSpec,
+    )
+
+    explicit = active_work_query(
+        result_shape="subject",
+        dedupe="subject",
+        default_budgets=QueryBudgets(max_results=50, max_traversal_depth=2),
+        maximum_budgets=QueryBudgets(max_results=500, max_traversal_depth=4),
+    )
+    stated = explicit.model_dump(mode="json")
+    stated.pop("result_shape")
+    stated.pop("dedupe")
+    defaulted = QueryDefinitionSpec.model_validate(stated)
+    assert defaulted.result_shape == "subject"
+    assert defaulted.dedupe == "subject"
+    assert defaulted.model_dump(mode="json") == explicit.model_dump(mode="json")
+    assert query_definition_digest(defaulted) == query_definition_digest(explicit)
+
+
+def test_explicit_path_specs_still_receive_the_path_budget_defaults():
+    from cruxible_client.contracts.query.definitions import QueryDefinitionSpec
+
+    stated = active_work_query().model_dump(mode="json")
+    stated.pop("default_budgets")
+    stated.pop("maximum_budgets")
+    defaulted = QueryDefinitionSpec.model_validate(stated)
+    assert defaulted.result_shape == "path"
+    assert defaulted.dedupe == "path"
+    for budget in (defaulted.default_budgets, defaulted.maximum_budgets):
+        assert budget.max_paths == 20000
+        assert budget.max_paths_per_result == 100
+        assert budget.max_traversal_depth == len(defaulted.traversal)

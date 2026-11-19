@@ -1,6 +1,0 @@
-version: '1'
-config_digest: sha256:d7e30dc551f77721025cde481b26885f6ec3459ebba2060c18b599c274465b2e
-lock_digest: sha256:1c517e295240c2f1b41f1d67fe0f332ef49fe5b55d69e463492f5c7edd1411b7
-generated_at: 2026-08-04 21:39:19.652691+00:00
-artifacts: {}
-providers: {}

@@ -1,0 +1,146 @@
+{
+  "source": "https://github.com/package-url/purl-spec/tree/d66745e85940191e5c9690e9f82bc2d75120003f/types",
+  "about": "Each purl type definition's explicit case_sensitive values (the schema default is true; false means the valid form is lowercase), extracted verbatim from the definition JSON files at that commit.",
+  "types": {
+    "alpm": {
+      "namespace": false,
+      "name": false,
+      "version": true
+    },
+    "apk": {
+      "namespace": false,
+      "name": false
+    },
+    "bazel": {},
+    "bitbucket": {
+      "namespace": false,
+      "name": false
+    },
+    "bitnami": {
+      "name": false
+    },
+    "brew": {
+      "namespace": false,
+      "name": false
+    },
+    "cargo": {
+      "name": true
+    },
+    "chrome-extension": {
+      "name": false
+    },
+    "cocoapods": {
+      "name": true
+    },
+    "composer": {
+      "namespace": false,
+      "name": false
+    },
+    "conan": {},
+    "conda": {},
+    "cpan": {
+      "name": true
+    },
+    "cran": {
+      "name": true
+    },
+    "deb": {
+      "namespace": false,
+      "name": false
+    },
+    "docker": {},
+    "gem": {},
+    "generic": {},
+    "git": {
+      "namespace": true,
+      "name": true
+    },
+    "github": {
+      "namespace": false,
+      "name": false
+    },
+    "golang": {
+      "namespace": true,
+      "name": true
+    },
+    "hackage": {
+      "name": true
+    },
+    "hex": {
+      "namespace": false,
+      "name": false
+    },
+    "huggingface": {
+      "namespace": true,
+      "name": true,
+      "version": false
+    },
+    "julia": {
+      "name": true
+    },
+    "luarocks": {
+      "namespace": false,
+      "name": false,
+      "version": true
+    },
+    "maven": {
+      "namespace": true,
+      "name": true,
+      "version": true
+    },
+    "mlflow": {},
+    "npm": {
+      "namespace": true,
+      "name": true,
+      "version": true
+    },
+    "nuget": {
+      "name": true
+    },
+    "oci": {
+      "name": false,
+      "version": false
+    },
+    "opam": {
+      "name": true
+    },
+    "otp": {
+      "name": false,
+      "subpath": false
+    },
+    "pub": {
+      "name": false
+    },
+    "pypi": {
+      "name": false,
+      "version": false
+    },
+    "qpkg": {
+      "namespace": false
+    },
+    "rpm": {
+      "namespace": false,
+      "name": true
+    },
+    "swid": {
+      "namespace": true,
+      "name": true,
+      "version": true
+    },
+    "swift": {
+      "namespace": true,
+      "name": true,
+      "version": true
+    },
+    "vcpkg": {},
+    "vscode-extension": {
+      "namespace": false,
+      "name": false,
+      "version": false
+    },
+    "yocto": {
+      "namespace": false,
+      "name": true
+    }
+  }
+}

@@ -1,1 +1,1 @@
-"""Bundled Cruxible provider implementations."""
+"""Providers package."""

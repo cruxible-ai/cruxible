@@ -1,0 +1,362 @@
+"""End-to-end proof that projection observation reuses the one coverage scanner."""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from cruxible_client import contracts as api
+from cruxible_client.authoring.workspace import observe_next_workspace_with_coverage
+from cruxible_client.contracts.captures import DirectForeignSourceSelection
+from cruxible_client.contracts.semantic import ContentSpan
+from cruxible_core.coverage import adapter
+from cruxible_core.coverage.adapter import WorkingSourceObservation
+from cruxible_core.coverage.contracts import (
+    CoverageAccessProfile,
+    CoverageCardBudget,
+)
+from cruxible_core.coverage.indexes import CoverageScanBudget
+from cruxible_core.indexes.projection import AcceptedCoordinate
+from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.service.discovery.coverage import service_resolve_playbill_coverage
+from cruxible_core.service.discovery.next import (
+    NextRequest,
+    NextWorkspaceObservation,
+    service_playbill_next,
+)
+from tests.core_support._claim_authoring_support import service_propose_playbill_claim
+from tests.core_support._knowledge_loop_support import TIMESTAMP, activate, authoring
+from tests.core_support._support import initialize_local
+from tests.test_client.test_playbill_projection_repin import _workspace
+
+SOURCE_CONTENT = b"# Runbook\nstatus: ready\nfooter\n"
+NEEDLE = b"status: ready\n"
+PROFILE = {
+    "tag": "playbill-coverage-access-profile-v1",
+    "profile_id": "integration-next",
+    "permitted_access_classes": ["instance", "public"],
+    "disclose_restricted_existence": True,
+}
+
+
+class _DirectCoverageClient:
+    def __init__(self, instance: PlaybillInstance) -> None:
+        self.instance = instance
+        self.calls = 0
+        self.last_result = None
+
+    def resolve_coverage(self, instance_id: str, **values: Any) -> api.CoverageResult:
+        self.calls += 1
+        result = service_resolve_playbill_coverage(
+            self.instance,
+            instance_id=instance_id,
+            observations=tuple(
+                WorkingSourceObservation.model_validate(value) for value in values["observations"]
+            ),
+            at=(
+                None
+                if values["at"] is None
+                else AcceptedCoordinate.model_validate(values["at"].model_dump())
+            ),
+            budget=CoverageCardBudget.model_validate(values["budget"]),
+            scan_budget=CoverageScanBudget.model_validate(values["scan_budget"]),
+        )
+        self.last_result = result
+        return api.CoverageResult(
+            coordinate=api.AcceptedCoordinate.model_validate(result.at.model_dump()),
+            result=result.model_dump(mode="json"),
+        )
+
+
+def _foreign_world(root: Path, *, whole_file: bool = False):  # type: ignore[no-untyped-def]
+    workspace = root / "workspace"
+    workspace.mkdir()
+    source = _workspace(workspace)
+    source.write_bytes(SOURCE_CONTENT)
+    instance_root = root / "instance"
+    instance_root.mkdir()
+    instance, owner = initialize_local(instance_root)
+    stored = instance.body_store().store(SOURCE_CONTENT)
+    start = 0 if whole_file else SOURCE_CONTENT.index(NEEDLE)
+    end = len(SOURCE_CONTENT) if whole_file else start + len(NEEDLE)
+    proposal = service_propose_playbill_claim(
+        instance,
+        authoring=authoring("wi-42", "ready", with_claim_type=True).model_copy(
+            update={
+                "source_selection": DirectForeignSourceSelection(
+                    logical_source_identity="corpus.runbook",
+                    span=ContentSpan(content_digest=stored.digest, start_byte=start, end_byte=end),
+                    media_type="text/markdown",
+                )
+            }
+        ),
+        actor_id="owner",
+        proposal_name="scanner-cited-runbook",
+        timestamp=TIMESTAMP,
+    )
+    activate(instance, owner, proposal)
+    return instance, source, workspace
+
+
+def _result(
+    instance: PlaybillInstance,
+    client: _DirectCoverageClient,
+    root: Path,
+    *,
+    next_profile: CoverageAccessProfile | None = None,
+):  # type: ignore[no-untyped-def]
+    coordinate = api.AcceptedCoordinate.model_validate(
+        AcceptedCoordinate.from_internal(instance.accepted_coordinate()).model_dump()
+    )
+    observed, pinned = observe_next_workspace_with_coverage(
+        client,
+        instance.descriptor.instance_id,
+        root,
+        coordinate=coordinate,
+        access_profile=PROFILE,
+    )
+    assert pinned == coordinate
+    result = service_playbill_next(
+        instance,
+        request=NextRequest(
+            at=AcceptedCoordinate.model_validate(pinned.model_dump()),
+            evaluation_time=datetime(2026, 8, 16, 21, tzinfo=UTC),
+            access_profile=next_profile or CoverageAccessProfile.model_validate(PROFILE),
+            workspace_observation=NextWorkspaceObservation.model_validate(observed),
+        ),
+    )
+    return observed, result
+
+
+def test_one_existing_scanner_handles_relocation_duplicate_and_genuine_span_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    instance, source, workspace = _foreign_world(tmp_path)
+    client = _DirectCoverageClient(instance)
+    original = adapter.build_working_occurrence_overlay
+    invocations = 0
+
+    def counted(*args: Any, **kwargs: Any):  # type: ignore[no-untyped-def]
+        nonlocal invocations
+        invocations += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(adapter, "build_working_occurrence_overlay", counted)
+
+    initial, first = _result(instance, client, workspace)
+    assert all(item.reason != "citation_drifted" for item in first.items)
+    original_occurrence = initial["source_observations"][0]["occurrences"][0]
+
+    source.write_bytes(b"Unrelated heading\n" + SOURCE_CONTENT)
+    moved, second = _result(instance, client, workspace)
+    moved_occurrence = moved["source_observations"][0]["occurrences"][0]
+    assert original_occurrence["identity_digest"] == moved_occurrence["identity_digest"]
+    assert all(item.reason != "citation_drifted" for item in second.items)
+
+    source.write_bytes(SOURCE_CONTENT.replace(NEEDLE, NEEDLE + NEEDLE))
+    duplicated, ambiguous = _result(instance, client, workspace)
+    assert "coverage_occurrence_ambiguous" in duplicated["source_observations"][0]["scan_notes"]
+    ambiguous_row = next(item for item in ambiguous.items if item.reason == "citation_drifted")
+    assert ambiguous_row.detail["drift_state"] == "ambiguous"  # type: ignore[index]
+    assert ambiguous_row.repair.required_change == "rebind_or_retire_drifted_claim"
+
+    source.write_bytes(SOURCE_CONTENT.replace(NEEDLE, b"status: blocked\n"))
+    changed, drifted = _result(instance, client, workspace)
+    assert changed["source_observations"][0]["scan_notes"] == []
+    assert any(item.reason == "citation_drifted" for item in drifted.items)
+    assert invocations == client.calls == 4
+
+
+def test_whole_file_citation_is_current_while_its_quoted_bytes_occur(tmp_path: Path) -> None:
+    """A citation spanning the whole file commits to those bytes, not to the file.
+
+    It stays current through an append or a prepend (the bytes still occur once)
+    and drifts when the quoted bytes themselves change.
+    """
+
+    instance, source, workspace = _foreign_world(tmp_path, whole_file=True)
+    client = _DirectCoverageClient(instance)
+
+    source.write_bytes(SOURCE_CONTENT + b"appended section\n")
+    _observed, appended = _result(instance, client, workspace)
+    assert all(item.reason != "citation_drifted" for item in appended.items)
+
+    source.write_bytes(b"Unrelated heading\n" + SOURCE_CONTENT)
+    _observed, prepended = _result(instance, client, workspace)
+    assert all(item.reason != "citation_drifted" for item in prepended.items)
+
+    source.write_bytes(SOURCE_CONTENT.replace(NEEDLE, b"status: blocked\n"))
+    _observed, edited = _result(instance, client, workspace)
+    drifted = [item for item in edited.items if item.reason == "citation_drifted"]
+    assert len(drifted) == 1
+    assert drifted[0].detail["drift_state"] == "changed"  # type: ignore[index]
+
+
+def _multi_source_world(
+    root: Path,
+    *,
+    source_count: int,
+    occurrences_per_source: int,
+):  # type: ignore[no-untyped-def]
+    workspace = root / "workspace"
+    workspace.mkdir()
+    playbill = workspace / ".cruxible"
+    playbill.mkdir()
+    lines = [
+        "tag: playbill-source-catalog-v1",
+        "catalog_kind: portable",
+        "entries:",
+    ]
+    source_bytes = b"# runbook\n" + b"separator\n".join(
+        NEEDLE for _ in range(occurrences_per_source)
+    )
+    for ordinal in range(source_count):
+        source_id = f"corpus.scale{ordinal:03d}"
+        filename = f"scale-{ordinal:03d}.md"
+        lines.extend(
+            (
+                f"  - name: {source_id}",
+                f"    locator: {filename}",
+                f"    document_id: scale-{ordinal:03d}",
+                "    document_kind: runbook",
+                f"    title: Scale {ordinal:03d}",
+                "    media_type: text/markdown",
+                f"    governance_scope: [Document:scale-{ordinal:03d}]",
+            )
+        )
+        (workspace / filename).write_bytes(source_bytes)
+    (playbill / "files.yaml").write_text("\n".join(lines) + "\n")
+
+    instance_root = root / "instance"
+    instance_root.mkdir()
+    instance, owner = initialize_local(instance_root)
+    stored = instance.body_store().store(source_bytes)
+    start = source_bytes.index(NEEDLE)
+    proposal = service_propose_playbill_claim(
+        instance,
+        authoring=authoring("wi-42", "ready", with_claim_type=True).model_copy(
+            update={
+                "source_selection": DirectForeignSourceSelection(
+                    logical_source_identity="corpus.scale000",
+                    span=ContentSpan(
+                        content_digest=stored.digest,
+                        start_byte=start,
+                        end_byte=start + len(NEEDLE),
+                    ),
+                    media_type="text/markdown",
+                )
+            }
+        ),
+        actor_id="owner",
+        proposal_name="scanner-scale-citation",
+        timestamp=TIMESTAMP,
+    )
+    activate(instance, owner, proposal)
+    return instance, workspace
+
+
+def test_real_client_server_path_preserves_full_proofs_at_gen2_scale(tmp_path: Path) -> None:
+    instance, workspace = _multi_source_world(
+        tmp_path,
+        source_count=40,
+        occurrences_per_source=17,
+    )
+
+    client = _DirectCoverageClient(instance)
+    observed, result = _result(instance, client, workspace)
+
+    sources = observed["source_observations"]
+    assert len(sources) == 40
+    assert client.last_result is not None
+    assert sum(len(span.cards) for span in client.last_result.spans) == 680
+    # One proof per span per Capture commitment: the cited span's and the
+    # Subject's key Claim's own words.
+    assert all(
+        len(span.commitment_scan_proofs) == 2
+        and len({proof.commitment_digest for proof in span.commitment_scan_proofs}) == 2
+        for span in client.last_result.spans
+    )
+    assert len(sources[0]["occurrences"]) == 17
+    row = next(item for item in result.items if item.reason == "citation_drifted")
+    assert row.detail["drift_state"] == "ambiguous"  # type: ignore[index]
+
+
+def test_six_source_default_budget_keeps_every_local_proof(tmp_path: Path) -> None:
+    instance, workspace = _multi_source_world(
+        tmp_path,
+        source_count=6,
+        occurrences_per_source=8,
+    )
+
+    client = _DirectCoverageClient(instance)
+    observed, _result_value = _result(
+        instance,
+        client,
+        workspace,
+    )
+
+    sources = observed["source_observations"]
+    assert len(sources) == 6
+    assert client.last_result is not None
+    assert sum(len(span.cards) for span in client.last_result.spans) == 48
+    # One proof per span per Capture commitment: the cited span's and the
+    # Subject's key Claim's own words.
+    assert all(
+        len(span.commitment_scan_proofs) == 2
+        and len({proof.commitment_digest for proof in span.commitment_scan_proofs}) == 2
+        for span in client.last_result.spans
+    )
+    assert len(sources[0]["occurrences"]) == 8
+
+
+@pytest.mark.parametrize(
+    ("state", "replacement"),
+    [
+        ("changed", SOURCE_CONTENT.replace(NEEDLE, b"status: blocked\n")),
+        ("gone", b"gone\n"),
+        ("ambiguous", SOURCE_CONTENT.replace(NEEDLE, NEEDLE + NEEDLE)),
+    ],
+)
+def test_real_client_observation_builder_closes_each_citation_liveness_row(
+    tmp_path: Path,
+    state: str,
+    replacement: bytes,
+) -> None:
+    instance, source, workspace = _foreign_world(tmp_path)
+    client = _DirectCoverageClient(instance)
+    source.write_bytes(replacement)
+
+    _observed, before = _result(instance, client, workspace)
+    row = next(item for item in before.items if item.reason == "citation_drifted")
+    assert row.detail["drift_state"] == state  # type: ignore[index]
+
+    source.write_bytes(SOURCE_CONTENT)
+    _restored, after = _result(instance, client, workspace)
+    assert all(item.reason != "citation_drifted" for item in after.items)
+
+
+def test_inaccessible_source_observation_leaks_no_liveness_detail(tmp_path: Path) -> None:
+    instance, source, workspace = _foreign_world(tmp_path)
+    source.write_bytes(SOURCE_CONTENT.replace(NEEDLE, b"status: blocked\n"))
+    public_only = CoverageAccessProfile(
+        profile_id="integration-public-only",
+        permitted_access_classes=("public",),
+        disclose_restricted_existence=False,
+    )
+
+    _observed, result = _result(
+        instance,
+        _DirectCoverageClient(instance),
+        workspace,
+        next_profile=public_only,
+    )
+
+    assert "workspace_sources" not in result.observed_domains
+    assert all(
+        item.reason not in {"citation_drifted", "citation_source_unobserved"}
+        for item in result.items
+    )
+    assert "observed_window_digest" not in result.model_dump_json()

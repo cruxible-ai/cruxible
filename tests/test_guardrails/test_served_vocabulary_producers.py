@@ -1,0 +1,156 @@
+"""Every frozen closed-vocabulary member has a production producer.
+
+The v1 wire freeze makes an un-emitted member permanent: a caller can never
+observe it, and removing it later costs a ratified succession. The guard scans
+the shipped source for the exact code string in a value position -- prose that
+only names a code produces nothing -- ignoring the modules that only declare or
+classify the vocabularies, so a member whose only producer is a test double
+reads as absent here.
+"""
+
+from __future__ import annotations
+
+import ast
+from collections.abc import Iterator
+from pathlib import Path
+from typing import get_args
+
+from cruxible_client.contracts.procedures.results import (
+    ProcedureAdmissionRefusalCode,
+    ProcedureInternalFailureCode,
+    ProcedureOperationalFailureCode,
+)
+
+_SOURCE_ROOT = Path(__file__).resolve().parents[2] / "src" / "cruxible_core"
+
+# Modules that carry a vocabulary member without producing it: the source-owned
+# catalog, the provider refusal wire vocabulary, and the outcome map that
+# translates one vocabulary into another.
+_DECLARATION_ONLY = {
+    "service/refusals.py",
+    "providers/provider_runtime_contract.py",
+    "providers/provider_outcomes.py",
+}
+
+
+def _production_modules() -> Iterator[Path]:
+    for path in sorted(_SOURCE_ROOT.rglob("*.py")):
+        if path.relative_to(_SOURCE_ROOT).as_posix() in _DECLARATION_ONLY:
+            continue
+        yield path
+
+
+def _prose_constants(tree: ast.AST) -> set[int]:
+    """Return the ids of every string that is a bare statement, not a value.
+
+    Module, class, function and attribute docstrings all take this shape. Prose
+    naming a refusal code does not produce it, so counting one would let a
+    member reach the frozen wire with nothing but a mention behind it.
+    """
+
+    return {
+        id(node.value)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Expr)
+        and isinstance(node.value, ast.Constant)
+        and isinstance(node.value.value, str)
+    }
+
+
+def _produced_strings() -> frozenset[str]:
+    produced: set[str] = set()
+    for path in _production_modules():
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        prose = _prose_constants(tree)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                if id(node) in prose:
+                    continue
+                produced.add(node.value)
+    return frozenset(produced)
+
+
+def test_prose_naming_a_code_is_not_a_producer_of_it() -> None:
+    """A docstring is a mention; a raise, a return or a mapping value is a producer."""
+
+    module = ast.parse(
+        '"""occurrence_not_due is refused when the schedule says so."""\n'
+        'CODE = "occurrence_already_admitted"\n'
+        "\n"
+        "def refuse() -> str:\n"
+        '    """line_not_accepted names the refusal this guard would miss."""\n'
+        '    return "line_identity_mismatch"\n'
+    )
+    prose = _prose_constants(module)
+    produced = {
+        node.value
+        for node in ast.walk(module)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in prose
+    }
+
+    assert "occurrence_already_admitted" in produced
+    assert "line_identity_mismatch" in produced
+    assert not {"occurrence_not_due", "line_not_accepted"} & produced
+
+
+def test_every_admission_refusal_member_is_produced_in_production_source() -> None:
+    """U1 froze two Line codes with zero producers; the whole Literal is guarded."""
+
+    produced = _produced_strings()
+    missing = sorted(
+        code for code in get_args(ProcedureAdmissionRefusalCode) if code not in produced
+    )
+    assert missing == []
+
+
+# Members frozen into v1 with no production producer today. The inventory is
+# pinned exactly, so a new member cannot join the closed vocabulary without
+# either a producer or a recorded decision, and it can only shrink. It is a
+# debt, not a licence: `cache_integrity` is deliberately absent from it.
+INTERNAL_FAILURE_WITHOUT_PRODUCTION_PRODUCER = frozenset(
+    {
+        "provider_refusal_taxonomy_unknown",
+        "unknown_manifest_field",
+        "manifest_divergence",
+        # Produced only by the outcome map's translation of a code the bound
+        # operation does not declare (provider_outcomes.map_operation_refusal).
+        "undeclared_refusal",
+        "unknown_run_context_field",
+        "lock_mismatch",
+        "lock_missing_hash",
+        "lock_ambiguous_fork",
+        "index_not_pinned",
+        "index_redirect",
+        "non_finite_output",
+        "image_provenance_mismatch",
+    }
+)
+OPERATIONAL_FAILURE_WITHOUT_PRODUCTION_PRODUCER = frozenset(
+    {
+        "journal_read_failed",
+        "unresolvable_source",
+        "air_gapped_cache_miss",
+        "network_disabled",
+        "cache_permissions",
+        "unresolved_secret_ref",
+    }
+)
+
+
+def test_internal_failure_producer_debt_is_pinned_and_can_only_shrink() -> None:
+    """U6 de-emitted `cache_integrity` inside the batch that froze it."""
+
+    produced = _produced_strings()
+    missing = frozenset(
+        code for code in get_args(ProcedureInternalFailureCode) if code not in produced
+    )
+    assert missing == INTERNAL_FAILURE_WITHOUT_PRODUCTION_PRODUCER
+    assert "cache_integrity" not in INTERNAL_FAILURE_WITHOUT_PRODUCTION_PRODUCER
+
+
+def test_operational_failure_producer_debt_is_pinned_and_can_only_shrink() -> None:
+    produced = _produced_strings()
+    missing = frozenset(
+        code for code in get_args(ProcedureOperationalFailureCode) if code not in produced
+    )
+    assert missing == OPERATIONAL_FAILURE_WITHOUT_PRODUCTION_PRODUCER

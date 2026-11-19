@@ -1,0 +1,1560 @@
+{
+  "security.credential-state": {
+    "input": {
+      "allow_extra": false,
+      "fields": {
+        "held": {
+          "type": "json"
+        },
+        "state_text": {
+          "type": "string"
+        },
+        "truncated": {
+          "type": "json"
+        }
+      }
+    },
+    "output": {
+      "allow_extra": false,
+      "fields": {
+        "added": {
+          "type": "integer"
+        },
+        "changed": {
+          "type": "integer"
+        },
+        "credential": {
+          "type": "string"
+        },
+        "failed": {
+          "type": "integer"
+        },
+        "inbox": {
+          "type": "json"
+        },
+        "items": {
+          "type": "json"
+        },
+        "keys": {
+          "type": "integer"
+        },
+        "posted": {
+          "type": "integer"
+        },
+        "read": {
+          "type": "string"
+        },
+        "revised": {
+          "type": "integer"
+        },
+        "unproven": {
+          "type": "integer"
+        },
+        "verified": {
+          "type": "integer"
+        }
+      }
+    },
+    "signature": {
+      "effect": "pure",
+      "in": {
+        "name": "fixture.security.credential-state.request",
+        "version": 1
+      },
+      "out": {
+        "name": "fixture.security.credential-state.result",
+        "version": 1
+      }
+    }
+  },
+  "security.cve-applicability": {
+    "input": {
+      "allow_extra": false,
+      "fields": {
+        "assessments": {
+          "type": "json"
+        },
+        "collections": {
+          "type": "json"
+        },
+        "record_base64": {
+          "type": "string"
+        },
+        "releases": {
+          "type": "json"
+        },
+        "sources": {
+          "type": "json"
+        },
+        "watched": {
+          "type": "json"
+        }
+      }
+    },
+    "output": {
+      "allow_extra": false,
+      "fields": {
+        "affected": {
+          "type": "integer"
+        },
+        "changed": {
+          "type": "integer"
+        },
+        "cve_id": {
+          "type": "string"
+        },
+        "inconclusive": {
+          "type": "integer"
+        },
+        "items": {
+          "type": "json"
+        },
+        "judged": {
+          "type": "integer"
+        },
+        "not_affected": {
+          "type": "integer"
+        },
+        "unchanged": {
+          "type": "integer"
+        }
+      }
+    },
+    "signature": {
+      "effect": "pure",
+      "in": {
+        "name": "fixture.security.cve-applicability.request",
+        "version": 1
+      },
+      "out": {
+        "name": "fixture.security.cve-applicability.result",
+        "version": 1
+      }
+    }
+  },
+  "security.cyclonedx-components": {
+    "input": {
+      "allow_extra": false,
+      "fields": {
+        "releases": {
+          "type": "json"
+        },
+        "sbom_text": {
+          "type": "string"
+        }
+      }
+    },
+    "output": {
+      "allow_extra": false,
+      "fields": {
+        "added": {
+          "type": "integer"
+        },
+        "changed": {
+          "type": "integer"
+        },
+        "components": {
+          "type": "integer"
+        },
+        "items": {
+          "type": "json"
+        },
+        "product": {
+          "type": "string"
+        },
+        "skipped": {
+          "type": "integer"
+        },
+        "version": {
+          "type": "string"
+        }
+      }
+    },
+    "signature": {
+      "effect": "pure",
+      "in": {
+        "name": "fixture.security.cyclonedx-components.request",
+        "version": 1
+      },
+      "out": {
+        "name": "fixture.security.cyclonedx-components.result",
+        "version": 1
+      }
+    }
+  },
+  "security.epss-daily": {
+    "input": {
+      "allow_extra": false,
+      "fields": {
+        "url": {
+          "default": "https://epss.empiricalsecurity.com/epss_scores-current.csv.gz",
+          "optional": true,
+          "type": "string"
+        }
+      }
+    },
+    "signature": {
+      "effect": "external_read",
+      "in": {
+        "name": "fixture.security.epss-daily.request",
+        "version": 1
+      },
+      "out": {
+        "name": "fixture.security.epss-daily.result",
+        "version": 1
+      }
+    },
+    "source_view": {
+      "allow_extra": false,
+      "fields": {
+        "input_bucket": {
+          "type": "string"
+        },
+        "retrieved": {
+          "type": "json"
+        }
+      }
+    }
+  },
+  "security.epss-scores": {
+    "input": {
+      "allow_extra": false,
+      "fields": {
+        "daily_base64": {
+          "type": "string"
+        },
+        "watched": {
+          "type": "json"
+        }
+      }
+    },
+    "output": {
+      "allow_extra": false,
+      "fields": {
+        "changed": {
+          "type": "integer"
+        },
+        "items": {
+          "type": "json"
+        },
+        "model_version": {
+          "type": "string"
+        },
+        "score_date": {
+          "type": "string"
+        },
+        "scored": {
+          "type": "integer"
+        },
+        "watched": {
+          "type": "integer"
+        }
+      }
+    },
+    "signature": {
+      "effect": "pure",
+      "in": {
+        "name": "fixture.security.epss-scores.request",
+        "version": 1
+      },
+      "out": {
+        "name": "fixture.security.epss-scores.result",
+        "version": 1
+      }
+    }
+  },
+  "security.harden": {
+    "input": {
+      "allow_extra": false,
+      "fields": {
+        "hq1": {
+          "type": "json"
+        },
+        "hq2": {
+          "type": "json"
+        },
+        "hq3": {
+          "type": "json"
+        },
+        "hq4": {
+          "type": "json"
+        },
+        "hq5": {
+          "type": "json"
+        },
+        "hq6": {
+          "type": "json"
+        },
+        "params": {
+          "type": "json"
+        },
+        "truncated": {
+          "type": "json"
+        }
+      }
+    },
+    "output": {
+      "allow_extra": false,
+      "fields": {
+        "answers": {
+          "type": "json"
+        },
+        "found": {
+          "type": "integer"
+        },
+        "gaps": {
+          "type": "integer"
+        },
+        "items": {
+          "type": "json"
+        },
+        "none": {
+          "type": "integer"
+        },
+        "posted": {
+          "type": "integer"
+        },
+        "targets": {
+          "type": "integer"
+        },
+        "unknown": {
+          "type": "integer"
+        }
+      }
+    },
+    "signature": {
+      "effect": "pure",
+      "in": {
+        "name": "fixture.security.harden.request",
+        "version": 1
+      },
+      "out": {
+        "name": "fixture.security.harden.result",
+        "version": 1
+      }
+    }
+  },
+  "security.kev-attention": {
+    "input": {
+      "allow_extra": false,
+      "fields": {
+        "assessments": {
+          "type": "json"
+        },
+        "catalog_base64": {
+          "type": "string"
+        },
+        "releases": {
+          "type": "json"
+        },
+        "watched": {
+          "type": "json"
+        }
+      }
+    },
+    "output": {
+      "allow_extra": false,
+      "fields": {
+        "catalog_version": {
+          "type": "string"
+        },
+        "items": {
+          "type": "json"
+        },
+        "newly_listed": {
+          "type": "integer"
+        },
+        "posted": {
+          "type": "integer"
+        }
+      }
+    },
+    "signature": {
+      "effect": "pure",
+      "in": {
+        "name": "fixture.security.kev-attention.request",
+        "version": 1
+      },
+      "out": {
+        "name": "fixture.security.kev-attention.result",
+        "version": 1
+      }
+    }
+  },
+  "security.kev-catalog": {
+    "input": {
+      "allow_extra": false,
+      "fields": {
+        "catalog_base64": {
+          "type": "string"
+        },
+        "watched": {
+          "type": "json"
+        }
+      }
+    },
+    "output": {
+      "allow_extra": false,
+      "fields": {
+        "catalog_count": {
+          "type": "integer"
+        },
+        "catalog_version": {
+          "type": "string"
+        },
+        "changed": {
+          "type": "integer"
+        },
+        "items": {
+          "type": "json"
+        },
+        "listed": {
+          "type": "integer"
+        },
+        "watched": {
+          "type": "integer"
+        }
+      }
+    },
+    "signature": {
+      "effect": "pure",
+      "in": {
+        "name": "fixture.security.kev-catalog.request",
+        "version": 1
+      },
+      "out": {
+        "name": "fixture.security.kev-catalog.result",
+        "version": 1
+      }
+    }
+  },
+  "security.log-reads": {
+    "input": {
+      "allow_extra": false,
+      "fields": {
+        "held": {
+          "type": "json"
+        },
+        "incident": {
+          "type": "string"
+        },
+        "read_text": {
+          "type": "string"
+        },
+        "truncated": {
+          "type": "json"
+        }
+      }
+    },
+    "output": {
+      "allow_extra": false,
+      "fields": {
+        "added": {
+          "type": "integer"
+        },
+        "changed": {
+          "type": "integer"
+        },
+        "inbox": {
+          "type": "json"
+        },
+        "incident": {
+          "type": "string"
+        },
+        "items": {
+          "type": "json"
+        },
+        "matches": {
+          "type": "integer"
+        },
+        "mine": {
+          "type": "integer"
+        },
+        "posted": {
+          "type": "integer"
+        },
+        "read": {
+          "type": "string"
+        },
+        "recordable": {
+          "type": "integer"
+        },
+        "service": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        }
+      }
+    },
+    "signature": {
+      "effect": "pure",
+      "in": {
+        "name": "fixture.security.log-reads.request",
+        "version": 1
+      },
+      "out": {
+        "name": "fixture.security.log-reads.result",
+        "version": 1
+      }
+    }
+  },
+  "security.osv-applicability": {
+    "input": {
+      "allow_extra": false,
+      "fields": {
+        "assessments": {
+          "type": "json"
+        },
+        "osv": {
+          "type": "json"
+        },
+        "releases": {
+          "type": "json"
+        },
+        "watched": {
+          "type": "json"
+        }
+      }
+    },
+    "output": {
+      "allow_extra": false,
+      "fields": {
+        "affected": {
+          "type": "integer"
+        },
+        "changed": {
+          "type": "integer"
+        },
+        "coverage": {
+          "type": "integer"
+        },
+        "inconclusive": {
+          "type": "integer"
+        },
+        "items": {
+          "type": "json"
+        },
+        "judged": {
+          "type": "integer"
+        },
+        "not_affected": {
+          "type": "integer"
+        },
+        "packages": {
+          "type": "integer"
+        },
+        "unchanged": {
+          "type": "integer"
+        },
+        "unkeyed": {
+          "type": "json"
+        }
+      }
+    },
+    "signature": {
+      "effect": "pure",
+      "in": {
+        "name": "fixture.security.osv-applicability.request",
+        "version": 1
+      },
+      "out": {
+        "name": "fixture.security.osv-applicability.result",
+        "version": 1
+      }
+    }
+  },
+  "security.osv-ecosystems": {
+    "input": {
+      "allow_extra": false,
+      "fields": {
+        "url": {
+          "default": "https://osv-vulnerabilities.storage.googleapis.com/ecosystems.txt",
+          "optional": true,
+          "type": "string"
+        }
+      }
+    },
+    "signature": {
+      "effect": "pure",
+      "in": {
+        "name": "fixture.security.osv-ecosystems.request",
+        "version": 1
+      },
+      "out": {
+        "name": "fixture.security.osv-ecosystems.result",
+        "version": 1
+      }
+    },
+    "source_view": {
+      "allow_extra": false,
+      "fields": {
+        "input_bucket": {
+          "type": "string"
+        },
+        "retrieved": {
+          "type": "json"
+        }
+      }
+    }
+  },
+  "security.osv-query": {
+    "input": {
+      "allow_extra": false,
+      "fields": {
+        "ecosystems": {
+          "type": "json"
+        },
+        "purl_types": {
+          "type": "json"
+        },
+        "releases": {
+          "type": "json"
+        },
+        "watched": {
+          "type": "json"
+        }
+      }
+    },
+    "signature": {
+      "effect": "pure",
+      "in": {
+        "name": "fixture.security.osv-query.request",
+        "version": 1
+      },
+      "out": {
+        "name": "fixture.security.osv-query.result",
+        "version": 1
+      }
+    },
+    "source_view": {
+      "allow_extra": false,
+      "fields": {
+        "exchanges": {
+          "type": "json"
+        },
+        "input_bucket": {
+          "type": "string"
+        },
+        "not_indexed": {
+          "type": "json"
+        },
+        "osv_ecosystems": {
+          "type": "json"
+        },
+        "purl_types": {
+          "type": "json"
+        },
+        "service": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "security.pypi-release": {
+    "input": {
+      "allow_extra": false,
+      "fields": {
+        "project": {
+          "type": "string"
+        },
+        "versions": {
+          "default": 3,
+          "optional": true,
+          "type": "integer"
+        }
+      }
+    },
+    "signature": {
+      "effect": "external_read",
+      "in": {
+        "name": "fixture.security.pypi-release.request",
+        "version": 1
+      },
+      "out": {
+        "name": "fixture.security.pypi-release.result",
+        "version": 1
+      }
+    },
+    "source_view": {
+      "allow_extra": false,
+      "fields": {
+        "input_bucket": {
+          "type": "string"
+        },
+        "project": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "versions": {
+          "type": "json"
+        }
+      }
+    }
+  },
+  "security.registry-facts": {
+    "input": {
+      "allow_extra": false,
+      "fields": {
+        "coverage": {
+          "type": "json"
+        },
+        "held": {
+          "type": "json"
+        },
+        "release": {
+          "type": "json"
+        }
+      }
+    },
+    "output": {
+      "allow_extra": false,
+      "fields": {
+        "added": {
+          "type": "integer"
+        },
+        "changed": {
+          "type": "integer"
+        },
+        "files": {
+          "type": "integer"
+        },
+        "items": {
+          "type": "json"
+        },
+        "locator": {
+          "type": "string"
+        },
+        "restated": {
+          "type": "integer"
+        },
+        "retired": {
+          "type": "integer"
+        },
+        "revised": {
+          "type": "integer"
+        },
+        "revision": {
+          "type": "string"
+        }
+      }
+    },
+    "signature": {
+      "effect": "pure",
+      "in": {
+        "name": "fixture.security.registry-facts.request",
+        "version": 1
+      },
+      "out": {
+        "name": "fixture.security.registry-facts.result",
+        "version": 1
+      }
+    }
+  },
+  "security.release-asset": {
+    "input": {
+      "allow_extra": false,
+      "fields": {
+        "url": {
+          "type": "string"
+        }
+      }
+    },
+    "signature": {
+      "effect": "pure",
+      "in": {
+        "name": "fixture.security.release-asset.request",
+        "version": 1
+      },
+      "out": {
+        "name": "fixture.security.release-asset.result",
+        "version": 1
+      }
+    },
+    "source_view": {
+      "allow_extra": false,
+      "fields": {
+        "input_bucket": {
+          "type": "string"
+        },
+        "retrieved": {
+          "type": "json"
+        }
+      }
+    }
+  },
+  "security.repo-snapshot": {
+    "input": {
+      "allow_extra": false,
+      "fields": {
+        "forge_host": {
+          "type": "string"
+        },
+        "full_name": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "ref": {
+          "type": "string"
+        },
+        "scope": {
+          "type": "string"
+        }
+      }
+    },
+    "signature": {
+      "effect": "external_read",
+      "in": {
+        "name": "fixture.security.repo-snapshot.request",
+        "version": 1
+      },
+      "out": {
+        "name": "fixture.security.repo-snapshot.result",
+        "version": 1
+      }
+    },
+    "source_view": {
+      "allow_extra": false,
+      "fields": {
+        "files": {
+          "type": "json"
+        },
+        "forge_host": {
+          "type": "string"
+        },
+        "full_name": {
+          "type": "string"
+        },
+        "input_bucket": {
+          "type": "string"
+        },
+        "locator": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "ref": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "string"
+        },
+        "scope": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "security.respond": {
+    "input": {
+      "allow_extra": false,
+      "fields": {
+        "audits": {
+          "type": "json"
+        },
+        "credentials": {
+          "type": "json"
+        },
+        "deployments": {
+          "type": "json"
+        },
+        "exceptions": {
+          "type": "json"
+        },
+        "exposure": {
+          "type": "json"
+        },
+        "hosts": {
+          "type": "json"
+        },
+        "overdue": {
+          "type": "json"
+        },
+        "params": {
+          "type": "json"
+        },
+        "patches": {
+          "type": "json"
+        },
+        "truncated": {
+          "type": "json"
+        }
+      }
+    },
+    "output": {
+      "allow_extra": false,
+      "fields": {
+        "answers": {
+          "type": "json"
+        },
+        "found": {
+          "type": "integer"
+        },
+        "incident": {
+          "type": "string"
+        },
+        "items": {
+          "type": "json"
+        },
+        "none": {
+          "type": "integer"
+        },
+        "posted": {
+          "type": "integer"
+        },
+        "ready_to_close": {
+          "type": "integer"
+        },
+        "status": {
+          "type": "string"
+        },
+        "unknown": {
+          "type": "integer"
+        }
+      }
+    },
+    "signature": {
+      "effect": "pure",
+      "in": {
+        "name": "fixture.security.respond.request",
+        "version": 1
+      },
+      "out": {
+        "name": "fixture.security.respond.result",
+        "version": 1
+      }
+    }
+  },
+  "security.runtime-inventory": {
+    "input": {
+      "allow_extra": false,
+      "fields": {
+        "held": {
+          "type": "json"
+        },
+        "inventory_text": {
+          "type": "string"
+        },
+        "patches": {
+          "type": "json"
+        },
+        "runs": {
+          "type": "json"
+        },
+        "scope": {
+          "type": "string"
+        },
+        "truncated": {
+          "type": "json"
+        }
+      }
+    },
+    "output": {
+      "allow_extra": false,
+      "fields": {
+        "added": {
+          "type": "integer"
+        },
+        "assets": {
+          "type": "integer"
+        },
+        "changed": {
+          "type": "integer"
+        },
+        "coverage": {
+          "type": "string"
+        },
+        "failed": {
+          "type": "integer"
+        },
+        "format": {
+          "type": "string"
+        },
+        "items": {
+          "type": "json"
+        },
+        "mine": {
+          "type": "integer"
+        },
+        "nones": {
+          "type": "integer"
+        },
+        "proposes": {
+          "type": "integer"
+        },
+        "regressions": {
+          "type": "json"
+        },
+        "restated": {
+          "type": "integer"
+        },
+        "retired": {
+          "type": "integer"
+        },
+        "revised": {
+          "type": "integer"
+        },
+        "revision": {
+          "type": "string"
+        },
+        "runs": {
+          "type": "integer"
+        },
+        "scope": {
+          "type": "string"
+        },
+        "unidentified": {
+          "type": "integer"
+        },
+        "verified": {
+          "type": "integer"
+        }
+      }
+    },
+    "signature": {
+      "effect": "pure",
+      "in": {
+        "name": "fixture.security.runtime-inventory.request",
+        "version": 1
+      },
+      "out": {
+        "name": "fixture.security.runtime-inventory.result",
+        "version": 1
+      }
+    }
+  },
+  "security.sarif-findings": {
+    "input": {
+      "allow_extra": false,
+      "fields": {
+        "held": {
+          "type": "json"
+        },
+        "repo_ref": {
+          "type": "string"
+        },
+        "sarif_text": {
+          "type": "string"
+        },
+        "truncated": {
+          "type": "json"
+        }
+      }
+    },
+    "output": {
+      "allow_extra": false,
+      "fields": {
+        "added": {
+          "type": "integer"
+        },
+        "changed": {
+          "type": "integer"
+        },
+        "findings": {
+          "type": "integer"
+        },
+        "fixed": {
+          "type": "integer"
+        },
+        "full": {
+          "type": "json"
+        },
+        "gaps": {
+          "type": "integer"
+        },
+        "inbox": {
+          "type": "json"
+        },
+        "items": {
+          "type": "json"
+        },
+        "mine": {
+          "type": "integer"
+        },
+        "new": {
+          "type": "integer"
+        },
+        "posted": {
+          "type": "integer"
+        },
+        "regressed": {
+          "type": "integer"
+        },
+        "repo_ref": {
+          "type": "string"
+        },
+        "results": {
+          "type": "integer"
+        },
+        "revisions": {
+          "type": "json"
+        },
+        "routed_to_assessment": {
+          "type": "integer"
+        },
+        "tools": {
+          "type": "json"
+        }
+      }
+    },
+    "signature": {
+      "effect": "pure",
+      "in": {
+        "name": "fixture.security.sarif-findings.request",
+        "version": 1
+      },
+      "out": {
+        "name": "fixture.security.sarif-findings.result",
+        "version": 1
+      }
+    }
+  },
+  "security.workflow-facts": {
+    "input": {
+      "allow_extra": false,
+      "fields": {
+        "coverage": {
+          "type": "json"
+        },
+        "held": {
+          "type": "json"
+        },
+        "releases": {
+          "type": "json"
+        },
+        "snapshot": {
+          "type": "json"
+        },
+        "targets": {
+          "type": "json"
+        }
+      }
+    },
+    "output": {
+      "allow_extra": false,
+      "fields": {
+        "added": {
+          "type": "integer"
+        },
+        "changed": {
+          "type": "integer"
+        },
+        "items": {
+          "type": "json"
+        },
+        "jobs": {
+          "type": "integer"
+        },
+        "locator": {
+          "type": "string"
+        },
+        "restated": {
+          "type": "integer"
+        },
+        "retired": {
+          "type": "integer"
+        },
+        "revised": {
+          "type": "integer"
+        },
+        "revision": {
+          "type": "string"
+        },
+        "scope": {
+          "type": "string"
+        },
+        "unparsed": {
+          "type": "json"
+        },
+        "workflows": {
+          "type": "integer"
+        }
+      }
+    },
+    "signature": {
+      "effect": "pure",
+      "in": {
+        "name": "fixture.security.workflow-facts.request",
+        "version": 1
+      },
+      "out": {
+        "name": "fixture.security.workflow-facts.result",
+        "version": 1
+      }
+    }
+  },
+  "web.fetch": {
+    "input": {
+      "allow_extra": false,
+      "fields": {
+        "credential_header": {
+          "default": "authorization",
+          "optional": true,
+          "type": "string"
+        },
+        "credential_ref": {
+          "optional": true,
+          "type": "string"
+        },
+        "expected_format": {
+          "default": "auto",
+          "enum": [
+            "auto",
+            "html",
+            "json",
+            "csv",
+            "text",
+            "bytes"
+          ],
+          "optional": true,
+          "type": "string"
+        },
+        "extract": {
+          "default": true,
+          "optional": true,
+          "type": "bool"
+        },
+        "logical_source": {
+          "default": "web.response",
+          "optional": true,
+          "type": "string"
+        },
+        "max_bytes": {
+          "default": 262144,
+          "optional": true,
+          "type": "integer"
+        },
+        "paced": {
+          "default": false,
+          "optional": true,
+          "type": "bool"
+        },
+        "render": {
+          "default": false,
+          "optional": true,
+          "type": "bool"
+        },
+        "url": {
+          "type": "string"
+        }
+      }
+    },
+    "signature": {
+      "effect": "external_read",
+      "in": {
+        "name": "fixture.web.fetch.request",
+        "version": 1
+      },
+      "out": {
+        "name": "fixture.web.fetch.result",
+        "version": 1
+      }
+    },
+    "source_view": {
+      "allow_extra": false,
+      "fields": {
+        "derived": {
+          "json_schema": {
+            "additionalProperties": false,
+            "properties": {
+              "assembled_document": {
+                "additionalProperties": false,
+                "properties": {
+                  "assembly": {
+                    "type": "string"
+                  },
+                  "byte_count": {
+                    "type": "integer"
+                  },
+                  "engine": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "sha256": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "assembly",
+                  "engine",
+                  "byte_count",
+                  "sha256"
+                ],
+                "type": "object"
+              },
+              "engine": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "kind": {
+                "type": "string"
+              },
+              "metadata": {
+                "type": "object"
+              },
+              "text": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "kind",
+              "engine",
+              "text",
+              "metadata"
+            ],
+            "type": "object"
+          },
+          "type": "json"
+        },
+        "input_bucket": {
+          "type": "string"
+        },
+        "retrieved": {
+          "json_schema": {
+            "additionalProperties": false,
+            "properties": {
+              "body_base64": {
+                "type": "string"
+              },
+              "body_sha256": {
+                "type": "string"
+              },
+              "byte_count": {
+                "type": "integer"
+              },
+              "final_url": {
+                "type": "string"
+              },
+              "headers": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              "renderer": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "source": {
+                "enum": [
+                  "packaged-recording",
+                  "network"
+                ],
+                "type": "string"
+              },
+              "status_code": {
+                "type": "integer"
+              },
+              "url": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "url",
+              "final_url",
+              "status_code",
+              "headers",
+              "byte_count",
+              "body_sha256",
+              "body_base64",
+              "source",
+              "renderer"
+            ],
+            "type": "object"
+          },
+          "type": "json"
+        }
+      }
+    }
+  },
+  "workspace.file": {
+    "input": {
+      "allow_extra": false,
+      "fields": {
+        "byte_length": {
+          "json_schema": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": "json"
+        },
+        "bytes": {
+          "type": "string"
+        },
+        "bytes_digest": {
+          "json_schema": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "type": "json"
+        },
+        "commitment_digest": {
+          "json_schema": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "type": "json"
+        },
+        "content_encoding": {
+          "enum": [
+            "base64"
+          ],
+          "type": "string"
+        },
+        "logical_source": {
+          "type": "string"
+        }
+      }
+    },
+    "output": {
+      "allow_extra": false,
+      "fields": {
+        "content": {
+          "json_schema": {
+            "oneOf": [
+              {
+                "properties": {
+                  "bom": {
+                    "type": "boolean"
+                  },
+                  "character_count": {
+                    "type": "integer"
+                  },
+                  "encoding": {
+                    "const": "utf-8"
+                  },
+                  "kind": {
+                    "const": "text"
+                  },
+                  "line_count": {
+                    "type": "integer"
+                  },
+                  "lines": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "newline": {
+                    "enum": [
+                      "lf",
+                      "crlf",
+                      "cr",
+                      "mixed",
+                      "none"
+                    ],
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string"
+                  },
+                  "trailing_newline": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "encoding",
+                  "bom",
+                  "newline",
+                  "trailing_newline",
+                  "line_count",
+                  "character_count",
+                  "text",
+                  "lines"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "byte_length": {
+                    "type": "integer"
+                  },
+                  "bytes": {
+                    "type": "string"
+                  },
+                  "encoding": {
+                    "const": "base64"
+                  },
+                  "kind": {
+                    "const": "bytes"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "encoding",
+                  "byte_length",
+                  "bytes"
+                ],
+                "type": "object"
+              }
+            ],
+            "type": "object"
+          },
+          "type": "json"
+        },
+        "input_bucket": {
+          "type": "string"
+        },
+        "source": {
+          "json_schema": {
+            "additionalProperties": true,
+            "properties": {
+              "byte_length": {
+                "type": "integer"
+              },
+              "bytes_digest": {
+                "type": "string"
+              },
+              "commitment_digest": {
+                "type": "string"
+              },
+              "logical_source": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "logical_source",
+              "commitment_digest",
+              "bytes_digest",
+              "byte_length"
+            ],
+            "type": "object"
+          },
+          "type": "json"
+        }
+      }
+    },
+    "signature": {
+      "effect": "external_read",
+      "in": {
+        "name": "fixture.workspace.file.request",
+        "version": 1
+      },
+      "out": {
+        "name": "fixture.workspace.file.result",
+        "version": 1
+      }
+    }
+  }
+}

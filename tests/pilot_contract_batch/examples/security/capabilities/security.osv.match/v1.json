@@ -1,0 +1,17 @@
+{
+  "artifact_format": "cruxible-capability-v1",
+  "description": "Matches this run's OSV responses to the components asked about and returns one document of (component, CVE) pairs, each with its advisory and the versions OSV lists as fixed. A component OSV did not answer in full is not in queried, is listed in not_checked with why, and is never clean.",
+  "effect": "pure",
+  "in": {
+    "digest": "sha256:d14d5ac608aa69b6b2a6eb1cbec4fa558ea398b19e415759d4ce6b09a5164a97",
+    "name": "security.osv.match.request",
+    "version": 1
+  },
+  "name": "security.osv.match",
+  "out": {
+    "digest": "sha256:6d24c0ef182a2a6bdc9dd2d5c5de3d27b86b4841b34b408d52e8566b39a690b4",
+    "name": "security.osv.match.result",
+    "version": 1
+  },
+  "version": 1
+}

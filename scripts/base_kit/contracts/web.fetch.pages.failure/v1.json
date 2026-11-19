@@ -1,0 +1,61 @@
+{
+  "artifact_format": "cruxible-contract-v1",
+  "description": "One page of a web.fetch.pages call that has no Capture: its 0-based index and the page count, its built URL and request digest, whether it was refused or failed, the refusal code or error kind, the message, and the origin's status when it answered outside 2xx.",
+  "fields": {
+    "code": {
+      "type": {
+        "kind": "string",
+        "min_len": 1
+      }
+    },
+    "message": {
+      "type": {
+        "kind": "string"
+      }
+    },
+    "outcome": {
+      "type": {
+        "kind": "enum",
+        "members": [
+          "failed",
+          "refused"
+        ]
+      }
+    },
+    "page_count": {
+      "type": {
+        "kind": "int",
+        "max": 64,
+        "min": 1
+      }
+    },
+    "page_index": {
+      "type": {
+        "kind": "int",
+        "max": 63,
+        "min": 0
+      }
+    },
+    "request_digest": {
+      "type": {
+        "kind": "string",
+        "pattern": "^sha256:[0-9a-f]{64}$"
+      }
+    },
+    "status_code": {
+      "optional": true,
+      "type": {
+        "kind": "int",
+        "max": 599,
+        "min": 100
+      }
+    },
+    "url": {
+      "type": {
+        "kind": "string"
+      }
+    }
+  },
+  "name": "web.fetch.pages.failure",
+  "version": 1
+}

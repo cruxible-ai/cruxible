@@ -1,0 +1,17 @@
+{
+  "artifact_format": "cruxible-capability-v1",
+  "description": "Reads every file a glob matches in an authorized workspace and returns their exact bytes as a list of Captures, one per file, sorted by name. More matches than max_files refuses the read before any file is read; a file that fails to read is left out and the list is marked incomplete. Every instance serves it: Cruxible reads the files itself, with no provider to install or bind.",
+  "effect": "pure",
+  "in": {
+    "digest": "sha256:d8df103fa8bfcfe093ce837f52a232b4cfacebd0306b703c53948291a512058e",
+    "name": "workspace.files.request",
+    "version": 1
+  },
+  "name": "workspace.files",
+  "out": {
+    "digest": "sha256:94a02051ca920df020b187f3c1c297a803fe312b944bdbc23e533835a5781531",
+    "name": "workspace.files.result",
+    "version": 1
+  },
+  "version": 1
+}

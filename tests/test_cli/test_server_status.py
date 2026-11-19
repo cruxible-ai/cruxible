@@ -18,11 +18,12 @@ from click.testing import CliRunner
 from fastapi.testclient import TestClient
 
 from cruxible_client import CruxibleClient, contracts
+from cruxible_client.authoring.sdk_types import IncompatibleDaemonVersion
 from cruxible_client.errors import ServerUnreachableError
 from cruxible_core.cli.main import cli
 from cruxible_core.mcp.handlers import reset_client_cache
 from cruxible_core.mcp.permissions import reset_permissions
-from cruxible_core.runtime.instance_manager import get_manager
+from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.app import create_app
 from cruxible_core.server.credentials import reset_runtime_credential_store
 from cruxible_core.server.registry import reset_registry
@@ -39,7 +40,11 @@ def cli_context_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
 
 
 def _patch_client(monkeypatch: pytest.MonkeyPatch, client: object) -> None:
-    monkeypatch.setattr("cruxible_core.cli.commands.server._get_client", lambda: client)
+    # Mirrors _get_lifecycle_client: the command passes its --state-root (or None).
+    def lifecycle_client(state_root: Path | None = None) -> object:
+        return client
+
+    monkeypatch.setattr("cruxible_core.cli.commands.server._get_client", lifecycle_client)
 
 
 def test_status_requires_server_mode(monkeypatch, runner: CliRunner) -> None:
@@ -63,6 +68,88 @@ def test_status_down_daemon_errors_clearly(monkeypatch, runner: CliRunner) -> No
     assert result.exit_code == 1
     assert "could not reach Cruxible server" in result.output
     assert "Connection refused" in result.output
+    assert "Daemon reachable; credential missing" not in result.output
+
+
+@pytest.mark.parametrize(
+    "command",
+    (
+        ("--instance-id", "inst_mismatch", "get", "project.work_item/wi-42"),
+        (
+            "--instance-id",
+            "inst_mismatch",
+            "proposal",
+            "activate",
+            "sha256:" + "1" * 64,
+        ),
+        ("host", "show", "inst_mismatch"),
+    ),
+)
+def test_cli_renders_daemon_contract_mismatch(
+    command: tuple[str, ...],
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+) -> None:
+    daemon_digest = "sha256:" + "9" * 64
+    monkeypatch.setattr(
+        CruxibleClient,
+        "_version_info",
+        lambda _self: ("9.9.9", daemon_digest),
+    )
+
+    result = runner.invoke(cli, ["--server-url", "http://daemon.invalid", *command])
+
+    assert result.exit_code == 1
+    assert result.exception is not None
+    assert not isinstance(result.exception, IncompatibleDaemonVersion)
+    assert "cruxible.sdk.daemon_version_incompatible" in result.stderr
+    assert "client_version=" in result.stderr
+    assert "daemon_version=9.9.9" in result.stderr
+    assert "client_snapshot_digest=sha256:" in result.stderr
+    assert f"daemon_snapshot_digest={daemon_digest}" in result.stderr
+    assert "Repair: upgrade the client or daemon" in result.stderr
+
+
+def test_status_reachable_daemon_missing_credential_names_repair(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+) -> None:
+    """A live auth-enabled daemon identifies the missing client credential."""
+    monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(tmp_path / "server-state"))
+    monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
+    monkeypatch.setenv("CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET", "bootstrap-secret")
+    reset_permissions()
+    reset_registry()
+    reset_runtime_credential_store()
+    reset_client_cache()
+    get_playbill_manager().clear()
+
+    try:
+        with TestClient(create_app()) as transport:
+            client = CruxibleClient(base_url="http://cruxible-daemon")
+            client._client = transport
+            _patch_client(monkeypatch, client)
+            result = runner.invoke(
+                cli,
+                ["--server-url", "http://cruxible-daemon", "server", "status"],
+            )
+    finally:
+        get_playbill_manager().clear()
+        reset_client_cache()
+        reset_runtime_credential_store()
+        reset_registry()
+        reset_permissions()
+
+    assert result.exit_code == 1
+    assert "Error: Daemon reachable; credential missing." in result.output
+    assert "AuthenticationError" not in result.output
+    # The CLI has no bearer-token flag; the refusal must not name one.
+    assert "--server-bearer-token" not in result.output
+    assert "CRUXIBLE_SERVER_BEARER_TOKEN" in result.output
+    assert "bootstrap-secret file" in result.output
+    assert "cruxible server start --auth --bootstrap-secret-file PATH" in result.output
+    assert "could not reach Cruxible server" not in result.output
 
 
 def test_status_reports_daemon_metadata(monkeypatch, runner: CliRunner) -> None:
@@ -70,11 +157,14 @@ def test_status_reports_daemon_metadata(monkeypatch, runner: CliRunner) -> None:
         def server_info(self) -> contracts.ServerInfoResult:
             return contracts.ServerInfoResult(
                 server_required=False,
-                state_dir="/srv/state",
+                state_root="/srv/state",
                 version="0.2.0",
                 instance_count=3,
                 auth_enabled=True,
                 auth_required=True,
+                provider_lane=contracts.ProviderLaneStatus(
+                    state="available", code=None, detail=None
+                ),
             )
 
     _patch_client(monkeypatch, StubClient())
@@ -83,10 +173,19 @@ def test_status_reports_daemon_metadata(monkeypatch, runner: CliRunner) -> None:
     assert result.exit_code == 0, result.output
     assert "Daemon: reachable (http://server)" in result.output
     assert "Version: 0.2.0" in result.output
-    assert "State dir: /srv/state" in result.output
+    assert "State root: /srv/state" in result.output
     assert "Instances: 3" in result.output
+    assert "Server required: no" in result.output
     assert "Auth enabled: yes" in result.output
     assert "Auth required: yes" in result.output
+    assert "Provider lane: available" in result.output
+
+
+def test_server_info_is_merged_into_status(runner: CliRunner) -> None:
+    result = runner.invoke(cli, ["server", "info"])
+
+    assert result.exit_code == 2
+    assert "No such command 'info'" in result.output
 
 
 def test_status_json_includes_transport(monkeypatch, runner: CliRunner) -> None:
@@ -94,11 +193,14 @@ def test_status_json_includes_transport(monkeypatch, runner: CliRunner) -> None:
         def server_info(self) -> contracts.ServerInfoResult:
             return contracts.ServerInfoResult(
                 server_required=False,
-                state_dir="/srv/state",
+                state_root="/srv/state",
                 version="0.2.0",
                 instance_count=1,
                 auth_enabled=False,
                 auth_required=False,
+                provider_lane=contracts.ProviderLaneStatus(
+                    state="available", code=None, detail=None
+                ),
             )
 
     _patch_client(monkeypatch, StubClient())
@@ -109,6 +211,40 @@ def test_status_json_includes_transport(monkeypatch, runner: CliRunner) -> None:
     assert payload["version"] == "0.2.0"
     assert payload["instance_count"] == 1
     assert payload["transport"] == "http://server"
+    assert payload["provider_lane"] == {
+        "tag": "cruxible-provider-lane-status-v1",
+        "state": "available",
+        "code": None,
+        "detail": None,
+        # Core registers no isolated executor, so an operator reading this lane
+        # can see that a hosted profile naming a backend is naming nothing.
+        "isolated_executors": [],
+    }
+
+
+def test_status_reports_typed_provider_lane_degradation(monkeypatch, runner: CliRunner) -> None:
+    class StubClient:
+        def server_info(self) -> contracts.ServerInfoResult:
+            return contracts.ServerInfoResult(
+                server_required=False,
+                state_root="/srv/state",
+                version="0.2.0",
+                instance_count=1,
+                auth_enabled=False,
+                auth_required=False,
+                provider_lane=contracts.ProviderLaneStatus(
+                    state="unavailable",
+                    code="provider_runtime_recovery_failed",
+                    detail="journal recovery failed",
+                ),
+            )
+
+    _patch_client(monkeypatch, StubClient())
+    result = runner.invoke(cli, ["--server-url", "http://server", "server", "status"])
+
+    assert result.exit_code == 0, result.output
+    assert "Provider lane: unavailable" in result.output
+    assert "provider_runtime_recovery_failed: journal recovery failed" in result.output
 
 
 @pytest.fixture
@@ -122,7 +258,7 @@ def ephemeral_daemon_client(
     transport is a FastAPI TestClient over create_app(), so `server status`
     exercises the real `/api/v1/server/info` route end to end.
     """
-    monkeypatch.setenv("CRUXIBLE_SERVER_STATE_DIR", str(tmp_path / "server-state"))
+    monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(tmp_path / "server-state"))
     monkeypatch.delenv("CRUXIBLE_SERVER_AUTH", raising=False)
     monkeypatch.delenv("CRUXIBLE_MODE", raising=False)
     monkeypatch.delenv("CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET", raising=False)
@@ -130,7 +266,7 @@ def ephemeral_daemon_client(
     reset_registry()
     reset_runtime_credential_store()
     reset_client_cache()
-    get_manager().clear()
+    get_playbill_manager().clear()
 
     test_client = TestClient(create_app())
     client = CruxibleClient(base_url="http://cruxible-daemon")
@@ -139,7 +275,7 @@ def ephemeral_daemon_client(
         yield client
     finally:
         test_client.close()
-        get_manager().clear()
+        get_playbill_manager().clear()
 
 
 def test_status_against_ephemeral_daemon_reports_live_fields(
@@ -158,3 +294,65 @@ def test_status_against_ephemeral_daemon_reports_live_fields(
     assert payload["version"] == __version__
     assert payload["instance_count"] == 0
     assert payload["transport"] == "http://cruxible-daemon"
+
+
+def test_status_answers_an_instance_scoped_token_with_its_own_host(
+    monkeypatch, runner: CliRunner
+) -> None:
+    """A pure read must not send an instance admin hunting for the bootstrap secret."""
+    from cruxible_client.errors import DaemonOperationScopeError
+
+    coordinate = contracts.AcceptedCoordinate(
+        git_oid="1" * 40,
+        semantic_root="sha256:" + "2" * 64,
+        generation_root="sha256:" + "3" * 64,
+        compiler_digest="sha256:" + "4" * 64,
+    )
+
+    class ScopedClient:
+        def server_info(self) -> contracts.ServerInfoResult:
+            raise DaemonOperationScopeError("cruxible_server_info", "inst_scoped")
+
+        def version(self) -> str:
+            return "0.5.1"
+
+        def show_host(self, instance_id: str) -> contracts.HostInspection:
+            assert instance_id == "inst_scoped"
+            return contracts.HostInspection(
+                instance_id=instance_id,
+                managed_root=None,
+                workspace_root=None,
+                compatibility="writable",
+                writable=True,
+            )
+
+        def whoami(self, instance_id: str) -> contracts.WhoAmI:
+            assert instance_id == "inst_scoped"
+            return contracts.WhoAmI(
+                actor_id="agent",
+                credential_label="agent",
+                actor_id_source="runtime_credential",
+                authenticated=True,
+                credential_permission_mode="admin",
+                principal_registration_status="active",
+                active_principal_ids=["agent"],
+                coordinate=coordinate,
+                can_author=True,
+                authoring_refusal=None,
+            )
+
+    _patch_client(monkeypatch, ScopedClient())
+    monkeypatch.setattr("cruxible_core.cli.commands.server._get_checked_client", ScopedClient)
+    text = runner.invoke(cli, ["--server-url", "http://server", "server", "status"])
+    assert text.exit_code == 0, text.output
+    assert "Scope: instance inst_scoped" in text.output
+    assert "Host inst_scoped: writable" in text.output
+    assert "Actor: agent (admin, principal active)" in text.output
+
+    as_json = runner.invoke(cli, ["--server-url", "http://server", "server", "status", "--json"])
+    assert as_json.exit_code == 0, as_json.output
+    payload = json.loads(as_json.output)
+    assert payload["scope"] == "instance"
+    assert payload["instance_id"] == "inst_scoped"
+    assert payload["host"]["compatibility"] == "writable"
+    assert payload["identity"]["actor_id"] == "agent"

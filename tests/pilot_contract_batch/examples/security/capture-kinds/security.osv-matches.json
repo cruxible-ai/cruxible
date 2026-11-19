@@ -1,0 +1,65 @@
+{
+  "decoding": {
+    "encoding": "identity",
+    "format": "json",
+    "limits": {
+      "decoded_bytes": 4194304,
+      "depth": 16,
+      "records": 100000
+    }
+  },
+  "layout": {
+    "header": {
+      "queried": {
+        "at": "/queried",
+        "type": "list<string{max_len: 256}>{max_items: 20000}"
+      }
+    },
+    "records": {
+      "affected": {
+        "at": "/affected/*",
+        "count_at": "/count",
+        "fields": {
+          "osv_id": {
+            "at": "osv_id"
+          }
+        },
+        "key": {
+          "cve_id": {
+            "at": "cve_id",
+            "type": "key_part<security.vulnerability:cve_id>"
+          },
+          "purl": {
+            "at": "purl",
+            "type": "key_part<security.component:purl>"
+          }
+        },
+        "row": {
+          "digest": "sha256:78e3bcd86138b59ec55cdac71ea154aaf3e26bebdaca1896679c46ba9b39bc35",
+          "name": "security.osv-affected",
+          "version": 1
+        }
+      },
+      "not_checked": {
+        "at": "/not_checked/*",
+        "fields": {
+          "reason": {
+            "at": "reason"
+          }
+        },
+        "key": {
+          "purl": {
+            "at": "purl",
+            "type": "key_part<security.component:purl>"
+          }
+        },
+        "row": {
+          "digest": "sha256:547d75c18258a54d5c6f5de344c905efbf3e81b265a920dfb557ddf3d00fc963",
+          "name": "security.osv-not-checked",
+          "version": 1
+        }
+      }
+    }
+  },
+  "name": "security.osv-matches"
+}

@@ -1,0 +1,11 @@
+{
+  "normalizer": {"normalizer": "none", "version": 1},
+  "about": "none@1 keeps every key value as it is (its ClaimType's canonical form still applies first).",
+  "cases": [
+    {"raw": "Django_Rest", "canonical": "Django_Rest"},
+    {"raw": "CVE-2024-1234", "canonical": "CVE-2024-1234"},
+    {"raw": "pkg:PyPI/Foo", "canonical": "pkg:PyPI/Foo"},
+    {"raw": 7, "canonical": 7},
+    {"raw": true, "canonical": true}
+  ]
+}

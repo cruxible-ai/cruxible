@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import io
 import json
 import os
@@ -14,24 +15,27 @@ import structlog
 from fastapi import Request
 from fastapi.testclient import TestClient
 
-from cruxible_core.mcp.handlers import reset_client_cache
+from cruxible_client.contracts.documents import (
+    DocumentAuthority,
+    DocumentLifecycle,
+    DocumentShell,
+)
+from cruxible_core.governance.keys import generate_client_principal_key
 from cruxible_core.mcp.permissions import reset_permissions
-from cruxible_core.runtime.instance_manager import get_manager
 from cruxible_core.runtime.permissions import PermissionMode
+from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server import request_logging as request_logging_module
 from cruxible_core.server.app import create_app
 from cruxible_core.server.credentials import (
     get_runtime_credential_store,
     reset_runtime_credential_store,
 )
-from cruxible_core.server.registry import reset_registry
+from cruxible_core.server.registry import get_registry, reset_registry
 from cruxible_core.server.request_logging import (
     _RotatingFileLogSink,
     configure_request_logging,
     log_runtime_request,
 )
-from tests.support.workflow_helpers import write_placeholder_kit_lock
-from tests.test_cli.conftest import CAR_PARTS_YAML
 
 
 @pytest.fixture
@@ -59,15 +63,15 @@ def request_log_buffer() -> io.StringIO:
 
 @pytest.fixture
 def app_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
-    monkeypatch.setenv("CRUXIBLE_SERVER_STATE_DIR", str(tmp_path / "server-state"))
+    state = tmp_path / "server-state"
+    monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(state))
     monkeypatch.delenv("CRUXIBLE_SERVER_AUTH", raising=False)
     monkeypatch.delenv("CRUXIBLE_SERVER_TOKEN", raising=False)
     monkeypatch.delenv("CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET", raising=False)
     reset_permissions()
     reset_registry()
     reset_runtime_credential_store()
-    reset_client_cache()
-    get_manager().clear()
+    get_playbill_manager().clear()
     return TestClient(create_app())
 
 
@@ -87,14 +91,12 @@ def _clear_buffer(buffer: io.StringIO) -> None:
     buffer.truncate(0)
 
 
-def _init_instance(client: TestClient, root: Path) -> str:
-    root.mkdir()
-    (root / "config.yaml").write_text(CAR_PARTS_YAML)
+def _create_host(client: TestClient, instance_id: str) -> str:
     response = client.post(
-        "/api/v1/instances",
-        json={"root_dir": str(root), "config_yaml": CAR_PARTS_YAML},
+        "/api/v1/runtime/instances",
+        json={"instance_id": instance_id},
     )
-    assert response.status_code == 200
+    assert response.status_code == 200, response.text
     return str(response.json()["instance_id"])
 
 
@@ -104,62 +106,47 @@ def _runtime_credential_headers(
     instance_id: str,
     permission_mode: PermissionMode,
 ) -> tuple[dict[str, str], str]:
+    label = f"{permission_mode.name.lower()}_credential"
     created = get_runtime_credential_store().create_credential(
         instance_id=instance_id,
-        label=f"{permission_mode.name.lower()} credential",
+        label=label,
         permission_mode=permission_mode,
         created_by="test",
+        principal_id=label,
     )
     monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
     monkeypatch.delenv("CRUXIBLE_SERVER_TOKEN", raising=False)
     return {"Authorization": f"Bearer {created.token}"}, created.record.credential_id
 
 
-def _write_standalone_kit_manifest(kit_dir: Path, kit_id: str) -> None:
-    (kit_dir / "cruxible-kit.yaml").write_text(
-        "\n".join(
-            [
-                "schema_version: cruxible.kit.v1",
-                f"kit_id: {kit_id}",
-                "version: 0.2.0",
-                "role: standalone",
-                "entry_config: config.yaml",
-                "provider_paths: []",
-                "copy_paths: []",
-                "requires_extras: []",
-            ]
-        )
-        + "\n"
-    )
-    write_placeholder_kit_lock(kit_dir)
-
-
 def test_successful_runtime_request_logs_principal_and_instance(
     app_client: TestClient,
-    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     request_log_buffer: io.StringIO,
 ) -> None:
-    instance_id = _init_instance(app_client, tmp_path / "project")
+    instance_id = _create_host(app_client, "inst_request_log_success")
     headers, credential_id = _runtime_credential_headers(
         monkeypatch,
         instance_id=instance_id,
-        permission_mode=PermissionMode.READ_ONLY,
+        permission_mode=PermissionMode.ADMIN,
     )
     _clear_buffer(request_log_buffer)
 
-    response = app_client.get(f"/api/v1/{instance_id}/schema", headers=headers)
+    response = app_client.get(
+        f"/api/v1/{instance_id}/runtime/credentials",
+        headers=headers,
+    )
 
     assert response.status_code == 200
     event = _runtime_request_events(request_log_buffer)[-1]
     assert event["event"] == "runtime_request"
     assert event["method"] == "GET"
-    assert event["route"] == "/api/v1/{instance_id}/schema"
+    assert event["route"] == "/api/v1/{instance_id}/runtime/credentials"
     assert event["status"] == 200
-    assert event["principal_id"] == credential_id
-    assert event["principal_label"] == "read_only credential"
+    assert event["credential_id"] == credential_id
+    assert event["credential_label"] == "admin_credential"
     assert event["credential_type"] == "runtime_credential"
-    assert event["role"] == "read_only"
+    assert event["role"] == "admin"
     assert event["instance_scope"] == instance_id
     assert event["instance_id"] == instance_id
     assert "operation_id" not in event
@@ -167,11 +154,10 @@ def test_successful_runtime_request_logs_principal_and_instance(
 
 def test_denied_runtime_request_logs_status_and_error_type(
     app_client: TestClient,
-    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     request_log_buffer: io.StringIO,
 ) -> None:
-    instance_id = _init_instance(app_client, tmp_path / "project")
+    instance_id = _create_host(app_client, "inst_request_log_denied")
     headers, credential_id = _runtime_credential_headers(
         monkeypatch,
         instance_id=instance_id,
@@ -180,8 +166,8 @@ def test_denied_runtime_request_logs_status_and_error_type(
     _clear_buffer(request_log_buffer)
 
     response = app_client.post(
-        f"/api/v1/{instance_id}/entities",
-        json={"entities": []},
+        f"/api/v1/{instance_id}/bodies",
+        json={"content_base64": ""},
         headers=headers,
     )
 
@@ -189,113 +175,176 @@ def test_denied_runtime_request_logs_status_and_error_type(
     event = _runtime_request_events(request_log_buffer)[-1]
     assert event["event"] == "runtime_request"
     assert event["method"] == "POST"
-    assert event["route"] == "/api/v1/{instance_id}/entities"
+    assert event["route"] == "/api/v1/{instance_id}/bodies"
     assert event["status"] == 403
     assert event["error_type"] == "PermissionDeniedError"
-    assert event["principal_id"] == credential_id
-    assert event["principal_label"] == "read_only credential"
+    assert event["credential_id"] == credential_id
+    assert event["credential_label"] == "read_only_credential"
     assert event["credential_type"] == "runtime_credential"
     assert event["instance_id"] == instance_id
 
 
-def test_derived_actor_context_logs_same_principal_and_operation_as_provenance(
+def test_playbill_write_logs_credential_actor_and_operation(
     app_client: TestClient,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     request_log_buffer: io.StringIO,
 ) -> None:
-    instance_id = _init_instance(app_client, tmp_path / "project")
+    instance_id = _create_host(app_client, "inst_request_log_actor")
     headers, credential_id = _runtime_credential_headers(
         monkeypatch,
         instance_id=instance_id,
-        permission_mode=PermissionMode.GRAPH_WRITE,
+        permission_mode=PermissionMode.ADMIN,
     )
-    payload = {
-        "entities": [
-            {
-                "entity_type": "Vehicle",
-                "entity_id": "V-LOG-ACTOR",
-                "properties": {
-                    "vehicle_id": "V-LOG-ACTOR",
-                    "year": 2026,
-                    "make": "Honda",
-                    "model": "Civic",
-                },
-            },
-            {
-                "entity_type": "Part",
-                "entity_id": "BP-LOG-ACTOR",
-                "properties": {
-                    "part_number": "BP-LOG-ACTOR",
-                    "name": "Log Actor Pads",
-                    "category": "brakes",
-                },
-            },
-        ],
-        "relationships": [
-            {
-                "from_type": "Part",
-                "from_id": "BP-LOG-ACTOR",
-                "relationship_type": "fits",
-                "to_type": "Vehicle",
-                "to_id": "V-LOG-ACTOR",
-            }
-        ],
-    }
+    managed_root = Path(get_registry().get(instance_id).location)
+    owner = generate_client_principal_key(
+        tmp_path / "request-log-owner-custody",
+        principal_id="admin_credential",
+        kind="ordinary",
+        forbidden_roots=(managed_root,),
+    )
+    reviewer = generate_client_principal_key(
+        tmp_path / "request-log-reviewer-custody",
+        principal_id="reviewer",
+        kind="ordinary",
+        forbidden_roots=(managed_root,),
+    )
     _clear_buffer(request_log_buffer)
 
     response = app_client.post(
-        f"/api/v1/{instance_id}/direct-writes/batch",
-        json={"payload": payload},
+        f"/api/v1/{instance_id}/init",
+        json={
+            "principals": [
+                owner.principal.model_dump(mode="json"),
+                reviewer.principal.model_dump(mode="json"),
+            ],
+        },
         headers=headers,
     )
 
     assert response.status_code == 200
-    lookup = app_client.get(
-        f"/api/v1/{instance_id}/relationships/lookup",
-        params={
-            "from_type": "Part",
-            "from_id": "BP-LOG-ACTOR",
-            "relationship_type": "fits",
-            "to_type": "Vehicle",
-            "to_id": "V-LOG-ACTOR",
-        },
-        headers=headers,
-    )
-    assert lookup.status_code == 200
-    actor_context = lookup.json()["metadata"]["provenance"]["created_actor_context"]
-    event = _runtime_request_events(request_log_buffer)[0]
-    assert event["principal_id"] == credential_id
-    assert event["principal_label"] == actor_context["actor_id"]
-    assert event["operation_id"] == actor_context["operation_id"]
+    event = _runtime_request_events(request_log_buffer)[-1]
+    assert event["credential_id"] == credential_id
+    assert event["credential_label"] == "admin_credential"
+    assert event["principal_id"] == "admin_credential"
+    assert str(event["operation_id"]).startswith("op_")
 
 
-def test_bootstrap_secret_runtime_request_log_does_not_include_secret(
+def test_activation_receipt_and_request_log_name_the_credential_actor(
     app_client: TestClient,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     request_log_buffer: io.StringIO,
 ) -> None:
-    kit_dir = tmp_path / "standalone-kit"
-    kit_dir.mkdir()
-    (kit_dir / "config.yaml").write_text(CAR_PARTS_YAML)
-    _write_standalone_kit_manifest(kit_dir, "car-parts-hosted")
-    monkeypatch.setattr(
-        "cruxible_core.kits.get_kit_catalog",
-        lambda: {"car-parts-hosted": f"file://{kit_dir}"},
+    instance_id = _create_host(app_client, "inst_request_log_activation")
+    headers, credential_id = _runtime_credential_headers(
+        monkeypatch,
+        instance_id=instance_id,
+        permission_mode=PermissionMode.ADMIN,
     )
+    managed_root = Path(get_registry().get(instance_id).location)
+    owner = generate_client_principal_key(
+        tmp_path / "request-log-activation-owner",
+        principal_id="admin_credential",
+        kind="ordinary",
+        forbidden_roots=(managed_root,),
+    )
+    reviewer = generate_client_principal_key(
+        tmp_path / "request-log-activation-reviewer",
+        principal_id="reviewer",
+        kind="ordinary",
+        forbidden_roots=(managed_root,),
+    )
+    initialized = app_client.post(
+        f"/api/v1/{instance_id}/init",
+        json={
+            "principals": [
+                owner.principal.model_dump(mode="json"),
+                reviewer.principal.model_dump(mode="json"),
+            ],
+        },
+        headers=headers,
+    )
+    assert initialized.status_code == 200, initialized.text
+    stored = app_client.post(
+        f"/api/v1/{instance_id}/bodies",
+        json={"content_base64": base64.b64encode(b"activation actor\n").decode("ascii")},
+        headers=headers,
+    )
+    assert stored.status_code == 200, stored.text
+    shell = DocumentShell(
+        identity="document:activation-actor",
+        document_kind="design",
+        title="Activation actor",
+        media_type="text/plain",
+        body_digest=stored.json()["digest"],
+        authority=DocumentAuthority(
+            required_tier="graph_write",
+        ),
+        governance_scope=("project:playbill",),
+        lifecycle=DocumentLifecycle(revision=1),
+    )
+    proposed = app_client.post(
+        f"/api/v1/{instance_id}/documents/proposals",
+        json={
+            "shell": shell.model_dump(mode="json"),
+            "proposal_name": "activation-actor",
+            # This test walks the explicit approve and activate lifecycle.
+            "accept": "never",
+        },
+        headers=headers,
+    )
+    assert proposed.status_code == 200, proposed.text
+    proposal_id = proposed.json()["proposal"]["admission"]["proposal_id"]
+
+    _clear_buffer(request_log_buffer)
+    activated = app_client.post(
+        f"/api/v1/{instance_id}/proposals/{proposal_id}/activate",
+        headers=headers,
+    )
+
+    assert activated.status_code == 200, activated.text
+    assert activated.json()["activated_by"] == "admin_credential"
+    event = _runtime_request_events(request_log_buffer)[-1]
+    assert event["route"] == "/api/v1/{instance_id}/proposals/{proposal_id}/activate"
+    assert event["credential_id"] == credential_id
+    assert event["credential_label"] == "admin_credential"
+    assert str(event["operation_id"]).startswith("op_")
+
+
+def test_empty_playbill_init_reaches_the_typed_bootstrap_refusal(
+    app_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance_id = _create_host(app_client, "inst_empty_principals")
+    headers, _credential_id = _runtime_credential_headers(
+        monkeypatch,
+        instance_id=instance_id,
+        permission_mode=PermissionMode.ADMIN,
+    )
+
+    response = app_client.post(
+        f"/api/v1/{instance_id}/init",
+        json={"principals": []},
+        headers=headers,
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error_type"] == "BootstrapError"
+
+
+def test_bootstrap_secret_runtime_request_log_does_not_include_secret(
+    app_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    request_log_buffer: io.StringIO,
+) -> None:
     monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
     monkeypatch.setenv("CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET", "bootstrap-secret")
     _clear_buffer(request_log_buffer)
 
     response = app_client.post(
         "/api/v1/runtime/instances",
-        json={
-            "instance_id": "inst_requestlog",
-            "source_type": "kit",
-            "kit_refs": ["car-parts-hosted"],
-            "bare": True,
-        },
+        json={"instance_id": "inst_requestlog_bootstrap"},
         headers={"Authorization": "Bearer bootstrap-secret"},
     )
 
@@ -305,8 +354,8 @@ def test_bootstrap_secret_runtime_request_log_does_not_include_secret(
     event = _runtime_request_events(request_log_buffer)[-1]
     assert event["route"] == "/api/v1/runtime/instances"
     assert event["status"] == 200
-    assert event["principal_id"] == "runtime_bootstrap"
-    assert event["principal_label"] == "runtime_bootstrap"
+    assert event["credential_id"] == "runtime_bootstrap"
+    assert event["credential_label"] == "runtime_bootstrap"
     assert event["credential_type"] == "runtime_bootstrap"
 
 
@@ -334,7 +383,7 @@ def test_configure_request_logging_writes_to_default_durable_log(
     request_log_buffer: io.StringIO,
 ) -> None:
     state_dir = tmp_path / "server-state"
-    monkeypatch.setenv("CRUXIBLE_SERVER_STATE_DIR", str(state_dir))
+    monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(state_dir))
     monkeypatch.delenv("CRUXIBLE_SERVER_LOG_PATH", raising=False)
 
     log_path = configure_request_logging()
@@ -344,13 +393,14 @@ def test_configure_request_logging_writes_to_default_durable_log(
         auth_context=None,
     )
 
-    assert log_path == (state_dir / "logs" / "server.log").resolve()
+    assert log_path == (state_dir / "daemon" / "logs" / "server.log").resolve()
     payload = json.loads(log_path.read_text().splitlines()[-1])
     assert payload["event"] == "runtime_request"
     assert payload["method"] == "GET"
     assert payload["route"] == "/api/v1/test-log"
     assert payload["status"] == 204
-    assert payload["principal_id"] == "anonymous"
+    assert payload["credential_id"] == "anonymous"
+    assert payload["principal_id"] is None
 
 
 def test_rotating_file_log_sink_rotates_when_limit_is_exceeded(tmp_path: Path) -> None:
@@ -437,6 +487,10 @@ def test_log_runtime_request_swallows_broken_pipe_from_dead_sink(
             pass
 
 
-def test_configure_request_logging_is_callable() -> None:
-    """configure_request_logging stays importable and runs without error."""
+def test_configure_request_logging_is_callable(request_log_buffer: io.StringIO) -> None:
+    """configure_request_logging stays importable and runs without error.
+
+    ``request_log_buffer`` restores the default renderer on teardown, so the
+    daemon's JSON configuration does not leak into later test files.
+    """
     configure_request_logging()
