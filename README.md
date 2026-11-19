@@ -14,32 +14,83 @@ they’ve learned through a typed, code-like interface, so they model the world
 rather than solely write notes about it. Their observations and judgments
 become building blocks that later sessions reuse instead of re-deriving.
 
+It runs unattended as a local daemon. Pipelines you approve re-check sources
+on a schedule, and when the evidence behind a fact changes, the fact is
+flagged instead of going quietly stale. Agents reach it through a Python SDK,
+an MCP server or the CLI; all three talk to the same daemon, so they share one
+record.
+
 Runs on Linux (x86-64) and macOS (Apple silicon) with Python 3.11+; on
 Windows, use WSL2. [Install and start](#install-and-start).
 
-<!-- TODO(0.5.0): the examples below are from one run on the integration build
-(a shop's delivery promises; 2026-11-18, outputs and definitions in
-wt-i/promise), trimmed: ids shortened; sequence numbers, generation ids and
-times of day cut; the query's flags column cut. The run wrote the evidence as
-a dict, not FileEvidence. Re-run them on the release build. -->
+## A short example
 
-An agent recording a judgment with the Python SDK:
+A small shop promises customers delivery dates. Whether a promise is safe
+depends on when the supplier restocks, and the supplier's notice page changes
+without warning. A pipeline the shop approved re-reads that page on a
+schedule and keeps each reading. An agent reads the latest one and records
+its judgment with the Python SDK:
 
 ```python
-w = cx.world()                        # typed handles for this shop's own vocabulary
+w = cx.world()                       # typed handles for this shop's own vocabulary
+order = w.shop.order["ord-1042"]
 
-# what a scheduled check last read from the supplier
-widget = w.shop.item["blue-widget"]
-stock = widget.in_stock[0]            # 40
-
-# the judgment: promise Friday delivery, citing the stock line it rests on
-w.shop.order.define("ord-1042", item=widget, needed=12).set(
-    promised_for="2026-11-20",
+# the judgment: promise Friday delivery, citing the reading it rests on
+order.set(
     promise="open",
-    evidence=FileEvidence(file='supplier/stock.json#{"sku": "blue-widget", "in_stock": 40}'),
-).write(because=f"Friday delivery for order 1042: {stock.value} in stock, we need 12.")
-# -> a proposal; it takes effect when the reviewer approves it
+    promised_for="2026-11-20",
+    evidence=CaptureEvidence(capture="CAP-c01ffabbbb61"),   # the latest reading of the notice
+    because="Acme's notice confirms a restock of 200 for Thursday the 19th, "
+            "so we can promise Friday the 20th.",
+)
+# -> a proposal; a second agent reviews it before it counts
 ```
+
+A second agent reviews the proposal, and sees the supplier's words under the
+judgment that rests on them:
+
+```text
+$ cruxible proposal review sha256:e0518aa5...
+Why: Acme's notice confirms a restock of 200 for Thursday the 19th, so we can promise Friday the 20th.
+  set shop.order/ord-1042 promise: open  [CLM-3d57ae93...; verdict supported]
+    cites CAP-c01ffabbbb61 acme.notice
+      | {"restock": {"sku": "blue-widget", "quantity": 200, "date": "2026-11-19", "message": "Restock of 200 blue widgets confirmed for Thursday the 19th."}}
+```
+
+Then the supplier changes the page, and nobody at the shop has to notice. On
+its next run (every 20 seconds here) the pipeline reads the new page and
+records what it now says. Copying a fact from a source is the mechanical
+part, so it lands without review. Twelve seconds after the page changed, the
+promise that rested on the old date is back in front of an agent, through a
+saved query the shop wrote ([Lines and automation](docs/lines-and-automation.md)):
+
+```text
+$ cruxible get shop.item/blue-widget --detail history --field restock_expected
+restock_expected
+  by owner  changed  2026-11-19 -> 2026-11-27
+      reason: As the supplier's restock notice states.  (Procedure shop.notice-check, run RUN-8af69fc0...)
+  by owner  stated  2026-11-19
+      reason: As the supplier's restock notice states.  (Procedure shop.notice-check, run RUN-d2498007...)
+
+$ cruxible query --name shop.promises_at_risk
+subject              promised_for  restock_expected  sku
+shop.order/ord-1042  2026-11-20    2026-11-27        blue-widget
+```
+
+The session that picks this up doesn't start over. It reads why the promise
+was made and what the notice says now, and changes its mind on the record,
+citing the new reading:
+
+```text
+$ cruxible get shop.order/ord-1042 --detail history --field promise
+promise
+  by owner, approved by reviewer  changed  open -> withdrawn
+      reason: Acme's notice now says the restock moved to Friday the 27th, so Friday the 20th no longer holds. Customer told; new date when it lands.
+  by owner, approved by reviewer  stated  open
+      reason: Acme's notice confirms a restock of 200 for Thursday the 19th, so we can promise Friday the 20th.
+```
+
+## Why this beats notes alone
 
 Agents today have two places to put what they learn. Notes in markdown are
 easy to write and hold reasoning well, but they can only be searched, not
@@ -54,56 +105,13 @@ In [MemoryAgentBench](https://arxiv.org/abs/2507.05257), when a later
 statement contradicted an earlier one, the memory systems tested often failed
 to answer from the newer one.
 
-In Cruxible a fact keeps the reasoning it was recorded with:
-
-```text
-$ cruxible get shop.order/ord-1042 --detail history --field promise
-promise
-  proposed 2026-11-18 by owner, approved by reviewer  stated  open
-      reason: Friday delivery for order 1042: 40 in stock, we need 12.
-```
-
-And a later statement replaces the earlier one, while the history keeps both:
-
-```text
-$ cruxible get shop.item/blue-widget --detail history --field in_stock
-in_stock
-  proposed 2026-11-18 by owner  changed  40 -> 5
-      reason: As the supplier's stock feed says.  (Procedure shop.stock-check, run RUN-ab9c47be...)
-  proposed 2026-11-18 by owner  stated  40
-      reason: As the supplier's stock feed says.  (Procedure shop.stock-check, run RUN-c632bf87...)
-```
-
 Cruxible is designed to keep the strengths of both. Facts are typed and
 queryable like structured data, and types can grow as agents learn more
 about your domain. Each fact has one current value: a new one replaces it, and
-the earlier values are kept as history. Reasoning stays in prose, in your own pages, and facts cite
+the earlier values are kept as history, as the promise above shows. Reasoning stays in prose, in your own pages, and facts cite
 the passages they rest on. Your files, repos and services remain the source
 of truth: Cruxible points to them and keeps a snapshot only of the evidence a
 fact was drawn from, so every claim can be traced back.
-
-That stock level comes from a pipeline the shop approved, which re-reads the
-supplier's feed on a schedule. When what it reads no longer covers a promise,
-a saved query flags the order
-([Lines and automation](docs/lines-and-automation.md) shows how both are
-defined):
-
-```text
-$ cruxible line run shop.stock-check
-Counts: written 1 (settled 1, proposed 0); unchanged 0; refused 0; inbox 0
-
-$ cruxible query --name shop.promises_at_risk
-subject              in_stock  needed  promised_for  sku
-shop.order/ord-1042  5         12      2026-11-20    blue-widget
-```
-
-It runs unattended as a local daemon. Pipelines you approve re-check sources
-on a schedule, and when the evidence behind a fact changes, the fact is
-flagged instead of going quietly stale. Agents reach it through a Python SDK,
-an MCP server or the CLI; all three talk to the same daemon, so they share one
-record.
-
-## Why this beats notes alone
 
 - **Fresh, not silently stale.** Pipelines re-check facts on the schedule you
   set. When a source changes, the fact is updated or flagged, and a fact whose
@@ -112,10 +120,15 @@ record.
 - **Knowledge compounds.** A fact checked once is reused by every later
   session and every agent until its evidence moves; work goes where the world
   changed.
-- **Agents collaborate through one record.** Many agents and people share one
-  governed ledger instead of overwriting each other's notes. Every change is a
-  proposal; your approval policy decides what lands at once and what waits for
-  a second agent's review.
+- **Governed, not only shared.** Many agents and people work in one record
+  instead of overwriting each other's notes. Every change is a proposal,
+  checked against the rules you declared; your approval policy decides what
+  lands at once and what waits for a second agent's signed review, and what a
+  pipeline may write on its own is granted explicitly and expires.
+- **Every fact has its provenance.** What was concluded, from which evidence,
+  proposed by whom, approved by whom and when. Accepted state is a signed Git
+  ledger, each fact keeps its own history, and any earlier value can be read
+  back as it stood.
 - **Deterministic.** No LLM runs inside Cruxible. Agents and people propose
   and judge; Cruxible applies declared rules deterministically.
 
@@ -138,13 +151,6 @@ A kit is a ready-made domain. The security kit keeps a project's dependencies,
 their known vulnerabilities and your team's judgments about them current. One
 Runbook reads the SBOM and asks OSV, CISA KEV and EPSS; here on a deliberately
 vulnerable Django app with 32 components:
-
-<!-- TODO(0.5.0): from the upgrade run on the integration build (2026-11-18,
-wt-i/upgr/out/01, 02, 03, 11), trimmed: each Line's two output lines joined,
-run ids, "succeeded", zero counts and the sixth Line cut (in the rerun also
-the settled/proposed counts and Lines 5-6); ids shortened; the reason wrapped.
-Re-run on the release build, and add the console screenshots here (the state
-graph, and the judgment with what it rests on). -->
 
 ```text
 $ cruxible runbook run security.start
