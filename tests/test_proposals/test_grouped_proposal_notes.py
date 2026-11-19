@@ -50,6 +50,34 @@ def _approve(instance, owner, proposal):
     )
 
 
+def _drain_advisory_refresh(instance):
+    """Finish the background review-ref refresh that submit and approve queue.
+
+    That refresh is a projection repair: left running, it can land after a
+    simulated crash and complete the note before the test reads the refusal.
+    """
+    instance.settled_workspace_advertisement()
+
+
+def _crash_after_second_approval(instance, owner, monkeypatch):
+    first = _submit(instance, "first")
+    second = _submit(instance, "second", timestamp="2026-08-11T12:30:00.000001Z")
+    _approve(instance, owner, first)
+    _drain_advisory_refresh(instance)
+    oid = first.admission.candidate_commit_oid
+    old_note = instance.read_proposal_note("approval", oid)
+    with monkeypatch.context() as patch:
+
+        def crash(*_args, **_kwargs):
+            raise OSError("crash after durable approval")
+
+        patch.setattr(ProposalNoteIndex, "publish", crash)
+        with pytest.raises(OSError, match="crash after durable approval"):
+            _approve(instance, owner, second)
+    assert instance.read_proposal_note("approval", oid) == old_note
+    return first, oid
+
+
 def _expected(*proposals):
     return b"".join(
         proposal_evaluation_note(admission=p.admission, evaluation=p.evaluation)
@@ -131,6 +159,7 @@ def test_crash_after_evidence_before_note_reconciles_valid_subset_then_activates
 ):
     instance, owner = initialize_local(tmp_path)
     first = _submit(instance, "first")
+    _drain_advisory_refresh(instance)
     oid = first.admission.candidate_commit_oid
     old_note = instance.read_proposal_note("evaluation", oid)
     with monkeypatch.context() as patch:
@@ -231,20 +260,7 @@ def test_crash_after_second_shared_candidate_approval_repairs_nonempty_subset(
     tmp_path, monkeypatch
 ):
     instance, owner = initialize_local(tmp_path)
-    first = _submit(instance, "first")
-    second = _submit(instance, "second", timestamp="2026-08-11T12:30:00.000001Z")
-    _approve(instance, owner, first)
-    oid = first.admission.candidate_commit_oid
-    old_note = instance.read_proposal_note("approval", oid)
-    with monkeypatch.context() as patch:
-
-        def crash(*_args, **_kwargs):
-            raise OSError("crash after durable approval")
-
-        patch.setattr(ProposalNoteIndex, "publish", crash)
-        with pytest.raises(OSError, match="crash after durable approval"):
-            _approve(instance, owner, second)
-    assert instance.read_proposal_note("approval", oid) == old_note
+    first, oid = _crash_after_second_approval(instance, owner, monkeypatch)
     with pytest.raises(ProposalIntegrityError, match="note_disagrees_with_evidence"):
         service_activate_playbill_proposal(
             instance, proposal_id=first.admission.proposal_id, activated_by="owner"
@@ -255,6 +271,23 @@ def test_crash_after_second_shared_candidate_approval_repairs_nonempty_subset(
     ).note_bytes(oid)["approval"]
     assert instance.read_proposal_note("approval", oid) == expected
     assert len(json.loads(expected)) == 2
+    assert (
+        service_activate_playbill_proposal(
+            instance, proposal_id=first.admission.proposal_id, activated_by="owner"
+        ).status
+        == "accepted"
+    )
+
+
+def test_background_refresh_after_approval_crash_repairs_the_subset_note(tmp_path, monkeypatch):
+    # The advisory refresh a later write queues (and one already queued that
+    # runs late) repairs the incomplete note; strict activation then agrees.
+    instance, owner = initialize_local(tmp_path)
+    first, oid = _crash_after_second_approval(instance, owner, monkeypatch)
+    instance.advertise_workspace()
+    _drain_advisory_refresh(instance)
+    approvals = json.loads(instance.read_proposal_note("approval", oid))
+    assert len(approvals) == 2
     assert (
         service_activate_playbill_proposal(
             instance, proposal_id=first.admission.proposal_id, activated_by="owner"
