@@ -259,21 +259,30 @@ The [concepts guide](docs/concepts.md) walks through all of these in order.
 
 ## Documentation
 
-- [Quickstart](docs/quickstart.md) and the
-  [security walkthrough](docs/security-walkthrough.md)
-- [Concepts](docs/concepts.md) and [Architecture](docs/architecture.md)
-- [For AI agents](docs/for-ai-agents.md) and
-  [Building team knowledge](docs/building-team-knowledge.md)
-- [Asking questions](docs/asking-questions.md),
-  [Documents and notes](docs/documents-and-notes.md),
-  [Evidence and admission](docs/evidence-and-admission.md),
-  [Keeping knowledge current](docs/keeping-knowledge-current.md)
-- [Review and governance](docs/review-and-governance.md),
-  [Lines and automation](docs/lines-and-automation.md),
-  [Kits](docs/kits.md)
-- [CLI reference](docs/cli-reference.md), [MCP tools](docs/mcp-tools.md),
-  [Python SDK](packages/cruxible-client/README.md)
-- [Upgrading](docs/upgrading.md), [Data and network](docs/data-and-network.md)
+Pick a starting point based on what you're trying to do (or browse the
+[full index](docs/index.md)):
+
+| If you want to… | Start here |
+|---|---|
+| **Try Cruxible on a real repo in minutes** | [Quickstart](docs/quickstart.md) · [Security walkthrough](docs/security-walkthrough.md) (full outputs + reviewed judgments) |
+| **Understand the mental model and vocabulary** | [Concepts](docs/concepts.md) · [Architecture](docs/architecture.md) |
+| **Connect an AI agent (MCP, CLI, SDK, skills)** | [For AI agents](docs/for-ai-agents.md) · [Agent plugin](plugins/README.md) (`survey`, `adopt-kit`, `create-state`, `automate-state`, `review-state`) |
+| **Decide what to model as state vs. prose** | [Building team knowledge](docs/building-team-knowledge.md) (modeling habits and *Mistakes we made ourselves*) |
+| **Keep Markdown docs in sync with live state** | [Documents and notes](docs/documents-and-notes.md) (atomic note+Claim writes, review guidance, and self-updating **projection blocks**) |
+| **Require stronger evidence or track predictions** | [Evidence and admission](docs/evidence-and-admission.md) (admission rules, freshness, attestations, and **predictions**) |
+| **Query across relations or time-travel history** | [Asking questions](docs/asking-questions.md) (`--follow`, saved queries, `--at`, and grepping `.cruxible/floor/`) |
+| **Work drift queues and decide what to verify** | [Keeping knowledge current](docs/keeping-knowledge-current.md) (`next` repairs, duplicates, `audit` ranking, and none vs. unknown) |
+| **Build scheduled pipelines or custom providers** | [Lines and automation](docs/lines-and-automation.md) (Procedures, pinned providers, inbox posts, and earning `settle` mandates) |
+| **Lock down review, cosign, or propose-only agents** | [Review and governance](docs/review-and-governance.md) (approval policies, `governed_write` agents, and trust boundaries) |
+| **Evolve schemas or package reusable domains** | [Evolving your vocabulary](docs/evolving-your-vocabulary.md) (migrating Claims without losing history) · [Kits](docs/kits.md) |
+
+**Reference & operations:** [CLI reference](docs/cli-reference.md) ·
+[MCP tools](docs/mcp-tools.md) ·
+[Python SDK](packages/cruxible-client/README.md) ·
+[Isolated deployment](docs/isolated-deployment.md) ·
+[Upgrading](docs/upgrading.md) ·
+[Data and network](docs/data-and-network.md) ·
+[Hosted runtime image](docs/hosted-runtime-image.md)
 
 ## Develop
 
