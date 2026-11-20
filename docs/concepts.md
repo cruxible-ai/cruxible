@@ -49,7 +49,8 @@ where someone has read the whole scope; otherwise it means "unknown".
   repository, and vocabularies ship as kits.
 - **Connected to the world.** Claims cite the files and responses they rest
   on, passages of your documents can reflect the state and are flagged when it
-  moves, and Lines observe the outside world and propose what they find.
+  moves, and Lines run pinned providers to fetch, analyze, derive, and propose
+  or settle what they find.
 - **Questions over the whole graph.** Queries follow relations and give the
   same answer every time, at any point in history.
 
@@ -74,7 +75,20 @@ judgment; Cruxible checks it, records it and serves it back. It shows a
 contradiction or a drifted source, and a person or an agent decides what it
 means.
 
-The rest of this page builds the system up from its foundation: the ledger.
+### Vocabulary at a glance
+
+| Term | What it is |
+|---|---|
+| **Ledger** | The signed Git repository an instance's daemon writes to; each accepted change is one **generation**. |
+| **Subject** | One thing the instance tracks, named `kind/id` (for example `catalog.part/bp-1142` or `security.app_exposure/...`). |
+| **ClaimType** | One declared field on a SubjectKind: its value type, cardinality, freshness, and admitted evidence. |
+| **Claim** | One typed value of one field about one Subject, with its rationale, cited evidence, verdict, and revision history. |
+| **Capture** | Immutable retained bytes (an API response, file read, or provider output) stored with provenance metadata. |
+| **Proposal** | A checked, frozen candidate change evaluated against a specific generation before approval and activation. |
+| **Procedure & Line** | A Procedure is a replayable step graph calling pinned **providers** through typed capability slots; a Line binds it to inputs, budgets, Triggers, and an authority ceiling (`observe`, `propose`, `settle`). |
+| **Kit** | A versioned bundle of definitions, queries, guidance, Procedures, and providers that installs as a reviewed change. |
+
+The rest of this page builds these pieces up from the foundation: the ledger.
 
 ## The ledger
 
@@ -141,12 +155,16 @@ Cruxible models your world as things, their fields, and the relations between
 them. Declaring that model is what lets people and agents describe the same
 world the same way, and lets Cruxible check every change against it.
 
-To make these ideas concrete, the rest of this page uses a domain whose
-relationships everyone already knows: car parts and the vehicles they fit. A
-parts catalog is a solved problem in practice; it's here because nobody has to
-learn it first. The same model applies to whatever your team actually works
-on. To follow along, install the example kit the guides use: `cruxible kit
-add car-parts:1.0.0` ([Kits](kits.md#a-worked-example-installing-car-parts)).
+To make these ideas concrete across another domain, the rest of this page uses
+car parts and the vehicles they fit. If you came from the
+[Quickstart](quickstart.md) or [Security walkthrough](security-walkthrough.md),
+it is the exact same model: `security.app_exposure` is a **SubjectKind**,
+`security.osv-query` is a **Line**, and a VEX reachability justification is a
+**Claim**. A parts catalog is a solved problem in practice; it's here because
+nobody has to learn the domain first. To follow along from a checkout of the
+[kits repository](https://github.com/cruxible-ai/cruxible-kits), install the
+example kit (`cruxible kit add ../cruxible-kits/kits/car-parts`; see
+[Kits](kits.md#a-worked-example-installing-car-parts)).
 
 A **Subject** is a thing the instance knows about, named `kind/id`:
 `catalog.part/bp-1142` is a set of brake pads, and
@@ -286,12 +304,13 @@ evidence is one or more of:
   or `--evidence-contract` for the newest one about the Subject).
 
 Which citation fits depends on what the judgment rests on. A quoted code line
-(`--evidence-file PATH#TEXT`) is a pointer for reviewers: it shows where to
-look, but it is not a witness that resurfaces the judgment when the code
-changes in a way that matters. A judgment that depends on code should cite a
-check result where one exists, such as a scanner's finding, so the evidence
-moves when the check's answer does. Prose keeps quote and `--section`
-citations.
+(`--evidence-file PATH#TEXT`) detects edits to *that exact passage* (surfacing
+`citation_drifted` when the line changes), so it is useful for pointing
+reviewers at a specific call site—but it cannot catch a semantic change
+elsewhere in the codebase, such as a new caller added in another file. Where an
+automated check exists (such as a scanner or static analyzer), cite its Capture
+too so the evidence moves whenever the check's answer does. Prose keeps quote
+and `--section` citations.
 
 A Capture's bytes are the document its producer returned, verbatim: the body an
 origin sent, the file read, the document a conversion produced, in whatever
@@ -428,19 +447,14 @@ follow-up.
 
 ### Captures a run must have produced
 
-A Capture under a contract the daemon fetches for (not one recording an
-author's own words or a quoted file) is evidence only when the journal records
-a run producing it: a Source read the run selected, or an `emit_capture`
-terminal. That is what makes fetched evidence trustworthy: bytes can't be
-passed off as something a run observed. Anything else holding Capture bytes,
-such as bytes put with `body store` or a Source read its acquisition rule did
-not select, is refused when first cited (`capture_production_unproven`). A
-version-1 Capture under such a contract carries no producer receipt and is
-refused when first cited (`capture_v1_citation_refused`); a Claim already
-citing one keeps it. A proposal is held to this again when it is activated, so
-one admitted before the rule existed that cites such a Capture is refused
-(`cruxible.proposal.capture_production_unproven`): readmit it to see which
-citation fails, then resubmit it citing a Capture a run produced.
+A Capture under a contract the daemon fetches for (not an author's own words or
+a quoted file) counts as evidence only when the journal records a run producing
+it—either a Source read the run selected or an `emit_capture` terminal. That is
+what makes fetched evidence trustworthy: arbitrary bytes stored by hand cannot
+be passed off as something a pipeline observed. See
+[Evidence and admission](evidence-and-admission.md) and the
+[CLI reference](cli-reference.md) for the exact refusal codes and legacy Capture
+rules.
 
 ### Observations over time
 
@@ -559,20 +573,16 @@ only, and someone runs `proposal activate` later). A proposal kept with
 `proposal approve` or `proposal activate`.
 
 Because every change records the generation it was made on, many writers can
-work at once without silently overwriting each other. A proposal becomes
-stale when another generation is accepted after it was evaluated. Approving,
-activating or readmitting it recompiles it at the current head, as a fresh
-proposal that supersedes the old one, from the authoring, write or Procedure
-inputs it retained; normal approval policy applies, approvals of the old
-candidate don't carry over, and providers and state-tap reads are not
-repeated. If what it changes has itself moved in the meantime, the recompile
-is refused and `next` lists the proposal for `proposal readmit`, which rebases
-it as a new proposal to review. Proposals of other origins keep byte
-readmission, and this work happens only on those explicit operations.
-`proposal withdraw` retires a proposal that will never activate, and a
-reviewer turns one down with `proposal reject`. [Review and
-governance](review-and-governance.md) walks through reviewing, approving and
-choosing a policy.
+work at once without silently overwriting each other. A proposal becomes stale
+when another generation is accepted after it was evaluated. On approval,
+activation, or readmission, Cruxible recompiles it against the current head
+from its retained inputs (without repeating external provider calls): if what
+it changes moved in the meantime, `next` lists it for `proposal readmit` to
+rebase as a new candidate; prior approvals never silently carry over to a
+recompiled proposal. `proposal withdraw` retires a proposal that will never
+activate, and a reviewer turns one down with `proposal reject`. [Review and
+governance](review-and-governance.md) walks through reviewing, approving,
+stale proposals, and choosing a policy.
 
 ```mermaid
 stateDiagram-v2
@@ -772,24 +782,14 @@ Claim. A prediction is stored as a resolution contract, so `get
 ResolutionContract:NAME` reads one.
 
 Settling is an explicit act; nothing settles a prediction on its own. Any
-accepted observation inside the window can settle it, and once the window has
-closed `next` lists the prediction as `prediction_settleable` with the settle
-command. An observation counts at the time its Claim version was accepted, or
-at the time a later Capture re-observed that same unchanged version: when a
-run records a per-Claim re-observation of a value its live Claim already
-states (a record whose other fields changed), settle uses that version's
-latest such re-observation whose call had ended by the window's close if it
-lies inside the window (a later one past the close does not hide it). Shared
-content and row observations keep Claims fresh but do not settle predictions
-yet. The Claim itself does not change; the settlement cites the
-re-observing Capture and its record. Settle names the bound an observation
-misses: `prediction_observation_predates_contract` when it was made at or
-before the prediction was accepted (an unchanged value stated earlier needs a
-later re-observation), `prediction_window_not_open` when it precedes the
-window, and `prediction_deadline_passed` when it follows the window's close.
-A window that closes with no observation inside it cannot settle; Cruxible
-gives an unobserved window no meaning of its own, so retire the contract, or
-record the observation you did make as a revised Claim and predict again.
+accepted observation inside the window can settle it, and once the window
+closes `next` lists the prediction as `prediction_settleable` with the settle
+command. Observations must be recorded (or explicitly re-observed on that
+Claim) after the prediction was accepted and within the window; an unobserved
+window carries no meaning of its own, so retire the contract or predict again.
+See [Evidence and admission](evidence-and-admission.md) and the
+[CLI reference](cli-reference.md) for the exact settlement window rules and
+refusal codes.
 
 ## Procedures and Lines
 
@@ -811,27 +811,27 @@ it runs directly, only as a Line (its terminals act only there), or not at
 all. A Procedure may declare measurements, which `procedure measure` evaluates
 once due and `procedure readings` reads.
 
-A Procedure never names a provider. Each provider call goes through a **slot**,
+A Procedure never names a provider directly. Each call goes through a **slot**,
 and each slot names a **capability**: a small, immutable, versioned artifact
-(`workspace.file@1`, `web.fetch@1`) that says what kind of call it is, with
-its request Contract, its result Contract and its effect (`pure`,
-`external_read` or `external_mutation`). Capabilities are what make a
-Procedure's action space explicit: what it may do to the outside world is
-whatever effects its slots' capabilities declare. A **Provider** is an
-installed package whose operations each declare the capabilities they serve,
-and carry their own copies of the shapes they accept and return.
+(`workspace.file@1`, `web.fetch@1`) declaring the call's request Contract,
+result Contract, and effect (`pure`, `external_read`, or `external_mutation`).
+Capabilities make a Procedure's action space explicit: what it may do to the
+outside world is whatever effects its slots declare.
+
+A **Provider** is a pinned, installed Python package whose operations declare
+the capabilities they serve and carry their own copies of the shapes they
+accept and return. Because providers sit behind typed capability slots and
+return Captures, a provider can run any repeatable retrieval or computation
+your domain needs—fetching an HTTP API, querying a database, running a static
+analyzer, or scoring inputs with a custom ML model—without putting
+domain-specific logic or models inside Cruxible core.
 
 A Line binds each slot to one exact provider build and operation when it is
-accepted: one that serves the slot's capability and fits it, request and
-result, Captures included. Its runs never rebind, so a run is reproducible
-from its record, and you can always answer what a pipeline did and why it
-proposed what it did. A direct run fits each slot to the single live operation
-that serves and fits it. No fit refuses `cruxible.line.slot_unfilled`; several
-fits refuse `cruxible.line.slot_ambiguous` and list the candidates. Select
-explicitly with `cruxible procedure run NAME INPUT --bind slot=provider`, or
-pass `bindings={"slot": "provider"}` to the SDK's `Procedure.run`. A `line`
-member carries the same `bindings` mapping alongside its Procedure and
-parameters.
+accepted, and its runs never rebind, so every run is reproducible from its
+record and you can always trace what a pipeline did and why it proposed what it
+did. Direct runs fit each slot automatically when a single live operation
+matches, or take explicit bindings (`--bind slot=provider` on the CLI,
+`bindings={...}` in the SDK and Line definitions).
 
 What a Capture looks like inside is declared once, on its CaptureKind: a
 **layout** names its header fields and its record sets, with the key and row
@@ -843,12 +843,10 @@ capabilities); core serves the two file reads itself, and other providers
 install with `cruxible provider install` or arrive with a kit (bundled, or a
 default installed by name). Installing grants no permission to run anything.
 
-A Procedure is authored in one typed form, the `ProcedureSpec`: references are
-typed (`{"$ref": "step", "step": "parse", "path": ["items"]}`), and filters and
-a claims step's `where` use one typed closed predicate. In Python, `Sequence`
-from `cruxible_client.authoring.procedures` is a thin builder over that spec,
-with builders for the open step kinds only (read, call, extract, filter/dedupe,
-inbox, claims).
+Procedures are authored in one typed `ProcedureSpec` form (or built in Python
+with `Sequence` from `cruxible_client.authoring.procedures`). See
+[Lines and automation](lines-and-automation.md) for step authoring, slot
+binding, and provider packaging.
 
 ### Lines, Triggers and mandates
 
@@ -894,10 +892,6 @@ armed:
 
 Internal actions (floor refresh, evidence sweeps, prediction retries) also
 run on Triggers, and need no enablement.
-
-"Arm" has one meaning: a labeled branch of a Procedure graph, such as a
-guard's true or false edge, which measurements can read at `arm` grain to
-compare experiment arms.
 
 ## Kits
 

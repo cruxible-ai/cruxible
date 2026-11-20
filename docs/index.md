@@ -1,13 +1,15 @@
 # Cruxible documentation
 
-Cruxible keeps what a team of people and AI agents knows about its world:
-each fact structured, stored with the reason and the evidence behind it,
-changed only through checked and reviewed changes, and kept with its full
-history. Agents read what the team currently believes directly, instead of
-re-reading every document, and can tell a checked fact from a guess.
+Cruxible keeps governed, cross-source state for teams of people and AI agents:
+each fact typed, stored with the reason and evidence behind it, changed only
+through checked and reviewed writes, and kept with its full history. Automated
+pipelines run pinned providers—from API fetches and static analyzers to custom
+ML models—on a schedule or trigger, while agents read accepted state directly
+instead of re-deriving it from scratch and can tell a checked fact from a guess.
 
-No language model runs inside Cruxible. People and agents supply the
-judgment; Cruxible checks it, records it and serves it back.
+No language model runs inside Cruxible. People and agents supply the judgment,
+and pinned providers supply domain retrieval and computation; Cruxible checks
+it, records it and serves it back.
 
 ## Start here
 
@@ -31,8 +33,9 @@ judgment; Cruxible checks it, records it and serves it back.
   what was true in the past.
 - [Documents and notes](documents-and-notes.md): writing notes together with
   the facts they support, and pages that stay in step.
-- [Lines and automation](lines-and-automation.md): recurring checks that run
-  on a schedule and propose what they find.
+- [Lines and automation](lines-and-automation.md): scheduled and event-driven
+  pipelines that run pinned providers—API fetches, analyzers, or custom ML
+  models—and settle or propose what they find.
 - [Review and governance](review-and-governance.md): who can change what, and
   how changes get reviewed.
 - [Evolving your vocabulary](evolving-your-vocabulary.md): the vocabulary

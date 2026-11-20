@@ -31,27 +31,35 @@ registry listing). Every tool runs on a daemon; the server is only its client.
 }
 ~~~
 
-Without a socket or URL the server reuses the local daemon on
-`~/.cruxible/run/daemon.sock`, starting one when none answers. Without
-`CRUXIBLE_INSTANCE_ID` it uses the instance the workspace's
-`.cruxible/coverage.json` binds. `CRUXIBLE_PRINCIPAL_ID` names the principal
-the agent acts as; on a daemon with auth, `CRUXIBLE_SERVER_BEARER_TOKEN`
-carries its credential. `cruxible principal add NAME --key-dir DIR` writes
-exactly these settings to `DIR/cruxible.env`. Setup (starting a daemon,
-`cruxible init`, adding principals) is operator work on the CLI; on MCP,
-`cruxible_init` initializes the workspace folder as `cruxible init` does, and
-nothing else sets up. It creates the owner only, under `self_approval_allowed`,
-and takes one argument (`principal_id`): cosign setup on an existing instance (a reviewer
-principal and no self-approval) is two CLI steps, in this order: `cruxible
-principal add reviewer --key-dir DIR --signer-key OWNER_KEY --mode graph_write`
-(the tier that may submit approvals when the daemon runs with auth), then submit the
-approval policy (`cruxible authoring example approval-policy > policy.json`,
-`cruxible authoring submit policy.json`; its mode is
-`independent_approval_required`). Add the reviewer first: once the policy
-lands, the owner can no longer land a change alone. A new instance gets both
-at creation with `cruxible init --reviewer-key-dir DIR
---require-independent-approval`; on an initialized instance that command
-answers "already initialized" and adds nothing. See [MCP tools](mcp-tools.md) for every variable.
+**Environment and defaults** (see [MCP tools](mcp-tools.md) for every variable):
+
+- **Daemon**: without a socket or URL, `cruxible mcp` reuses the local daemon on
+  `~/.cruxible/run/daemon.sock`, starting one when none answers.
+- **Instance**: without `CRUXIBLE_INSTANCE_ID`, it uses the instance bound in
+  the workspace's `.cruxible/coverage.json`.
+- **Identity and auth**: `CRUXIBLE_PRINCIPAL_ID` names the principal the agent
+  acts as; on a daemon with auth, `CRUXIBLE_SERVER_BEARER_TOKEN` carries its
+  credential. `cruxible principal add NAME --key-dir DIR` writes all of these
+  settings to `DIR/cruxible.env`.
+
+**Initialization and cosign.** Setup (starting a daemon, `cruxible init`,
+adding principals) is operator work on the CLI. On MCP, `cruxible_init` is the
+only setup tool: it takes `principal_id` and creates the owner only under
+`self_approval_allowed`.
+
+- **New instance with cosign**: run `cruxible init --reviewer-key-dir DIR
+  --require-independent-approval` (on an already-initialized instance, `init`
+  answers "already initialized" and adds nothing).
+- **Adding cosign to an existing instance**: run these two CLI steps in order—add
+  the reviewer first, because once `independent_approval_required` lands, the
+  owner can no longer land a change alone (`graph_write` is the tier that may
+  submit approvals when the daemon runs with auth):
+
+~~~bash
+cruxible principal add reviewer --key-dir DIR --signer-key OWNER_KEY --mode graph_write
+cruxible authoring example approval-policy > policy.json
+cruxible authoring submit policy.json
+~~~
 
 Some operator acts have no MCP tool, so an agent asks for them or runs them
 as CLI steps: making a principal's key (`cruxible principal add NAME --key-dir
