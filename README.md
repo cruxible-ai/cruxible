@@ -16,8 +16,10 @@ evidence-backed state across sources—so observations and judgments compound
 across sessions instead of getting re-derived from scratch or going quietly
 stale.
 
-- **Automated pipelines** re-check external sources on a schedule and settle
-  mechanical facts without an agent in the loop.
+- **Automated pipelines** run pinned providers—from API fetches and static
+  analyzers to custom ML models—on a schedule or trigger, settling trusted
+  observations and derivations or proposing findings for review without an
+  agent in the loop.
 - **Agents record judgments** through a typed Python SDK, MCP server, or CLI,
   citing the exact source data or code passages they rest on, subject to signed
   review.
@@ -40,11 +42,11 @@ With Cruxible's **security kit** on a Django app with 32 components:
 
 ### 1. Pull external facts and surface what needs judgment
 
-One Runbook reads the SBOM and queries OSV, CISA KEV, and EPSS. Copying facts
-from declared sources is mechanical, so those settle under explicit, expiring
-mandates—recording both what was found and verified absences (like "not in KEV"
-only when the full catalog was read). Seven unjudged exposures above the
-exploit-likelihood threshold land in the inbox:
+One Runbook reads the SBOM and queries OSV, CISA KEV, and EPSS. In this kit,
+pulling those declared feeds is mechanical, so they settle under explicit,
+expiring mandates—recording both what was found and verified absences (like
+"not in KEV" only when the full catalog was read). Seven unjudged exposures
+above the exploit-likelihood threshold land in the inbox:
 
 ```text
 $ cruxible runbook run security.start
@@ -237,9 +239,13 @@ skills: `survey` works out what in a project is worth holding as state,
   [Architecture](docs/architecture.md))
 - **Procedures, Lines, and Triggers.** A Procedure is a reviewed, replayable
   graph of steps that reads accepted state, invokes pinned provider builds
-  through capability slots, extracts typed records, and proposes, settles, or
-  posts to the inbox. A Line binds a Procedure's inputs, budgets, and authority
-  ceiling to Triggers (cron, cadence, capture landing, or accepted changes).
+  through typed capability slots, extracts typed records, and proposes,
+  settles, or posts to the inbox. Because computation lives in pinned provider
+  packages—anything from API fetches and SQL queries to static analyzers or
+  custom ML models—teams and agents can push any repeatable retrieval or
+  derivation into a governed pipeline. A Line binds a Procedure's inputs,
+  budgets, and authority ceiling to Triggers (cron, cadence, capture landing,
+  or accepted changes).
   ([Lines and automation](docs/lines-and-automation.md))
 - **Kits.** A domain—its vocabulary, queries, guidance documents, Procedures,
   and bundled providers—travels between instances as a kit, installed and
