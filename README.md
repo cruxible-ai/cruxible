@@ -24,8 +24,9 @@ It lets you:
   affected facts and judgments surface for review; everything else stays
   current and untouched.
 
-Cruxible doesn't replace your code, docs, or tools—it points to them, records
-what was concluded from them, and tracks when they change.
+Cruxible doesn't replace your Markdown notes, code, or databases—prose and
+source records stay where they live, while Cruxible holds the typed claims
+pointing to them and tracks when they change.
 
 No LLM runs inside Cruxible. Everything runs locally on Linux (x86-64) and
 macOS (Apple silicon) with Python 3.11+ (Windows via WSL2), backed by a signed
@@ -175,6 +176,11 @@ single-purpose tools alike:
   facts beat text alone; in
   [MemoryAgentBench](https://arxiv.org/abs/2507.05257), tested memory systems
   frequently failed to prefer newer statements over older contradicting ones.
+- **A plain database still needs this layer built around it.** SQLite or
+  Postgres stores rows cleanly (Cruxible itself indexes into SQLite), but for
+  agent-maintained knowledge you still end up building citations, freshness,
+  *verified none* vs. *unknown*, signed review, and versioned history on top.
+  Cruxible gives you that layer out of the box.
 - **Single-purpose tools do not own cross-source judgments.** Your repos,
   databases, and SaaS tools remain the sources of truth for their own records.
   Cruxible sits at the judgment layer across them—joining external feeds, local

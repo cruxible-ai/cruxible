@@ -7,11 +7,12 @@ typed facts and reviewed judgments with citations, running autonomous pipelines
 to pull from APIs, scanners, analyzers, and custom ML models, and drawing
 attention only to what changed when inputs move.
 
-Cruxible doesn't replace your code, docs, or tools—it points to them, records
-what was concluded from them, and tracks when they change. No language model
-runs inside Cruxible: people and agents supply the judgment, pinned providers
-supply domain retrieval and computation, and Cruxible checks, records, and
-serves it back with full history.
+Cruxible doesn't replace your Markdown notes, code, or databases—prose and
+source records stay where they live, while Cruxible holds the typed claims
+pointing to them and tracks when they change. No language model runs inside
+Cruxible: people and agents supply the judgment, pinned providers supply domain
+retrieval and computation, and Cruxible checks, records, and serves it back
+with full history.
 
 ## Start here
 
