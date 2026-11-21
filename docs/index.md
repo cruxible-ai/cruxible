@@ -1,15 +1,17 @@
 # Cruxible documentation
 
-Cruxible keeps governed, cross-source state for teams of people and AI agents:
-each fact typed, stored with the reason and evidence behind it, changed only
-through checked and reviewed writes, and kept with its full history. Automated
-pipelines run pinned providers—from API fetches and static analyzers to custom
-ML models—on a schedule or trigger, while agents read accepted state directly
-instead of re-deriving it from scratch and can tell a checked fact from a guess.
+Cruxible is a state layer that gives your agents and teams a shared model of
+what they believe to be true. It lets agents and people build on what's already
+verified instead of starting from scratch or overwriting each other—recording
+typed facts and reviewed judgments with citations, running autonomous pipelines
+to pull from APIs, scanners, analyzers, and custom ML models, and drawing
+attention only to what changed when inputs move.
 
-No language model runs inside Cruxible. People and agents supply the judgment,
-and pinned providers supply domain retrieval and computation; Cruxible checks
-it, records it and serves it back.
+Cruxible doesn't replace your code, docs, or tools—it points to them, records
+what was concluded from them, and tracks when they change. No language model
+runs inside Cruxible: people and agents supply the judgment, pinned providers
+supply domain retrieval and computation, and Cruxible checks, records, and
+serves it back with full history.
 
 ## Start here
 
