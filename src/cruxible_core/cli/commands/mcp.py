@@ -12,8 +12,22 @@ import click
 
 
 @click.command("mcp")
-def mcp_cmd() -> None:
+@click.option(
+    "--env-file",
+    "env_file",
+    default=None,
+    help=(
+        "Load Cruxible settings from a file (for example DIR/cruxible.env, also "
+        "CRUXIBLE_ENV_FILE). Process environment variables take precedence."
+    ),
+)
+@click.pass_context
+def mcp_cmd(ctx: click.Context, env_file: str | None) -> None:
     """Serve the Cruxible MCP tools over stdio."""
     from cruxible_core.mcp.server import main
 
-    main()
+    root_env_file = (
+        ctx.obj["mcp_env_file"] if isinstance(ctx.obj, dict) and "mcp_env_file" in ctx.obj else None
+    )
+    selected = env_file if env_file is not None else root_env_file
+    main(argv=(), env_file=selected)

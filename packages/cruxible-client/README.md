@@ -161,6 +161,7 @@ A Cruxible built on an injected client with no workspace (the internal
 
 | Setting | Default / behavior |
 |---|---|
+| `CRUXIBLE_ENV_FILE` | Used when `env_file` is omitted; loads allowlisted `CRUXIBLE_*` settings from a file (such as `DIR/cruxible.env`) into the connection without mutating `os.environ`. |
 | `CRUXIBLE_SERVER_BEARER_TOKEN` | Used when `token` is omitted; never creates a principal or grants rights. |
 | `CRUXIBLE_PRINCIPAL_ID` | Used when `principal_id` is omitted; the daemon checks it is a registered, active principal before any write and attributes the session to it; reads stay open. |
 | `CRUXIBLE_CLI_CONTEXT_PATH` | Otherwise `~/.cruxible/client-context.json`. |
@@ -182,6 +183,7 @@ that mismatch instead of guessing a local instance.
 connect(
     *,
     context: str | Path | None = None,
+    env_file: str | Path | None = None,
     target: str | None = None,
     instance: str | None = None,
     token: SecretStr | None = None,
@@ -194,11 +196,12 @@ connect(
 
 Opens a transport, checks client/daemon contract compatibility, resolves context, and ordinarily performs orientation. A supplied at skips live orientation and pins that coordinate.
 
-**Conditions and effects:** ValueError/ContextResolutionError for missing or inconsistent context; IncompatibleDaemonVersion for an incompatible authoring contract; authentication/transport errors.
+**Conditions and effects:** ValueError/ContextResolutionError for missing or inconsistent context; EnvFileError for an invalid or improperly permissioned env file; IncompatibleDaemonVersion for an incompatible authoring contract; authentication/transport errors.
 
 | Parameter | Default | Meaning |
 |---|---|---|
 | `context` | `None` | Remembered client-context JSON path; otherwise CRUXIBLE_CLI_CONTEXT_PATH or ~/.cruxible/client-context.json. |
+| `env_file` | `None` | Env file path (for example DIR/cruxible.env); otherwise CRUXIBLE_ENV_FILE. Layered into this connection without mutating os.environ; explicit arguments and process environment variables take precedence. |
 | `target` | `None` | Explicit HTTP(S) endpoint or unix:/absolute/socket. It does not select an arbitrary local instance directory. |
 | `instance` | `None` | Daemon instance ID. Omission uses resolved workspace/client context. |
 | `token` | `None` | Bearer credential as SecretStr; otherwise CRUXIBLE_SERVER_BEARER_TOKEN. |

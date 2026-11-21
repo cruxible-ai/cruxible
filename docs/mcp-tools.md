@@ -108,9 +108,18 @@ call.
 
 ## Instances and the adapter environment
 
+**Loading a principal's `cruxible.env` without copying tokens.** Point the MCP
+server at the file `cruxible init` or `cruxible principal add` wrote with
+`--env-file DIR/cruxible.env` (on `cruxible mcp` or `cruxible-mcp`) or
+`CRUXIBLE_ENV_FILE=DIR/cruxible.env` in the MCP client config's `env` block.
+Only allowlisted `CRUXIBLE_*` variables are read; process environment variables
+always take precedence; a file holding `CRUXIBLE_SERVER_BEARER_TOKEN` must be
+owner-only (`0600`) and never a symlink. Keeping the bearer token inside the
+`0600` file avoids pasting secrets into MCP client JSON.
+
 Every tool that acts on one instance takes an optional `instance_id`. Omitted,
 it defaults to `CRUXIBLE_INSTANCE_ID` in the MCP server's own environment (set it
-in the `env` block of the MCP client config), and then to the instance the MCP
+in the `env` block of the MCP client config, or via `CRUXIBLE_ENV_FILE`), and then to the instance the MCP
 workspace's `.cruxible/coverage.json` binds, provided the binding names the
 server's daemon; a binding on another daemon than the environment's is refused.
 The server never reads remembered CLI context. With none of these, the call fails and
@@ -156,11 +165,11 @@ environment variables above override the record in every case. `whoami`'s `ident
 
 So an MCP server started in an initialized project acts as its owner by
 default. A reviewer's server is a second server whose `env` block sets
-`CRUXIBLE_PRINCIPAL_ID=reviewer`; nothing else is needed on the machine where
-`cruxible init --reviewer-key-dir` or `cruxible principal add` made the
-reviewer, because its key is found from its remembered settings. Cosign
-between agents on one machine is a convention, not a security boundary: any
-process of the OS user can read both keys.
+`CRUXIBLE_PRINCIPAL_ID=reviewer` (or `CRUXIBLE_ENV_FILE=/path/to/reviewer/cruxible.env`);
+nothing else is needed on the machine where `cruxible init --reviewer-key-dir`
+or `cruxible principal add` made the reviewer, because its key is found from its
+remembered settings. Cosign between agents on one machine is a convention, not a
+security boundary: any process of the OS user can read both keys.
 
 `CRUXIBLE_MCP_WORKSPACE_ROOT` selects the client-owned workspace for tools that
 read or write local files. The stdio MCP process is the client-side adapter; the
@@ -183,7 +192,8 @@ holding `<signer_id>.ed25519`, the layout `cruxible principal add
 server's environment; no tool argument can name a key path. The tool signs as
 `signer_id`, else as the principal the server acts as, else as the directory's
 only key. A server started with a principal's `cruxible.env`
-(`CRUXIBLE_PRINCIPAL_ID` and `CRUXIBLE_PRINCIPAL_KEY`) needs no key directory:
+(`CRUXIBLE_ENV_FILE`, `--env-file`, or `CRUXIBLE_PRINCIPAL_ID` and
+`CRUXIBLE_PRINCIPAL_KEY`) needs no key directory:
 the key is found by the lookup the CLI and the SDK use (see `principal add` in
 the [CLI reference](cli-reference.md)), never another principal's. The order
 is: `<signer>.ed25519` in `CRUXIBLE_MCP_KEY_DIR`; `CRUXIBLE_PRINCIPAL_KEY`
@@ -193,7 +203,7 @@ if it names that principal; the default key directory `cruxible init` uses.
 With no key found, the tool refuses and says how to configure it:
 
 ~~~text
-cruxible_proposal_approve: no signing key for principal nobody here; repair: start this MCP server with nobody's settings in its environment (CRUXIBLE_PRINCIPAL_ID and CRUXIBLE_PRINCIPAL_KEY, as its cruxible.env sets them, in the env block of the MCP client config), or set CRUXIBLE_MCP_KEY_DIR to the directory holding nobody.ed25519. A remote signer uses cruxible_proposal_approve_prepare and cruxible_proposal_approve_submit (profile full)
+cruxible_proposal_approve: no signing key for principal nobody here; repair: start this MCP server with CRUXIBLE_ENV_FILE=DIR/cruxible.env (or --env-file DIR/cruxible.env), or set CRUXIBLE_PRINCIPAL_ID and CRUXIBLE_PRINCIPAL_KEY (as its cruxible.env sets them) in the env block of the MCP client config, or set CRUXIBLE_MCP_KEY_DIR to the directory holding nobody.ed25519. A remote signer uses cruxible_proposal_approve_prepare and cruxible_proposal_approve_submit (profile full)
 ~~~
 
 Passing the reviewed `candidate_digest` binds the approval to that candidate:

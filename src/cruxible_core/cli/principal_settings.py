@@ -59,9 +59,13 @@ def write_principal_settings(
     """Write (or replace) the principal's settings file owner-only; return its path."""
 
     path = principal_settings_path(key_dir)
+    quoted_path = shlex.quote(str(path))
     lines = [
         f"# Cruxible settings for principal {principal_id}, written by `{written_by}`.",
-        f"# Load with: set -a; . {shlex.quote(str(path))}; set +a",
+        (
+            f"# Load with: --env-file {quoted_path} (or CRUXIBLE_ENV_FILE), "
+            f"or `set -a; . {quoted_path}; set +a`"
+        ),
         *_transport_lines(ctx_obj),
         f"export CRUXIBLE_INSTANCE_ID={shlex.quote(instance_id)}",
         f"export CRUXIBLE_PRINCIPAL_ID={shlex.quote(principal_id)}",

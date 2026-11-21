@@ -35,6 +35,7 @@ from cruxible_client.authoring.context import (
     resolve_context,
 )
 from cruxible_client.authoring.doc_writes import write_workspace
+from cruxible_client.authoring.env_file import merge_env_file, resolve_env_file_path
 from cruxible_client.authoring.principal_settings import (
     principal_key,
     principal_key_missing,
@@ -2811,6 +2812,8 @@ class Cruxible:
         self._owns_client = True
         # The context file ``connect`` was opened with; None reads the default.
         self._context_path: Path | None = None
+        # Connection-scoped environment layered from an env file (None reads live os.environ).
+        self._environ: Mapping[str, str] | None = None
         # An accepted ClaimType at an exact coordinate never changes, so one read
         # answers every Claim this connection drafts under that predicate there.
         self._claim_type_envelopes: dict[tuple[str, str], Mapping[str, object]] = {}
@@ -2820,6 +2823,7 @@ class Cruxible:
         cls,
         *,
         context: str | Path | None = None,
+        env_file: str | Path | None = None,
         target: str | None = None,
         instance: str | None = None,
         token: SecretStr | None = None,
@@ -2830,7 +2834,10 @@ class Cruxible:
     ) -> Cruxible:
         """Open a connection to one instance on a daemon.
 
-        The context file fills whatever is not passed. ``target`` is an ``http(s)://`` URL
+        ``env_file`` (or ``CRUXIBLE_ENV_FILE``) loads settings from a file such as
+        ``DIR/cruxible.env`` into this connection without mutating ``os.environ``;
+        explicit arguments and process environment variables always take precedence.
+        The context file fills whatever is still unset. ``target`` is an ``http(s)://`` URL
         or ``unix:<socket>``; ``instance`` the instance ID; ``token`` the bearer credential
         (default ``CRUXIBLE_SERVER_BEARER_TOKEN``); ``principal_id`` the principal of an
         auth-off daemon (default ``CRUXIBLE_PRINCIPAL_ID``). With neither a principal nor a
@@ -2843,11 +2850,23 @@ class Cruxible:
         what exists.
         """
 
+        effective_environ: dict[str, str] = dict(os.environ)
+        selected_env_file = resolve_env_file_path(env_file, environ=effective_environ)
+        if selected_env_file is not None:
+            effective_environ.update(
+                merge_env_file(
+                    selected_env_file,
+                    base_environ=effective_environ,
+                    explicit_transport=target is not None,
+                    explicit_principal=(principal_id or "").strip() or None,
+                )
+            )
+
         context_path = (
             Path(context).expanduser().resolve()
             if context is not None
             else Path(
-                os.environ.get(
+                effective_environ.get(
                     "CRUXIBLE_CLI_CONTEXT_PATH",
                     str(Path.home() / ".cruxible" / "client-context.json"),
                 )
@@ -2871,6 +2890,7 @@ class Cruxible:
             server_socket=explicit_socket,
             instance_id=instance,
             workspace=workspace,
+            environ=effective_environ,
             remembered=remembered,
         )
         if resolved.server_url is None and resolved.server_socket is None:
@@ -2882,14 +2902,14 @@ class Cruxible:
         raw_token = (
             token.get_secret_value()
             if token is not None
-            else os.environ.get("CRUXIBLE_SERVER_BEARER_TOKEN")
+            else effective_environ.get("CRUXIBLE_SERVER_BEARER_TOKEN")
         )
         if principal_id is None:
-            principal_id = configured_principal_id()
+            principal_id = configured_principal_id(effective_environ)
         if (
             principal_id is None
             and raw_token is None
-            and not (os.environ.get(PRINCIPAL_KEY_ENV) or "").strip()
+            and not (effective_environ.get(PRINCIPAL_KEY_ENV) or "").strip()
         ):
             # As the CLI does: act as the principal `cruxible init` (or `context
             # use --principal`) remembered for this instance on this endpoint,
@@ -2929,6 +2949,7 @@ class Cruxible:
             # whole accepted world: one identity read names it. Orient
             # explicitly (``orient()`` / ``refresh()``) when the overview is wanted.
             result._context_path = context_path
+            result._environ = dict(effective_environ) if selected_env_file is not None else None
             if at is None:
                 result._coordinate = AcceptedCoordinate.model_validate(
                     client.whoami(resolved.instance_id).coordinate.model_dump(mode="json")
@@ -3051,6 +3072,7 @@ class Cruxible:
         result._owns_client = False
         # The pinned context is the same connection: the same remembered context.
         result._context_path = self._context_path
+        result._environ = self._environ
         return result
 
     def _read_at(
@@ -5010,8 +5032,9 @@ class Cruxible:
             server_url=self._client.base_url,
             server_socket=self._client.socket_path,
             explicit=key,
+            environ=self._environ,
             # The context this connection was opened with, as it reads now.
-            remembered=remembered_context(path=self._context_path),
+            remembered=remembered_context(self._environ, path=self._context_path),
             folder=self._workspace,
         )
         if found is None:

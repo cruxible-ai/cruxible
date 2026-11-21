@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import argparse
 import inspect
 import os
 import sys
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from importlib import metadata
+from pathlib import Path
 from typing import Any, Literal, cast
 
 import structlog
@@ -327,11 +329,45 @@ def configure_structlog() -> None:
     )
 
 
-def main() -> None:
-    configure_structlog()
-    server = create_server()
-    validate_runtime_tools(server)
-    server.run(transport="stdio")
+def _parse_mcp_args(argv: Sequence[str] | None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="cruxible-mcp",
+        description="Serve the Cruxible MCP tools over stdio.",
+    )
+    parser.add_argument(
+        "--env-file",
+        default=None,
+        help=(
+            "Load Cruxible settings from a file (for example DIR/cruxible.env, also "
+            "CRUXIBLE_ENV_FILE). Process environment variables take precedence."
+        ),
+    )
+    return parser.parse_args(list(argv) if argv is not None else None)
+
+
+def main(
+    argv: Sequence[str] | None = None,
+    *,
+    env_file: str | Path | None = None,
+) -> None:
+    from cruxible_client.authoring.env_file import EnvFileError, apply_env_file
+
+    parsed = _parse_mcp_args(argv)
+    selected_env_file: str | Path | None = env_file if env_file is not None else parsed.env_file
+    try:
+        _, restore_env = apply_env_file(selected_env_file)
+    except EnvFileError as exc:
+        # stderr only: the MCP stdio protocol owns stdout.
+        sys.stderr.write(f"Error: {exc}\n")
+        sys.stderr.flush()
+        raise SystemExit(2) from exc
+    try:
+        configure_structlog()
+        server = create_server()
+        validate_runtime_tools(server)
+        server.run(transport="stdio")
+    finally:
+        restore_env()
 
 
 if __name__ == "__main__":

@@ -40,7 +40,9 @@ registry listing). Every tool runs on a daemon; the server is only its client.
 - **Identity and auth**: `CRUXIBLE_PRINCIPAL_ID` names the principal the agent
   acts as; on a daemon with auth, `CRUXIBLE_SERVER_BEARER_TOKEN` carries its
   credential. `cruxible principal add NAME --key-dir DIR` writes all of these
-  settings to `DIR/cruxible.env`.
+  settings to `DIR/cruxible.env` (`0600`). Pass `--env-file DIR/cruxible.env`
+  (or set `CRUXIBLE_ENV_FILE=DIR/cruxible.env` in the MCP `env` block) to load
+  it directly without copying tokens into client JSON.
 
 **Initialization and cosign.** Setup (starting a daemon, `cruxible init`,
 adding principals) is operator work on the CLI. On MCP, `cruxible_init` is the

@@ -277,20 +277,22 @@ def principal_key_missing(principal_id: str, *, client: PrincipalKeyClient) -> s
     if client == "cli":
         return (
             f"{lead}; repair: `cruxible context use --principal {principal_id}` where its "
-            f"settings are remembered, or load them with {source}, or pass --key FILE; "
+            f"settings are remembered, or pass --env-file DIR/cruxible.env (or CRUXIBLE_ENV_FILE), "
+            f"or load them with {source}, or pass --key FILE; "
             "`cruxible principal add ID --key-dir DIR` makes a new principal and its key"
         )
     if client == "sdk":
         return (
-            f"{lead}; repair: pass cx.signer({principal_id!r}, key=FILE), or start this "
-            f"process with its settings loaded: {source}"
+            f"{lead}; repair: pass cx.signer({principal_id!r}, key=FILE), connect with "
+            f"Cruxible.connect(env_file='DIR/cruxible.env'), or start this process with its "
+            f"settings loaded: {source}"
         )
     return (
-        f"{lead}; repair: start this MCP server with {principal_id}'s settings in its "
-        f"environment ({PRINCIPAL_ID_ENV} and {PRINCIPAL_KEY_ENV}, as its cruxible.env sets "
-        "them, in the env block of the MCP client config), or set CRUXIBLE_MCP_KEY_DIR to "
-        f"the directory holding {principal_id}.ed25519. A remote signer uses "
-        "cruxible_proposal_approve_prepare and cruxible_proposal_approve_submit (profile full)"
+        f"{lead}; repair: start this MCP server with CRUXIBLE_ENV_FILE=DIR/cruxible.env "
+        f"(or --env-file DIR/cruxible.env), or set {PRINCIPAL_ID_ENV} and {PRINCIPAL_KEY_ENV} "
+        "(as its cruxible.env sets them) in the env block of the MCP client config, or set "
+        f"CRUXIBLE_MCP_KEY_DIR to the directory holding {principal_id}.ed25519. A remote signer "
+        "uses cruxible_proposal_approve_prepare and cruxible_proposal_approve_submit (profile full)"
     )
 
 

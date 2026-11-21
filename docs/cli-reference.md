@@ -11,13 +11,23 @@ give machine-readable output.
 --server-socket TEXT
 --instance-id TEXT
 --principal-id TEXT
+--env-file TEXT
 --no-workspace
+--no-autostart
 --json-compact
 --version
 ~~~
 
+`--env-file PATH` (or `CRUXIBLE_ENV_FILE=PATH`) loads allowlisted `CRUXIBLE_*`
+variables from a file such as `DIR/cruxible.env` before target and principal
+resolution. Explicit CLI flags and existing process environment variables always
+take precedence; a file containing `CRUXIBLE_SERVER_BEARER_TOKEN` must be
+owner-only (`0600`) and not a symlink, and naming a different principal never
+loads another principal's key or token from the file.
+
 Target resolution is component-wise and deterministic: explicit flags, then
-`CRUXIBLE_SERVER_URL` / `CRUXIBLE_SERVER_SOCKET` / `CRUXIBLE_INSTANCE_ID`, then
+`CRUXIBLE_SERVER_URL` / `CRUXIBLE_SERVER_SOCKET` / `CRUXIBLE_INSTANCE_ID` (from
+the environment or `--env-file`), then
 the attached workspace discovered from `CRUXIBLE_WORKSPACE` or by
 walking up from the current directory to `.cruxible/coverage.json`, then the
 remembered global context. Automatic walk-up stops after the home directory and
@@ -708,18 +718,21 @@ the compile -- when it does not.
 ## mcp
 
 ```text
-cruxible mcp
+cruxible mcp [--env-file PATH]
 ```
 
 Serves the MCP tools over stdio. It is the same server as the `cruxible-mcp`
 script and reads the same environment (see [MCP tools](mcp-tools.md)); it exists
 so launchers that run a package by its own name, such as `uvx cruxible mcp`,
-reach the server. The root options and remembered CLI context do not configure
-it. Every tool runs on a daemon: with no transport configured, the server reuses
-the local daemon on `~/.cruxible/run/daemon.sock` or starts one (see
-[MCP tools](mcp-tools.md#the-daemon)). It logs warnings and errors on stderr;
-`FASTMCP_LOG_LEVEL` (`DEBUG`, `INFO`, `WARNING`, `ERROR` or `CRITICAL`) picks
-another level, and `CRUXIBLE_DEBUG` set to anything turns on `INFO`, which
+reach the server. `--env-file PATH` (also accepted before `mcp`, on
+`cruxible-mcp`, or via `CRUXIBLE_ENV_FILE`) loads allowlisted `CRUXIBLE_*`
+settings from a file such as `DIR/cruxible.env` before startup without copying
+bearer tokens into client JSON. Other root options and remembered CLI context do
+not configure it. Every tool runs on a daemon: with no transport configured, the
+server reuses the local daemon on `~/.cruxible/run/daemon.sock` or starts one
+(see [MCP tools](mcp-tools.md#the-daemon)). It logs warnings and errors on
+stderr; `FASTMCP_LOG_LEVEL` (`DEBUG`, `INFO`, `WARNING`, `ERROR` or `CRITICAL`)
+picks another level, and `CRUXIBLE_DEBUG` set to anything turns on `INFO`, which
 logs each daemon request and tool call.
 
 ## console
