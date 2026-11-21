@@ -22,6 +22,18 @@ from pathlib import Path
 
 import yaml
 
+
+class _MkDocsLoader(yaml.SafeLoader):
+    """Safe loading of mkdocs.yml: its ``!!python/name:`` tags (extension
+    callables such as the mermaid fence format) are read as their dotted names,
+    never imported."""
+
+
+_MkDocsLoader.add_multi_constructor(
+    "tag:yaml.org,2002:python/name:",
+    lambda _loader, suffix, _node: suffix,
+)
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DOCS = REPO_ROOT / "docs"
 SITE_URL = "https://docs.cruxible.ai"
@@ -79,7 +91,7 @@ def walk_nav(nav, acc):
 
 
 def main() -> None:
-    config = yaml.safe_load((REPO_ROOT / "mkdocs.yml").read_text())
+    config = yaml.load((REPO_ROOT / "mkdocs.yml").read_text(), Loader=_MkDocsLoader)
     entries: list[tuple[str, str | None, str | None]] = []
     walk_nav(config["nav"], entries)
 
