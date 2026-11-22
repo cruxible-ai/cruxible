@@ -3,7 +3,7 @@
   "succession": {
     "ratified_by": "maintainer",
     "register_entry": "2026-11-18:readme-example-run-findings-1118",
-    "surface_digest": "sha256:677767f06036b3868913ef8c14a31872617e9c8085cab890c36c17363b7d2e09"
+    "surface_digest": "sha256:461a15f3da784ef8b0c5a7b09a588db571647d228c3ad48cf068e83a2d18d95a"
   },
   "surface": {
     "cli_leaves": [
@@ -2442,7 +2442,7 @@
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_inbox_list",
         "input_schema_digest": "sha256:53516478e595f248537ae277482b9e4f54c7b818c262731d229e29e403ab5d8a",
         "name": "cruxible_inbox_list",
-        "output_schema_digest": "sha256:af7413faf542e7b526905a48f725aa577e206f46078288f422628dbdedb25184",
+        "output_schema_digest": "sha256:137e2be55e013025c4916679f35255f17dd32b692ea0d240b2ce058b0c477cfc",
         "permission": "READ_ONLY"
       },
       {

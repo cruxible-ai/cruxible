@@ -131,8 +131,9 @@ def test_the_sdk_lists_reads_and_judges_inbox_items(playbill_http, tmp_path, mon
     rows = (*page.rows, *rest.rows)
     assert not rest.truncated
     assert sorted(row.item_id for row in rows) == sorted({row.item_id for row in rows})
-    # S1: compact rows; the payload reads as a one-line title.
-    assert sorted(row.title for row in rows) == sorted(f'{{"cve":"{row["cve"]}"}}' for row in ROWS)
+    # S1: compact rows; the payload reads as a one-line title (its fields as
+    # name=value pairs when it has no title field).
+    assert sorted(row.title for row in rows) == sorted(f"cve={row['cve']}" for row in ROWS)
     assert {(row.status, row.seen, row.line) for row in rows} == {
         ("unread", 1, line.identity.qualified)
     }
@@ -262,9 +263,18 @@ def test_a_compact_row_titles_its_payload_in_one_bounded_line() -> None:
             "entries": [
                 entry({"title": "Patch lodash\\n now", "cve": "CVE-1"}, 1),
                 entry("x" * 500, 2),
+                # No title field: the fields read as name=value pairs, not JSON.
+                entry({"component": "pkg:pypi/django@4.2", "cve_id": "CVE-2024-39614"}, 3),
+                # Past the summary bound the preview is cut JSON; a title field
+                # among its leading members still titles the row.
+                entry({"name": "Big notice", "zbody": "y" * 600}, 4),
+                entry({"count": 10, "matches": "sha256:" + "8" * 64, "zrows": ["z" * 600]}, 5),
             ]
         }
     )
-    first, second = compact_inbox_list(page).rows
+    first, second, third, fourth, fifth = compact_inbox_list(page).rows
     assert (first.title, first.kind, first.seen) == ("Patch lodash\\n now", "ask", 3)
     assert len(second.title) == INBOX_ROW_TITLE_MAX_CHARS and second.title.endswith("…")
+    assert third.title == "component=pkg:pypi/django@4.2 cve_id=CVE-2024-39614"
+    assert fourth.title == "Big notice"
+    assert fifth.title.startswith("count=10 matches=sha256:888") and "{" not in fifth.title
