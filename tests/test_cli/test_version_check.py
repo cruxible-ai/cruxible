@@ -75,6 +75,7 @@ def daemon(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, object]
         return original(**kwargs)  # type: ignore[arg-type]
 
     monkeypatch.setattr(httpx, "Client", client)
+    monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "context.json"))
     monkeypatch.delenv("CRUXIBLE_SKIP_VERSION_CHECK", raising=False)
     monkeypatch.setattr("cruxible_core.cli.commands.server.time.sleep", lambda _seconds: None)

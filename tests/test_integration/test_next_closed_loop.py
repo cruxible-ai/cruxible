@@ -2909,3 +2909,64 @@ def test_an_approver_sees_a_stale_proposal_awaiting_its_authors_readmit(tmp_path
     # The author's own row still names the readmit.
     author = _row(instance, "proposal_stale", _request(instance), caller_principal_id="owner")
     assert author.repair.command == f"cruxible proposal readmit {stale_id}"
+
+
+def test_sole_principal_still_sees_own_held_proposal_in_next(tmp_path: Path) -> None:
+    """With no second ordinary principal under self-approval, the author sees its held proposal."""
+
+    from cruxible_core.runtime.instance import PlaybillInstance
+    from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
+    from tests.core_support._support import FIXED_TIMESTAMP, generate_client
+    from tests.test_proposals.test_approval_policy import _submit_tree
+    from tests.test_proposals.test_proposals import DOCUMENT_PATH, _shell
+
+    managed_root = tmp_path / "managed-sole"
+    owner = generate_client(
+        tmp_path, managed_root=managed_root, principal_id="owner", roles=("owner",)
+    )
+    instance = PlaybillInstance.initialize(
+        managed_root,
+        instance_id="inst_sole_principal",
+        client_principals=(owner.principal,),
+        workspace_roots=(tmp_path / "workspace",),
+        git_object_format="sha256",
+        timestamp=FIXED_TIMESTAMP,
+    )
+
+    body = instance.store_document_body(b"# Sole principal held proposal\n")
+    held = _submit_tree(
+        instance,
+        {
+            **instance.tree_at(instance.accepted_coordinate().git_oid),
+            DOCUMENT_PATH: render_document(_shell(body.digest)),
+        },
+        name="sole-principal-held",
+    )
+    assert held.candidate is not None
+    proposal_id = held.admission.proposal_id
+
+    activation_rows = [
+        item
+        for item in service_playbill_next(
+            instance, request=_request(instance), caller_principal_id="owner"
+        ).items
+        if item.reason == "proposal_awaiting_activation"
+    ]
+    (row,) = activation_rows
+    assert row.subject_identity == proposal_id
+    assert row.repair is not None
+    assert row.repair.operation == EXPECTED_OPERATIONS["proposal_awaiting_activation"]
+    assert row.repair.command == f"cruxible proposal activate {proposal_id}"
+
+    receipt = service_activate_playbill_proposal(
+        instance, proposal_id=proposal_id, activated_by="owner"
+    )
+    assert receipt.status == "accepted"
+    remaining = [
+        item
+        for item in service_playbill_next(
+            instance, request=_request(instance), caller_principal_id="owner"
+        ).items
+        if item.reason == "proposal_awaiting_activation"
+    ]
+    assert remaining == []
