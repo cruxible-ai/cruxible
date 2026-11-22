@@ -84,21 +84,29 @@ def _repair_operands(operation: str, values: Mapping[str, object]) -> list[str]:
     return rendered
 
 
-def _restated_set(values: Mapping[str, object]) -> dict[str, object] | None:
+def _restated_set(
+    values: Mapping[str, object], *, operands: tuple[str, ...] = ()
+) -> dict[str, object] | None:
     """The set call a `cruxible.set` repair names, from its arguments, or None."""
 
-    subject, field, value = values.get("subject"), values.get("field"), values.get("value")
+    subject, field = values.get("subject"), values.get("field")
     if not isinstance(subject, str) or not isinstance(field, str):
         return None
-    if not isinstance(value, str | int | bool):
-        return None
+    if "value" in operands:
+        value: object = _OPERAND_PLACEHOLDERS["value"]
+    else:
+        value = values.get("value")
+        if not isinstance(value, str | int | bool):
+            return None
     restated: dict[str, object] = {"subject": subject, "field": field, "value": value}
     role = values.get("role")
     if isinstance(role, str):
         restated["role"] = role
     capture = values.get("capture_digest")
     contract = values.get("evidence_contract")
-    if isinstance(capture, str):
+    if "file" in operands:
+        restated["evidence"] = {"kind": "file", "file": _OPERAND_PLACEHOLDERS["file"]}
+    elif isinstance(capture, str):
         restated["evidence"] = {"kind": "capture", "capture": capture}
     elif isinstance(contract, str):
         restated["evidence"] = {"kind": "contract", "contract": contract}
@@ -176,6 +184,7 @@ _OPERAND_PLACEHOLDERS: Mapping[str, str] = {
     "because": placeholder("TEXT"),
     "file": placeholder("FILE#ANCHOR"),
     "capture": placeholder("CAP"),
+    "value": placeholder("VALUE"),
     # The Runbook or internal action a missed-instants repair runs.
     "runbook": placeholder("NAME"),
     "action": placeholder("NAME"),
@@ -290,8 +299,11 @@ def _mcp_repair_call(
     if operation == "cruxible.claim.retire" and text("claim_id"):
         # Why it ends is the retirer's to say: `because` is the argument left to add.
         return _mcp_call("cruxible_retire", target=text("claim_id"), **_because(operands))
-    if operation == "cruxible.set" and (restated := _restated_set(values)) is not None:
-        # `because` (and the file evidence a recapture needs) is the caller's to add.
+    if (
+        operation == "cruxible.set"
+        and (restated := _restated_set(values, operands=operands)) is not None
+    ):
+        # `because` (and any new value / file evidence) is the caller's to add.
         return _mcp_call("cruxible_set", **restated, **_because(operands))
     if operation == "cruxible.write" and (changes := _write_changes(values)):
         return _mcp_call("cruxible_write", changes=changes, **_because(operands))
@@ -415,7 +427,10 @@ def _sdk_repair_call(
         return _sdk_approve(values)
     if operation == "cruxible.claim.retire" and (claim := text("claim_id")):
         return _sdk_call("cx.retire", claim, **_because(operands))
-    if operation == "cruxible.set" and (restated := _restated_set(values)) is not None:
+    if (
+        operation == "cruxible.set"
+        and (restated := _restated_set(values, operands=operands)) is not None
+    ):
         subject, field, value = (restated.pop(key) for key in ("subject", "field", "value"))
         return _sdk_call("cx.set", subject, field, value, **restated, **_because(operands))
     if operation == "cruxible.write":
@@ -611,7 +626,7 @@ def next_repair_command(
             return None
         parts.extend([shlex.quote(proposal_id), "--signer-id", shlex.quote(signer_id)])
     elif operation == "cruxible.set":
-        restated = _restated_set(values)
+        restated = _restated_set(values, operands=operands)
         if restated is None:
             return None
         parts.extend(
@@ -621,7 +636,9 @@ def next_repair_command(
         if isinstance(role, str):
             parts.extend(["--role", shlex.quote(role)])
         evidence = restated.get("evidence")
-        if isinstance(evidence, Mapping) and isinstance(evidence.get("capture"), str):
+        if isinstance(evidence, Mapping) and isinstance(evidence.get("file"), str):
+            parts.extend(["--evidence-file", shlex.quote(str(evidence["file"]))])
+        elif isinstance(evidence, Mapping) and isinstance(evidence.get("capture"), str):
             parts.extend(["--capture", shlex.quote(str(evidence["capture"]))])
         elif isinstance(evidence, Mapping) and isinstance(evidence.get("contract"), str):
             parts.extend(["--evidence-contract", shlex.quote(str(evidence["contract"]))])

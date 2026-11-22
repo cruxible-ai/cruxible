@@ -1054,6 +1054,7 @@ NEXT_OPERAND_PLACEHOLDER_TEXT: dict[str, str] = {
     "because": "<TEXT> (why, in your words)",
     "file": "<FILE#ANCHOR> (the file and anchor holding the new text)",
     "capture": "<CAP> (the fresh Capture's handle)",
+    "value": "<VALUE> (the new value)",
 }
 
 

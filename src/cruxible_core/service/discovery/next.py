@@ -4029,8 +4029,36 @@ def _citation_drift_item(
         # its own; a file citation's new anchor is the re-binder's to choose.
         rebind.update({"section_file": source_id, "section": list(commitment.section)})
     # Core resurfaces, the agent judges: re-bind the Claim to the text it rests
-    # on now (the statement stays), or retire it -- whether the text changed,
-    # moved or is gone.
+    # on now (the statement stays), write a new value with new evidence (which
+    # supersedes the drifted Claim and clears the drift), or retire it --
+    # whether the text changed, moved or is gone.
+    alternatives: list[PlaybillNextRepairV1] = []
+    if commitment.set_arguments is not None:
+        set_args: dict[str, object] = {
+            "claim_id": claim_id,
+            **{key: value for key, value in commitment.set_arguments if key != "value"},
+        }
+        alternatives.append(
+            PlaybillNextRepairV1(
+                operation="cruxible.set",
+                operands_to_add=("value", "file", "because"),
+                target=commitment.claim_identity,
+                required_change="set_new_value_with_new_evidence",
+                arguments=set_args,
+            )
+        )
+    alternatives.append(
+        PlaybillNextRepairV1(
+            operation="cruxible.claim.retire",
+            operands_to_add=("because",),
+            target=commitment.claim_identity,
+            required_change="retire_claim_with_attribution",
+            arguments={
+                "claim_id": claim_id,
+                "expected_coordinate": coordinate.model_dump(mode="json"),
+            },
+        )
+    )
     return _item(
         severity="repair",
         reason="citation_drifted",
@@ -4045,18 +4073,7 @@ def _citation_drift_item(
             # A section citation locates its new text; a file citation's new
             # anchor is the re-binder's to choose.
             operands_to_add=("because",) if "section" in rebind else ("file", "because"),
-            alternatives=(
-                PlaybillNextRepairV1(
-                    operation="cruxible.claim.retire",
-                    operands_to_add=("because",),
-                    target=commitment.claim_identity,
-                    required_change="retire_claim_with_attribution",
-                    arguments={
-                        "claim_id": claim_id,
-                        "expected_coordinate": coordinate.model_dump(mode="json"),
-                    },
-                ),
-            ),
+            alternatives=tuple(alternatives),
         ),
     )
 

@@ -197,7 +197,8 @@
       "values": [
         "because",
         "file",
-        "capture"
+        "capture",
+        "value"
       ]
     },
     "NextRepairOperation": {
@@ -40375,7 +40376,8 @@
                   "enum": [
                     "because",
                     "file",
-                    "capture"
+                    "capture",
+                    "value"
                   ],
                   "type": "string"
                 },
@@ -40871,7 +40873,8 @@
                   "enum": [
                     "because",
                     "file",
-                    "capture"
+                    "capture",
+                    "value"
                   ],
                   "type": "string"
                 },
@@ -41523,7 +41526,8 @@
                   "enum": [
                     "because",
                     "file",
-                    "capture"
+                    "capture",
+                    "value"
                   ],
                   "type": "string"
                 },
@@ -42108,7 +42112,8 @@
                   "enum": [
                     "because",
                     "file",
-                    "capture"
+                    "capture",
+                    "value"
                   ],
                   "type": "string"
                 },
@@ -43145,7 +43150,8 @@
                   "enum": [
                     "because",
                     "file",
-                    "capture"
+                    "capture",
+                    "value"
                   ],
                   "type": "string"
                 },
@@ -43853,7 +43859,8 @@
                   "enum": [
                     "because",
                     "file",
-                    "capture"
+                    "capture",
+                    "value"
                   ],
                   "type": "string"
                 },

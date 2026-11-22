@@ -774,7 +774,10 @@ def _citation_drifted_changed(root: Path, _monkeypatch: pytest.MonkeyPatch) -> N
     row = _row_by_key(instance, key, before)
     assert row.repair.operation == _expected_operation(key)
     assert row.repair.required_change == "rebind_or_retire_drifted_claim"
-    assert [item.operation for item in row.repair.alternatives] == ["cruxible.claim.retire"]
+    assert [item.operation for item in row.repair.alternatives] == [
+        "cruxible.set",
+        "cruxible.claim.retire",
+    ]
 
     activate(instance, owner, successor)
     _assert_key_gone(
@@ -919,7 +922,10 @@ def _citation_drifted_v4(
     row = _row_by_key(instance, key, before)
     assert row.repair.operation == _expected_operation(key)
     assert row.repair.required_change == "rebind_or_retire_drifted_claim"
-    assert [item.operation for item in row.repair.alternatives] == ["cruxible.claim.retire"]
+    assert [item.operation for item in row.repair.alternatives] == [
+        "cruxible.set",
+        "cruxible.claim.retire",
+    ]
 
     if drift_state == "gone":
         from tests.core_support._retirement_support import retire_claim
