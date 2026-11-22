@@ -98,11 +98,15 @@ _SEGMENT_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 
 
 def _write_value(value: object) -> Any:
+    from cruxible_client.contracts.temporal import temporal_value_text
+
     if isinstance(value, SubjectRef):
         return value.address
     if isinstance(value, LiteralValue):
         return value.value
-    return value
+    # A date or datetime field holds its canonical text.
+    temporal = temporal_value_text(value)
+    return value if temporal is None else temporal
 
 
 class WorldStructureError(SdkError):

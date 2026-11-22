@@ -105,7 +105,7 @@ def test_set_states_a_value_then_revises_the_live_claim_without_its_id(
     instance: PlaybillInstance,
 ) -> None:
     first = _write(instance, _set(WI1, "status", "ready"))
-    assert first.status == "accepted", first
+    assert first.status == "accepted", first.model_dump(mode="json")
     (change,) = first.changes
     assert (change.op, change.field, change.before, change.after) == (
         "set",
@@ -401,7 +401,7 @@ def test_bounded_native_text_keeps_the_writers_source_evidence(instance: Playbil
     assert _refusal(refused).code == "cruxible.write.value_type_mismatch"
     assert "Document section" in _refusal(refused).repair
     first = _write(instance, _set(WI1, "ruling", "reviewed"))
-    assert first.status == "accepted", first
+    assert first.status == "accepted", first.model_dump(mode="json")
     assert first.changes[0].after == "reviewed"
     revised = _write(instance, _set(WI1, "ruling", "approved"))
     assert revised.status == "accepted", revised
@@ -775,7 +775,7 @@ def test_a_capture_handle_resolves_to_its_digest_before_lowering(
     first = _write(
         instance, _set(WI1, "measured", 3, evidence=report_evidence(tmp_path, "Count: 3"))
     )
-    assert first.status == "accepted", first
+    assert first.status == "accepted", first.model_dump(mode="json")
     assert first.changes[0].verdict == "supported" and first.warnings == ()
     (digest,) = cited_captures(instance, first.changes[0].claim or "")
     handle = capture_handle(digest)
@@ -903,7 +903,9 @@ def _contract_of(instance: PlaybillInstance, digest: str) -> str:
     )
 
 
-def _seed_record_source(instance: PlaybillInstance, *, contract: Any = None) -> tuple[Any, Any]:
+def _seed_record_source(
+    instance: PlaybillInstance, *, contract: Any = None, claim_bound: bool = False
+) -> tuple[Any, Any]:
     """Accept an external record contract and its provider; answer (contract, provider)."""
 
     from cruxible_client.contracts.artifacts import ArtifactIdentity
@@ -946,7 +948,7 @@ def _seed_record_source(instance: PlaybillInstance, *, contract: Any = None) -> 
                         ),
                         admission="direct",
                         subject_binding="exact_claim_subject"
-                        if contract.shape == "foreign_span"
+                        if claim_bound or contract.shape == "foreign_span"
                         else "contract_source_mapping",
                     ),
                 )
@@ -984,6 +986,8 @@ def _record_capture(
     *,
     exact: bool = True,
     observed_at: Any = None,
+    status: str = "ready",
+    name_subject: bool = True,
 ) -> str:
     """Store (and cite nowhere) external record Captures whose selector names ``subject``.
 
@@ -1009,6 +1013,8 @@ def _record_capture(
             subject_path(kind, subject_id)
         ).model_dump(mode="json"),
     }
+    if not name_subject:
+        del selector["semantic_subject"]
     reader = FakeVersionedExternalSourceReader()
     reader.seed(
         source_identity="commerce.production.orders",
@@ -1023,7 +1029,7 @@ def _record_capture(
             components.selector_schema_pins[0].target.name,
         ),
         selector=selector,
-        value={"order_id": subject_id, "status": "ready"},
+        value={"order_id": subject_id, "status": status},
         replayability="attested_only" if contract.replay == "attested" else "exact",
     )
     acquired = reader.acquire(
@@ -1060,7 +1066,7 @@ def _record_capture(
     from cruxible_client.contracts.captures import render_capture_envelope
 
     store = instance.body_store()
-    body = f'{{"order_id":"{subject_id}","status":"ready"}}'.encode()
+    body = f'{{"order_id":"{subject_id}","status":"{status}"}}'.encode()
     exact = acquired.envelope.model_dump(mode="json")
     exact["commitment"] = {
         "tag": "playbill-evidence-commitment-v1",
@@ -1094,6 +1100,76 @@ def test_contract_evidence_finds_an_uncited_capture_whose_source_names_the_subje
         _write(instance, _set(WI2, "recorded_status", "ready") | {"evidence": by_contract})
     )
     assert other.code == "cruxible.write.contract_capture_not_found"
+
+
+def test_contract_evidence_cites_the_newest_reading_not_the_cited_one(
+    record_instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A newer reading of the cited source, cited by nobody yet, is the one cited."""
+
+    instance = record_instance
+    from datetime import timedelta
+
+    from cruxible_client.contracts.write import capture_handle
+    from tests.core_support._pc_c_support import NOW
+
+    admit_legacy_v1_citations(monkeypatch)  # the fixture reader's v1 records
+    # The Claim binds the reading to its Subject, as a fetched page's would.
+    contract, provider_artifact = _seed_record_source(instance, claim_bound=True)
+    # The source names no Subject: only the citation ties a reading to wi-1.
+    old = _record_capture(
+        instance,
+        contract,
+        provider_artifact,
+        WI1,
+        observed_at=NOW - timedelta(hours=2),
+        name_subject=False,
+    )
+    by_digest = {"kind": "capture", "capture": old}
+    first = _write(instance, _set(WI1, "recorded_status", "ready") | {"evidence": by_digest})
+    assert first.status == "accepted", first.model_dump(mode="json")
+    by_contract = {"kind": "contract", "contract": contract.identity.name}
+    new = _record_capture(
+        instance, contract, provider_artifact, WI1, status="shipped", name_subject=False
+    )
+    assert new != old and new not in _accepted_capture_digests(instance)
+    outcome = _write(instance, _set(WI1, "recorded_status", "shipped") | {"evidence": by_contract})
+    assert outcome.status == "accepted", outcome
+    assert outcome.changes[0].capture == capture_handle(new)
+
+
+def test_contract_evidence_refuses_when_the_newest_reading_does_not_verify(
+    record_instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Never an older reading in place of a newer one that cannot be read."""
+
+    instance = record_instance
+    from datetime import timedelta
+
+    from cruxible_client.contracts.write import capture_handle
+    from tests.core_support._pc_c_support import NOW
+
+    admit_legacy_v1_citations(monkeypatch)  # the fixture reader's v1 records
+    contract, provider_artifact = _seed_record_source(instance)
+    _record_capture(
+        instance, contract, provider_artifact, WI1, observed_at=NOW - timedelta(hours=2)
+    )
+    new = _record_capture(instance, contract, provider_artifact, WI1, status="shipped")
+    from cruxible_core.service.evidence import capture_reads
+
+    original = capture_reads.verify_accepted_capture
+
+    def unavailable(inst: Any, head: Any, digest: str, **kwargs: Any) -> Any:
+        return "capture_unavailable" if digest == new else original(inst, head, digest, **kwargs)
+
+    monkeypatch.setattr(capture_reads, "verify_accepted_capture", unavailable)
+    by_contract = {"kind": "contract", "contract": contract.identity.name}
+    refused = _refusal(
+        _write(instance, _set(WI1, "recorded_status", "shipped") | {"evidence": by_contract})
+    )
+    assert refused.code == "cruxible.write.contract_capture_unverified"
+    assert refused.candidates == (capture_handle(new),)
+    assert refused.repair is not None and "CAP-" in refused.repair
 
 
 def test_contract_evidence_finds_an_uncited_self_asserted_capture(
@@ -1190,14 +1266,24 @@ def test_contract_evidence_reads_indexes_not_the_body_store(
     assert outcome.status == "accepted", outcome
     assert outcome.changes[0].capture == capture_handle(held)
 
-    # Its budget counts the contract's own Captures, not the objects stored.
-    _record_capture(instance, contract, provider_artifact, WI2)
-    _record_capture(instance, contract, provider_artifact, WI3)
-    monkeypatch.setattr(write_verbs, "_CONTRACT_CAPTURE_BUDGET", 2)
-    crowded = _refusal(
-        _write(instance, _set(WI2, "recorded_status", "ready") | {"evidence": by_contract})
-    )
-    assert crowded.code == "cruxible.write.capture_scan_exhausted"
+    # The contract's other Captures cost nothing: no envelope of another
+    # Subject's source is read.
+    from cruxible_core.storage import capture_metadata
+
+    others = {
+        _record_capture(instance, contract, provider_artifact, subject) for subject in (WI2, WI3)
+    }
+    real = capture_metadata.capture_envelope
+    read: list[str] = []
+
+    def counted(store: Any, digest: str, *, access: Any) -> Any:
+        read.append(digest)
+        return real(store, digest, access=access)
+
+    monkeypatch.setattr(capture_metadata, "capture_envelope", counted)
+    again = _write(instance, _set(WI1, "recorded_status", "done") | {"evidence": by_contract})
+    assert again.status == "accepted", again
+    assert not others.intersection(read)
 
 
 def test_a_handle_matching_more_captures_than_the_verification_budget_refuses(
@@ -1740,7 +1826,7 @@ def test_one_write_may_retire_one_contender_and_replace_the_other(
 
 def test_set_with_expect_replaces_only_the_value_it_expected(instance: PlaybillInstance) -> None:
     first = _write(instance, _set(WI1, "status", "ready", expect=[]))
-    assert first.status == "accepted", first
+    assert first.status == "accepted", first.model_dump(mode="json")
     head = instance.accepted_coordinate().git_oid
 
     refused = _write(instance, _set(WI1, "status", "done", expect="blocked"))
@@ -1780,7 +1866,7 @@ def test_retired_exact_content_expect_markers_refuse_at_the_typed_boundary(
 ) -> None:
     # Retired marker-shaped data is never interpreted as a native string.
     first = _write(instance, _set(WI1, "ruling", "reviewed"))
-    assert first.status == "accepted", first
+    assert first.status == "accepted", first.model_dump(mode="json")
     marker = {"exact_content": "unavailable", "content_digest": "sha256:" + "ab" * 32}
     from pydantic import ValidationError
 
@@ -1827,7 +1913,7 @@ def test_add_with_expect_absent_refuses_what_would_be_already_done(
     instance: PlaybillInstance,
 ) -> None:
     first = _write(instance, {**_add(WI1, "governs", WI2), "expect_absent": True})
-    assert first.status == "accepted", first
+    assert first.status == "accepted", first.model_dump(mode="json")
     again = _refusal(_write(instance, {**_add(WI1, "governs", WI2), "expect_absent": True}))
     assert again.code == "cruxible.write.value_already_present"
     assert again.candidates == (first.changes[0].claim,)
@@ -2558,7 +2644,7 @@ def test_rebind_moves_located_own_words_as_one_citation(
     first = _write(
         instance, _set(WI1, "status", "ready", evidence=_review_section(workspace, "Ready."))
     )
-    assert first.status == "accepted", first
+    assert first.status == "accepted", first.model_dump(mode="json")
     claim = first.changes[0].claim
     assert claim is not None
     (before,) = _claim_citations(instance, claim)

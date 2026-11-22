@@ -735,6 +735,12 @@ def render_get(
                     f"{printable(erased.because)}"
                 )
             )
+            if capture.passage is not None:
+                # The cited passage, as proposal review prints it.
+                text_lines = [line for line in capture.passage.splitlines() if line.strip()]
+                if capture.passage_truncated:
+                    text_lines[-1:] = [(text_lines[-1] if text_lines else "") + " ..."]
+                lines.extend(f"  | {printable(line)}" for line in text_lines)
         for attestation in result.evidence.attestations:
             lines.append(
                 f"attestation {attestation.stance} by {attestation.principal} "

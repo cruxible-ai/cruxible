@@ -2737,6 +2737,9 @@ class _CitationCommitment:
     set_arguments: tuple[tuple[str, object], ...] | None = None
     # The heading path a section citation was taken at, so a re-bind names it.
     section: tuple[str, ...] | None = None
+    # What the citing Claim is about: its Subject's artifact path and field.
+    subject_path: str | None = None
+    predicate: str | None = None
 
 
 @dataclass(frozen=True)
@@ -2964,6 +2967,8 @@ def claim_citation_commitments(
                 original_start=None if selection_span is None else selection_span[0],
                 original_end=None if selection_span is None else selection_span[1],
                 lineage_note=lineage_note,
+                subject_path=claim.statement.subject.artifact_path,
+                predicate=claim.statement.predicate,
                 section=(
                     tuple(str(item) for item in heading_path)
                     if isinstance(heading_path, list | tuple)
@@ -4038,6 +4043,11 @@ def _citation_drift_item(
         detail["observed_window_digest"] = observed_window_digest
     if commitment.lineage_note is not None:
         detail["lineage_note"] = commitment.lineage_note
+    if commitment.predicate is not None:
+        # Name what the Claim is about, as every Claim row does: the field here,
+        # the Subject among the related identities.
+        detail["predicate"] = commitment.predicate
+    about = () if commitment.subject_path is None else (commitment.subject_path,)
     claim_id = commitment.claim_identity.removeprefix("Claim:")
     rebind: dict[str, object] = {
         "claim_id": claim_id,
@@ -4083,7 +4093,7 @@ def _citation_drift_item(
         severity="repair",
         reason="citation_drifted",
         subject_identity=commitment.claim_identity,
-        related_identities=(commitment.citation_id,),
+        related_identities=(commitment.citation_id, *about),
         detail=detail,
         repair=PlaybillNextRepairV1(
             operation="cruxible.rebind",

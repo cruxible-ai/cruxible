@@ -46,7 +46,21 @@ CREATE TABLE IF NOT EXISTS content_reuse (
 ) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS backfilled (shard TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS backfill_complete (singleton INTEGER PRIMARY KEY);
+CREATE TABLE IF NOT EXISTS readings (
+ capture_digest TEXT PRIMARY KEY, contract_digest TEXT NOT NULL, source_key TEXT NOT NULL,
+ semantic_subject TEXT NOT NULL, observed_us INTEGER NOT NULL) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS readings_by_source
+ ON readings(source_key, contract_digest, observed_us);
+CREATE INDEX IF NOT EXISTS readings_by_subject
+ ON readings(semantic_subject, contract_digest, observed_us);
+CREATE TABLE IF NOT EXISTS readings_complete (singleton INTEGER PRIMARY KEY);
 """
+#: Coordinate fields that say WHERE a reading was taken, not which version it
+#: read: part of the logical source (the same URL fetched again is the same
+#: source; its response metadata is not).
+_SOURCE_LOCATOR_FIELDS: dict[str, tuple[str, ...]] = {"http-response-v1": ("url",)}
+#: How many leading bytes of a stored envelope the readings index reads.
+_READING_HEAD_LIMIT = 1 << 22
 _LOCK = threading.RLock()
 #: One connection per index file per process, its schema created once, used under ``_LOCK``.
 _RESIDENT = ResidentConnections(lock=lambda: _LOCK)
@@ -115,6 +129,70 @@ def envelope_contract(head: bytes) -> str | None:
     return named.decode("ascii")
 
 
+def _reading(content: bytes) -> tuple[str, str, int]:
+    """One envelope's (logical source key, semantic subject, observed_at in µs).
+
+    The logical source is what a later reading of the same thing repeats: the
+    source identity and selector (plus a coordinate's locator fields), never the
+    version coordinate. Empty strings when the envelope names none (a CAS
+    source, no subject); unparseable bytes read as no reading at all.
+    """
+
+    import hashlib
+    import json
+
+    from cruxible_client.contracts.canonical import canonical_bytes
+    from cruxible_client.contracts.temporal import parse_datetime
+
+    try:
+        data = json.loads(content)
+        source = data["source"]
+        observed = parse_datetime(str(data["observed_at"]))
+    except (ValueError, KeyError, TypeError):
+        return "", "", 0
+    if observed is None:
+        return "", "", 0
+    micros = int(observed.timestamp() * 1_000_000)
+    if not isinstance(source, dict):
+        return "", "", micros
+    kind = source.get("kind")
+    subject = ""
+    if kind == "external":
+        selector = source.get("selector")
+        coordinate = source.get("coordinate")
+        locator = {
+            field: coordinate.get(field)
+            for field in _SOURCE_LOCATOR_FIELDS.get(str(source.get("coordinate_type")), ())
+            if isinstance(coordinate, dict)
+        }
+        named: object = {
+            "kind": "external",
+            "source_identity": source.get("source_identity"),
+            "selector_type": source.get("selector_type"),
+            "selector": selector,
+            "locator": locator,
+        }
+        if isinstance(selector, dict) and isinstance(selector.get("semantic_subject"), dict):
+            subject = canonical_bytes(selector["semantic_subject"]).decode()
+    elif kind == "ledger":
+        named = {"kind": "ledger", "address": source.get("address")}
+    else:
+        return "", "", micros
+    try:
+        key = "sha256:" + hashlib.sha256(canonical_bytes(named)).hexdigest()
+    except (ValueError, TypeError):
+        return "", subject, micros
+    return key, subject, micros
+
+
+def semantic_subject_key(address: object) -> str:
+    """The readings index's spelling of a selector's ``semantic_subject``."""
+
+    from cruxible_client.contracts.canonical import canonical_bytes
+
+    return canonical_bytes(address).decode()
+
+
 class CaptureEnvelopeIndex:
     """The contract-to-envelope index beside one body store."""
 
@@ -149,8 +227,12 @@ class CaptureEnvelopeIndex:
         if contract is None:
             return
         inputs = self._derivation_inputs(content) if _DERIVED_MARK in content else None
+        reading = _reading(content)
         with self._connection() as connection:
             connection.execute("INSERT OR IGNORE INTO envelopes VALUES (?,?)", (contract, digest))
+            connection.execute(
+                "INSERT OR IGNORE INTO readings VALUES (?,?,?,?,?)", (digest, contract, *reading)
+            )
             if inputs is not None:
                 connection.executemany(
                     "INSERT OR IGNORE INTO derivation_inputs VALUES (?,?)",
@@ -319,6 +401,122 @@ class CaptureEnvelopeIndex:
         digests = tuple(str(row[0]) for row in rows)
         return digests[:limit], len(digests) <= limit
 
+    def _backfill_readings(self, connection: sqlite3.Connection) -> None:
+        """Read each envelope indexed before readings were kept, once (a cold migration)."""
+
+        if connection.execute("SELECT 1 FROM readings_complete").fetchone():
+            return
+        missing = connection.execute(
+            "SELECT e.contract_digest, e.capture_digest FROM envelopes e "
+            "LEFT JOIN readings r ON r.capture_digest = e.capture_digest "
+            "WHERE r.capture_digest IS NULL"
+        ).fetchall()
+        connection.executemany(
+            "INSERT OR IGNORE INTO readings VALUES (?,?,?,?,?)",
+            [
+                (str(digest), str(contract), *self._stored_reading(str(digest)))
+                for contract, digest in missing
+            ],
+        )
+        connection.execute("INSERT OR IGNORE INTO readings_complete VALUES (1)")
+
+    def _stored_reading(self, digest: str) -> tuple[str, str, int]:
+        return _reading(self._store.peek(digest, _READING_HEAD_LIMIT))
+
+    def newest_readings(
+        self,
+        contract_digests: Collection[str],
+        *,
+        cited: Collection[str],
+        subject: str,
+        limit: int,
+    ) -> tuple[str, ...]:
+        """Newest first: the Captures under these contracts that read what ``cited`` read.
+
+        A candidate is a cited Capture, a later or earlier reading of the same
+        logical source as one (contract lineage plus source key), or a reading
+        whose selector names ``subject`` (``semantic_subject_key``). Each source
+        and the subject is one bounded index seek of at most ``limit`` rows, so
+        the cost follows the Subject's citations, never the contract's Captures.
+        A preview reads the index as it stands and adds what it holds.
+        """
+
+        from cruxible_core.indexes.sql_batch import select_in
+        from cruxible_core.storage.cas import dry_run_held_bodies
+
+        versions = tuple(dict.fromkeys(contract_digests))
+        wanted = sorted(set(cited))
+        if not versions:
+            return ()
+        rows: dict[str, int] = {}
+        sources: set[str] = set()
+
+        def read(connection: sqlite3.Connection) -> None:
+            for digest, contract, key, observed in select_in(
+                connection,
+                "SELECT capture_digest,contract_digest,source_key,observed_us FROM readings "
+                "WHERE capture_digest IN ({})",
+                wanted,
+            ):
+                if contract in versions:
+                    rows[str(digest)] = int(observed)
+                    if key:
+                        sources.add(str(key))
+            seeks = [("source_key", key) for key in sorted(sources)]
+            if subject:
+                seeks.append(("semantic_subject", subject))
+            for column, value in seeks:
+                for version in versions:
+                    for digest, observed in connection.execute(
+                        f"SELECT capture_digest,observed_us FROM readings WHERE {column}=? "
+                        "AND contract_digest=? ORDER BY observed_us DESC LIMIT ?",
+                        (value, version, limit),
+                    ):
+                        rows[str(digest)] = int(observed)
+
+        held = dry_run_held_bodies()
+        if held is None:
+            with self._connection() as connection:
+                self._backfill(connection)
+                self._backfill_readings(connection)
+                read(connection)
+        else:
+            complete = False
+            if self.path.is_file() and not self.path.is_symlink():
+                with _LOCK:
+                    connection = sqlite3.connect(f"file:{self.path}?mode=ro", uri=True, timeout=30)
+                    try:
+                        read(connection)
+                        complete = bool(
+                            connection.execute("SELECT 1 FROM readings_complete").fetchone()
+                            and connection.execute("SELECT 1 FROM backfill_complete").fetchone()
+                        )
+                    except sqlite3.DatabaseError:
+                        rows.clear()
+                        sources.clear()
+                    finally:
+                        connection.close()
+            # A preview never writes the index: on a store not yet migrated it
+            # reads the contract's envelopes itself (the cold path), and it
+            # always adds the bodies it holds.
+            extra: dict[str, bytes] = {
+                digest: content
+                for digest, content in held.items()
+                if envelope_contract(content[:ENVELOPE_HEAD_LENGTH]) in versions
+            }
+            if not complete:
+                found, _ = self._captures_without_writing(versions, limit=1 << 62)
+                for digest in found:
+                    extra.setdefault(digest, self._store.peek(digest, _READING_HEAD_LIMIT))
+            known = {digest: _reading(content) for digest, content in extra.items()}
+            sources |= {known[digest][0] for digest in wanted if digest in known}
+            sources.discard("")
+            for digest, (key, named, observed) in known.items():
+                if digest in wanted or (key and key in sources) or (subject and named == subject):
+                    rows[digest] = observed
+        ordered = sorted(rows.items(), key=lambda item: (item[1], item[0]), reverse=True)
+        return tuple(digest for digest, _observed in ordered)
+
     def contracts_of(self, capture_digests: Collection[str]) -> dict[str, str]:
         """The contract each stored Capture envelope names, by Capture digest, batched.
 
@@ -477,4 +675,5 @@ __all__ = [
     "ENVELOPE_HEAD_LENGTH",
     "CaptureEnvelopeIndex",
     "envelope_contract",
+    "semantic_subject_key",
 ]

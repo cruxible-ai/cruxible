@@ -72,18 +72,18 @@ def test_a_fire_refreshes_at_its_recorded_instant_and_serving_needs_no_fold(
     instance, _owner = _freshness_world(tmp_path)
     drain(instance, now=AT)
     lead = _deadline(instance)
-    # Armed at the earliest end over the facts and the row keys together. The
-    # first is the evidence_expiring lead's start, clamped to horizon/4 before
-    # the support expires (stale_after 10 s): only a row key ends there.
-    assert lead is not None and lead == _earliest_end(instance)
-    fact_end = _earliest_fact_end(instance)
-    assert fact_end is not None and fact_end - lead == timedelta(seconds=10) / 4
+    # Armed at the earliest end over the facts and the row keys together: the
+    # evidence_expiring lead's start, clamped to horizon/4 before the support
+    # expires (stale_after 10 s). The facts end there too, so the row starts
+    # from facts that read every observation recorded by then.
+    assert lead is not None and lead == _earliest_end(instance) == _earliest_fact_end(instance)
     assert any(
         event.action == facts.NEXT_EXPIRE for event in fire_internal_triggers(instance, now=lead)
     )
-    with patch.object(facts, "_claim_facts", side_effect=AssertionError("no fact ended")):
-        drain(instance, now=lead)
+    drain(instance, now=lead)
     edge = _deadline(instance)
+    fact_end = _earliest_fact_end(instance)
+    assert edge is not None and edge - lead == timedelta(seconds=10) / 4
     assert edge == fact_end == _earliest_end(instance)
     request = NextRequest(evaluation_time=edge, access_profile=_access())
     # A read past the bound is served: it derives what ended and rolls it back.
@@ -120,6 +120,43 @@ def test_a_fire_refreshes_at_its_recorded_instant_and_serving_needs_no_fold(
             served.model_dump_json()
             == service_playbill_next(instance, request=request).model_dump_json()
         )
+
+
+def test_evidence_expiring_starts_from_facts_that_read_every_reobservation(
+    tmp_path: Path,
+) -> None:
+    """One lead: the facts end where the row starts, so a re-observation before it counts.
+
+    stale_after 40 s: the row's lead is 10 s (a quarter of the horizon). The
+    Claim is re-observed at 20 s; at 31 s the served queue and the live fold
+    agree that its evidence is not expiring (it now expires at 60 s).
+    """
+
+    from tests.test_integration.test_next_closed_loop import _refresh_claim
+
+    instance, owner = _freshness_world(tmp_path, stale_after=40_000_000)
+    drain(instance, now=AT)
+    lead_start = AT + timedelta(seconds=30)
+    assert _earliest_fact_end(instance) == lead_start == _deadline(instance)
+    _refresh_claim(instance, owner, timestamp="2026-08-16T20:00:20.000000Z")
+    later = AT + timedelta(seconds=31)
+    fire_internal_triggers(instance, now=later)
+    drain(instance, now=later)
+    request = NextRequest(evaluation_time=later, access_profile=_access())
+
+    def reasons(page) -> set[str]:  # type: ignore[no-untyped-def]
+        return {item.reason for item in page.items}
+
+    served = service_playbill_next(instance, request=request)
+    with patch.object(facts, "served_claim_rows", return_value=None):
+        folded = service_playbill_next(instance, request=request)
+    assert "evidence_expiring" not in reasons(folded)
+    assert reasons(served) == reasons(folded)
+    # At the re-observed lead start it is expiring, in both.
+    again = NextRequest(evaluation_time=AT + timedelta(seconds=50), access_profile=_access())
+    fire_internal_triggers(instance, now=again.evaluation_time)
+    drain(instance, now=again.evaluation_time)
+    assert "evidence_expiring" in reasons(service_playbill_next(instance, request=again))
 
 
 def test_each_bound_rearms_and_an_unbounded_state_cancels_the_deadline(tmp_path: Path) -> None:

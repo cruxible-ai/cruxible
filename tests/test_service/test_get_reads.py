@@ -221,6 +221,12 @@ def test_evidence_names_each_capture_by_contract_identity_and_version(
     assert capture.capture.startswith("CAP-") and len(capture.capture) == len("CAP-") + 12
     digest = capture_contract_digest(_CONTRACT).tagged
     assert digest not in json.dumps(evidence.model_dump(mode="json"))
+    # The passage the Claim cites, as proposal review shows it, in JSON and text.
+    assert capture.passage == "status: ready" and not capture.passage_truncated
+    from cruxible_client.contracts.get_text import render_get
+
+    text = render_get(_get(instance, claim, detail="evidence"))
+    assert text is not None and "\n  | status: ready" in text
 
 
 def test_why_history_and_proof_reuse_todays_services(world: dict[str, Any]) -> None:

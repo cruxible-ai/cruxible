@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 ISO_8601_FORMAT_HINT = "expected ISO 8601 datetime or date, e.g. 2026-08-05T14:30:00Z or 2026-08-05"
 """Self-correcting format guidance echoed by every datetime rejection.
@@ -38,6 +38,20 @@ def parse_datetime(value: str | datetime | None) -> datetime | None:
         return ensure_utc(value)
     normalized = value.replace("Z", "+00:00")
     return ensure_utc(datetime.fromisoformat(normalized))
+
+
+def temporal_value_text(value: object) -> str | None:
+    """A ``datetime.date`` or ``datetime.datetime`` as a date or datetime field holds it.
+
+    ``YYYY-MM-DD`` for a date; an ISO-8601 instant in UTC for a datetime (a
+    naive one reads as UTC). ``None`` for anything else.
+    """
+
+    if isinstance(value, datetime):
+        return format_datetime(value)
+    if isinstance(value, date):
+        return value.isoformat()
+    return None
 
 
 def format_datetime(value: datetime | None) -> str | None:
@@ -145,5 +159,6 @@ __all__ = [
     "is_expired",
     "parse_datetime",
     "parse_iso_duration_microseconds",
+    "temporal_value_text",
     "utc_now",
 ]

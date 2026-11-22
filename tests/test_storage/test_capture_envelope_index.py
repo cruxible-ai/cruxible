@@ -67,3 +67,71 @@ def test_a_dry_run_reads_the_index_without_writing_it(tmp_path: Path) -> None:
             True,
         )
     assert not (root / "capture-envelopes.sqlite3").exists()
+
+
+def _reading_bytes(contract: str, *, url: str, observed: str, body: str) -> bytes:
+    import json
+
+    return json.dumps(
+        {
+            "capture_contract_digest": contract,
+            "observed_at": observed,
+            "commitment": body,
+            "source": {
+                "kind": "external",
+                "source_identity": "web.fetch",
+                "coordinate_type": "http-response-v1",
+                "coordinate": {"url": url, "etag": body},
+                "selector_type": "whole-response-v1",
+                "selector": {},
+            },
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+
+
+def test_newest_readings_follow_the_cited_source_by_index(tmp_path: Path) -> None:
+    """A later reading of a cited source is found by seek; other sources are not read."""
+
+    import sqlite3
+
+    root = tmp_path / "cas"
+    root.mkdir()
+    store = ContentAddressedBodyStore(root)
+    contract = digest("contract", "web")
+    old = store.store(
+        _reading_bytes(contract, url="https://a", observed="2026-11-01T00:00:00Z", body="1")
+    ).digest
+    new = store.store(
+        _reading_bytes(contract, url="https://a", observed="2026-11-02T00:00:00Z", body="2")
+    ).digest
+    other = store.store(
+        _reading_bytes(contract, url="https://b", observed="2026-11-03T00:00:00Z", body="3")
+    ).digest
+    index = store.capture_envelopes
+    assert index.newest_readings((contract,), cited=(old,), subject="", limit=8) == (new, old)
+    assert index.newest_readings((contract,), cited=(), subject="", limit=8) == ()
+    assert index.newest_readings((contract,), cited=(other,), subject="", limit=8) == (other,)
+    # Envelopes indexed before readings were kept are read once.
+    with sqlite3.connect(root / "capture-envelopes.sqlite3") as connection:
+        connection.execute("DELETE FROM readings")
+        connection.execute("DELETE FROM readings_complete")
+    fresh = ContentAddressedBodyStore(root).capture_envelopes
+    assert fresh.newest_readings((contract,), cited=(old,), subject="", limit=1) == (new, old)
+    # A dry run answers the same without writing, and adds what it holds.
+    from cruxible_core.storage.cas import DryRunBodyStore
+
+    with dry_run_bodies() as held:
+        newest = (
+            DryRunBodyStore(store, held)
+            .store(
+                _reading_bytes(contract, url="https://a", observed="2026-11-04T00:00:00Z", body="4")
+            )
+            .digest
+        )
+        assert index.newest_readings((contract,), cited=(old,), subject="", limit=8) == (
+            newest,
+            new,
+            old,
+        )

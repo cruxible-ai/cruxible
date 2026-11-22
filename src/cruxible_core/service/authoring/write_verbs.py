@@ -260,8 +260,6 @@ _RATIONALE_MAX = 280
 # How many of a contract's Captures about the Subject, newest first, are tried
 # for the newest one that verifies.
 _MAX_CONTRACT_CAPTURES = 32
-# How many of a contract's Captures one contract lookup reads.
-_CONTRACT_CAPTURE_BUDGET = 16_384
 _CONTRACT_QUALIFIER = "CaptureContract:"
 _CLAIM_ID = re.compile(CLAIM_ID_PATTERN)
 # Decimal text a number field cannot hold: digits with a fraction or an exponent.
@@ -2369,9 +2367,10 @@ class _Planner:
         from cruxible_core.service.evidence.capture_reads import (
             CaptureReadInvalid,
             RetainedCapture,
-            contract_captures,
             verify_accepted_capture,
         )
+        from cruxible_core.storage.capture_envelope_index import semantic_subject_key
+        from cruxible_core.storage.capture_metadata import capture_envelope
 
         # Either spelling names a reserved contract: the public name orient
         # shows, or the stored identity.
@@ -2407,36 +2406,28 @@ class _Planner:
                     (subject_path_value, *versions),
                 )
             }
-        # Every retained Capture of the contract counts, cited or not; the body
-        # store indexes each envelope by its contract when it is stored.
-        inventory = contract_captures(
-            self.instance, contract_digests=versions, budget=_CONTRACT_CAPTURE_BUDGET
-        )
-        if not inventory.complete:
-            raise _refuse(
-                "cruxible.write.capture_scan_exhausted",
-                f"the newest Capture of {public_name(bare)} about {subject} was not found: the "
-                "contract has more Captures than one lookup reads",
-                change=index,
-                repair="Cite the Capture by its CAP- handle or its full sha256 digest",
-                field_path=path,
-            )
-        address = SemanticAddress.whole_artifact(subject_path_value).model_dump(mode="json")
-
-        def about_subject(envelope: Any) -> bool:
-            selector = getattr(envelope.source, "selector", None)
-            return isinstance(selector, Mapping) and selector.get("semantic_subject") == address
-
-        bound = sorted(
-            (
-                item
-                for item in inventory.captures
-                if item.digest in cited or about_subject(item.envelope)
-            ),
-            key=lambda item: (item.envelope.observed_at, item.digest),
-            reverse=True,
-        )
+        # The newest reading of each logical source the Subject's citations read,
+        # and every reading whose source names the Subject: maintained by the
+        # body store's envelope index when each envelope is stored, so a lookup
+        # costs a seek per source, never a pass over the contract's Captures.
         store = self.instance.body_store()
+        address = SemanticAddress.whole_artifact(subject_path_value).model_dump(mode="json")
+        candidates = store.capture_envelopes.newest_readings(
+            versions,
+            cited=cited,
+            subject=semantic_subject_key(address),
+            limit=_MAX_CONTRACT_CAPTURES,
+        )
+        bound: list[RetainedCapture] = []
+        for digest in candidates[:_MAX_CONTRACT_CAPTURES]:
+            try:
+                envelope = capture_envelope(store, digest, access=_VALUE_READ_ACCESS)
+            except (CruxibleError, ValueError):
+                envelope = None
+            if envelope is None:
+                # The newest reading cannot be read: never cite an older one silently.
+                raise self._newest_unverified(digest, bare, subject, index=index, path=path)
+            bound.append(RetainedCapture(digest=digest, envelope=envelope))
         # A Claim maps a byte span onto what it cites, so only an exact-bytes
         # commitment can back one. A newer Capture committed any other way is
         # never skipped silently: it is named, as a refusal or as a warning.
@@ -2450,10 +2441,15 @@ class _Planner:
                     access=_VALUE_READ_ACCESS,
                     captures=self.captures,
                 )
-            except (CaptureReadInvalid, ReadRefusalError):
-                continue
+            except (CaptureReadInvalid, ReadRefusalError) as exc:
+                raise self._newest_unverified(
+                    item.digest, bare, subject, index=index, path=path, reason=str(exc)
+                ) from None
             if isinstance(verified, str):
-                continue
+                # A newer reading that does not verify is named, never stepped over.
+                raise self._newest_unverified(
+                    item.digest, bare, subject, index=index, path=path, reason=verified
+                )
             reuse = classify_capture_reuse(
                 verified.envelope, contract=verified.contract, store=store, claim_id=""
             )
@@ -2497,6 +2493,30 @@ class _Planner:
                 f"Capture {subject} under {public_name(bare)} first (a Procedure or Line that "
                 "produces it, or --evidence-file / file evidence from its source), or cite a "
                 "Capture by its CAP- handle or digest"
+            ),
+            field_path=path,
+        )
+
+    def _newest_unverified(
+        self,
+        digest: str,
+        bare: str,
+        subject: str,
+        *,
+        index: int,
+        path: str,
+        reason: str = "capture_unreadable",
+    ) -> WriteRefusalError:
+        return _refuse(
+            "cruxible.write.contract_capture_unverified",
+            f"the newest Capture of {public_name(bare)} about {subject}, "
+            f"{capture_handle(digest)}, does not verify ({reason}); an older reading "
+            "is not cited in its place",
+            change=index,
+            candidates=(capture_handle(digest),),
+            repair=(
+                f"Capture {subject} under {public_name(bare)} again, or cite the Capture "
+                "you mean by its CAP- handle or digest"
             ),
             field_path=path,
         )
