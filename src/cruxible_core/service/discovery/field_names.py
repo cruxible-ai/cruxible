@@ -9,7 +9,9 @@ from __future__ import annotations
 
 from collections.abc import Collection, Mapping
 
-RESERVED_FIELD_NAMES = frozenset({"subject_id", "subject", "kind", "predicate", "claim", "flags"})
+RESERVED_FIELD_NAMES = frozenset(
+    {"subject_id", "subject", "kind", "predicate", "claim", "flags", "last_changed"}
+)
 """Names the read verbs reserve: Subject fields and row metadata keys."""
 
 RESERVED_FIELD_PREFIX = "value."

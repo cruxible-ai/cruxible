@@ -1138,7 +1138,7 @@ adds `receipt.replay`: `definition_path`, `result` (`ClaimQueryResult`) and
 | `contains` | `None` | Case-insensitive text in any live Claim value; alone, across kinds. |
 | `select` | `None` | Column fields; without it a kind shows up to 12 predicates. |
 | `follow` | `None` | One-hop relations as `(field, alias)`, or `(field, alias, "reverse")` along another kind's predicate that points here; later fields read `alias.field`. |
-| `order_by` | `None` | Fields, `-` prefixed for descending. |
+| `order_by` | `None` | Fields, `-` prefixed for descending; `-last_changed` first lists recently changed Subjects first (`last_changed` also filters and selects). |
 | `limit` / `cursor` | `50` / `None` | Rows per page (at most 500) and the `next_cursor` of the previous page. |
 | `spec` / `name` / `params` | `None` | The spec and named modes. |
 | `at` | `None` | A coordinate or git oid; the connection's otherwise. |

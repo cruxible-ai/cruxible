@@ -278,8 +278,14 @@ class QueryVocabulary:
         *,
         field_path: str,
         owner: str | None = None,
+        reserved: tuple[str, ...] = (),
     ) -> PredicateInfo | Literal["subject_id"]:
-        """Resolve a field by the shared read-verb naming rule, or refuse with the nearest."""
+        """Resolve a field by the shared read-verb naming rule, or refuse with the nearest.
+
+        ``reserved`` are the extra reserved names the caller serves itself (a
+        compact query's ``last_changed``): a refusal suggests them beside
+        ``subject_id``.
+        """
 
         if name == SUBJECT_ID_FIELD and reserved_meaning(name, self.predicates):
             return "subject_id"
@@ -297,7 +303,7 @@ class QueryVocabulary:
             )
         admitted = {info.predicate: info for kind in kinds for info in self.predicates_of(kind)}
         shown = {self.field_name(info, kinds) for info in admitted.values()}
-        suggestions = nearest(name, (*shown, *admitted, SUBJECT_ID_FIELD))
+        suggestions = nearest(name, (*shown, *admitted, SUBJECT_ID_FIELD, *reserved))
         if name in self.predicates:
             message = f"predicate {name!r} does not apply to {label}"
         else:
@@ -307,7 +313,8 @@ class QueryVocabulary:
             message,
             nearest=suggestions,
             repair=(
-                f"use a predicate of {label} (orient with kind {label} lists them) or subject_id"
+                f"use a predicate of {label} (orient with kind {label} lists them) or "
+                f"{', '.join((SUBJECT_ID_FIELD, *reserved))}"
             ),
             field_path=field_path,
         )

@@ -2522,7 +2522,15 @@ many-valued column matches any of its values), list only live rows unless a
 `capped` and says so. `--order-by` sorts by each column's type (numbers as
 numbers, instants as instants), nulls last, ties by name. `--where` filters combine as
 all-of; a field is a predicate's full name, its name after the `KIND.` prefix,
-`subject_id`, or `alias.field` after `--follow`. `f!=v` also matches a Subject without the value.
+`subject_id`, `last_changed`, or `alias.field` after `--follow`. `f!=v` also matches a Subject without the value.
+`last_changed` is the generation in which the Subject, or any Claim about it,
+last changed (0 for genesis). It compares with `=`, `!=`, `<`, `<=`, `>`, `>=`
+and `in`, and selects as a column. As an order key it must come first:
+`--order-by -last_changed` lists the most recently changed Subjects first, and
+`--where 'last_changed>=835'` keeps only the Subjects changed since generation
+835. Either one adds the `last_changed` column. It is read from the
+accepted-history index, one lookup per Subject and Claim, never by replaying
+history.
 `f exists` matches a Subject whose field holds a live Claim, including an explicit
 none (a KEV field read in full that shows `none of security.catalog/cisa-kev`);
 `f !exists` matches only a field with no Claim at all, one nobody has answered.
@@ -4795,11 +4803,14 @@ the refresh.
 ## since
 
 ~~~text
-cruxible since GENERATION [--max-rows N] [--max-bytes N]
+cruxible since GENERATION [--limit N] [--max-bytes N]
   [--access-profile FILE|-] [--cursor FILE|-] [--json]
 ~~~
 
 Returns signed accepted ChangeSet members in `(GENERATION, pinned head]` order.
+`--limit` (default 100, at most 1000; `--max-rows` is the same option and the
+wire field `max_rows`) bounds the rows on a page. A truncated page ends with
+`More: cruxible since ...`, the command that continues it.
 The text output prints one line per value, led by the generation and the
 action: `28  create  catalog.part/bp-1142  semantic.alias = bp1142  [CLM-…]`,
 and `retire subject KIND/ID` for a retired Subject.

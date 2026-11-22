@@ -251,7 +251,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_query": (
         "Use to answer any question over accepted state in one call. Compact: kind "
         '(e.g. "project.work_item") with where filters such as '
-        '{"field": "status", "eq": "ready"}, select, follow and order_by; contains alone '
+        '{"field": "status", "eq": "ready"}, select, follow and order_by (["-last_changed"] '
+        "lists recently changed Subjects first; last_changed is a generation); contains alone "
         "searches every "
         "Claim value; a definition kind (ClaimType, Procedure, Trigger, Line, SubjectKind, "
         "CaptureContract, ProcedureMandate, QueryDefinition) lists those definitions with "

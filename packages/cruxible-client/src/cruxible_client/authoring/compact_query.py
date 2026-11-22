@@ -348,6 +348,10 @@ def parse_where(expression: str) -> QueryFilter:
 
 _SUFFIXES = tuple(operator for operator in QUERY_FILTER_OPERATORS if operator != "eq")
 _ORDERED = frozenset({"integer", "number", "string"})
+#: The generation a Subject (its shell or any Claim about it) last changed in:
+#: a reserved field the daemon serves for where, select and order_by.
+LAST_CHANGED_FIELD = "last_changed"
+_LAST_CHANGED_OPERATORS = ("eq", "ne", "lt", "lte", "gt", "gte", "in")
 
 
 def keyword_name(field: str) -> str | None:
@@ -440,18 +444,35 @@ class CompactQuery:
                 names[leaf] = predicates[0]
         return names
 
+    def _recency(self, name: str) -> bool:
+        """``last_changed`` keeps its reserved meaning unless a predicate's full name is it."""
+
+        return name == LAST_CHANGED_FIELD and self._fields().get(name) != name
+
     def _predicate(self, name: str) -> str | None:
-        if name == "subject_id":
+        if name == "subject_id" or self._recency(name):
             return None
         names = self._fields()
         if name not in names:
             raise QueryNameError(
                 f"{self._kind} has no field {name!r}",
-                nearest=_nearest(name, [*names, "subject_id"]),
+                nearest=_nearest(name, [*names, "subject_id", LAST_CHANGED_FIELD]),
             )
         return names[name]
 
     def _check(self, name: str, operator: str, value: object) -> object:
+        if self._recency(name):
+            if operator not in _LAST_CHANGED_OPERATORS:
+                raise QueryNameError(
+                    f"{operator!r} does not apply to {LAST_CHANGED_FIELD}; use "
+                    + ", ".join(_LAST_CHANGED_OPERATORS)
+                )
+            values = list(value) if operator == "in" and isinstance(value, Sequence) else [value]
+            if operator == "in" and (isinstance(value, str) or not values):
+                raise QueryNameError(f"{LAST_CHANGED_FIELD}__in takes a nonempty list")
+            if any(isinstance(item, bool) or not isinstance(item, int) for item in values):
+                raise QueryNameError(f"{LAST_CHANGED_FIELD} compares with a generation number")
+            return values if operator == "in" else values[0]
         predicate = self._predicate(name)
         if predicate is None:
             if operator == "exists":
@@ -505,7 +526,7 @@ class CompactQuery:
                 operator == "eq"
                 and head
                 and suffix
-                and name != "subject_id"
+                and name not in {"subject_id", LAST_CHANGED_FIELD}
                 and name not in self._fields()
             ):
                 raise QueryNameError(
@@ -519,6 +540,8 @@ class CompactQuery:
     def _wire_field(self, name: str) -> str:
         """The full predicate a World name sends, which the daemon resolves as itself."""
 
+        if self._recency(name):
+            return name
         return self._predicate(name) or "subject_id"
 
     def select(self, *fields: str) -> CompactQuery:
@@ -532,6 +555,8 @@ class CompactQuery:
 
     def order_by(self, *fields: str) -> CompactQuery:
         """Order rows by fields; prefix ``-`` for descending.
+
+        ``-last_changed`` (first) lists the most recently changed Subjects first.
 
         Next: ``.run()``.
         """
@@ -590,6 +615,7 @@ def filters_from_mappings(where: Sequence[QueryFilter | Mapping[str, Any]]) -> t
 
 
 __all__ = [
+    "LAST_CHANGED_FIELD",
     "CompactQuery",
     "QueryNameError",
     "QueryResult",
