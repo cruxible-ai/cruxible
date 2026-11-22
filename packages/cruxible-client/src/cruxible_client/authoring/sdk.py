@@ -10,7 +10,7 @@ import time
 import unicodedata
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeVar, cast, overload
@@ -256,7 +256,7 @@ from cruxible_client.contracts.shapes import (
 )
 from cruxible_client.contracts.subject_kinds import SubjectKeyPart, SubjectKeyReference
 from cruxible_client.contracts.subjects import SubjectShell
-from cruxible_client.contracts.temporal import format_datetime
+from cruxible_client.contracts.temporal import format_datetime, temporal_value_text
 from cruxible_client.contracts.triggers import InternalActionName
 from cruxible_client.contracts.write import (
     AboutChange,
@@ -1856,7 +1856,9 @@ def _write_field(field_name: str | ClaimTypeRef) -> str:
     return field_name.address if isinstance(field_name, ClaimTypeRef) else field_name
 
 
-def _write_value(value: ClaimValue | SubjectRef | LiteralValue | NoneValue) -> WriteValue:
+def _write_value(
+    value: ClaimValue | date | SubjectRef | LiteralValue | NoneValue,
+) -> WriteValue:
     if isinstance(value, NoneValue):
         return value
     if isinstance(value, SubjectRef):
@@ -1865,15 +1867,34 @@ def _write_value(value: ClaimValue | SubjectRef | LiteralValue | NoneValue) -> W
         if not isinstance(value.value, bool | int | float | str):
             raise ValueError("the write verbs take a scalar value; this literal is structured")
         return value.value
+    # A date or datetime field holds its canonical text: YYYY-MM-DD, or an
+    # ISO-8601 instant in UTC (a naive datetime reads as UTC, as query filters do).
+    temporal = temporal_value_text(value)
+    if temporal is not None:
+        return temporal
+    if not isinstance(value, bool | int | str):
+        raise WriteRefusalError(
+            "cruxible.write.value_type_mismatch",
+            f"a write value is text, a whole number, true/false, a date or a datetime; "
+            f"got {type(value).__name__}",
+            repair_line=(
+                "Pass a date field a datetime.date or 'YYYY-MM-DD', a datetime field a "
+                "datetime.datetime or an ISO-8601 instant, a decimal as text"
+            ),
+        )
     return value
 
 
 WriteExpect = (
-    ClaimValue | SubjectRef | LiteralValue | Sequence[ClaimValue | SubjectRef | LiteralValue]
+    ClaimValue
+    | date
+    | SubjectRef
+    | LiteralValue
+    | Sequence[ClaimValue | date | SubjectRef | LiteralValue]
 )
 
 
-def _expected_value(value: ClaimValue | SubjectRef | LiteralValue) -> ClaimValue:
+def _expected_value(value: ClaimValue | date | SubjectRef | LiteralValue) -> ClaimValue:
     written = _write_value(value)
     assert not isinstance(written, NoneValue)
     return written
@@ -1884,7 +1905,7 @@ def _write_expect(expect: WriteExpect | None) -> ExpectedValue | None:
 
     if expect is None:
         return None
-    if isinstance(expect, bool | int | float | str | SubjectRef | LiteralValue):
+    if isinstance(expect, bool | int | float | str | date | SubjectRef | LiteralValue):
         return _expected_value(expect)
     return tuple(_expected_value(item) for item in expect)
 
@@ -1900,7 +1921,8 @@ def _write_target(target: str | ClaimRef | SubjectRef | SlotRef) -> str | SlotRe
 _WriteSubject: TypeAlias = "str | SubjectRef | CreatedSubject | SubjectCreationDraft"
 _WriteField = str | ClaimTypeRef
 _WriteValue: TypeAlias = (
-    "ClaimValue | SubjectRef | LiteralValue | NoneValue | CreatedSubject | SubjectCreationDraft"
+    "ClaimValue | date | SubjectRef | LiteralValue | NoneValue | CreatedSubject"
+    " | SubjectCreationDraft"
 )
 #: One key part of a create: a literal, or a pair's end (an accepted Subject, a
 #: Subject this write creates, or a ``cx.new_subject`` draft of one).
@@ -4045,7 +4067,7 @@ class Cruxible:
         self,
         subject: str | SubjectRef,
         field: str | ClaimTypeRef,
-        value: ClaimValue | SubjectRef | LiteralValue | NoneValue,
+        value: ClaimValue | date | SubjectRef | LiteralValue | NoneValue,
         *,
         because: str,
         evidence: Evidence | AuthoredSection | None = None,
@@ -4121,7 +4143,7 @@ class Cruxible:
         self,
         subject: str | SubjectRef,
         field: str | ClaimTypeRef,
-        value: ClaimValue | SubjectRef | LiteralValue | NoneValue,
+        value: ClaimValue | date | SubjectRef | LiteralValue | NoneValue,
         *,
         because: str,
         evidence: Evidence | AuthoredSection | None = None,

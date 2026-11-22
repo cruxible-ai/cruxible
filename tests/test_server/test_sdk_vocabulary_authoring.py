@@ -621,3 +621,47 @@ def test_accept_takes_a_bool_and_refuses_other_values_before_the_wire(
     with pytest.raises(ValueError, match="accept is 'if_allowed' or 'never'"):
         landed.prepare().submit(accept="yes")  # type: ignore[arg-type]
     assert landed.prepare().submit(accept=True).outcome.status == "landed"  # type: ignore[arg-type]
+
+
+def test_date_and_datetime_fields_take_python_values(
+    playbill_http: tuple[TestClient, str, Path], tmp_path: Path
+) -> None:
+    """A datetime.date or datetime.datetime is sent as the field's canonical text."""
+
+    from datetime import UTC, date, datetime
+
+    from cruxible_client.authoring import world as world_module
+    from cruxible_client.contracts.errors import WriteRefusalError
+    from cruxible_client.contracts.shapes import DateTimeType, DateType
+
+    http, instance_id, _ = playbill_http
+    cx = _cx(http, instance_id, tmp_path)
+    changes = cx.changes(rationale="Releases with a day and an instant.")
+    changes.field("dev.release", "ref", SLUG, description="Its reference.", key=True)
+    changes.field("dev.release", "ships_on", DateType(), description="The day it ships.")
+    changes.field("dev.release", "cut_at", DateTimeType(), description="When it was cut.")
+    changes.subject_kind(name="dev.release", description="A release.")
+    assert changes.prepare().submit().outcome.status == "landed"
+    cx.refresh()
+
+    day = cx.set("dev.release/r1", "dev.release.ships_on", date(2026, 11, 22), because="Planned.")
+    assert day.changes[0].after == "2026-11-22", day
+    cut = datetime(2026, 11, 21, 9, 30, tzinfo=UTC)
+    instant = cx.set("dev.release/r1", "dev.release.cut_at", cut, because="Cut.")
+    assert instant.changes[0].after == "2026-11-21T09:30:00+00:00", instant
+    again = cx.set(
+        "dev.release/r1",
+        "dev.release.ships_on",
+        date(2026, 11, 23),
+        because="Slipped a day.",
+        expect=date(2026, 11, 22),
+    )
+    assert again.changes[0].after == "2026-11-23", again
+    # The World's keyword writes send the same text.
+    assert world_module._write_value(date(2026, 1, 2)) == "2026-01-02"
+    # Anything else refuses before the wire, naming the forms, never a repr.
+    with pytest.raises(WriteRefusalError) as caught:
+        cx.set("dev.release/r1", "dev.release.ref", object(), because="x")  # type: ignore[arg-type]
+    assert caught.value.error_code == "cruxible.write.value_type_mismatch"
+    assert "object at 0x" not in str(caught.value)
+    assert "YYYY-MM-DD" in (caught.value.repair_line or "")

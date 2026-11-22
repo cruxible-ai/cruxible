@@ -22,7 +22,6 @@ import json
 import keyword
 import re
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
@@ -39,7 +38,7 @@ from cruxible_client.contracts.compact_query import (
 from cruxible_client.contracts.public_names import public_name
 from cruxible_client.contracts.read_values import ShownObject, TruncatedText
 from cruxible_client.contracts.shapes import claim_value_kind, value_type_name
-from cruxible_client.contracts.temporal import format_datetime
+from cruxible_client.contracts.temporal import temporal_value_text
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from cruxible_client.authoring.world import World
@@ -388,9 +387,8 @@ def _wire_value(value: object) -> object:
         return value.value
     if isinstance(value, SubjectRef):
         return value.address
-    if isinstance(value, datetime):
-        return format_datetime(value)
-    return value
+    temporal = temporal_value_text(value)
+    return value if temporal is None else temporal
 
 
 class CompactQuery:

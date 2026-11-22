@@ -74,7 +74,7 @@ _DEFINE_OPTIONS = frozenset({"create_new", "expect_new", "evidence", "role"})
 _STUB_IMPORTS = (
     "from collections.abc import Sequence",
     "from collections.abc import Iterator",
-    "from datetime import datetime",
+    "from datetime import date, datetime",
     "from typing import Literal",
     "",
     "from cruxible_client.authoring.compact_query import QueryResult",
@@ -300,6 +300,10 @@ def _subject_block(world: World, node: _Node) -> list[str]:
     return lines
 
 
+#: A date or datetime field also takes the Python value, sent as its canonical text.
+_TEMPORAL_ANNOTATIONS = {"date": "str | date", "datetime": "str | datetime"}
+
+
 def _write_annotation(claim_type: WorldClaimType) -> str:
     """The value one write keyword takes: an enum member is a ``Literal``."""
 
@@ -308,6 +312,9 @@ def _write_annotation(claim_type: WorldClaimType) -> str:
         return "str | SubjectRef | WorldNewSubject"
     if claim_type.members:
         return "Literal[" + ", ".join(repr(member) for member in claim_type.members) + "]"
+    temporal = _TEMPORAL_ANNOTATIONS.get(claim_type.value_type.kind)
+    if temporal is not None:
+        return temporal
     declared = value_type_name(claim_type.value_type)
     return {"string": "str", "integer": "int", "number": "int", "boolean": "bool"}.get(
         str(declared), "str | int | bool"
@@ -537,7 +544,7 @@ def _value_annotation(claim_type: WorldClaimType) -> tuple[str, tuple[str, ...]]
         return f"Literal[{spelled}]", ("eq", "ne", "in", "exists", "contains")
     declared = value_type_name(claim_type.value_type)
     if declared == "string":
-        annotation = "str | datetime" if claim_type.value_type.kind == "datetime" else "str"
+        annotation = _TEMPORAL_ANNOTATIONS.get(claim_type.value_type.kind, "str")
         return annotation, ("eq", "ne", *_ORDERED_OPERATORS, "in", "exists", "contains")
     if declared == "integer":
         return "int", ("eq", "ne", *_ORDERED_OPERATORS, "in", "exists")
