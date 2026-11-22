@@ -32,8 +32,9 @@ def _command_modules() -> list[ModuleType]:
     ]
     # DP-0B intentionally reduces this package to the four public groups, the
     # stdio MCP entry that registry launchers reach through ``cruxible mcp``,
-    # `cruxible console` (the read-only console listener), and their shared
-    # formatting/dispatch helper.
+    # `cruxible console` (the read-only console listener), `cruxible python`
+    # (the SDK script runner and checker), and their shared formatting/dispatch
+    # helper.
     assert {module.__name__.rsplit(".", 1)[-1] for module in modules} == {
         "_common",
         "console",
@@ -41,6 +42,7 @@ def _command_modules() -> list[ModuleType]:
         "credentials",
         "mcp",
         "playbill",
+        "python_runner",
         "server",
     }
     return modules
@@ -143,9 +145,9 @@ def test_every_command_defined_in_the_commands_package_is_reachable() -> None:
     # First-run adds rebind; Capture erasure adds capture erase; `console` adds one;
     # the vocabulary file adds `vocabulary export|plan|apply`; the six `curation`
     # verbs left with 0.5.0 and the duplicates audit came back as `duplicates`;
-    # `link` adds one.
-    assert len(leaf_claims) == 116, (
-        f"expected 116 Cruxible/host leaf commands, found {len(leaf_claims)}"
+    # `link` adds one; `python` adds one.
+    assert len(leaf_claims) == 117, (
+        f"expected 117 Cruxible/host leaf commands, found {len(leaf_claims)}"
     )
 
     reachable = set(leaf_claims)

@@ -7,10 +7,21 @@ that lands it; entries move under a version heading when the release is
 tagged. Work items for these changes live on the active release line in
 the project's own state instance.
 
+### Added
+
+- **`cruxible python`** runs an SDK script (`SCRIPT`, `-c CODE` or `-`) with the
+  CLI's own interpreter, its resolved daemon, instance, principal and
+  `--env-file` settings passed in the environment, from any repository and with
+  nothing installed into that project. `cruxible python --check` type-checks the
+  script with pyright against the instance's world stub (`from world import
+  World`), cached per instance under `~/.cruxible/stubs/` and re-rendered only
+  when the vocabulary moves; without pyright it refuses with
+  `cruxible.python.pyright_unavailable`.
+
 ### Fixed
 
 - A client and daemon in the same `major.minor` release series whose authoring
-  contract snapshots differ (a 0.5.0 client and a 0.5.1 daemon) no longer
+  contract snapshots differ (from 0.5.1 on, e.g. a 0.5.1 client and a 0.5.2 daemon) no longer
   refuse reads: orient, query, get, since, next, whoami and the other reads
   serve, and every write still refuses with
   `cruxible.sdk.daemon_version_incompatible` before it is sent. Another

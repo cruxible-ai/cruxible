@@ -411,7 +411,9 @@ Passing `part.set(...)` itself to `w.write` fails (it has already tried to
 write, and lacks `because`); pass `part.edit().set(...)`.
 `.cruxible/world.pyi` holds the vocabulary as Python types, so an editor or a
 model completes real names; floor delivery keeps it current, and `cruxible
-stub` writes one.
+stub` writes one. `cruxible python script.py` runs an SDK script with the CLI's
+own interpreter and connection from any repository, and `cruxible python --check
+script.py` type-checks it against the vocabulary (`from world import World`).
 
 ### Definitions
 

@@ -1182,6 +1182,9 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
         module="server",
         attr="server_group",
     ),
+    "python": _command(
+        "python_runner", "python_cmd", "Run or --check a script with Cruxible's interpreter."
+    ),
     "mcp": _command("mcp", "mcp_cmd", "Serve the MCP tools over stdio."),
     "console": _command(
         "console", "console_cmd", "Open the read-only console in a browser (loopback only)."

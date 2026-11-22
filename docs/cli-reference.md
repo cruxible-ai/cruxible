@@ -4798,7 +4798,68 @@ the daemon keeps it current as part of each floor refresh, re-rendering it only
 when an accepted generation changed the vocabulary (it reads only the change
 records since the generation it last checked, and writes the file only when its
 bytes differ). With delivery off, `cruxible stub --out .cruxible/world.pyi` is
-the refresh.
+the refresh. `cruxible python --check` keeps its own per-instance copy and needs
+neither.
+
+## python
+
+~~~text
+cruxible python SCRIPT [ARGS]...
+cruxible python -c CODE [ARGS]...
+cruxible python - [ARGS]...
+cruxible python --check SCRIPT... | -c CODE | -
+~~~
+
+Runs a script with the interpreter the CLI itself runs on, so `import
+cruxible_client` is the SDK installed with this `cruxible`, from any repository
+or worktree and with nothing installed into that project's environment.
+`-c CODE` runs a string and `-` reads the script from standard input, as
+`python` does; options for the script go after SCRIPT, and the exit status is
+the script's.
+
+The connection this command resolved reaches the script through its
+environment: the daemon (`--server-url` / `--server-socket`, as
+`CRUXIBLE_SERVER_URL` or `CRUXIBLE_SERVER_SOCKET`, exactly one), the instance
+(`--instance-id`, as `CRUXIBLE_INSTANCE_ID`), the acting principal with its key
+and credential, and whatever `--env-file` / `CRUXIBLE_ENV_FILE` loaded (already
+applied with explicit flags kept, so the child does not read the file again).
+`Cruxible.connect()` in the script picks them up; nothing is printed or put on
+a command line.
+
+~~~bash
+cruxible --env-file ~/keys/reviewer/cruxible.env python triage.py --limit 20
+~~~
+
+`--check` type-checks instead of running, with pyright, against this
+instance's world stub. No pyright configuration is needed: the stub is put on
+the checker's path as the module `world`, the way `cruxible stub` documents
+importing it.
+
+~~~python
+from typing import TYPE_CHECKING, cast
+from cruxible_client import Cruxible
+
+if TYPE_CHECKING:
+    from world import World
+
+with Cruxible.connect() as cx:
+    w = cast("World", cx.world())
+~~~
+
+A misspelled kind, field or enum member prints one line per diagnostic
+(`FILE:LINE:COL: error: ...`), then `check: N error(s), files: N`, and exits 1;
+a clean check prints `check: ok` and exits 0. The first line names the stub used
+and whether it was `reused`, `revalidated` or `rendered`. pyright is found on
+`PATH` or beside the CLI's interpreter; without it the check refuses with
+`cruxible.python.pyright_unavailable` (repair: `uv tool install pyright`).
+
+The stub is cached per instance in the per-user Cruxible directory (beside the
+CLI context file: `~/.cruxible/stubs/<instance>/world.pyi`, or beside
+`CRUXIBLE_CLI_CONTEXT_PATH`), so every checkout and worktree shares one. Each
+check reads the accepted head; an unchanged head reuses the stub with no other
+read, a moved head re-reads only the vocabulary listing, and the stub is
+rendered again only when a ClaimType or SubjectKind changed (or the cache names
+another daemon endpoint). `cruxible stub --out PATH` is unchanged.
 
 ## since
 

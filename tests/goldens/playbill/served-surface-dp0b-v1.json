@@ -2,8 +2,8 @@
   "format": "playbill-served-surface-v1",
   "succession": {
     "ratified_by": "maintainer",
-    "register_entry": "query-recency-sort-and-since-limit-1120",
-    "surface_digest": "sha256:419c43c166652042d576280123a7b73edb1cf01a40f90bbbcee84f74e6a16fc9"
+    "register_entry": "2026-11-22:sdk-python-runner-1120",
+    "surface_digest": "sha256:9404dec095398f71886dfd9a056902438a84bec939218aeed8096553e21e4b99"
   },
   "surface": {
     "cli_leaves": [
@@ -678,6 +678,13 @@
         ],
         "command": "provider retire",
         "delegate": "cruxible_core.cli.commands.playbill.retire_provider"
+      },
+      {
+        "client_operations": [
+          "get"
+        ],
+        "command": "python",
+        "delegate": "cruxible_core.cli.commands.python_runner.python_cmd"
       },
       {
         "client_operations": [
@@ -2304,7 +2311,7 @@
       {
         "client_operations": [],
         "delegate": "cruxible_core.mcp.handlers.handle_console",
-        "input_schema_digest": "sha256:419cc464b9e84035b066da68491cf67800fed7f14dc0c8cf6333906fe6dc36f1",
+        "input_schema_digest": "sha256:6321b11026feee5a5a7936f27c62b98dbaca3156a271b0a70141bc1a8516f91d",
         "name": "cruxible_console",
         "output_schema_digest": "sha256:1091f8cc1b43f0dea1c32fdf434e9811226ce0c456caab3d05eaff7f38cc50f3",
         "permission": "READ_ONLY"
@@ -2448,14 +2455,15 @@
       {
         "client_operations": [
           "create_host",
+          "get",
           "init",
           "orient",
           "show_host"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_init",
-        "input_schema_digest": "sha256:1cf060135e2b393ae0fbe0b7cdbac99b39d52127d73e49e09611cf595c65be2c",
+        "input_schema_digest": "sha256:8f38e2df34e87c0244eaa80f8d4b3ce4eb54f1758f30cb29fd056fcc21ad3281",
         "name": "cruxible_init",
-        "output_schema_digest": "sha256:d6321b60efe130609096d01614b49b09a46d4c0b779b88f5a8dd0cbf7d1c864e",
+        "output_schema_digest": "sha256:4b3ea97f6b447b5bc09fbd91500c62eb65ed492f35c76847609c8d9ea7708e59",
         "permission": "ADMIN"
       },
       {
