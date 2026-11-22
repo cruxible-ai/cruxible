@@ -1126,10 +1126,11 @@ def proposals_awaiting_activation(
     candidates neither refused, accepted nor withdrawn whose parent is the
     coordinate's semantic root. Under ``independent_approval_required``, a
     candidate qualifies once its requirement is met. Under
-    ``self_approval_allowed``, an unapproved normal candidate is withheld so
-    ``next`` does not steer a self-approving author at activating its own
-    ``accept=never`` proposal; once another active ordinary signer approves it
-    (for example with ``hold=true``), it surfaces here. A principal-lifecycle
+    ``self_approval_allowed``, an unapproved normal candidate is withheld while
+    another active ordinary principal could review it, so ``next`` does not
+    steer a self-approving author at activating its own ``accept=never``
+    proposal; once that reviewer approves it (for example with ``hold=true``),
+    it surfaces here. A sole principal still sees its own candidate. A principal-lifecycle
     candidate is the actor's own signature to give first, and a compiler upgrade
     needs at least one active ordinary signature before settlement.
     """
@@ -1159,8 +1160,9 @@ def proposals_awaiting_activation(
             if _signature_required_unsigned(candidate, signers, ordinary_principal_ids):
                 # Settlement needs a signature first: the approval row offers it.
                 continue
-        elif eligible < 1:
-            # Do not steer a self-approving author to activate its own unapproved proposal.
+        elif eligible < 1 and ordinary_principal_ids - {row["actor_id"]}:
+            # Another principal can review: do not steer the author to activate its
+            # own unapproved proposal. Alone, the author's activation is the only path.
             continue
         ready.append(
             ProposalAwaitingActivation(
