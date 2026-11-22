@@ -541,6 +541,7 @@ class IncompatibleDaemonVersion(SdkError):
         expected_snapshot_digest: str,
         actual_snapshot_digest: str,
         daemon_label: str | None = None,
+        reads_compatible: bool = False,
     ) -> None:
         self.client_version = client_version
         self.daemon_version = daemon_version
@@ -549,7 +550,13 @@ class IncompatibleDaemonVersion(SdkError):
         self.client_snapshot_digest = expected_snapshot_digest
         self.daemon_snapshot_digest = actual_snapshot_digest
         self.daemon_label = daemon_label
+        self.reads_compatible = reads_compatible
         where = f" at {daemon_label}" if daemon_label else ""
+        scope = (
+            "Reads still serve across this patch skew; writes need the same contract. "
+            if reads_compatible
+            else ""
+        )
         # One line: both versions, both contract digests, and the fix.
         super().__init__(
             f"this client is cruxible {client_version}; the daemon{where} is cruxible "
@@ -557,6 +564,7 @@ class IncompatibleDaemonVersion(SdkError):
             f"(client_version={client_version}, daemon_version={daemon_version}, "
             f"client_snapshot_digest={expected_snapshot_digest}, "
             f"daemon_snapshot_digest={actual_snapshot_digest}). "
+            f"{scope}"
             "Repair: upgrade the client or daemon so both use the same authoring "
             "contract snapshot: stop that daemon with `cruxible server stop` and rerun "
             "(a local daemon then starts at this version), or use cruxible "

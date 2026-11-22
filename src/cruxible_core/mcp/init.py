@@ -32,6 +32,7 @@ from cruxible_client.authoring.workspace import (
     write_workspace_config,
 )
 from cruxible_client.authoring.world_stub import render_world_stub_for, write_world_stub
+from cruxible_client.compatibility import require_authoring_compatibility
 from cruxible_client.contracts.approval_policy import ApprovalPolicyMode
 from cruxible_client.contracts.get_reads import GetRequest
 from cruxible_client.contracts.principals import is_canonical_principal_id
@@ -262,6 +263,8 @@ def run_mcp_init(
                 workspace_root=str(root),
                 folder_identity_path=None if record is None else str(folder_identity_path(root)),
             )
+    # Refuse a write-incompatible daemon before keys are generated, not after.
+    call(require_authoring_compatibility, "cruxible_init")
     owner = principal_id or default_principal_id()
     if requested_reviewer is not None and requested_reviewer == owner:
         raise DataValidationError(

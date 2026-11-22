@@ -90,13 +90,17 @@ cache and index URLs, `GIT_SSH_COMMAND`, and daemon configuration. Nothing else
 reaches it: not the server's transport, tier, instance or principal, and no
 credential (Cruxible tokens and keys, API keys, cloud or forge tokens).
 
-The MCP server and the CLI each ask the daemon's `/version` once per process
-before their first real request. What can break a call is the authoring
-contract, so its snapshot digest decides: a different digest refuses with
+The MCP server, the CLI and the SDK each ask the daemon's `/version` once per
+process before their first real request. The same authoring contract snapshot
+digest proceeds silently whatever the package versions. A different digest in
+the same `major.minor` release series (a 0.5.0 client and a 0.5.1 daemon)
+still serves reads (orient, query, get, since, next, whoami, server info,
+proposal list and review, inbox list and get, capture read, floor export), and
+refuses each write before sending it. A daemon in another release series, or
+one that reports no digest, refuses every call. A refusal is
 `cruxible.sdk.daemon_version_incompatible` in one line naming both versions,
 both digests, where the daemon is and the fix (stop it with `cruxible server
-stop` and rerun, or use the daemon's version); the same digest proceeds
-silently whatever the package versions. `cruxible --version`, `--help`,
+stop` and rerun, or use the daemon's version). `cruxible --version`, `--help`,
 `server stop` and `context show` never refuse. `CRUXIBLE_SKIP_VERSION_CHECK=1`
 skips the check, for development only. `cruxible --version` prints the version,
 the contract digest's first 12 hex and, in a source checkout, the commit.

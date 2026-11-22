@@ -7,6 +7,16 @@ that lands it; entries move under a version heading when the release is
 tagged. Work items for these changes live on the active release line in
 the project's own state instance.
 
+### Fixed
+
+- A client and daemon in the same `major.minor` release series whose authoring
+  contract snapshots differ (a 0.5.0 client and a 0.5.1 daemon) no longer
+  refuse reads: orient, query, get, since, next, whoami and the other reads
+  serve, and every write still refuses with
+  `cruxible.sdk.daemon_version_incompatible` before it is sent. Another
+  release series still refuses every call; `CRUXIBLE_SKIP_VERSION_CHECK=1`
+  still bypasses the check.
+
 ## [0.5.0] - 2026-11-18
 
 This release replaces the 0.3 configuration graph with a new state model.
