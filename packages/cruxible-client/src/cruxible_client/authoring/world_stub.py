@@ -557,11 +557,11 @@ def _filter_parameters(world: World, kind: str) -> tuple[list[str], list[str]]:
     """
 
     parameters: list[str] = []
-    fields: list[str] = ["subject_id"]
+    fields: list[str] = ["subject_id", "last_changed"]
     for leaf, predicates in sorted(world._leaf_map(kind).items()):
         fields.extend(predicates)
         spelled = keyword_name(leaf)
-        if len(predicates) != 1 or spelled is None or leaf == "subject_id":
+        if len(predicates) != 1 or spelled is None or leaf in {"subject_id", "last_changed"}:
             continue
         fields.append(leaf)
         annotation, operators = _value_annotation(world.claim_type(predicates[0]))
@@ -579,6 +579,11 @@ def _filter_parameters(world: World, kind: str) -> tuple[list[str], list[str]]:
     for operator in ("eq", "ne", *_ORDERED_OPERATORS, "in", "contains"):
         name = "subject_id" if operator == "eq" else f"subject_id__{operator}"
         value = "Sequence[str]" if operator == "in" else "str"
+        parameters.append(f"{name}: {value} | None = ...,")
+    # The generation the Subject last changed in (shell or any Claim about it).
+    for operator in ("eq", "ne", *_ORDERED_OPERATORS, "in"):
+        name = "last_changed" if operator == "eq" else f"last_changed__{operator}"
+        value = "Sequence[int]" if operator == "in" else "int"
         parameters.append(f"{name}: {value} | None = ...,")
     return parameters, sorted(set(fields), key=lambda item: item.encode("utf-8"))
 

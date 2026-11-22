@@ -857,3 +857,147 @@ def test_subject_valued_column_type_uses_the_type_grammar_spelling() -> None:
     (column,) = output
     assert column.type == "subject<project.batch>"
     assert column.type == render_type(SubjectType(subject_kinds=("project.batch",)))
+
+
+# -- last_changed: recency from the history index ------------------------------
+
+
+@pytest.fixture(params=["indexed", "unpruned"])
+def backend(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> str:
+    """Run under the indexed selection, or force the unpruned accepted-facts path."""
+
+    if request.param == "unpruned":
+        from cruxible_core.service.discovery import query as served
+
+        monkeypatch.setattr(served, "select_query_facts", lambda *_args, **_kwargs: None)
+    return str(request.param)
+
+
+def _generations(instance: Any) -> dict[str, int]:
+    rows = _query(instance, kind=SUBJECT_KIND, select=["last_changed"]).rows
+    return {row["subject_id"]: row["last_changed"] for row in rows}
+
+
+def test_last_changed_orders_newest_first_on_both_backends(instance: Any, backend: str) -> None:
+    changed = _generations(instance)
+    # wi-43's status Claim was accepted one generation after wi-42's.
+    assert changed["wi-43"] > changed["wi-42"] > 0
+
+    newest = _query(instance, kind=SUBJECT_KIND, order_by=["-last_changed"])
+    assert _ids(newest) == ["wi-43", "wi-42"]
+    assert [row["last_changed"] for row in newest.rows] == [changed["wi-43"], changed["wi-42"]]
+    assert newest.columns[-1].name == "last_changed"
+    assert newest.columns[-1].type == "integer"
+    oldest = _query(instance, kind=SUBJECT_KIND, order_by=["last_changed", "-status"])
+    assert _ids(oldest) == ["wi-42", "wi-43"]
+
+
+def test_last_changed_selects_recent_subjects_on_both_backends(instance: Any, backend: str) -> None:
+    changed = _generations(instance)
+    recent = _query(
+        instance, kind=SUBJECT_KIND, where=[{"field": "last_changed", "gte": changed["wi-43"]}]
+    )
+    assert _ids(recent) == ["wi-43"]
+    # The CLI spells every value as text.
+    spelled = _query(
+        instance,
+        kind=SUBJECT_KIND,
+        where=[{"field": "last_changed", "in": [str(changed["wi-42"])]}],
+        select=["status"],
+    )
+    assert _ids(spelled) == ["wi-42"]
+    assert [column.name for column in spelled.columns] == ["status", "last_changed"]
+    assert (
+        _ids(_query(instance, kind=SUBJECT_KIND, where=[{"field": "last_changed", "gt": 10**9}]))
+        == []
+    )
+
+
+def test_last_changed_pages_continue_the_recency_order(instance: Any) -> None:
+    first = _query(instance, kind=SUBJECT_KIND, order_by=["-last_changed"], limit=1)
+    assert _ids(first) == ["wi-43"] and first.truncated and first.next_cursor
+    second = _query(
+        instance,
+        kind=SUBJECT_KIND,
+        order_by=["-last_changed"],
+        limit=1,
+        cursor=first.next_cursor,
+        evaluation_time=None,
+    )
+    assert _ids(second) == ["wi-42"] and second.next_cursor is None
+
+
+def test_last_changed_is_a_subject_shell_or_claim_change(instance: Any) -> None:
+    from cruxible_core.service.discovery.recency import subject_last_changed
+
+    coordinate = instance.accepted_coordinate()
+    with instance.bind_accepted_projection(coordinate) as projection:
+        paths = [
+            str(path)
+            for (path,) in projection.typed.connection.execute(
+                "SELECT path FROM subjects WHERE subject_kind=? ORDER BY path", (SUBJECT_KIND,)
+            )
+        ]
+        claims = {
+            str(subject): str(claim)
+            for subject, claim in projection.typed.connection.execute(
+                "SELECT subject_path, path FROM claims WHERE predicate=?", (PREDICATE,)
+            )
+        }
+    changed = subject_last_changed(instance, coordinate, paths)
+    with instance.accepted_history_reader() as history:
+        for path in paths:
+            expected = max(history.last_changed([path, claims[path]]).values())
+            assert changed[path] == expected
+
+
+@pytest.mark.parametrize(
+    ("fields", "code", "path", "nearest"),
+    [
+        (
+            {"order_by": ["status", "-last_changed"]},
+            "cruxible.query.order_not_applicable",
+            "order_by[1]",
+            None,
+        ),
+        (
+            {"order_by": ["-last_changed", "last_changed"]},
+            "cruxible.query.order_repeated",
+            "order_by",
+            None,
+        ),
+        (
+            {"where": [{"field": "last_changed", "contains": "8"}]},
+            "cruxible.query.operator_not_applicable",
+            "where[0]",
+            None,
+        ),
+        (
+            {"where": [{"field": "last_changed", "gte": "recent"}]},
+            "cruxible.query.value_type_mismatch",
+            "where[0]",
+            None,
+        ),
+        (
+            {"order_by": ["-last_chnged"]},
+            "cruxible.query.unknown_field",
+            "order_by[0]",
+            "last_changed",
+        ),
+        (
+            {"select": ["last_change"]},
+            "cruxible.query.unknown_field",
+            "select[0]",
+            "last_changed",
+        ),
+    ],
+)
+def test_last_changed_refusals_name_the_repair(
+    instance: Any, fields: dict[str, Any], code: str, path: str, nearest: str | None
+) -> None:
+    with pytest.raises(ReadRefusalError) as caught:
+        _query(instance, kind=SUBJECT_KIND, **fields)
+    assert caught.value.error_code == code
+    assert caught.value.context["field_path"] == path
+    if nearest is not None:
+        assert nearest in caught.value.candidates

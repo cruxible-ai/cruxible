@@ -33,6 +33,12 @@ real value, filter on the value itself. The
 or held as unsure; here the price's evidence has expired ([Evidence and
 admission](evidence-and-admission.md#freshness)).
 
+To find recent activity without reading old backlog, order or filter by
+`last_changed`, the generation in which a Subject or any Claim about it last
+changed. `--order-by -last_changed` lists the newest first, and
+`--where 'last_changed>=835'` keeps only Subjects changed since generation 835.
+`cruxible since 835 --limit 40` then lists those changes one value per line.
+
 On a field that holds several values, `=` matches a Subject that has the value
 among its values, and `!=` matches one that doesn't have it, including a
 Subject with no value at all:

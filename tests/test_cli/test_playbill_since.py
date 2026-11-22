@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import httpx
+import pytest
 from click.testing import CliRunner
 
 from cruxible_client import CruxibleClient, contracts
@@ -56,6 +57,50 @@ def test_cli_since_calls_the_frozen_client_operation(monkeypatch) -> None:  # ty
     assert result.exit_code == 0, result.output
     assert calls == [("inst_since", 3)]
     assert '"tag": "playbill-since-result-v1"' in result.output
+
+
+@pytest.mark.parametrize(
+    ("flags", "max_rows"),
+    [((), 100), (("--limit", "40"), 40), (("--max-rows", "7"), 7)],
+)
+def test_cli_since_limit_bounds_the_page(monkeypatch, flags, max_rows) -> None:  # type: ignore[no-untyped-def]
+    """``--limit`` is the page bound (``--max-rows`` its wire spelling)."""
+
+    sent: list[object] = []
+    coordinate = contracts.AcceptedCoordinate(
+        git_oid="1" * 64,
+        semantic_root="sha256:" + "2" * 64,
+        generation_root="sha256:" + "3" * 64,
+        compiler_digest="sha256:" + "4" * 64,
+    )
+    values = {
+        "coordinate": coordinate.model_dump(mode="json"),
+        "generation": 900,
+        "rows": [],
+        "next_cursor": None,
+        "truncated": False,
+    }
+
+    class StubClient:
+        def since(self, instance_id: str, *, generation: int, max_rows: int, **_values: object):
+            sent.append(max_rows)
+            return contracts.SinceResult.model_validate(
+                {
+                    **values,
+                    "result_digest": contracts._since_digest(  # type: ignore[attr-defined]
+                        "playbill-since-result-v1", values
+                    ),
+                }
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    prefix = ["--server-url", "https://since.example.test", "--instance-id", "inst_since"]
+    result = CliRunner().invoke(cli, [*prefix, "since", "835", *flags])
+
+    assert result.exit_code == 0, result.output
+    assert sent == [max_rows]
+    too_many = CliRunner().invoke(cli, [*prefix, "since", "835", "--limit", "1001"])
+    assert too_many.exit_code == 2 and "--limit" in too_many.output
 
 
 def test_cli_since_surfaces_a_typed_profile_refusal_without_traceback(
@@ -210,7 +255,7 @@ def test_cli_since_text_continues_with_a_command_that_runs(monkeypatch) -> None:
     cursor_value = contracts.SinceCursor.model_validate(cursor).model_dump(mode="json")
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
     prefix = ["--server-url", "https://since.example.test", "--instance-id", "inst_since"]
-    first = CliRunner().invoke(cli, [*prefix, "since", "3", "--max-rows", "1"])
+    first = CliRunner().invoke(cli, [*prefix, "since", "3", "--limit", "1"])
 
     assert first.exit_code == 0, first.output
     (more,) = [line for line in first.output.splitlines() if line.startswith("More: ")]

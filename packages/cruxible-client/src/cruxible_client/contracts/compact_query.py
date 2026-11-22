@@ -89,7 +89,8 @@ QueryFollowDirection = Literal["forward", "reverse"]
 QueryMode = Literal["inline", "named", "spec"]
 
 _FIELD_DESCRIPTION = (
-    "Predicate (short, e.g. adoption_state, or qualified), subject_id, or alias.field after follow."
+    "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed (the "
+    "generation the Subject or any Claim about it last changed in), or alias.field after follow."
 )
 
 
@@ -295,7 +296,10 @@ class QueryRequest(BaseModel):
     order_by: tuple[str, ...] = Field(
         default=(),
         max_length=8,
-        description="Fields to order by; prefix - for descending.",
+        description=(
+            "Fields to order by; prefix - for descending. -last_changed (first) lists the "
+            "most recently changed Subjects first."
+        ),
     )
     status: tuple[QueryClaimStatus, ...] = Field(
         default=("live",),
