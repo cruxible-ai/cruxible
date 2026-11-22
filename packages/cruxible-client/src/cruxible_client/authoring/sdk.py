@@ -3467,9 +3467,23 @@ class Cruxible:
         Only catalogued files are selected (an uncatalogued path refuses). A write
         citing a file as ``FileEvidence(file="PATH#ANCHOR")`` catalogues it itself.
         Next: ``cx.file(path).section("Heading", "Child")`` or ``.anchor("text found once")``;
-        pass the selection as ``supported_by=``.
+        pass the selection as ``supported_by=``. A workspace with no catalog
+        refuses naming the call that creates one (``cx.files.add(path)``).
         """
 
+        from cruxible_client.authoring.files import catalog_step
+        from cruxible_client.contracts.workspace_layout import workspace_path
+
+        root = self._workspace_root
+        if not any(
+            item.is_file() for item in (workspace_path(root, "files.yaml"), root / "files.yaml")
+        ):
+            raise SourceSelectionError(
+                f"{path!s} cannot be selected: the workspace has no file catalog "
+                "(.cruxible/files.yaml), and a selection reads only catalogued files. "
+                f"Repair: {catalog_step('sdk', 'add', str(path))} creates the catalog with "
+                f"this file, then cx.file({str(path)!r}) selects from it"
+            )
         return self._files.select(path)
 
     def subject(

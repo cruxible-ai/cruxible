@@ -665,3 +665,24 @@ def test_date_and_datetime_fields_take_python_values(
     assert caught.value.error_code == "cruxible.write.value_type_mismatch"
     assert "object at 0x" not in str(caught.value)
     assert "YYYY-MM-DD" in (caught.value.repair_line or "")
+
+
+def test_file_without_a_catalog_names_the_call_that_creates_it(
+    playbill_http: tuple[TestClient, str, Path], tmp_path: Path
+) -> None:
+    """cx.file in a workspace with no files.yaml refuses with the SDK repair, which works."""
+
+    from cruxible_client.authoring.sdk_types import SourceSelectionError
+
+    http, instance_id, _ = playbill_http
+    cx = _cx(http, instance_id, tmp_path)
+    workspace = tmp_path / "vocabulary-world"
+    (workspace / "notes.md").write_text("# Notes\n\nShips Friday.\n", encoding="utf-8")
+    with pytest.raises(SourceSelectionError) as caught:
+        cx.file("notes.md")
+    assert caught.value.code == "cruxible.sdk.source_selection_refused"
+    assert 'cx.files.add("notes.md")' in str(caught.value)
+    assert "files.yaml" in str(caught.value)
+    cx.files.add("notes.md")
+    assert (workspace / ".cruxible" / "files.yaml").is_file()
+    assert cx.file("notes.md").anchor("Ships Friday").source_id == "doc-notes.md"
