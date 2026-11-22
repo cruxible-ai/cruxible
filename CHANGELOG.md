@@ -7,6 +7,8 @@ that lands it; entries move under a version heading when the release is
 tagged. Work items for these changes live on the active release line in
 the project's own state instance.
 
+## [0.5.1] - 2026-11-22
+
 ### Added
 
 - **`cruxible python`** runs an SDK script (`SCRIPT`, `-c CODE` or `-`) with the
@@ -17,16 +19,51 @@ the project's own state instance.
   World`), cached per instance under `~/.cruxible/stubs/` and re-rendered only
   when the vocabulary moves; without pyright it refuses with
   `cruxible.python.pyright_unavailable`.
+- **Recency queries and `since --limit`:** `query` now accepts `last_changed`
+  (the generation a Subject or any of its Claims last changed) in `--order-by`,
+  `--where`, and `--select` (CLI, MCP, and Python SDK), computed from maintained
+  indexes rather than walking history. `cruxible since` and `cruxible_since`
+  accept `--limit` / `limit`.
+- **Cited passages in `get --detail evidence`:** each Capture row of `get CLM
+  --detail evidence` now carries the cited passage (`passage`,
+  `passage_truncated`) using the same slicing as proposal review, and prints it
+  under the capture line in text output.
+- **SDK convenience exports and temporal values:** write-evidence classes are
+  re-exported from top-level `cruxible_client`, and date/datetime fields accept
+  Python `datetime.date` and `datetime.datetime` values directly.
 
 ### Fixed
 
-- A client and daemon in the same `major.minor` release series whose authoring
-  contract snapshots differ (from 0.5.1 on, e.g. a 0.5.1 client and a 0.5.2 daemon) no longer
-  refuse reads: orient, query, get, since, next, whoami and the other reads
-  serve, and every write still refuses with
-  `cruxible.sdk.daemon_version_incompatible` before it is sent. Another
-  release series still refuses every call; `CRUXIBLE_SKIP_VERSION_CHECK=1`
-  still bypasses the check.
+- **Same-series read-only compatibility:** a client and daemon in the same
+  `major.minor` release series whose authoring contract snapshots differ (from
+  0.5.1 on, e.g. a 0.5.1 client and a 0.5.0 or 0.5.2 daemon) no longer refuse
+  reads: orient, query, get, since, next, whoami and the other reads serve,
+  while every write refuses with `cruxible.sdk.daemon_version_incompatible`
+  before it is sent. Another release series still refuses every call;
+  `CRUXIBLE_SKIP_VERSION_CHECK=1` still bypasses the check.
+- **MCP server and agent plugin polish:** Codex and MCP clients resolve
+  workspace roots via `CRUXIBLE_MCP_WORKSPACE_ROOT` and MCP client `roots`
+  (refusing plugin package/cache directories), `cruxible_init` reports
+  `workspace_root` and handles already-initialized folders cleanly,
+  `cruxible_console` ensures the daemon is ready, the bundled plugin carries its
+  icon and refreshed docs, and `next` withholds unapproved `accept=never`
+  proposals from self-activation only while another active ordinary principal
+  can review them (a sole principal still sees its own held proposal).
+- **Actionable `next`, `inbox`, and `review` output:** `citation_drifted` rows
+  name the citing Subject and field and offer writing a new value with new
+  evidence alongside rebinding; `claim_dependency_stale` rows print each
+  unobserved end or changed input Claim in text output and offer a working
+  `retire` repair with `get` alternatives; `inbox list` titles payloads by
+  their fields rather than truncated JSON; `proposal review` separates a first
+  file citation's `CaptureContract` from judged definitions.
+- **Evidence resolution and freshness:** `set --evidence-contract` resolves the
+  newest reading of the cited source via bounded index seeks instead of
+  scanning older Captures, and `evidence_expiring` uses one clamped lead
+  computation for both derived facts and served rows.
+- **Cold-run ergonomics:** `orient` lists admitted evidence families (including
+  `workspace_file`) beside named contracts, `cx.file(...)` in a workspace with
+  no file catalog names `cx.files.add(...)` as the repair, and cold-run
+  refusals and `init` docs were tightened.
 
 ## [0.5.0] - 2026-11-18
 

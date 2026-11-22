@@ -2,7 +2,7 @@
   "format": "playbill-served-surface-v1",
   "succession": {
     "ratified_by": "maintainer",
-    "register_entry": "2026-11-22:release-051-narrow-fixes",
+    "register_entry": "2026-11-22:release-051",
     "surface_digest": "sha256:708001655a017990e03ca94a0633a52542d88a109e9ca9890f2c34e65fb79ae4"
   },
   "surface": {
