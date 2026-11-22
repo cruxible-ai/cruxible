@@ -2,8 +2,8 @@
   "format": "playbill-served-surface-v1",
   "succession": {
     "ratified_by": "maintainer",
-    "register_entry": "2026-11-22:sdk-python-runner-1120",
-    "surface_digest": "sha256:9404dec095398f71886dfd9a056902438a84bec939218aeed8096553e21e4b99"
+    "register_entry": "2026-11-18:readme-example-run-findings-1118",
+    "surface_digest": "sha256:0c5689aeb799a807cd4a8d6cd3f05f66e0e4cac0179d126667ca4233c0227bd0"
   },
   "surface": {
     "cli_leaves": [
@@ -1595,7 +1595,7 @@
         "request_model": "cruxible_core.server.playbill_request_models.NextRequest",
         "request_schema_digest": "sha256:14d072eede4cb2410b6556b1c72f72f8a62476ce192771692a1530eb499fe73b",
         "response_model": "cruxible_client.contracts.NextResult",
-        "response_schema_digest": "sha256:3eadd86fd8216664b7a46e4ea45542cdf219c7e46613f614c74d907a18cbd8bc"
+        "response_schema_digest": "sha256:646ffd54a2b1fb88f0777fce2742f41de0689272ada4d31e660715080a457791"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.orient",
@@ -2449,7 +2449,7 @@
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_inbox_list",
         "input_schema_digest": "sha256:53516478e595f248537ae277482b9e4f54c7b818c262731d229e29e403ab5d8a",
         "name": "cruxible_inbox_list",
-        "output_schema_digest": "sha256:af7413faf542e7b526905a48f725aa577e206f46078288f422628dbdedb25184",
+        "output_schema_digest": "sha256:137e2be55e013025c4916679f35255f17dd32b692ea0d240b2ce058b0c477cfc",
         "permission": "READ_ONLY"
       },
       {
@@ -2580,7 +2580,7 @@
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_next",
         "input_schema_digest": "sha256:822dc04c16064413474f2632b8758500c7aa6db30bbe675a5ea7584518b5602f",
         "name": "cruxible_next",
-        "output_schema_digest": "sha256:1d6203c62ebf4ec12b3cab3f8205c4ebb1ea12437aaa54a137da6353fe4eaec6",
+        "output_schema_digest": "sha256:14443181cde694b20cc59979512bcbce68062c19ee801eeb8336fd28cafff40c",
         "permission": "READ_ONLY"
       },
       {

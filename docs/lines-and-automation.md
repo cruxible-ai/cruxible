@@ -654,14 +654,15 @@ repair  line_inbox_unread  Line:catalog.acme-notices  next=cruxible.inbox.list
 
 $ cruxible inbox list --line catalog.acme-notices --status unread
 STATUS  ITEM  LINE  KIND  SEEN  TITLE
-unread  INB-961a51ad102e  Line:catalog.acme-notices  post  1  {"notice":"2026-10-21 Price change: all wiper blades up 5% from 2026-11-01."}
-unread  INB-877f3d1e627e  Line:catalog.acme-notices  post  1  {"notice":"2026-10-20 Recall: bp-2210 ceramic pads, batch 4471, may delaminate …
+unread  INB-961a51ad102e  Line:catalog.acme-notices  post  1  notice=2026-10-21 Price change: all wiper blades up 5% from 2026-11-01.
+unread  INB-877f3d1e627e  Line:catalog.acme-notices  post  1  notice=2026-10-20 Recall: bp-2210 ceramic pads, batch 4471, may delaminate unde…
 ~~~
 
-Each row is the item's status, id, Line, the step that posted it (`KIND`),
-how many times it was posted (`SEEN`) and a one-line title: the payload's
-`title`, `name`, `summary`, `subject` or `id` field when it has one, otherwise
-the payload itself, cut at 80 characters.
+Each row is the item's status, id, Line, the step that posted it (`KIND`: the
+inbox step's `id`, here `post`, or `step_N` when the step names none), how many
+times it was posted (`SEEN`) and a one-line title: the payload's `title`,
+`name`, `summary`, `subject` or `id` field when it has one, otherwise its fields
+as `name=value` pairs, cut at 80 characters.
 
 An inbox item is a call for attention, not storage. When the list already
 exists as state (a Query answers it) or as evidence (a Capture holds it), post
@@ -727,8 +728,8 @@ the same rows twice:
 ~~~text
 $ cruxible inbox list --line catalog.acme-notices
 STATUS  ITEM  LINE  KIND  SEEN  TITLE
-dismissed  INB-961a51ad102e  Line:catalog.acme-notices  post  2  {"notice":"2026-10-21 Price change: all wiper blades up 5% from 2026-11-01."}
-linked  INB-877f3d1e627e  Line:catalog.acme-notices  post  2  {"notice":"2026-10-20 Recall: bp-2210 ceramic pads, batch 4471, may delaminate …
+dismissed  INB-961a51ad102e  Line:catalog.acme-notices  post  2  notice=2026-10-21 Price change: all wiper blades up 5% from 2026-11-01.
+linked  INB-877f3d1e627e  Line:catalog.acme-notices  post  2  notice=2026-10-20 Recall: bp-2210 ceramic pads, batch 4471, may delaminate unde…
 
 $ cruxible inbox get INB-961a51ad102e
 dismissed (+1 since)  INB-961a51ad102e  Line:catalog.acme-notices  x2  2026-11-16T03:18:48.151453+00:00

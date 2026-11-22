@@ -633,6 +633,18 @@ def review_change_lines(
     return lines
 
 
+def _first_citation_contract(item: Any) -> bool:
+    """A workspace file's own CaptureContract that a first citation of the file creates."""
+
+    from cruxible_client.contracts.captures import FOREIGN_SOURCE_CONTRACT_PREFIX
+
+    return (
+        getattr(item, "kind", None) == "CaptureContract"
+        and getattr(item, "action", None) == "created"
+        and str(getattr(item, "name", "")).startswith(FOREIGN_SOURCE_CONTRACT_PREFIX)
+    )
+
+
 def review_definition_lines(
     item: ReviewDefinition, *, file_paths: Mapping[str, str] | None = None
 ) -> list[str]:
@@ -888,14 +900,24 @@ def render_review_summary(
             if review.change_counts_truncated:
                 lines.append("  (more kinds and fields: --json)")
     if review.definition_count:
-        shown = len(review.definitions)
-        lines.append(
-            f"Definitions ({review.definition_count}):"
-            if shown == review.definition_count
-            else f"Definitions ({review.definition_count}; showing {shown}):"
-        )
-        for definition in review.definitions:
+        # A workspace file's own CaptureContract, installed by its first citation,
+        # is not a definition the reviewer judges: it is listed apart.
+        installed = [item for item in review.definitions if _first_citation_contract(item)]
+        judged = [item for item in review.definitions if not _first_citation_contract(item)]
+        total = review.definition_count - len(installed)
+        shown = len(judged)
+        if total:
+            lines.append(
+                f"Definitions ({total}):"
+                if shown == total and review.definitions_next is None
+                else f"Definitions ({total}; showing {shown}):"
+            )
+        for definition in judged:
             lines.extend(review_definition_lines(definition, file_paths=file_paths))
+        if installed:
+            lines.append(f"Installed by a first file citation ({len(installed)}):")
+            for definition in installed:
+                lines.extend(review_definition_lines(definition, file_paths=file_paths))
         if review.definitions_next is not None:
             lines.append(f"More definitions: {run}--definitions-from {review.definitions_next}")
     if review.item_reason_count:
@@ -1054,6 +1076,7 @@ NEXT_OPERAND_PLACEHOLDER_TEXT: dict[str, str] = {
     "because": "<TEXT> (why, in your words)",
     "file": "<FILE#ANCHOR> (the file and anchor holding the new text)",
     "capture": "<CAP> (the fresh Capture's handle)",
+    "value": "<VALUE> (the new value)",
 }
 
 

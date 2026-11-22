@@ -235,6 +235,90 @@ def test_a_drifted_citation_re_binds_or_retires_on_every_surface() -> None:
     )
 
 
+def test_a_drifted_citation_with_set_arguments_offers_writing_new_value_with_new_evidence() -> None:
+    commitment = _CitationCommitment(
+        citation_id=CITATION,
+        commitment_digest=CAPTURE,
+        byte_length=10,
+        claim_identity=f"Claim:{CLAIM}",
+        source_id="repo.reports",
+        source_digest=CAPTURE,
+        section=None,
+        set_arguments=tuple(_SET.items()),
+    )
+    row = _citation_drift_item(commitment, coordinate=_coordinate(), drift_state="changed")
+    assert row.repair is not None
+    assert [item.operation for item in row.repair.alternatives] == [
+        "cruxible.set",
+        "cruxible.claim.retire",
+    ]
+    write_new, retire = row.repair.alternatives
+    assert write_new.required_change == "set_new_value_with_new_evidence"
+    assert write_new.operands_to_add == ("value", "file", "because")
+    assert write_new.command == (
+        "cruxible set project.work_item/wi-1 project.work_item.measured '<VALUE>' "
+        "--role observation --evidence-file '<FILE#ANCHOR>' --because '<TEXT>'"
+    )
+    assert retire.command == f"cruxible retire {CLAIM} --because '<TEXT>'"
+
+    mcp = _item(
+        severity=row.severity,
+        reason=row.reason,
+        subject_identity=row.subject_identity,
+        detail=row.detail,
+        repair=row.repair,
+        surface="mcp",
+    ).repair
+    assert mcp is not None
+    assert mcp.alternatives[0].command == (
+        'cruxible_set(subject="project.work_item/wi-1", field="project.work_item.measured", '
+        'value="<VALUE>", role="observation", '
+        'evidence={"kind": "file", "file": "<FILE#ANCHOR>"}, because="<TEXT>")'
+    )
+
+    sdk = _item(
+        severity=row.severity,
+        reason=row.reason,
+        subject_identity=row.subject_identity,
+        detail=row.detail,
+        repair=row.repair,
+        surface="sdk",
+    ).repair
+    assert sdk is not None
+    assert sdk.alternatives[0].command == (
+        'cx.set("project.work_item/wi-1", "project.work_item.measured", "<VALUE>", '
+        'role="observation", evidence={"kind": "file", "file": "<FILE#ANCHOR>"}, '
+        'because="<TEXT>")'
+    )
+
+    from cruxible_client.contracts import NextHealth, NextItem, NextStatus
+    from cruxible_client.contracts.text_display import next_lines
+
+    healthy = NextHealth(state="current")
+    status = NextStatus(
+        blocking=False,
+        instance=healthy,
+        floor=healthy,
+        ledger_mirror=healthy,
+        provider_lane=healthy,
+        procedure_catalog=healthy,
+        compiler=healthy,
+        line_dispatch=healthy,
+        consumers=healthy,
+        triggers=healthy,
+    )
+    rendered = "\n".join(
+        next_lines(
+            status=status,
+            items=[NextItem.model_validate(row.model_dump(mode="json"))],
+        )
+    )
+    assert (
+        "or: cruxible set project.work_item/wi-1 project.work_item.measured '<VALUE>'" in rendered
+    )
+    assert "<VALUE> (the new value)" in rendered
+
+
 def test_an_alternative_the_caller_cannot_run_is_left_out() -> None:
     repair = PlaybillNextRepairV1(
         operation="cruxible.get",

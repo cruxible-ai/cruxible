@@ -487,8 +487,9 @@ NextReason: TypeAlias = Literal[
 #: enabled): it sorts after every problem and no problem count includes it.
 NextSeverity: TypeAlias = Literal["blocking", "repair", "warning", "setup"]
 #: An operand only the caller holds, which a repair's command shows as a
-#: placeholder to replace: ``because`` (TEXT), ``file`` (FILE#ANCHOR), ``capture`` (CAP).
-NextRepairOperand: TypeAlias = Literal["because", "file", "capture"]
+#: placeholder to replace: ``because`` (TEXT), ``file`` (FILE#ANCHOR),
+#: ``capture`` (CAP), ``value`` (VALUE).
+NextRepairOperand: TypeAlias = Literal["because", "file", "capture", "value"]
 #: Why a repair is withheld from this caller: its permission ``tier``, its MCP
 #: tool ``profile``, a caller that cannot author here at all (``authoring``),
 #: or a repair only its ``author`` may run (a stale proposal's readmit).

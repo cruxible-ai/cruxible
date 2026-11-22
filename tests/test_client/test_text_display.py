@@ -497,7 +497,7 @@ def test_a_review_summary_prints_changes_and_definitions_not_json() -> None:
         "More values: --changes-from 1",
         "Values by kind and field:",
         "  security.pair  justification  set  2",
-        "Definitions (6):",
+        "Definitions (5):",
         "  Line security.kev-triage: created",
         "    binding      fetch -> web/f3543a2990f6#web.fetch",
         "    parameter    url = https://example.test/kev.json",
@@ -513,12 +513,18 @@ def test_a_review_summary_prints_changes_and_definitions_not_json() -> None:
         "    schedule  on cron 0 14 * * * (UTC)",
         "    target    Runbook:security.maintain",
         "  ClaimType x.y: created",
-        # Reserved stored names read in their public spelling; the JSON keeps them.
+        # A file's own contract, created by its first citation, is listed apart
+        # from the definitions a reviewer judges. Reserved stored names read in
+        # their public spelling; the JSON keeps them.
+        "Installed by a first file citation (1):",
         "  CaptureContract cruxible.foreign-source.doc-notes.md: created",
     ]
     lines = text.splitlines()
     for line_text in expected:
         assert line_text in lines, line_text
+    assert lines.index("Installed by a first file citation (1):") > lines.index(
+        "  ClaimType x.y: created"
+    )
     assert '{"truncated"' not in text and '"value"' not in text
     assert "playbill." not in text
     assert summary.definitions[-1].name == "playbill.foreign-source.doc-notes.md"  # type: ignore[attr-defined]
@@ -526,6 +532,26 @@ def test_a_review_summary_prints_changes_and_definitions_not_json() -> None:
     from cruxible_client.contracts.text_display import render_review_summary
 
     assert text == render_review_summary(summary)  # type: ignore[arg-type]
+
+
+def test_a_first_file_citation_contract_is_not_listed_as_a_judged_definition() -> None:
+    """A value write citing a workspace file for the first time installs the file's
+    own CaptureContract; the review lists it apart, not as a definition to judge."""
+
+    summary = _review_summary(
+        definitions=[
+            {
+                "kind": "CaptureContract",
+                "name": "playbill.foreign-source.app.py",
+                "action": "created",
+            }
+        ],
+        definition_count=1,
+    )
+    lines = str(summary).splitlines()
+    assert "Installed by a first file citation (1):" in lines
+    assert "  CaptureContract cruxible.foreign-source.app.py: created" in lines
+    assert not any(line.startswith("Definitions (") for line in lines)
 
 
 def test_a_reviewed_proposal_prints_its_summary_without_a_request() -> None:

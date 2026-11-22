@@ -197,7 +197,8 @@
       "values": [
         "because",
         "file",
-        "capture"
+        "capture",
+        "value"
       ]
     },
     "NextRepairOperation": {
@@ -34684,7 +34685,7 @@
       },
       "json_schema": {
         "additionalProperties": false,
-        "description": "One inbox item as a list shows it by default: what it is, and how often seen.\n\n``kind`` is the terminal (Procedure node) that posted it; ``title`` a\none-line reading of its payload (a ``title``, ``name``, ``summary``,\n``subject`` or ``id`` field, else its canonical JSON), cut to\n``INBOX_ROW_TITLE_MAX_CHARS``. ``inbox get`` returns every field.",
+        "description": "One inbox item as a list shows it by default: what it is, and how often seen.\n\n``kind`` is the terminal (Procedure node) that posted it; ``title`` a\none-line reading of its payload (a ``title``, ``name``, ``summary``,\n``subject`` or ``id`` field, else its fields as ``name=value`` pairs, else\nits canonical JSON), cut to ``INBOX_ROW_TITLE_MAX_CHARS``. ``inbox get`` returns every field.",
         "properties": {
           "item_id": {
             "pattern": "^INB-[0-9a-f]{64}$",
@@ -34858,7 +34859,7 @@
         "$defs": {
           "InboxRow": {
             "additionalProperties": false,
-            "description": "One inbox item as a list shows it by default: what it is, and how often seen.\n\n``kind`` is the terminal (Procedure node) that posted it; ``title`` a\none-line reading of its payload (a ``title``, ``name``, ``summary``,\n``subject`` or ``id`` field, else its canonical JSON), cut to\n``INBOX_ROW_TITLE_MAX_CHARS``. ``inbox get`` returns every field.",
+            "description": "One inbox item as a list shows it by default: what it is, and how often seen.\n\n``kind`` is the terminal (Procedure node) that posted it; ``title`` a\none-line reading of its payload (a ``title``, ``name``, ``summary``,\n``subject`` or ``id`` field, else its fields as ``name=value`` pairs, else\nits canonical JSON), cut to ``INBOX_ROW_TITLE_MAX_CHARS``. ``inbox get`` returns every field.",
             "properties": {
               "item_id": {
                 "pattern": "^INB-[0-9a-f]{64}$",
@@ -40375,7 +40376,8 @@
                   "enum": [
                     "because",
                     "file",
-                    "capture"
+                    "capture",
+                    "value"
                   ],
                   "type": "string"
                 },
@@ -40871,7 +40873,8 @@
                   "enum": [
                     "because",
                     "file",
-                    "capture"
+                    "capture",
+                    "value"
                   ],
                   "type": "string"
                 },
@@ -41523,7 +41526,8 @@
                   "enum": [
                     "because",
                     "file",
-                    "capture"
+                    "capture",
+                    "value"
                   ],
                   "type": "string"
                 },
@@ -42108,7 +42112,8 @@
                   "enum": [
                     "because",
                     "file",
-                    "capture"
+                    "capture",
+                    "value"
                   ],
                   "type": "string"
                 },
@@ -43145,7 +43150,8 @@
                   "enum": [
                     "because",
                     "file",
-                    "capture"
+                    "capture",
+                    "value"
                   ],
                   "type": "string"
                 },
@@ -43853,7 +43859,8 @@
                   "enum": [
                     "because",
                     "file",
-                    "capture"
+                    "capture",
+                    "value"
                   ],
                   "type": "string"
                 },
