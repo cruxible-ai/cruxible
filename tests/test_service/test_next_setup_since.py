@@ -90,7 +90,8 @@ def test_setup_rows_sort_after_problems_and_count_apart_from_them(tmp_path: Path
     instance, line, _owner = _line_world(tmp_path)
     _open_proposal(instance, line)
 
-    items = _rows(instance, caller_principal_id="owner")
+    # The owner's held proposal is the reviewer's to approve.
+    items = _rows(instance, caller_principal_id="reviewer")
     severities = [item.severity for item in items]
     setup = [item for item in items if item.severity == "setup"]
     problems = [item for item in items if item.severity != "setup"]
@@ -104,7 +105,7 @@ def test_setup_rows_sort_after_problems_and_count_apart_from_them(tmp_path: Path
     # never named in `top`, so a fresh instance's choices do not read as trouble.
     attention = service_playbill_orient(
         instance,
-        caller=OrientCaller("owner", "admin"),
+        caller=OrientCaller("reviewer", "admin"),
         evaluation_time=_request(instance).evaluation_time,
     ).attention
     assert attention is not None

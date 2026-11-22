@@ -1537,7 +1537,8 @@ def test_selecting_a_file_still_refuses_at_the_same_typed_point(
     with pytest.raises(SourceSelectionError) as refused:
         playbill.file("notes.txt")
 
-    assert "exactly one .cruxible/files.yaml or files.yaml" in str(refused.value)
+    assert "the workspace has no file catalog" in str(refused.value)
+    assert 'cx.files.add("notes.txt")' in str(refused.value)
     assert len(client.batch_requests) == before
 
 
