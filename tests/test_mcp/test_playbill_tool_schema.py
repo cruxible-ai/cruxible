@@ -34,9 +34,19 @@ def test_registered_schema_catalog_matches_permission_catalog() -> None:
 
 def test_get_publishes_its_protocol_enums_and_init_takes_only_a_principal() -> None:
     schemas = _schemas()
-    # A bare folder starts by tool alone (maintainer ruling 2026-11-10); host
-    # creation stays an operator step on the CLI and HTTP.
-    assert set(schemas["cruxible_init"].inputSchema["properties"]) == {"principal_id"}
+    # A bare folder starts by tool alone (maintainer ruling 2026-11-10), with
+    # optional reviewer/independent-approval setup; host creation stays an
+    # operator step on the CLI and HTTP.
+    assert set(schemas["cruxible_init"].inputSchema["properties"]) == {
+        "principal_id",
+        "reviewer_id",
+        "require_independent_approval",
+    }
+    assert set(schemas["cruxible_console"].inputSchema["properties"]) == {
+        "instance_id",
+        "stop",
+        "no_open",
+    }
     assert "cruxible_host_create" not in schemas
 
     get = schemas["cruxible_get"].inputSchema

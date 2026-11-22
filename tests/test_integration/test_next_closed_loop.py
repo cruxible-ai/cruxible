@@ -1600,7 +1600,17 @@ def _proposal_awaiting_activation(root: Path, _monkeypatch: pytest.MonkeyPatch) 
             if item.reason == "proposal_awaiting_activation"
         ]
 
-    # Self-approval: the author's proposal needs nothing but activation.
+    def approval_rows(caller: str | None) -> list[object]:
+        return [
+            item
+            for item in service_playbill_next(
+                instance, request=_request(instance), caller_principal_id=caller
+            ).items
+            if item.reason == "proposal_awaiting_approval"
+        ]
+
+    # Self-approval: next does not steer the author to self-activate its own
+    # unapproved proposal; another active ordinary principal sees it for review.
     body = instance.store_document_body(b"# Ready to activate\n")
     ready = _submit_tree(
         instance,
@@ -1612,6 +1622,26 @@ def _proposal_awaiting_activation(root: Path, _monkeypatch: pytest.MonkeyPatch) 
     )
     assert ready.candidate is not None
     proposal_id = ready.admission.proposal_id
+    assert rows("owner") == []
+    assert approval_rows("owner") == []
+    (pending_review,) = approval_rows("reviewer")
+    assert pending_review.subject_identity == proposal_id
+    assert pending_review.repair.operation == EXPECTED_OPERATIONS["proposal_awaiting_approval"]
+
+    # Once a reviewer approves (held), the reviewer's queue clears and the
+    # author's next points at activating the reviewed proposal.
+    signed_self_policy = _sign(
+        client_material(root, instance),
+        ready.candidate.candidate_digest,
+        instance.accepted_coordinate().semantic_root,
+    )
+    service_submit_playbill_approval(
+        instance,
+        proposal_id=proposal_id,
+        attestation=signed_self_policy.attestation,
+        authenticated_submitter="reviewer",
+    )
+    assert approval_rows("reviewer") == []
     (row,) = rows("owner")
     assert row.subject_identity == proposal_id
     assert row.repair.operation == EXPECTED_OPERATIONS["proposal_awaiting_activation"]

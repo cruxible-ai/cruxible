@@ -717,18 +717,34 @@ def register_tools(
             str | None,
             Field(description="Owner principal ID (default: your OS username)."),
         ] = None,
+        *,
+        reviewer_id: Annotated[
+            str | None,
+            Field(description="Optional reviewer principal ID (default 'reviewer' if required)."),
+        ] = None,
+        require_independent_approval: Annotated[
+            bool,
+            Field(description="Require independent approval and create a reviewer."),
+        ] = False,
     ) -> McpInitResult:
         """Initialize this workspace folder; an initialized one reports its instance."""
-        return handlers.handle_init(principal_id)
+        return handlers.handle_init(
+            principal_id,
+            reviewer_id=reviewer_id,
+            require_independent_approval=require_independent_approval,
+        )
 
     @_tool
     def cruxible_console(
         instance_id: InstanceId = None,
         *,
         stop: Annotated[bool, Field(description="Stop the running console.")] = False,
+        no_open: Annotated[bool, Field(description="Start or check without opening a browser.")] = (
+            False
+        ),
     ) -> McpConsoleResult:
         """Open the read-only console in the user's browser; one listener per instance."""
-        return handlers.handle_console(require_instance_id(instance_id), stop=stop)
+        return handlers.handle_console(require_instance_id(instance_id), stop=stop, no_open=no_open)
 
     @_tool
     def cruxible_whoami(instance_id: InstanceId = None) -> McpWhoAmIResult:

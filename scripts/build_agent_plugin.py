@@ -18,6 +18,8 @@ BUNDLED_DOCS = (
     "kits.md",
     "lines-and-automation.md",
 )
+PLUGIN_ICON_SOURCE = Path("assets/brand/cruxible-org-avatar.png")
+PLUGIN_ICON_TARGET = Path("assets/icon.png")
 _LINK = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
 
 
@@ -50,6 +52,7 @@ def plugin_files(root: Path = ROOT) -> dict[Path, bytes]:
             "CRUXIBLE_MCP_TOOLS": ",".join(release["tools"]),
         },
     }
+    icon_ref = f"./{PLUGIN_ICON_TARGET.as_posix()}"
     documents = {
         PACKAGE / ".claude-plugin/plugin.json": {
             **metadata,
@@ -65,6 +68,8 @@ def plugin_files(root: Path = ROOT) -> dict[Path, bytes]:
                         "shortDescription": release["description"],
                         "developerName": release["publisher"],
                         "category": "Productivity",
+                        "composerIcon": icon_ref,
+                        "logo": icon_ref,
                     },
                 },
             },
@@ -101,6 +106,7 @@ def plugin_files(root: Path = ROOT) -> dict[Path, bytes]:
     for name in BUNDLED_DOCS:
         text = (root / "docs" / name).read_text()
         files[PACKAGE / "docs" / name] = bundled_doc(text, name, release["version"])
+    files[PACKAGE / PLUGIN_ICON_TARGET] = (root / PLUGIN_ICON_SOURCE).read_bytes()
     files[PACKAGE / "README.md"] = (root / "plugins/README.md").read_bytes()
     return files
 

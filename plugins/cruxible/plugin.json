@@ -9,7 +9,9 @@
         "displayName": "Cruxible",
         "shortDescription": "Typed, governed shared state and evidence for agents.",
         "developerName": "Cruxible LLC",
-        "category": "Productivity"
+        "category": "Productivity",
+        "composerIcon": "./assets/icon.png",
+        "logo": "./assets/icon.png"
       }
     }
   }

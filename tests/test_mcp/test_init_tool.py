@@ -252,3 +252,167 @@ def test_submit_by_path_refuses_a_symlink_and_an_oversize_file(workspace: Path) 
     (workspace / "bad.yaml").write_text("kind: nothing-like-an-input\n", encoding="utf-8")
     with pytest.raises(DataValidationError, match="not an authoring input"):
         handlers.handle_playbill_authoring_submit_file("inst_x", "bad.yaml")
+
+
+def test_init_with_reviewer_enables_mcp_only_independent_approval(
+    world: dict[str, Path],
+) -> None:
+    folder = world["folder"]
+    initialized = handlers.handle_init(
+        "owner",
+        reviewer_id="reviewer",
+        require_independent_approval=True,
+    )
+
+    assert initialized.status == "initialized"
+    assert initialized.principal_id == "owner"
+    assert initialized.reviewer_id == "reviewer"
+    assert initialized.approval_policy == "independent_approval_required"
+    assert initialized.base_kit_proposal_id is not None
+    owner_key_dir = Path(initialized.key_dir or "")
+    reviewer_key_dir = Path(initialized.reviewer_key_dir or "")
+    assert (owner_key_dir / "owner.ed25519").is_file()
+    assert (reviewer_key_dir / "reviewer.ed25519").is_file()
+    assert (reviewer_key_dir / "cruxible.env").is_file()
+    assert not reviewer_key_dir.is_relative_to(folder)
+    _no_key_material(initialized, owner_key_dir)
+    _no_key_material(initialized, reviewer_key_dir)
+
+    instance_id = require_instance_id()
+    # The reviewer approves the base kit proposal over MCP with no shell and no key path arg.
+    base_review = handlers.handle_playbill_review(
+        instance_id, initialized.base_kit_proposal_id, include_body=None
+    )
+    assert isinstance(base_review, contracts.ProposalReviewSummary)
+    base_approved = handlers.handle_playbill_approve(
+        instance_id,
+        initialized.base_kit_proposal_id,
+        signer_id="reviewer",
+        candidate_digest=base_review.candidate_digest,
+    )
+    assert isinstance(base_approved, contracts.ApprovalReceipt)
+    assert base_approved.signer_id == "reviewer" and base_approved.activation is not None
+    _no_key_material(base_approved, reviewer_key_dir)
+
+    # An author's change awaits approval and is approved by reviewer over MCP alone.
+    submitted = handlers.handle_playbill_authoring_submit_file(
+        instance_id, _subject_file(folder, "wi-cosign")
+    )
+    assert not isinstance(submitted.outcome, contracts.AuthoringLanded)
+    proposal_id = submitted.outcome.proposal_id
+    assert proposal_id is not None
+    review = handlers.handle_playbill_review(instance_id, proposal_id, include_body=None)
+    assert isinstance(review, contracts.ProposalReviewSummary)
+    approved = handlers.handle_playbill_approve(
+        instance_id,
+        proposal_id,
+        signer_id="reviewer",
+        candidate_digest=review.candidate_digest,
+    )
+    assert isinstance(approved, contracts.ApprovalReceipt)
+    assert approved.signer_id == "reviewer" and approved.activation is not None
+
+    # Re-calling init with the same reviewer/policy reports already_initialized.
+    again = handlers.handle_init(reviewer_id="reviewer", require_independent_approval=True)
+    assert again.status == "already_initialized"
+    assert again.reviewer_id == "reviewer"
+    assert again.reviewer_key_dir == str(reviewer_key_dir)
+
+
+def test_init_refuses_adding_reviewer_to_already_initialized_instance_and_same_id(
+    world: dict[str, Path],
+) -> None:
+    with pytest.raises(DataValidationError, match="must differ"):
+        handlers.handle_init("owner", reviewer_id="owner")
+
+    first = handlers.handle_init("owner")
+    assert first.status == "initialized" and first.reviewer_id is None
+    with pytest.raises(ConfigError, match="already initialized"):
+        handlers.handle_init(reviewer_id="reviewer", require_independent_approval=True)
+    # Never generates a reviewer key on an already-initialized instance.
+    reviewer_key = (
+        world["config"].resolve()
+        / "cruxible"
+        / "keys"
+        / first.instance_id
+        / "reviewer"
+        / "reviewer.ed25519"
+    )
+    assert not reviewer_key.exists()
+
+
+def test_codex_plugin_cache_cwd_uses_client_roots_and_refuses_without_roots(
+    world: dict[str, Path], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from mcp import types as mcp_types
+    from pydantic import AnyUrl
+
+    from cruxible_core.mcp.workspace import PluginDirectoryConflict
+
+    plugin_cache = tmp_path / "codex-cache" / "cruxible" / "0.5.0"
+    plugin_cache.mkdir(parents=True)
+    (plugin_cache / "plugin.json").write_text(
+        json.dumps({"name": "cruxible", "version": "0.5.0"}), encoding="utf-8"
+    )
+    (plugin_cache / "mcp.json").write_text(json.dumps({"mcpServers": {}}), encoding="utf-8")
+
+    project_a = world["folder"]
+    project_b = tmp_path / "project-b"
+    project_b.mkdir()
+
+    monkeypatch.delenv("CRUXIBLE_MCP_WORKSPACE_ROOT", raising=False)
+    monkeypatch.chdir(plugin_cache)
+
+    # Without client roots or CRUXIBLE_MCP_WORKSPACE_ROOT, never touch the plugin cache.
+    with pytest.raises(PluginDirectoryConflict, match="CRUXIBLE_MCP_WORKSPACE_ROOT"):
+        handlers.handle_init("owner")
+    assert not (plugin_cache / ".cruxible").exists()
+    with pytest.raises(PluginDirectoryConflict, match="CRUXIBLE_MCP_WORKSPACE_ROOT"):
+        require_instance_id()
+
+    # With MCP client roots, the server discovers the user's project despite plugin-cache cwd.
+    monkeypatch.setenv("CRUXIBLE_MCP_PROFILE", "full")
+    monkeypatch.setenv("CRUXIBLE_MODE", "admin")
+    reset_permissions()
+    server = create_server()
+    active_roots: list[Path] = [project_a]
+
+    async def list_roots_callback(_context: Any) -> mcp_types.ListRootsResult:
+        return mcp_types.ListRootsResult(
+            roots=[
+                mcp_types.Root(uri=AnyUrl(path.as_uri()), name=path.name) for path in active_roots
+            ]
+        )
+
+    async def exercise() -> tuple[str, str]:
+        async with create_connected_server_and_client_session(
+            server._mcp_server,
+            list_roots_callback=list_roots_callback,
+        ) as session:
+            await session.initialize()
+            init_a = await session.call_tool("cruxible_init", {"principal_id": "owner"})
+            assert not init_a.isError, init_a
+            payload_a = json.loads(init_a.content[0].text)  # type: ignore[union-attr]
+            assert Path(payload_a["workspace_root"]) == project_a.resolve()
+            assert not (plugin_cache / ".cruxible").exists()
+
+            whoami_a = await session.call_tool("cruxible_whoami", {})
+            assert not whoami_a.isError, whoami_a
+            who_payload = json.loads(whoami_a.content[0].text)  # type: ignore[union-attr]
+            assert who_payload["instance_id"] == payload_a["instance_id"]
+            assert who_payload["identity"]["actor_id"] == "owner"
+
+            # Switching roots via notification invalidates the cached roots.
+            active_roots[:] = [project_b]
+            await session.send_roots_list_changed()
+            init_b = await session.call_tool("cruxible_init", {"principal_id": "owner"})
+            assert not init_b.isError, init_b
+            payload_b = json.loads(init_b.content[0].text)  # type: ignore[union-attr]
+            assert Path(payload_b["workspace_root"]) == project_b.resolve()
+            return payload_a["instance_id"], payload_b["instance_id"]
+
+    inst_a, inst_b = asyncio.run(exercise())
+    assert inst_a != inst_b
+    assert (project_a / ".cruxible" / "coverage.json").is_file()
+    assert (project_b / ".cruxible" / "coverage.json").is_file()
+    assert not (plugin_cache / ".cruxible").exists()

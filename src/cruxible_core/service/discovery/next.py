@@ -5962,7 +5962,7 @@ def _activation_items(
                 target=proposal.proposal_id,
                 required_change=(
                     "activate_your_proposal_its_approvals_are_met"
-                    if proposal.approval_required
+                    if proposal.approval_required or proposal.approvals > 0
                     else "activate_your_proposal_it_needs_no_approval"
                 ),
                 arguments={"proposal_id": proposal.proposal_id},

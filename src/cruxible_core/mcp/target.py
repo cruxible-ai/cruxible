@@ -11,7 +11,11 @@ from cruxible_client.authoring.context import (
     resolve_context,
 )
 from cruxible_core.errors import ConfigError
-from cruxible_core.mcp.workspace import mcp_workspace_root
+from cruxible_core.mcp.workspace import (
+    MCP_WORKSPACE_ROOT_ENV,
+    PluginDirectoryConflict,
+    mcp_workspace_root,
+)
 from cruxible_core.workspace_root import WorkspaceBoundaryRefused
 
 MCP_INSTANCE_ENV = "CRUXIBLE_INSTANCE_ID"
@@ -19,9 +23,9 @@ _TARGET_ENV = ("CRUXIBLE_SERVER_URL", "CRUXIBLE_SERVER_SOCKET", MCP_INSTANCE_ENV
 
 NO_INSTANCE_MESSAGE = (
     "No Cruxible instance selected: pass instance_id, or launch the MCP server with "
-    f"{MCP_INSTANCE_ENV}=<instance id> in its environment (the `env` block of the MCP "
-    "client config), or run it in a workspace whose .cruxible/coverage.json binds an "
-    "instance on this server's daemon."
+    f"{MCP_INSTANCE_ENV}=<instance id> or {MCP_WORKSPACE_ROOT_ENV}=<project path> in its "
+    "environment (the `env` block of the MCP client config), or run it in a workspace whose "
+    ".cruxible/coverage.json binds an instance on this server's daemon."
 )
 
 
@@ -48,9 +52,9 @@ def _workspace_instance_id(env: Mapping[str, str]) -> str | None:
             remembered={},
             workspace=mcp_workspace_root(env),
         )
-    except WorkspaceBoundaryRefused:
-        # A workspace across an ownership or filesystem boundary refuses by
-        # name; it never reads as "no binding".
+    except (WorkspaceBoundaryRefused, PluginDirectoryConflict):
+        # A workspace across an ownership/filesystem boundary or an implicit
+        # plugin-package cwd refuses by name; it never reads as "no binding".
         raise
     except (
         ContextResolutionError,

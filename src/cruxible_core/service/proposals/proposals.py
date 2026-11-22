@@ -993,6 +993,7 @@ def proposals_awaiting_approval(
             actor_id=row["actor_id"],
             principal_id=principal_id,
             ordinary_principal_ids=ordinary_principal_ids,
+            include_self_approval_policy=True,
         )
         if counts is None:
             continue
@@ -1011,6 +1012,16 @@ def proposals_awaiting_approval(
     return tuple(awaiting)
 
 
+def _is_principal_lifecycle_only(candidate: CandidateRecord) -> bool:
+    return bool(candidate.members) and all(
+        member.artifact_kind == "principal-lifecycle" for member in candidate.members
+    )
+
+
+def _is_compiler_upgrade(candidate: CandidateRecord) -> bool:
+    return any(member.artifact_kind == "compiler-upgrade" for member in candidate.members)
+
+
 def _approval_awaited(
     evidence: ProposalEvidenceStore,
     candidate_digest: str,
@@ -1018,12 +1029,17 @@ def _approval_awaited(
     actor_id: str,
     principal_id: str,
     ordinary_principal_ids: frozenset[str],
+    include_self_approval_policy: bool = False,
 ) -> tuple[int, int] | None:
     """(eligible approvals, minimum) when `principal_id`'s approval would advance it, else None.
 
-    Counted exactly as activation counts it: distinct active ordinary signers
-    other than the creator; a compiler upgrade with no signature at all also
-    waits on one, which its creator may give.
+    Counted over distinct active ordinary signers other than the creator. When
+    ``include_self_approval_policy`` is set (open proposals at the head), an
+    open non-principal-lifecycle proposal under ``self_approval_allowed`` (no
+    ``approval_requirements`` on the candidate) still surfaces to another active
+    ordinary principal while it has no independent approval, so a reviewer sees
+    open proposals waiting for review. A compiler upgrade with no signature at
+    all waits on one, which its creator may give.
     """
 
     candidate = evidence.read_candidate(candidate_digest)
@@ -1040,7 +1056,14 @@ def _approval_awaited(
         return None if eligible >= minimum else (eligible, minimum)
     if _signature_required_unsigned(candidate, signers, ordinary_principal_ids):
         return 0, 1
-    return None
+    if (
+        not include_self_approval_policy
+        or _is_principal_lifecycle_only(candidate)
+        or actor_id == principal_id
+    ):
+        return None
+    eligible = len((signers - {actor_id}) & ordinary_principal_ids)
+    return None if eligible >= 1 else (eligible, 1)
 
 
 def stale_proposals_awaiting_approval(
@@ -1101,11 +1124,14 @@ def proposals_awaiting_activation(
 
     Read through the open-parent locator, like ``proposals_awaiting_approval``:
     candidates neither refused, accepted nor withdrawn whose parent is the
-    coordinate's semantic root. A candidate qualifies when it needs no approval
-    or its requirement is met, counted exactly as activation counts it. A
-    principal-lifecycle candidate is the actor's own signature to give first,
-    and a compiler upgrade with no signature yet needs one before settlement,
-    so neither is listed here until then.
+    coordinate's semantic root. Under ``independent_approval_required``, a
+    candidate qualifies once its requirement is met. Under
+    ``self_approval_allowed``, an unapproved normal candidate is withheld so
+    ``next`` does not steer a self-approving author at activating its own
+    ``accept=never`` proposal; once another active ordinary signer approves it
+    (for example with ``hold=true``), it surfaces here. A principal-lifecycle
+    candidate is the actor's own signature to give first, and a compiler upgrade
+    needs at least one active ordinary signature before settlement.
     """
 
     evidence = instance.proposal_evidence()
@@ -1119,21 +1145,22 @@ def proposals_awaiting_activation(
     ready = []
     for row in rows:
         candidate = evidence.read_candidate(row["candidate_digest"])
-        if candidate.members and all(
-            member.artifact_kind == "principal-lifecycle" for member in candidate.members
-        ):
+        if _is_principal_lifecycle_only(candidate):
             continue
         signers = {
             submission.attestation.signer_id
             for submission in evidence.read_approvals(row["candidate_digest"])
         }
         eligible = len((signers - {row["actor_id"]}) & ordinary_principal_ids)
-        if candidate.approval_requirements and (
-            eligible < candidate.approval_requirements[0].minimum_distinct_signers
-        ):
-            continue
-        if _signature_required_unsigned(candidate, signers, ordinary_principal_ids):
-            # Settlement needs a signature first: the approval row offers it.
+        if candidate.approval_requirements:
+            if eligible < candidate.approval_requirements[0].minimum_distinct_signers:
+                continue
+        elif _is_compiler_upgrade(candidate):
+            if _signature_required_unsigned(candidate, signers, ordinary_principal_ids):
+                # Settlement needs a signature first: the approval row offers it.
+                continue
+        elif eligible < 1:
+            # Do not steer a self-approving author to activate its own unapproved proposal.
             continue
         ready.append(
             ProposalAwaitingActivation(

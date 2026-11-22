@@ -20,10 +20,7 @@ vulnerable Django application, with Cruxible 0.5 and security kit 1.3.0.
 
 You'll need Python 3.11+, Git, a project to look at, a tool that writes a
 CycloneDX SBOM (step 3), and network access to `pypi.org`, `api.osv.dev`,
-`www.cisa.gov` and `api.first.org`. Until the security kit's registry release,
-you also need a clone of the
-[kits repository](https://github.com/cruxible-ai/cruxible-kits); the commands
-below assume it sits beside your project as `../cruxible-kits`.
+`www.cisa.gov` and `api.first.org`.
 
 ## Step 1: Install Cruxible and attach it to your project
 
@@ -98,9 +95,8 @@ A **kit** is a vocabulary and the definitions around it, published so any
 instance can install them. `kit add` shows you what it would install before it
 does anything:
 
-<!-- publish: kit tag -->
 ~~~text
-$ cruxible kit add ../cruxible-kits/kits/security
+$ cruxible kit add security:1.3.0
 security 1.3.0: would_propose (install)
   provider cruxible-provider-web (cruxible-provider-web 0.7.0): would install
   provider security-osv-provider (security-osv-provider 0.1.0.dev0): would install
@@ -119,19 +115,18 @@ Preview at b0a3ac708d13; nothing was written.
 Commit it: rerun the same command with --commit --at b0a3ac708d13
 ~~~
 
-Until the registry release of 1.3.0, install it from a checkout of the
-[kits repository](https://github.com/cruxible-ai/cruxible-kits); afterwards
-`cruxible kit add security:1.3.0` does the same. The **providers** are the
-packages that fetch and parse sources: OSV for vulnerabilities, a web
-provider for KEV and EPSS, and a SARIF reader for scanner output. Commit the
-install at the coordinate the preview printed. A kit that carries providers
-is several proposals, not one: each provider install is its own, and the
-kit's definitions are proposed only once the providers are installed, because
-they are checked against them:
+You can also install from a local checkout of the
+[kits repository](https://github.com/cruxible-ai/cruxible-kits) by passing its
+path (`../cruxible-kits/kits/security`) instead of `security:1.3.0`. The
+**providers** are the packages that fetch and parse sources: OSV for
+vulnerabilities, a web provider for KEV and EPSS, and a SARIF reader for
+scanner output. Commit the install at the coordinate the preview printed. A kit
+that carries providers is several proposals, not one: each provider install is
+its own, and the kit's definitions are proposed only once the providers are
+installed, because they are checked against them:
 
-<!-- publish: kit tag -->
 ~~~text
-$ cruxible kit add ../cruxible-kits/kits/security --commit --at b0a3ac708d13
+$ cruxible kit add security:1.3.0 --commit --at b0a3ac708d13
 security 1.3.0: awaiting_providers (install)
   provider cruxible-provider-web (cruxible-provider-web 0.7.0): awaiting approval, proposal sha256:e4d45ca1ff3348365e599fc2d8a953e9078b4fde62163de5028f0f1c3a3c5b28
   provider security-osv-provider (security-osv-provider 0.1.0.dev0): awaiting approval, proposal sha256:c7ba6329cb58c481b5c6ce3d8293139db2f28d1f4cf7eb85753f51c5419d9a5b

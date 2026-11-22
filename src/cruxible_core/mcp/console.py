@@ -60,13 +60,20 @@ def _open(link: str) -> bool:
         return False
 
 
-def _result(status: str, instance_id: str, port: int | None) -> McpConsoleResult:
+def _result(
+    status: str,
+    instance_id: str,
+    port: int | None,
+    *,
+    browser_opened: bool | None = None,
+) -> McpConsoleResult:
+    opened = (status in {"started", "running"}) if browser_opened is None else browser_opened
     return McpConsoleResult(
         status=status,  # type: ignore[arg-type]
         instance_id=instance_id,
         address=None if port is None else _address(port, instance_id),
         port=port,
-        browser_opened=status in {"started", "running"},
+        browser_opened=opened,
         stop=STOP_HINT if status in {"started", "running"} else None,
     )
 
@@ -125,17 +132,22 @@ def open_console(
     target: DaemonTarget,
     token: str | None,
     principal_id: str | None,
+    no_open: bool = False,
 ) -> McpConsoleResult:
-    """Start (or reuse) the listener for ``instance_id`` and open the browser on it."""
+    """Start (or reuse) the listener for ``instance_id``; open the browser unless ``no_open``."""
 
     with _lock:
         running = _running.get(instance_id)
         if running is not None and running.background.alive:  # type: ignore[attr-defined]
+            if no_open:
+                return _result("running", instance_id, running.port, browser_opened=False)
             # The first link is spent: a fresh one signs this browser in again.
             fresh = running.app.renew_bootstrap()  # type: ignore[attr-defined]
             status, port, link = "running", running.port, _bootstrap_link(running.port, fresh)
         else:
             status, port, link = _start(instance_id, target, token, principal_id)
+            if no_open:
+                return _result(status, instance_id, port, browser_opened=False)
     return _opened(status, instance_id, port, link)
 
 

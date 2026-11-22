@@ -184,10 +184,12 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_authoring_submit_file": (
         "Use to submit a workspace authoring file, such as a tailored kit automation template."
     ),
-    "cruxible_console": ("Use to open the read-only console in the user's browser."),
+    "cruxible_console": (
+        "Use to open the read-only console in the user's browser (no_open=true skips the browser)."
+    ),
     "cruxible_init": (
-        "Use once in a bare project folder: creates its instance and owner; this session "
-        "then acts as the owner."
+        "Use once in a bare project folder: creates its instance and owner (optionally a reviewer "
+        "and independent approval); this session then acts as the owner."
     ),
     "cruxible_authoring_status": (
         "Use when you need exactly what still separates an authored candidate from acceptance."

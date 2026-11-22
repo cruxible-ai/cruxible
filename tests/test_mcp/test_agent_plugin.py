@@ -58,6 +58,13 @@ def test_generated_host_packages_are_current_and_share_the_release() -> None:
     # Skills link core docs as bundled copies, never as web URLs.
     bundled = {path.name for path in (package / "docs").glob("*.md")}
     assert bundled == set(BUNDLED_DOCS)
+    interface = portable["extensions"]["com.openai"]["interface"]
+    for key in ("composerIcon", "logo"):
+        ref = interface[key]
+        assert ref.startswith("./assets/") and ref.endswith(".png")
+        asset = (package / ref).resolve()
+        assert asset.is_relative_to(package) and asset.is_file()
+        assert asset.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
     for path in [*(package / "skills").rglob("*.md"), *(package / "docs").glob("*.md")]:
         for link in re.findall(r"\]\(([^)]+)\)", path.read_text()):
             assert "docs.cruxible.ai" not in link, (path, link)
