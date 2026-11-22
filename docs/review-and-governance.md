@@ -75,7 +75,10 @@ the basis for each kind of change; a Runbook its steps; a Trigger its schedule
 and target; a new ClaimType its value type, cardinality, kinds, roles and the
 evidence it admits; a Document its title and links (`guides ClaimType:...`); a
 note its section and the Subjects it is about. Other kinds print one line, and
-a revision lists the fields it changes:
+a revision lists the fields it changes. A value write that cites a workspace
+file for the first time also creates that file's own CaptureContract; it is
+listed apart, under `Installed by a first file citation (N):`, since there is
+no definition to judge in it:
 
 ~~~text
 Definitions (1):
