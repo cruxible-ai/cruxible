@@ -166,7 +166,8 @@ EXPECTED_OPERATIONS = {
     # A marker the page has lost is repaired by releasing the registration that
     # demands it; a marker the page has mangled is repaired by restoring it.
     "projection_marker_invalid": frozenset({"cruxible.block.repin", "cruxible.block.depublish"}),
-    "claim_dependency_stale": "cruxible.authoring.example",
+    # Retire the judgment (reads of what changed beside it), or revise it.
+    "claim_dependency_stale": "cruxible.claim.retire",
     "claim_attestation_threshold_met": "cruxible.set",
     "claim_contradicting_evidence_available": "cruxible.authoring.example",
     "claim_new_evidence_supporting": "cruxible.authoring.example",

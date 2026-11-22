@@ -517,6 +517,49 @@ def test_a_mapping_names_a_member_the_enum_does_not_have(world) -> None:  # type
         cx.vocabulary.plan()
 
 
+def test_observation_only_fields_without_a_source_are_named_together(world) -> None:  # type: ignore[no-untyped-def]
+    _http, _instance_id, workspace, cx = world
+    cx.vocabulary.export()
+
+    def observed(data) -> None:  # type: ignore[no-untyped-def]
+        fields = data["kinds"]["dev.note"]["fields"]
+        for name in ("version", "released"):
+            fields[name] = {"value": "string{max_len: 32}", "permitted_roles": ["observation"]}
+
+    _edit(workspace, observed)
+    with pytest.raises(VocabularyFileError) as refused:
+        cx.vocabulary.plan()
+    message = str(refused.value)
+    assert refused.value.error_code == "cruxible.vocabulary.field_invalid"
+    assert "kinds.dev.note.fields.released, kinds.dev.note.fields.version:" in message
+    assert "evidence_rules_required" in message
+    assert "evidence: [<contract name>" in message
+    assert "permitted_roles: [normative]" in message
+
+    def normative(data) -> None:  # type: ignore[no-untyped-def]
+        for name in ("version", "released"):
+            data["kinds"]["dev.note"]["fields"][name]["permitted_roles"] = ["normative"]
+
+    _edit(workspace, normative)
+    assert cx.vocabulary.plan().preflight.verdict == "passed"
+
+
+def test_orient_names_file_citations_and_shows_field_descriptions(world) -> None:  # type: ignore[no-untyped-def]
+    from cruxible_client.contracts.text_display import render_orient
+
+    _http, _instance_id, _workspace, cx = world
+    detail = cx.orient(kind="dev.item").kind_detail
+    assert detail is not None
+    # A default field's own-words rule admits workspace file citations: say so.
+    assert "workspace_file" in detail.evidence
+    text = render_orient(cx.orient(kind="dev.item").model_dump(mode="json"))
+    assert "workspace_file" in text
+    assert "  slug  one" in text and "\n    The item's short name.\n" in text
+    assert "whole: cruxible get ClaimType:<predicate>" in text
+    listed = render_orient(cx.orient(section="claim_types").model_dump(mode="json"))
+    assert "dev.item.title  kinds=dev.item" in listed and "\n  Its label.\n" in listed
+
+
 def test_retired_true_retires_a_field_and_its_claims(world) -> None:  # type: ignore[no-untyped-def]
     _http, _instance_id, workspace, cx = world
     claim = _claim(cx, "dev.item/a", "dev.item.title", "First")

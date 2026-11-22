@@ -284,6 +284,18 @@ def _query_row(query: QueryDefinition) -> OrientQuery:
     )
 
 
+def _admitted_evidence(names: CaptureContractNames, claim_type: ClaimType) -> tuple[str, ...]:
+    """The contracts a ClaimType's rules admit and the families (``workspace_file``)
+    they admit beside them, in byte order: a file citation is evidence too."""
+
+    families = {
+        family
+        for rule in claim_type.evidence_admission_policy.rules
+        for family in rule.capture_contract_families
+    }
+    return tuple(sorted({*names.admitted(claim_type), *families}, key=lambda i: i.encode()))
+
+
 def _read_state(instance: PlaybillInstance, coordinate: AcceptedProjectionCoordinate) -> _State:
     with instance.bind_accepted_projection(coordinate) as projection:
         typed = projection.typed
@@ -301,7 +313,7 @@ def _read_state(instance: PlaybillInstance, coordinate: AcceptedProjectionCoordi
                 continue
             claim_types.append(claim_type)
             placements[claim_type.predicate] = (str(path), int(revision))
-            evidence[claim_type.predicate] = names.admitted(claim_type)
+            evidence[claim_type.predicate] = _admitted_evidence(names, claim_type)
         # The per-kind counters Subject writes maintain (vocabulary-sized), never a recount.
         subjects_by_kind = {
             str(kind): int(count) for kind, count in connection.execute(LIVE_SUBJECT_COUNTS_SQL)

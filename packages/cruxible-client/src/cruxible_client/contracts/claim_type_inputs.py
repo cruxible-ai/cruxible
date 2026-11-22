@@ -516,6 +516,15 @@ class ClaimTypeEvidenceRulesRequired(FormatError):
     error_code = "cruxible.claim_type.evidence_rules_required"
 
 
+#: Both repairs for a captured-only field with no source: the contract one and
+#: the cheap one (a hand-cited value is normative and needs no contract).
+_EVIDENCE_RULES_REPAIR = (
+    "Repair: list its shaped CaptureContracts in evidence: [<contract name>, ...]; "
+    "or, for a value cited by hand from a workspace file, permitted_roles: [normative] "
+    "(a file citation needs no contract)"
+)
+
+
 def _admitted_roles(roles: tuple[str, ...]) -> list[str]:
     return sorted({role for role in roles if role != "derivation"}, key=lambda r: r.encode())
 
@@ -569,7 +578,7 @@ def default_evidence_policy(
         raise ClaimTypeEvidenceRulesRequired(
             f"{ClaimTypeEvidenceRulesRequired.error_code}: evidence_requirement captured "
             "admits only a shaped payload under a declared contract, and this ClaimType "
-            "names none: list its shaped CaptureContracts in evidence: [<contract name>, ...]"
+            f"names none. {_EVIDENCE_RULES_REPAIR}"
         )
     rules.sort(key=lambda rule: str(rule["rule_id"]).encode("utf-8"))
     return {"rules": rules}

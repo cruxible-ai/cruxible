@@ -308,6 +308,37 @@ def test_a_next_page_prints_what_cruxible_next_prints() -> None:
     assert repr(page) == "Status: floor stale  next=cruxible floor export"
 
 
+def test_a_large_proposal_row_counts_its_slots_and_names_the_review() -> None:
+    """Survey cold run: a 41-slot proposal row listed every slot inline."""
+
+    from cruxible_client import contracts as api
+    from cruxible_client.contracts.text_display import next_claim_about
+
+    proposal = "sha256:" + "5" * 64
+
+    def row(touches: list[str]) -> api.NextItem:
+        return api.NextItem.model_validate(
+            {
+                "item_id": "sha256:" + "6" * 64,
+                "severity": "repair",
+                "reason": "proposal_awaiting_approval",
+                "subject_identity": proposal,
+                "detail": {"touches": touches},
+                "repair": {
+                    "operation": "cruxible.proposal.approve",
+                    "target": proposal,
+                    "required_change": "review_and_approve_the_candidate_with_your_signing_key",
+                },
+            }
+        )
+
+    slots = [f"dev.item/{name} dev.item.state" for name in "abcdefg"]
+    assert next_claim_about(row(slots[:3])) == "; ".join(slots[:3])
+    assert next_claim_about(row(slots)) == (
+        "; ".join(slots[:3]) + f"; +4 more: cruxible proposal review {proposal}"
+    )
+
+
 def test_a_get_card_prints_what_cruxible_get_prints() -> None:
     """Walkthrough W20: print(cx.get(ref)) was a 1 kB repr."""
 

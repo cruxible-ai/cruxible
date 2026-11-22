@@ -339,6 +339,19 @@ def test_a_detail_that_does_not_apply_refuses_naming_the_ones_that_do(
     assert refused.context["allowed"] == ["summary", "why", "history", "proof", "body"]
 
 
+def test_evidence_on_a_subject_refuses_naming_the_claim_form(world: dict[str, Any]) -> None:
+    """Survey cold run: `get SUBJECT --detail evidence` gave no route to a Claim's evidence."""
+
+    refused = _refusal(world["instance"], _SUBJECT, detail="evidence", surface="cli")
+
+    assert refused.error_code == "cruxible.get.detail_unsupported"
+    assert "Evidence is read per Claim: cruxible get CLM-... --detail evidence" in str(refused)
+    assert "cruxible get CLM-... --detail evidence" in refused.context["repair_line"]
+    # Other details keep the plain refusal.
+    other = _refusal(world["instance"], "Document:design", detail="evidence")
+    assert "per Claim" not in str(other)
+
+
 def test_a_proposal_reads_by_id_prefix_with_its_next_step(world: dict[str, Any]) -> None:
     instance, proposal = world["instance"], world["pending"]
     result = _get(instance, proposal[:20])
