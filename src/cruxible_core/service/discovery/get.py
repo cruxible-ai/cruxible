@@ -2579,6 +2579,20 @@ def _claim_evidence(
                     sorted(withheld),
                 )
             }
+    with instance.bind_accepted_projection(coordinate) as projection:
+        claim = cast(ClaimArtifact, projection.typed.source(resolved.identity))
+    # The cited passage, read and cut as proposal review shows it: the spans the
+    # Claim maps onto each Capture's committed bytes.
+    from cruxible_core.service.proposals.review_view import CitedText
+
+    spans = sorted(
+        {
+            (span.content_digest, span.start_byte, span.end_byte)
+            for mapping in claim.backing.source_mappings
+            for span in mapping.spans
+        }
+    )
+    cited = CitedText(instance, reader, withheld=False)
     captures: list[GetCaptureEvidence] = []
     for account in explanation.admission_accounts:
         version = names.version_of(account.capture_contract_digest)
@@ -2600,6 +2614,14 @@ def _claim_evidence(
                 source = envelope.producer.qualified
             observed_at = envelope.observed_at
             byte_length = envelope.commitment.byte_length
+        shown = (
+            None
+            if account.capture_digest in withheld or erasure is not None or not spans
+            else cited.citation(
+                {"capture": account.capture_digest, "origin": account.citation_origin},
+                [list(span) for span in spans],
+            )
+        )
         captures.append(
             GetCaptureEvidence(
                 capture=capture_handle(account.capture_digest),
@@ -2618,6 +2640,8 @@ def _claim_evidence(
                 else GetCaptureErasure(
                     by=erasure.erased_by, at=erasure.erased_at, because=erasure.because
                 ),
+                passage=None if shown is None else shown.text,
+                passage_truncated=False if shown is None else shown.text_truncated,
             )
         )
     # Accepted attestations and the door's recorded events of this exact version.
@@ -2636,8 +2660,6 @@ def _claim_evidence(
         )
         for item in explanation.attestation_accounts
     )
-    with instance.bind_accepted_projection(coordinate) as projection:
-        claim = cast(ClaimArtifact, projection.typed.source(resolved.identity))
     value = _artifact_value(claim)
     return GetEvidence(
         value=value,

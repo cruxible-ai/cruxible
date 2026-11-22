@@ -829,6 +829,18 @@ class GetCaptureEvidence(_StrictGetModel):
         description="Present when the Capture's retained body was erased: its bytes are gone, "
         "so the verdict reads this evidence as no longer replayable.",
     )
+    passage: str | None = Field(
+        default=None,
+        exclude_if=_omit_none,
+        description="The bytes of this Capture the Claim maps (its cited spans), as proposal "
+        "review shows them; absent when it maps none, the body is withheld, erased or "
+        "unavailable.",
+    )
+    passage_truncated: bool = Field(
+        default=False,
+        exclude_if=lambda value: not value,
+        description="The passage was cut at the review's cited-text limit.",
+    )
 
 
 #: Why an attestation does or does not count toward the Claim's verdict.
