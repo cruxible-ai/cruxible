@@ -169,6 +169,16 @@ class SemanticDeltaLimitError(FormatError):
     error_code = "cruxible.semantic_delta.limit_exceeded"
 
 
+class PyrightUnavailable(CruxibleError):
+    """`cruxible python --check` found no pyright to type-check with."""
+
+    error_code = "cruxible.python.pyright_unavailable"
+
+    def __init__(self) -> None:
+        self.repair_commands = ("uv tool install pyright",)
+        super().__init__(f"{self.error_code}: no pyright on PATH or beside this interpreter")
+
+
 class BootstrapError(CruxibleError):
     """Genesis does not reproduce from the supplied out-of-band trust root."""
 
@@ -1038,6 +1048,7 @@ __all__ = [
     "ProjectionFormatError",
     "ProjectionIntegrityError",
     "ProjectionPublicationError",
+    "PyrightUnavailable",
     "ReadRefusalError",
     "ReplayCheckpointError",
     "SemanticDeltaLimitError",

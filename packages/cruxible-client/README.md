@@ -406,7 +406,10 @@ outcome = cx.set("shop.part/bp-2210", "status", "in_stock", because="On the stoc
 field and enum before you define them. With floor delivery on, the daemon keeps `.cruxible/world.pyi`
 current: bind `world = cast("World", cx.world())` (`from world import World`
 under `TYPE_CHECKING`, with `.cruxible` on the checker's path) and a type checker
-refuses a misspelled kind, field or enum member in a script.
+refuses a misspelled kind, field or enum member in a script. From any repository, `cruxible python script.py`
+runs a script with the CLI's own interpreter and connection, and `cruxible python
+--check script.py` type-checks it against the instance's cached stub with no
+checker configuration.
 
 <a id="api-cruxible-subject"></a>
 

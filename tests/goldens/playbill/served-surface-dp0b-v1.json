@@ -2,8 +2,8 @@
   "format": "playbill-served-surface-v1",
   "succession": {
     "ratified_by": "maintainer",
-    "register_entry": "2026-11-17:final-batch-1117",
-    "surface_digest": "sha256:1ad2ce60cedee38f9f4d70f41a73932d9bddc6e80de893fd5be6bb28cdbcd0b9"
+    "register_entry": "2026-11-22:sdk-python-runner-1120",
+    "surface_digest": "sha256:7a5eb90c8b742db2c292451d485700964508f82540fd0e9120b4be7ddd6eecbe"
   },
   "surface": {
     "cli_leaves": [
@@ -678,6 +678,13 @@
         ],
         "command": "provider retire",
         "delegate": "cruxible_core.cli.commands.playbill.retire_provider"
+      },
+      {
+        "client_operations": [
+          "get"
+        ],
+        "command": "python",
+        "delegate": "cruxible_core.cli.commands.python_runner.python_cmd"
       },
       {
         "client_operations": [

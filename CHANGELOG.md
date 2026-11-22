@@ -7,6 +7,17 @@ that lands it; entries move under a version heading when the release is
 tagged. Work items for these changes live on the active release line in
 the project's own state instance.
 
+### Added
+
+- **`cruxible python`** runs an SDK script (`SCRIPT`, `-c CODE` or `-`) with the
+  CLI's own interpreter, its resolved daemon, instance, principal and
+  `--env-file` settings passed in the environment, from any repository and with
+  nothing installed into that project. `cruxible python --check` type-checks the
+  script with pyright against the instance's world stub (`from world import
+  World`), cached per instance under `~/.cruxible/stubs/` and re-rendered only
+  when the vocabulary moves; without pyright it refuses with
+  `cruxible.python.pyright_unavailable`.
+
 ## [0.5.0] - 2026-11-18
 
 This release replaces the 0.3 configuration graph with a new state model.
