@@ -84,7 +84,16 @@ if TYPE_CHECKING:
         ShownObject,
         TruncatedText,
     )
-    from cruxible_client.contracts.write import NoneValue, SlotRef
+    from cruxible_client.contracts.write import (
+        CaptureEvidence,
+        ContractEvidence,
+        Evidence,
+        FileEvidence,
+        NoneValue,
+        SectionEvidence,
+        SelfEvidence,
+        SlotRef,
+    )
     from cruxible_client.transport.http import CruxibleClient
 
 
@@ -140,7 +149,13 @@ __all__ = [
     "QueryRef",
     "QueryResult",
     "ReferentSensitivity",
+    "CaptureEvidence",
+    "ContractEvidence",
+    "Evidence",
+    "FileEvidence",
     "NoneValue",
+    "SectionEvidence",
+    "SelfEvidence",
     "SlotRef",
     "SourceRef",
     "ReadNode",
@@ -231,7 +246,16 @@ def __getattr__(name: str) -> Any:
         from cruxible_client.contracts import read_values
 
         return getattr(read_values, name)
-    if name in {"NoneValue", "SlotRef"}:
+    if name in {
+        "CaptureEvidence",
+        "ContractEvidence",
+        "Evidence",
+        "FileEvidence",
+        "NoneValue",
+        "SectionEvidence",
+        "SelfEvidence",
+        "SlotRef",
+    }:
         from cruxible_client.contracts import write
 
         return getattr(write, name)

@@ -229,3 +229,23 @@ def test_read_whole_and_the_values_it_reads_are_top_level_names() -> None:
     assert cruxible_client.ShownObject is ShownObject
     for name in ("WholeValueUnavailable", "TruncatedText", "ShownObject"):
         assert name in cruxible_client.__all__
+
+
+def test_write_evidence_types_are_top_level_exports() -> None:
+    """Every write-evidence option is importable from top-level ``cruxible_client``."""
+
+    from cruxible_client.contracts import write
+
+    names = (
+        "CaptureEvidence",
+        "ContractEvidence",
+        "Evidence",
+        "FileEvidence",
+        "SectionEvidence",
+        "SelfEvidence",
+    )
+    for name in names:
+        assert name in cruxible_client.__all__
+        assert name in dir(cruxible_client)
+        assert getattr(cruxible_client, name) is getattr(write, name)
+
