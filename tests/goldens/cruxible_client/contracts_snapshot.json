@@ -85008,7 +85008,7 @@
           "json_name": "field",
           "required": true,
           "schema": {
-            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed (the generation the Subject or any Claim about it last changed in), or alias.field after follow.",
+            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed, or alias.field after follow.",
             "maxLength": 256,
             "minLength": 1,
             "title": "Field",
@@ -85027,7 +85027,7 @@
             "type": "string"
           },
           "field": {
-            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed (the generation the Subject or any Claim about it last changed in), or alias.field after follow.",
+            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed, or alias.field after follow.",
             "maxLength": 256,
             "minLength": 1,
             "title": "Field",
@@ -85074,7 +85074,7 @@
           "json_name": "field",
           "required": true,
           "schema": {
-            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed (the generation the Subject or any Claim about it last changed in), or alias.field after follow.",
+            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed, or alias.field after follow.",
             "maxLength": 256,
             "minLength": 1,
             "title": "Field",
@@ -85101,7 +85101,7 @@
             "title": "Eq"
           },
           "field": {
-            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed (the generation the Subject or any Claim about it last changed in), or alias.field after follow.",
+            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed, or alias.field after follow.",
             "maxLength": 256,
             "minLength": 1,
             "title": "Field",
@@ -85138,7 +85138,7 @@
           "json_name": "field",
           "required": true,
           "schema": {
-            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed (the generation the Subject or any Claim about it last changed in), or alias.field after follow.",
+            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed, or alias.field after follow.",
             "maxLength": 256,
             "minLength": 1,
             "title": "Field",
@@ -85155,7 +85155,7 @@
             "type": "boolean"
           },
           "field": {
-            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed (the generation the Subject or any Claim about it last changed in), or alias.field after follow.",
+            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed, or alias.field after follow.",
             "maxLength": 256,
             "minLength": 1,
             "title": "Field",
@@ -85182,7 +85182,7 @@
           "json_name": "field",
           "required": true,
           "schema": {
-            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed (the generation the Subject or any Claim about it last changed in), or alias.field after follow.",
+            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed, or alias.field after follow.",
             "maxLength": 256,
             "minLength": 1,
             "title": "Field",
@@ -85214,7 +85214,7 @@
         "additionalProperties": false,
         "properties": {
           "field": {
-            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed (the generation the Subject or any Claim about it last changed in), or alias.field after follow.",
+            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed, or alias.field after follow.",
             "maxLength": 256,
             "minLength": 1,
             "title": "Field",
@@ -85255,7 +85255,7 @@
           "json_name": "field",
           "required": true,
           "schema": {
-            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed (the generation the Subject or any Claim about it last changed in), or alias.field after follow.",
+            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed, or alias.field after follow.",
             "maxLength": 256,
             "minLength": 1,
             "title": "Field",
@@ -85287,7 +85287,7 @@
         "additionalProperties": false,
         "properties": {
           "field": {
-            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed (the generation the Subject or any Claim about it last changed in), or alias.field after follow.",
+            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed, or alias.field after follow.",
             "maxLength": 256,
             "minLength": 1,
             "title": "Field",
@@ -85328,7 +85328,7 @@
           "json_name": "field",
           "required": true,
           "schema": {
-            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed (the generation the Subject or any Claim about it last changed in), or alias.field after follow.",
+            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed, or alias.field after follow.",
             "maxLength": 256,
             "minLength": 1,
             "title": "Field",
@@ -85366,7 +85366,7 @@
         "description": "The value is one of these.",
         "properties": {
           "field": {
-            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed (the generation the Subject or any Claim about it last changed in), or alias.field after follow.",
+            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed, or alias.field after follow.",
             "maxLength": 256,
             "minLength": 1,
             "title": "Field",
@@ -85412,7 +85412,7 @@
           "json_name": "field",
           "required": true,
           "schema": {
-            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed (the generation the Subject or any Claim about it last changed in), or alias.field after follow.",
+            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed, or alias.field after follow.",
             "maxLength": 256,
             "minLength": 1,
             "title": "Field",
@@ -85444,7 +85444,7 @@
         "additionalProperties": false,
         "properties": {
           "field": {
-            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed (the generation the Subject or any Claim about it last changed in), or alias.field after follow.",
+            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed, or alias.field after follow.",
             "maxLength": 256,
             "minLength": 1,
             "title": "Field",
@@ -85485,7 +85485,7 @@
           "json_name": "field",
           "required": true,
           "schema": {
-            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed (the generation the Subject or any Claim about it last changed in), or alias.field after follow.",
+            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed, or alias.field after follow.",
             "maxLength": 256,
             "minLength": 1,
             "title": "Field",
@@ -85517,7 +85517,7 @@
         "additionalProperties": false,
         "properties": {
           "field": {
-            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed (the generation the Subject or any Claim about it last changed in), or alias.field after follow.",
+            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed, or alias.field after follow.",
             "maxLength": 256,
             "minLength": 1,
             "title": "Field",
@@ -85558,7 +85558,7 @@
           "json_name": "field",
           "required": true,
           "schema": {
-            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed (the generation the Subject or any Claim about it last changed in), or alias.field after follow.",
+            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed, or alias.field after follow.",
             "maxLength": 256,
             "minLength": 1,
             "title": "Field",
@@ -85591,7 +85591,7 @@
         "description": "No value equals this one; a Subject without the value matches.",
         "properties": {
           "field": {
-            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed (the generation the Subject or any Claim about it last changed in), or alias.field after follow.",
+            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed, or alias.field after follow.",
             "maxLength": 256,
             "minLength": 1,
             "title": "Field",
@@ -93000,7 +93000,7 @@
                 "type": "string"
               },
               "field": {
-                "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed (the generation the Subject or any Claim about it last changed in), or alias.field after follow.",
+                "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed, or alias.field after follow.",
                 "maxLength": 256,
                 "minLength": 1,
                 "title": "Field",
@@ -93033,7 +93033,7 @@
                 "title": "Eq"
               },
               "field": {
-                "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed (the generation the Subject or any Claim about it last changed in), or alias.field after follow.",
+                "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed, or alias.field after follow.",
                 "maxLength": 256,
                 "minLength": 1,
                 "title": "Field",
@@ -93056,7 +93056,7 @@
                 "type": "boolean"
               },
               "field": {
-                "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed (the generation the Subject or any Claim about it last changed in), or alias.field after follow.",
+                "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed, or alias.field after follow.",
                 "maxLength": 256,
                 "minLength": 1,
                 "title": "Field",
@@ -93074,7 +93074,7 @@
             "additionalProperties": false,
             "properties": {
               "field": {
-                "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed (the generation the Subject or any Claim about it last changed in), or alias.field after follow.",
+                "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed, or alias.field after follow.",
                 "maxLength": 256,
                 "minLength": 1,
                 "title": "Field",
@@ -93106,7 +93106,7 @@
             "additionalProperties": false,
             "properties": {
               "field": {
-                "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed (the generation the Subject or any Claim about it last changed in), or alias.field after follow.",
+                "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed, or alias.field after follow.",
                 "maxLength": 256,
                 "minLength": 1,
                 "title": "Field",
@@ -93139,7 +93139,7 @@
             "description": "The value is one of these.",
             "properties": {
               "field": {
-                "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed (the generation the Subject or any Claim about it last changed in), or alias.field after follow.",
+                "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed, or alias.field after follow.",
                 "maxLength": 256,
                 "minLength": 1,
                 "title": "Field",
@@ -93176,7 +93176,7 @@
             "additionalProperties": false,
             "properties": {
               "field": {
-                "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed (the generation the Subject or any Claim about it last changed in), or alias.field after follow.",
+                "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed, or alias.field after follow.",
                 "maxLength": 256,
                 "minLength": 1,
                 "title": "Field",
@@ -93208,7 +93208,7 @@
             "additionalProperties": false,
             "properties": {
               "field": {
-                "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed (the generation the Subject or any Claim about it last changed in), or alias.field after follow.",
+                "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed, or alias.field after follow.",
                 "maxLength": 256,
                 "minLength": 1,
                 "title": "Field",
@@ -93241,7 +93241,7 @@
             "description": "No value equals this one; a Subject without the value matches.",
             "properties": {
               "field": {
-                "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed (the generation the Subject or any Claim about it last changed in), or alias.field after follow.",
+                "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed, or alias.field after follow.",
                 "maxLength": 256,
                 "minLength": 1,
                 "title": "Field",

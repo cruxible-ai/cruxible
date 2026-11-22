@@ -89,8 +89,8 @@ QueryFollowDirection = Literal["forward", "reverse"]
 QueryMode = Literal["inline", "named", "spec"]
 
 _FIELD_DESCRIPTION = (
-    "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed (the "
-    "generation the Subject or any Claim about it last changed in), or alias.field after follow."
+    "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed, or "
+    "alias.field after follow."
 )
 
 
