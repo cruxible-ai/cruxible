@@ -1944,7 +1944,12 @@ external source, or a same-version cited span with, with the relation kind, the
 shared capture, and the retired Claim and citation witnesses. It is read from
 accepted state alone, like the rest of the explanation.
 A real dependency on a retired Claim stays a `claim_dependency_stale` row in
-`next`.
+`next`. The row names each stale input: an `end unobserved` line names the
+pair end that lost its last observation (a package an import no longer lists)
+and the retired observation; an `input changed` line names the upstream Claim.
+Its repair retires the dependent Claim (`cruxible retire CLM-... --because`),
+with a `get` of each end or input beside it; revising the Claim from current
+inputs, or observing the end again, also clears the row.
 
 `attest` signs that the caller examined the current exact Claim. `--unsure` is
 how an agent leaves contested state contested instead of forcing a judgment it

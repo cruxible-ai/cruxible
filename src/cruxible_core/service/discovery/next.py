@@ -3807,17 +3807,37 @@ def claim_dependency_row(
             key=lambda item: item.encode("utf-8"),
         )
     )
+    claim_id = identity.removeprefix("Claim:")
+    # Read what changed: each unobserved end, else each changed input Claim.
+    reads = tuple(
+        dict.fromkeys(
+            str(item["subject_end"]).removeprefix("Subject:")
+            if item.get("subject_end")
+            else str(item["source_claim_identity"]).removeprefix("Claim:")
+            for item in stale_inputs
+        )
+    )
+    retire = _retire_alternative(identity, claim_id)
     return _item(
         severity="repair",
         reason="claim_dependency_stale",
         subject_identity=identity,
         related_identities=related,
         detail={"stale_inputs": stale_inputs},
-        repair=PlaybillNextRepairV1(
-            operation="cruxible.authoring.example",
-            target=identity,
-            required_change="reauthor_claim_from_current_inputs",
-            arguments={"claim_id": identity.removeprefix("Claim:")},
+        # Retiring clears the row; a revision from current inputs, or the end
+        # observed again, clears it too. The reads show what changed first.
+        repair=retire.model_copy(
+            update={
+                "alternatives": tuple(
+                    PlaybillNextRepairV1(
+                        operation="cruxible.get",
+                        target=identity,
+                        required_change="read_what_changed_then_judge_the_claim",
+                        arguments={"claim_id": claim_id, "ref": ref},
+                    )
+                    for ref in reads
+                )
+            }
         ),
     )
 

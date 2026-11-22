@@ -1085,6 +1085,44 @@ def next_input_lines(item: NextItem) -> list[str]:
     return lines
 
 
+def _short_digest(value: object) -> str:
+    return "-" if not isinstance(value, str) else value.rpartition(":")[2][:SHORT_OID]
+
+
+def next_stale_input_lines(item: NextItem) -> list[str]:
+    """A stale dependency's row: each input as ``--json`` carries it, one line each.
+
+    An unobserved end names the end Subject and the retired observation; a
+    changed input names its Claim, the version used and the current one.
+    """
+
+    detail = item.detail if isinstance(item.detail, dict) else {}
+    inputs = detail.get("stale_inputs")
+    if item.reason != "claim_dependency_stale" or not isinstance(inputs, list):
+        return []
+    lines: list[str] = []
+    for entry in inputs:
+        if not isinstance(entry, dict):
+            continue
+        source = str(entry.get("source_claim_identity", "-")).removeprefix("Claim:")
+        reasons = ",".join(
+            str(reason).removeprefix("cruxible.impact.")
+            for reason in entry.get("impact_reasons") or ()
+        )
+        end = entry.get("subject_end")
+        current = _short_digest(entry.get("current_artifact_digest"))
+        used = _short_digest(entry.get("used_artifact_digest"))
+        if isinstance(end, str) and end:
+            line = f"end unobserved: {end.removeprefix('Subject:')}  retired={source}  used={used}"
+        else:
+            line = f"input changed: {source}  current={current}  used={used}"
+            line += f"  reasons={reasons}" if reasons else ""
+        if entry.get("lineage_complete") is False:
+            line += "  lineage incomplete"
+        lines.append(line)
+    return lines
+
+
 def next_run_failure_lines(item: NextItem) -> list[str]:
     """A failed Line run's row: the run, its failure code and its cause, if recorded."""
 
@@ -1267,7 +1305,11 @@ def next_lines(
             lines.append(row + (f"  next={item.repair.command}" if item.repair.command else ""))
             continue
         lines.append(f"{row}  next={item.repair.operation}")
-        for line in (*next_run_failure_lines(item), *next_input_lines(item)):
+        for line in (
+            *next_run_failure_lines(item),
+            *next_input_lines(item),
+            *next_stale_input_lines(item),
+        ):
             lines.append(f"  {line}")
         lines.append(f"  repair: {next_repair_hint(item.repair)}")
         for alternative in item.repair.alternatives:
