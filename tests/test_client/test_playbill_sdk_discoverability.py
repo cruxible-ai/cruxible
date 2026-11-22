@@ -248,4 +248,3 @@ def test_write_evidence_types_are_top_level_exports() -> None:
         assert name in cruxible_client.__all__
         assert name in dir(cruxible_client)
         assert getattr(cruxible_client, name) is getattr(write, name)
-
