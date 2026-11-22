@@ -1248,6 +1248,9 @@ def test_connect_refuses_mismatched_served_snapshot_before_instance_io(
     connection: dict[str, object] = {}
 
     daemon_snapshot_digest = "sha256:" + "9" * 64
+    # Another major.minor series: even reads refuse at connect.
+    major, minor, *_ = CLIENT_VERSION.split(".")
+    other_series = f"{major}.{int(minor) + 1}.0"
 
     class _MismatchedClient:
         def __init__(self, **values: object) -> None:
@@ -1256,7 +1259,7 @@ def test_connect_refuses_mismatched_served_snapshot_before_instance_io(
 
         def _version_info(self) -> tuple[str, str]:
             calls.append("version_info")
-            return DAEMON_VERSION, daemon_snapshot_digest
+            return other_series, daemon_snapshot_digest
 
         def close(self) -> None:
             calls.append("close")
@@ -1272,12 +1275,12 @@ def test_connect_refuses_mismatched_served_snapshot_before_instance_io(
         )
     except IncompatibleDaemonVersion as exc:
         assert exc.client_version == CLIENT_VERSION
-        assert exc.daemon_version == DAEMON_VERSION
+        assert exc.daemon_version == other_series
         assert exc.client_snapshot_digest == SDK_CONTRACT_SNAPSHOT_DIGEST
         assert exc.daemon_snapshot_digest == daemon_snapshot_digest
         message = str(exc)
         assert f"client_version={CLIENT_VERSION}" in message
-        assert f"daemon_version={DAEMON_VERSION}" in message
+        assert f"daemon_version={other_series}" in message
         assert f"client_snapshot_digest={SDK_CONTRACT_SNAPSHOT_DIGEST}" in message
         assert f"daemon_snapshot_digest={daemon_snapshot_digest}" in message
         assert "upgrade the client or daemon" in message
@@ -1286,6 +1289,54 @@ def test_connect_refuses_mismatched_served_snapshot_before_instance_io(
     assert calls == ["connect", "version_info", "close"]
     assert connection["base_url"] == "http://explicit"
     assert connection["socket_path"] is None
+
+
+def test_connect_across_patch_skew_serves_reads_and_refuses_writes_before_sending(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:  # type: ignore[no-untyped-def]
+    import httpx
+
+    _workspace(tmp_path)
+    major, minor, *_ = CLIENT_VERSION.split(".")
+    paths: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.path)
+        if request.url.path == "/version":
+            return httpx.Response(
+                200,
+                json={
+                    "version": f"{major}.{minor}.999",
+                    "sdk_contract_snapshot_digest": "sha256:" + "9" * 64,
+                },
+            )
+        return httpx.Response(404, json={"error_type": "NotFound", "message": "absent"})
+
+    original = httpx.Client
+
+    def client(**kwargs: Any) -> httpx.Client:
+        kwargs["transport"] = httpx.MockTransport(respond)
+        return original(**kwargs)
+
+    monkeypatch.setattr(httpx, "Client", client)
+    monkeypatch.delenv("CRUXIBLE_SKIP_VERSION_CHECK", raising=False)
+
+    with Cruxible.connect(
+        target="http://daemon.invalid", instance="inst_test", workspace=tmp_path, at=_COORDINATE
+    ) as cx:
+        with pytest.raises(Exception) as read:
+            cx.next()
+        assert not isinstance(read.value, IncompatibleDaemonVersion)
+        assert paths[1] == "/api/v1/inst_test/coverage/resolve"  # a read POST went out
+
+        proposal = "sha256:" + "1" * 64
+        with pytest.raises(IncompatibleDaemonVersion, match="Reads still serve"):
+            cx.activate(proposal)
+        with pytest.raises(IncompatibleDaemonVersion):
+            cx.proposal(proposal).reject(reason="no")
+        assert not [path for path in paths if path.endswith(("/activate", "/reject"))]
+        assert paths.count("/version") == 1
 
 
 def test_refusal_diagnostic_maps_exact_payload_path_to_the_call_expression(

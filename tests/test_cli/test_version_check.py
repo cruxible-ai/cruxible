@@ -1,9 +1,10 @@
-"""A client and a daemon on different authoring contracts refuse before the first call.
+"""A client and a daemon on different authoring contracts.
 
-What can break a call is the contract, so the contract snapshot digest decides:
-a different digest refuses with one line naming both versions, both digests,
-where the daemon is and the fix; the same digest proceeds silently whatever the
-package versions. One ``/version`` request per process. ``--version``, ``--help``,
+The same contract snapshot digest proceeds silently whatever the package
+versions. A different digest in the same ``major.minor`` series serves reads
+and refuses each write before sending it; another series refuses every call,
+in one line naming both versions, both digests, where the daemon is and the
+fix. One ``/version`` request per process. ``--version``, ``--help``,
 ``server stop`` and ``context show`` never refuse, and
 ``CRUXIBLE_SKIP_VERSION_CHECK=1`` skips the check for development.
 """
@@ -48,6 +49,9 @@ def daemon(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, object]
                     "boot_id": "image",
                 },
             )
+        if request.url.path.endswith("/proposal-selector"):
+            selector = request.url.params["selector"]
+            return httpx.Response(200, json={"selector": selector, "proposal_id": selector})
         if request.url.path == "/api/v1/server/stop":
             state["stopped"] = True
             return httpx.Response(
@@ -146,3 +150,168 @@ def test_version_names_the_contract_and_a_checkouts_commit() -> None:
         rf"cruxible {re.escape(__version__)} \(contract {digest}(, git [0-9a-f]{{9}})?\)\n",
         result.output,
     )
+
+
+# Patch skew: the same major.minor series on another authoring contract (a
+# 0.5.0 client and a 0.5.1 daemon). Reads serve; writes refuse before sending.
+_major, _minor, *_rest = __version__.split(".")
+PATCH_SKEW = f"{_major}.{_minor}.999"
+OTHER_SERIES = f"{_major}.{int(_minor) + 1}.0"
+_WRITE_PATHS = ("/set", "/retire", "/write", "/activate", "/reject", "/ack")
+
+
+def _patch_skew(daemon: dict[str, object]) -> list[str]:
+    daemon["version"] = PATCH_SKEW
+    daemon["digest"] = OTHER_DIGEST
+    calls = daemon["calls"]
+    assert isinstance(calls, list)
+    return calls
+
+
+@pytest.mark.parametrize(
+    ("command", "route"),
+    [
+        (("whoami",), "/api/v1/inst_x/whoami"),
+        (("orient",), "/api/v1/inst_x/orient"),
+        (("query", "project.work_item"), "/api/v1/inst_x/query"),
+        (("get", "project.work_item/wi-1"), "/api/v1/inst_x/get"),
+        (("next",), "/api/v1/inst_x/next"),
+        (("proposal", "list"), "/api/v1/inst_x/proposals"),
+    ],
+)
+def test_cli_reads_serve_across_patch_skew(daemon, command: tuple[str, ...], route: str) -> None:
+    calls = _patch_skew(daemon)
+    result = _run("--instance-id", "inst_x", *command)
+
+    assert "daemon_version_incompatible" not in result.stderr  # type: ignore[attr-defined]
+    assert calls[0] == "/version" and calls.count("/version") == 1
+    assert route in calls
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        ("proposal", "activate", "sha256:" + "1" * 64),
+        ("proposal", "reject", "sha256:" + "1" * 64, "--reason", "no"),
+        ("inbox", "ack", "inb_1"),
+    ],
+)
+def test_cli_writes_refuse_across_patch_skew_before_sending(
+    daemon, command: tuple[str, ...]
+) -> None:
+    calls = _patch_skew(daemon)
+    result = _run("--instance-id", "inst_x", *command)
+
+    assert result.exit_code == 1  # type: ignore[attr-defined]
+    stderr = result.stderr  # type: ignore[attr-defined]
+    assert "cruxible.sdk.daemon_version_incompatible" in stderr
+    assert "Reads still serve across this patch skew" in stderr
+    assert not [path for path in calls if path.endswith(_WRITE_PATHS)]
+
+
+def test_cli_reads_refuse_across_a_minor_series(daemon) -> None:
+    daemon["version"] = OTHER_SERIES
+    result = _run("--instance-id", "inst_x", "orient")
+
+    assert result.exit_code == 1  # type: ignore[attr-defined]
+    assert "cruxible.sdk.daemon_version_incompatible" in result.stderr  # type: ignore[attr-defined]
+    assert "Reads still serve" not in result.stderr  # type: ignore[attr-defined]
+    assert daemon["calls"] == ["/version"]
+
+
+def test_cli_escape_hatch_lets_writes_through_patch_skew(
+    daemon, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = _patch_skew(daemon)
+    monkeypatch.setenv("CRUXIBLE_SKIP_VERSION_CHECK", "1")
+    result = _run("--instance-id", "inst_x", "proposal", "activate", "sha256:" + "1" * 64)
+
+    assert "daemon_version_incompatible" not in result.stderr  # type: ignore[attr-defined]
+    assert "/version" not in calls
+    assert any(path.endswith("/activate") for path in calls)
+
+
+def test_mcp_reads_serve_and_writes_refuse_across_patch_skew(
+    daemon, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = _patch_skew(daemon)
+    monkeypatch.setenv("CRUXIBLE_SERVER_URL", URL)
+    handlers.reset_client_cache()
+    try:
+        handlers._get_client()  # the server's client starts
+        with pytest.raises(Exception) as read:
+            handlers.handle_playbill_whoami("inst_x")  # reaches the daemon (404 here)
+        assert not isinstance(read.value, IncompatibleDaemonVersion)
+        assert "/api/v1/inst_x/whoami" in calls
+
+        with pytest.raises(IncompatibleDaemonVersion, match="Reads still serve"):
+            handlers.handle_playbill_retire(
+                "inst_x", target="CLM-" + "0" * 32, because="no longer true"
+            )
+        with pytest.raises(IncompatibleDaemonVersion):
+            handlers.handle_playbill_activate("inst_x", "sha256:" + "1" * 64)
+        assert not [path for path in calls if path.endswith(_WRITE_PATHS)]
+        assert calls.count("/version") == 1
+    finally:
+        handlers.reset_client_cache()
+
+
+def test_mcp_refuses_a_minor_series_at_start(daemon, monkeypatch: pytest.MonkeyPatch) -> None:
+    daemon["version"] = OTHER_SERIES
+    monkeypatch.setenv("CRUXIBLE_SERVER_URL", URL)
+    handlers.reset_client_cache()
+    with pytest.raises(IncompatibleDaemonVersion):
+        handlers._get_client()
+    handlers.reset_client_cache()
+
+
+@pytest.mark.parametrize(
+    ("path", "reads"),
+    [
+        ("/api/v1/inst_x/query", True),
+        ("/api/v1/inst_x/get", True),
+        ("/api/v1/inst_x/get-batch", True),
+        ("/api/v1/inst_x/next", True),
+        ("/api/v1/inst_x/since", True),
+        ("/api/v1/inst_x/coverage/resolve", True),
+        ("/api/v1/inst_x/captures/read", True),
+        ("/api/v1/inst_x/floor/export", True),
+        ("/api/v1/inst_x/proposals/sha256:1/review", True),
+        ("/api/v1/inst_x/procedures/p/readings", True),
+        ("/api/v1/server/stop", True),
+        ("/api/v1/inst_x/set", False),
+        ("/api/v1/inst_x/write", False),
+        ("/api/v1/inst_x/retire", False),
+        ("/api/v1/inst_x/bodies", False),
+        ("/api/v1/inst_x/authoring/submit", False),
+        ("/api/v1/inst_x/proposals/sha256:1/activate", False),
+        ("/api/v1/inst_x/proposals/sha256:1/approval-challenge", False),
+        ("/api/v1/inst_x/procedures/p/runs", False),
+        ("/api/v1/inst_x/captures/erase", False),
+        ("/api/v1/inst_x/query/extra", False),
+    ],
+)
+def test_only_declared_read_posts_cross_patch_skew(path: str, reads: bool) -> None:
+    from cruxible_client.transport.http import _is_read_post
+
+    assert _is_read_post(path) is reads
+
+
+def test_the_explicit_precheck_raises_the_recorded_refusal(
+    daemon, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_client import CruxibleClient
+    from cruxible_client.compatibility import (
+        check_daemon_compatibility,
+        require_authoring_compatibility,
+    )
+
+    _patch_skew(daemon)
+    with CruxibleClient(base_url=URL) as client:
+        require_authoring_compatibility(client)  # nothing recorded before the probe
+        check_daemon_compatibility(client)
+        with pytest.raises(IncompatibleDaemonVersion):
+            require_authoring_compatibility(client)
+        daemon["digest"] = AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST
+        check_daemon_compatibility(client)  # a matching probe clears it
+        require_authoring_compatibility(client)

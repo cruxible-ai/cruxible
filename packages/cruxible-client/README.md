@@ -196,7 +196,7 @@ connect(
 
 Opens a transport, checks client/daemon contract compatibility, resolves context, and ordinarily performs orientation. A supplied at skips live orientation and pins that coordinate.
 
-**Conditions and effects:** ValueError/ContextResolutionError for missing or inconsistent context; EnvFileError for an invalid or improperly permissioned env file; IncompatibleDaemonVersion for an incompatible authoring contract; authentication/transport errors.
+**Conditions and effects:** ValueError/ContextResolutionError for missing or inconsistent context; EnvFileError for an invalid or improperly permissioned env file; IncompatibleDaemonVersion for a daemon in another major.minor release series (within one series, a differing authoring contract lets reads through and refuses each write before sending it); authentication/transport errors.
 
 | Parameter | Default | Meaning |
 |---|---|---|
@@ -7374,7 +7374,7 @@ Retires one provider build, as `cruxible provider retire`. HTTP: `POST f'/api/v1
 | `CoreError` with `error_code` `cruxible.approval.reviewed_candidate_changed` | The reviewed proposal was proposed again at the head; nothing was signed. `exc.repair.arguments["proposal_id"]` names the successor to review and approve. `cruxible.approval.creator_forbidden` refuses a proposal's own author under independent approval. |
 | SigningKeyError | `cx.signer(...)` found no key for the principal, or the key is not the one the instance holds for it; the message names the repair. |
 | ProjectionMarkerError, ProjectionRepinError, ProjectionSyncError | Invalid/corrupt declaration, refused repin, or policy-enforced sync failure. |
-| IncompatibleDaemonVersion | Client and daemon authoring contract snapshots differ; upgrade deliberately. |
+| IncompatibleDaemonVersion | Client and daemon authoring contract snapshots differ: across release series every call refuses; within one `major.minor` series reads serve and writes refuse before sending. Upgrade deliberately. |
 | ServerUnreachableError | Connection failure or timeout; a timed-out mutation may have completed. |
 | AuthenticationError / PermissionDeniedError / typed daemon errors | Repair credentials, scope, authority, or the server’s structured refusal. |
 

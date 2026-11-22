@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any, Literal, TypeVar
+from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 import httpx
 from pydantic import BaseModel, TypeAdapter, ValidationError
@@ -102,6 +103,9 @@ _CLAIM_TYPE_MIGRATION_RESPONSE: TypeAdapter[contracts.ClaimTypeMigrationResponse
     contracts.ClaimTypeMigrationResponse
 )
 
+if TYPE_CHECKING:
+    from cruxible_client.authoring.sdk_types import IncompatibleDaemonVersion
+
 
 def validate_principal_id(principal_id: str) -> str:
     """Refuse a principal ID no registry could hold, before it reaches the wire."""
@@ -150,6 +154,9 @@ class _TransportGuard:
     def __init__(self, client: httpx.Client, target: str) -> None:
         self._client = client
         self._target = target
+        #: Set by the compatibility probe when the daemon's authoring contract
+        #: differs within one release series: reads proceed, writes refuse here.
+        self.write_refusal: IncompatibleDaemonVersion | None = None
 
     def _guard(self, method: str, *args: Any, **kwargs: Any) -> httpx.Response:
         try:
@@ -172,11 +179,30 @@ class _TransportGuard:
     def get(self, *args: Any, **kwargs: Any) -> httpx.Response:
         return self._guard("get", *args, **kwargs)
 
-    def post(self, *args: Any, **kwargs: Any) -> httpx.Response:
-        return self._guard("post", *args, **kwargs)
+    def post(self, path: str, *args: Any, **kwargs: Any) -> httpx.Response:
+        if self.write_refusal is not None and not _is_read_post(path):
+            raise self.write_refusal
+        return self._guard("post", path, *args, **kwargs)
 
     def close(self) -> None:
         self._client.close()
+
+
+#: The POST routes that only read (their bodies carry a selection, not a
+#: change). Every GET reads. Any other POST is a write: under authoring-contract
+#: skew it refuses before it is sent, so a new write route is gated by default.
+_READ_POST_ROUTE = re.compile(
+    r"^/api/v1/(?:server/(?:restart|stop)"
+    r"|[^/]+/(?:projections/check|projections/sync-backing|blocks/observe"
+    r"|floor/deliver-now|floor/export|floor/delta|captures/read|files/check"
+    r"|predictions/query|claims/read-batch|claims/backings|backlinks|get|get-batch"
+    r"|query|next|since|duplicates|audit|coverage/resolve"
+    r"|proposals/[^/]+/review|procedures/[^/]+/readings))$"
+)
+
+
+def _is_read_post(path: str) -> bool:
+    return _READ_POST_ROUTE.match(path) is not None
 
 
 def _change_control(dry_run: bool | None, at: str | None) -> dict[str, Any]:

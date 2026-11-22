@@ -88,6 +88,7 @@ from cruxible_client.authoring.write_evidence import (
     observe_changes,
     rebind_evidence,
 )
+from cruxible_client.compatibility import require_authoring_compatibility
 from cruxible_client.contracts.artifacts import parse_artifact_identity
 from cruxible_client.contracts.attestations import ApprovalStatement
 from cruxible_client.contracts.authoring.models import BlockSyncResult
@@ -1282,6 +1283,10 @@ def init_playbill(
         specifications.append(
             (Path(recovery_key_dir).expanduser(), recovery_principal_id, "recovery")
         )
+    # Refuse a write-incompatible daemon before keys are generated, not after.
+    from cruxible_core.cli.commands import _common
+
+    require_authoring_compatibility(_common._get_client())
     materials, markers = prepare_init_custody(
         transport=transport,
         instance_id=selected,
@@ -4312,6 +4317,7 @@ def add_principal(
         existing = principal_records(client, instance_id)
         if any(item.principal_id == principal_id for item in existing):
             raise click.ClickException(f"Cruxible principal already exists: {principal_id}")
+        require_authoring_compatibility(client)
         material = generate_client_principal_key(
             custody,
             principal_id=principal_id,
@@ -4562,6 +4568,7 @@ def _principal_successor(
         target = next((item for item in matches if item.principal_id == target_id), None)
         if target is None:
             raise click.ClickException(f"Unknown Cruxible principal: {target_id}")
+        require_authoring_compatibility(client)
         material = generate_client_principal_key(
             Path(key_dir).expanduser(),
             principal_id=target_id,

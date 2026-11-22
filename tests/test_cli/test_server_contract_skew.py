@@ -15,6 +15,10 @@ from cruxible_client.authoring.sdk_types import IncompatibleDaemonVersion
 from cruxible_core.cli.commands import _common
 from cruxible_core.cli.main import cli
 
+_major, _minor, *_ = __version__.split(".")
+#: Another major.minor series: even reads refuse, so the instance section cannot load.
+OTHER_SERIES = f"{_major}.{int(_minor) + 1}.0"
+
 
 @pytest.fixture
 def daemon(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, request: pytest.FixtureRequest):
@@ -36,7 +40,7 @@ def daemon(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, request: pytest.Fixt
             return httpx.Response(
                 200,
                 json={
-                    "version": __version__,
+                    "version": OTHER_SERIES if scoped else __version__,
                     "boot_id": "new-image" if action == "restart" and probes >= 3 else "old-image",
                     "sdk_contract_snapshot_digest": "sha256:" + ("8" if probes >= 2 else "9") * 64,
                 },
@@ -124,29 +128,6 @@ def test_lifecycle_works_through_an_incompatible_daemon(daemon, command: str) ->
         assert payload["version"] == __version__ and payload["scope"] == "daemon"
 
 
-@pytest.mark.parametrize(
-    "command",
-    (
-        ("get", "project.work_item/wi-42"),
-        ("proposal", "activate", "sha256:" + "1" * 64),
-    ),
-)
-def test_reads_and_authoring_still_refuse_contract_skew(daemon, command: tuple[str, ...]) -> None:
-    result = CliRunner().invoke(
-        cli,
-        [
-            "--server-url",
-            "http://daemon.invalid",
-            "--instance-id",
-            "inst_test",
-            *command,
-        ],
-    )
-    assert result.exit_code == 1, result.output
-    assert "cruxible.sdk.daemon_version_incompatible" in result.stderr
-    assert daemon == ["/version"]
-
-
 def test_a_cached_lifecycle_client_cannot_bypass_a_later_governed_handshake(daemon) -> None:
     with click.Context(cli, obj={"server_url": "http://daemon.invalid"}):
         lifecycle = _common._get_lifecycle_client()
@@ -165,8 +146,12 @@ def test_a_cached_lifecycle_client_cannot_bypass_a_later_governed_handshake(daem
             "close",
         }
         assert daemon == []
+        # Same release series: the governed client starts (reads serve), and
+        # its transport refuses a write before sending it.
+        governed = _common._get_client()
+        assert daemon == ["/version"]
         with pytest.raises(IncompatibleDaemonVersion):
-            _common._get_client()
+            governed.activate_proposal("inst_test", "sha256:" + "1" * 64)
         assert daemon == ["/version"]
 
 
@@ -183,11 +168,11 @@ def test_scoped_status_keeps_lifecycle_facts_without_unchecked_instance_reads(da
         payload = json.loads(result.stdout)
         assert payload["instance_status"] == "needs_matching_client"
         assert payload["code"] == "cruxible.sdk.daemon_version_incompatible"
-        assert payload["version"] == __version__
+        assert payload["version"] == OTHER_SERIES
         assert payload["transport"] == "http://daemon.invalid"
         assert payload["instance_id"] == "inst_scoped"
         assert "host" not in payload and "identity" not in payload
     else:
-        assert f"Version: {__version__}" in result.output
+        assert f"Version: {OTHER_SERIES}" in result.output
         assert "Daemon: reachable (http://daemon.invalid)" in result.output
     assert "Instance section needs a matching client" in result.output
