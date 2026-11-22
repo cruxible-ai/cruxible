@@ -773,6 +773,15 @@ def _citation_drifted_changed(root: Path, _monkeypatch: pytest.MonkeyPatch) -> N
     key = ("citation_drifted", "changed")
     row = _row_by_key(instance, key, before)
     assert row.repair.operation == _expected_operation(key)
+    # The row names what the Claim is about (Subject and field), in JSON and text.
+    from cruxible_client.contracts.text_display import next_claim_about
+
+    assert row.detail["predicate"] == current.statement.predicate
+    assert current.statement.subject.artifact_path in row.related_identities
+    subject_ref = current.statement.subject.artifact_path.removeprefix("subjects/")
+    assert next_claim_about(row) == (
+        f"{subject_ref.removesuffix('.json')} {current.statement.predicate}"
+    )
     assert row.repair.required_change == "rebind_or_retire_drifted_claim"
     assert [item.operation for item in row.repair.alternatives] == ["cruxible.claim.retire"]
 
