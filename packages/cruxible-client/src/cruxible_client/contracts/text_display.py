@@ -98,6 +98,9 @@ def _orient_predicate_line(item: Mapping[str, Any]) -> str:
 #: A query's description in the default map: its first sentence, at most this long.
 _ORIENT_QUERY_TEXT_LIMIT = 100
 
+#: Under a field's first sentence: where its whole description is read.
+_ORIENT_DESCRIPTION_HINT = "(field text: first sentence; whole: cruxible get ClaimType:<predicate>)"
+
 
 def _orient_kind_summary(kind: Mapping[str, Any]) -> str:
     """One line per kind in the default map (`OrientKindSummary`): its first
@@ -208,7 +211,12 @@ def render_orient(result: Mapping[str, Any]) -> str:
             f"Kind {detail['kind']}  subjects={detail['subjects']}"
             + (f"  evidence={','.join(map(_public_name, shared))}" if shared else "")
         )
-        lines.extend(f"  {_orient_predicate_line(item)}" for item in detail["predicates"])
+        for item in detail["predicates"]:
+            lines.append(f"  {_orient_predicate_line(item)}")
+            if item.get("description"):
+                lines.append(f"    {_first_sentence(item['description'])}")
+        if any(item.get("description") for item in detail["predicates"]):
+            lines.append(_ORIENT_DESCRIPTION_HINT)
         if detail.get("incoming"):
             lines.append("Incoming (--follow-in): " + ", ".join(detail["incoming"]))
         if detail["sample_subject_ids"]:
@@ -366,6 +374,10 @@ def render_orient(result: Mapping[str, Any]) -> str:
                 + _orient_predicate_line(row).split("  ", 1)[1]
                 + (f"  kit={row['kit']}" if row.get("kit") else "")
             )
+            if row.get("description"):
+                lines.append(f"  {_first_sentence(row['description'])}")
+        if any(row.get("description") for row in result["claim_types"]):
+            lines.append(_ORIENT_DESCRIPTION_HINT)
     queries = result.get("queries")
     if queries:
         if section is None:
@@ -1093,15 +1105,25 @@ def next_run_failure_lines(item: NextItem) -> list[str]:
     return lines
 
 
+#: A proposal row names this many ``kind/id field`` slots inline; a larger one
+#: counts the rest and names the review that lists them.
+NEXT_TOUCHES_SHOWN = 3
+
+
 def next_claim_about(item: NextItem) -> str | None:
     """What a Claim row is about, as ``kind/id field``: its Subject and predicate.
 
-    A proposal row names every ``kind/id field`` its Claims would write.
+    A proposal row names the ``kind/id field`` slots its Claims would write: up
+    to ``NEXT_TOUCHES_SHOWN``, then ``+N more`` and the review that lists them.
     """
 
     touches = item.detail.get("touches") if isinstance(item.detail, dict) else None
     if isinstance(touches, list) and touches:
-        return "; ".join(str(touch) for touch in touches)
+        shown = "; ".join(str(touch) for touch in touches[:NEXT_TOUCHES_SHOWN])
+        rest = len(touches) - NEXT_TOUCHES_SHOWN
+        if rest <= 0:
+            return shown
+        return f"{shown}; +{rest} more: cruxible proposal review {item.subject_identity}"
     predicate = item.detail.get("predicate") if isinstance(item.detail, dict) else None
     subject = next((ref for ref in item.related_identities if ref.startswith("subjects/")), None)
     if not isinstance(predicate, str) or subject is None:

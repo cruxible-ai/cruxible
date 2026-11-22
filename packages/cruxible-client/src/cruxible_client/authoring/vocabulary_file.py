@@ -36,6 +36,7 @@ from cruxible_client.contracts.authoring.models import ChangeSetAuthoringPayload
 from cruxible_client.contracts.authoring_landing import landing_for_surface
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.claim_type_inputs import (
+    ClaimTypeEvidenceRulesRequired,
     ClaimTypeInputRecord,
     default_resolution_policy,
     lower_claim_type_input,
@@ -1091,6 +1092,7 @@ def _plan_members(
     planned = _Planned()
     at = claims_at or accepted.coordinate
     named_types: set[str] = set()
+    sourceless: list[tuple[str, str]] = []
     for kind in sorted(file.kinds, key=lambda item: item.encode("utf-8")):
         entry = file.kinds[kind]
         current_kind = accepted.subject_kinds.get(kind)
@@ -1166,6 +1168,10 @@ def _plan_members(
             mapped = _mappings(predicate, item, current)
             try:
                 lowered = lower_entry(predicate, item, current)
+            except ClaimTypeEvidenceRulesRequired as exc:
+                # Named together below: one plan names every sourceless field.
+                sourceless.append((f"kinds.{kind}.fields.{name}", str(exc)))
+                continue
             except (FormatError, ValidationError, ValueError) as exc:
                 raise VocabularyFileError(
                     f"kinds.{kind}.fields.{name}: {exc}", code="cruxible.vocabulary.field_invalid"
@@ -1203,6 +1209,11 @@ def _plan_members(
                     kit=kit,
                 )
             )
+    if sourceless:
+        raise VocabularyFileError(
+            f"{', '.join(path for path, _ in sourceless)}: {sourceless[0][1]}",
+            code="cruxible.vocabulary.field_invalid",
+        )
     for predicate in sorted(set(accepted.claim_types) - named_types, key=lambda i: i.encode()):
         planned.entries.append(
             VocabularyPlanEntry(
