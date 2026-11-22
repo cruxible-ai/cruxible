@@ -48,7 +48,7 @@ from collections import OrderedDict, defaultdict
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from contextlib import nullcontext
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timedelta
+from datetime import datetime
 from functools import partial
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
@@ -630,14 +630,20 @@ def _claim_facts(
     if verdict is not None and verdict.freshness_expirations:
         # A current Claim is not derived again on each observation of its
         # content: its facts hold until its expiry nears next's lead, when it
-        # is derived again and reads every observation recorded by then.
-        from cruxible_core.service.discovery.next import DEFAULT_EXPIRING_WITHIN_MICROSECONDS
+        # is derived again and reads every observation recorded by then. The
+        # lead is the one evidence_expiring itself uses (clamped to a quarter
+        # of the horizon), so the row never starts from facts that predate an
+        # observation recorded before it.
+        from cruxible_core.service.discovery.next import (
+            DEFAULT_EXPIRING_WITHIN_MICROSECONDS,
+            _expiring_lead,
+        )
 
-        lead = timedelta(microseconds=DEFAULT_EXPIRING_WITHIN_MICROSECONDS)
+        within = CanonicalDuration(microseconds=DEFAULT_EXPIRING_WITHIN_MICROSECONDS)
         boundaries.update(
-            item.expires_at - lead
+            start
             for item in verdict.freshness_expirations
-            if item.expires_at - lead > at
+            if (start := item.expires_at - _expiring_lead(item, within)) > at
         )
         # A verdict that read freshness reads every observation of the keys
         # it depends on (its contents, its row, its enumeration). Only a Claim
