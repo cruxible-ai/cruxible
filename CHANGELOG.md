@@ -7,8 +7,33 @@ that lands it; entries move under a version heading when the release is
 tagged. Work items for these changes live on the active release line in
 the project's own state instance.
 
+## [0.6.0] - 2026-11-23
+
+This release cuts the ceremony around routine change: one command sets up an
+independent reviewer, one grant settles an observing Line, a pure provider
+build moves its Lines in one proposal, and judgments pin the Claims they were
+made from.
+
 ### Added
 
+- **One-command reviewer bootstrap:** `cruxible init
+  --require-independent-approval` no longer needs `--reviewer-key-dir`; the
+  reviewer's key custody defaults to the owner's sibling per-user path. The
+  text output names the reviewer's `CRUXIBLE_ENV_FILE`; `--json` adds
+  `reviewer_principal_id` and `reviewer_private_key_path`. An owner principal
+  named `reviewer` is refused when init makes the reviewer.
+- **One observation settle grant:** `scope: "observations"` on a
+  `procedure_mandate` input, and `cruxible line grant LINE
+  --settle-observations`, settle every observation-only ClaimType the Line's
+  pinned Procedure writes, pinned at its exact digest, instead of a
+  hand-written per-ClaimType matrix (`include_derived` adds derived values). It
+  lowers to the existing mandate scope: no stored format change.
+- **Pure operations commit `procedure_output` Captures:** a provider operation
+  declared `effect: pure` that returns into a CAS-only `procedure_output`
+  CaptureContract (as a `@derive` operation does) commits its Capture with a
+  CAS source carrying the invocation evidence, instead of refusing as a
+  provider protocol violation. A non-pure operation still cannot, and its
+  refusal names the shape and the effect.
 - **Compiler revision 74 (`based-on-observation-carry`)** is written at
   genesis. Revision 73 (0.5.x) instances open and keep working under revision
   73's laws, report the compiler facet `upgrade_available`, and move forward by
@@ -65,6 +90,12 @@ the project's own state instance.
 
 ### Changed
 
+- **Provider review shows what is installed:** a proposal that adds, revises
+  or retires a Provider build now reviews (CLI `proposal review` and
+  `approve`, MCP, SDK) its package, build key, control domain, declared
+  CaptureContracts and, per operation, effect, serves, Contracts,
+  `may_truncate`, entrypoint and declared endpoints, instead of "created".
+  The disposable review projection moves to format 7 and rebuilds.
 - **Plugin skills teach the 0.6.0 surfaces.** The governance reference sorts
   changes into cold (trust boundaries, always reviewed), warm (one observation
   settle grant, a pure `provider publish --move`, `line enable --runbook`) and
@@ -86,6 +117,16 @@ the project's own state instance.
   `next` observation rises from 256 to 4096, so an instance with more than 256
   cited passages, or a document with more than 256 citations, keeps its
   evidence.
+- **Write planning costs its changes.** Planning and lowering a write batch
+  no longer carry O(batch²) terms (the identity overlay, planned-change sets,
+  create-label scans and creation lookups are kept incrementally): a 400-change
+  batch plans in 7,514 SQL statements instead of 39,198. Slot reads for named
+  Subjects keep the lifecycle term off the index (`+lifecycle`) and seek the
+  Subject-and-predicate index instead of walking every live Claim.
+- **Capture conversion failures say why:** a provider capture field that
+  fails Capture conversion journals the field, the error type and a bounded
+  detail (never input values), and the run's terminal message carries it,
+  instead of only "Capture conversion failed".
 
 ## [0.5.1] - 2026-11-22
 

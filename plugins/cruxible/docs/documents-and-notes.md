@@ -1,4 +1,4 @@
-<!-- Bundled from cruxible 0.5.1 docs/documents-and-notes.md. -->
+<!-- Bundled from cruxible 0.6.0 docs/documents-and-notes.md. -->
 
 # Documents and notes
 

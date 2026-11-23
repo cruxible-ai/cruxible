@@ -1,4 +1,4 @@
-<!-- Bundled from cruxible 0.5.1 docs/kits.md. -->
+<!-- Bundled from cruxible 0.6.0 docs/kits.md. -->
 
 # Kits
 
