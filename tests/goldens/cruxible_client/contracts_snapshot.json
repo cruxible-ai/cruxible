@@ -82239,6 +82239,35 @@
             "title": "Lock Digest"
           }
         },
+        "move": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "move",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Move",
+            "type": "boolean"
+          }
+        },
+        "move_only": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "move_only",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Move Only",
+            "type": "array"
+          }
+        },
         "package": {
           "default": null,
           "default_json_serializable": true,
@@ -82396,6 +82425,19 @@
             "default": null,
             "title": "Lock Digest"
           },
+          "move": {
+            "default": false,
+            "title": "Move",
+            "type": "boolean"
+          },
+          "move_only": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Move Only",
+            "type": "array"
+          },
           "package": {
             "anyOf": [
               {
@@ -82444,6 +82486,36 @@
     },
     "ProviderInstallResult": {
       "fields": {
+        "automation_carries": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "automation_carries",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "line": "#/$defs/CarriedLineV1",
+                  "mandate": "#/$defs/CarriedMandateV1"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/CarriedLineV1"
+                },
+                {
+                  "$ref": "#/$defs/CarriedMandateV1"
+                }
+              ]
+            },
+            "title": "Automation Carries",
+            "type": "array"
+          }
+        },
         "build": {
           "default": null,
           "default_json_serializable": true,
@@ -82541,6 +82613,22 @@
           "schema": {
             "title": "Installed",
             "type": "boolean"
+          }
+        },
+        "moved": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "moved",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/ProviderRepinV1"
+            },
+            "title": "Moved",
+            "type": "array"
           }
         },
         "not_run": {
@@ -82657,6 +82745,22 @@
             "type": "string"
           }
         },
+        "stops": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "stops",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/StoppedAutomationV1"
+            },
+            "title": "Stops",
+            "type": "array"
+          }
+        },
         "tag": {
           "default": "playbill-provider-install-result-v1",
           "default_json_serializable": true,
@@ -82710,6 +82814,217 @@
             "title": "AcceptedCoordinate",
             "type": "object"
           },
+          "CarriedLineV1": {
+            "additionalProperties": false,
+            "description": "A same-identity Line successor over a Procedure successor; its enablement stops.",
+            "properties": {
+              "enablement": {
+                "const": "disabled",
+                "default": "disabled",
+                "title": "Enablement",
+                "type": "string"
+              },
+              "identity": {
+                "title": "Identity",
+                "type": "string"
+              },
+              "kind": {
+                "const": "line",
+                "default": "line",
+                "title": "Kind",
+                "type": "string"
+              },
+              "new_artifact_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "New Artifact Digest"
+              },
+              "new_procedure_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "New Procedure Digest"
+              },
+              "old_artifact_digest": {
+                "title": "Old Artifact Digest",
+                "type": "string"
+              },
+              "old_procedure_digest": {
+                "title": "Old Procedure Digest",
+                "type": "string"
+              },
+              "phase": {
+                "default": "validated",
+                "enum": [
+                  "planned",
+                  "validated"
+                ],
+                "title": "Phase",
+                "type": "string"
+              },
+              "procedure": {
+                "title": "Procedure",
+                "type": "string"
+              }
+            },
+            "required": [
+              "identity",
+              "procedure",
+              "old_procedure_digest",
+              "old_artifact_digest"
+            ],
+            "title": "CarriedLineV1",
+            "type": "object"
+          },
+          "CarriedMandateV1": {
+            "additionalProperties": false,
+            "description": "A same-name successor pinning its Line's successor.\n\nPropose-only, settle fields removed (``demotion`` says why a settle grant\nlost settle); or, for an observation-only settle grant across a pure,\nnon-widening provider build move, the same grant with its terms unchanged\n(``new_grant`` settle, ``retained_scope`` its ClaimTypes), and an enabled\nLine stays enabled on its successor (``carries_line_enablement``).",
+            "properties": {
+              "carries_line_enablement": {
+                "default": false,
+                "title": "Carries Line Enablement",
+                "type": "boolean"
+              },
+              "demotion": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "compiler_revision",
+                      "procedure_changed",
+                      "kit_change",
+                      "line_changed",
+                      "capability_changed",
+                      "effect_widened",
+                      "endpoints_widened",
+                      "may_truncate_widened",
+                      "judgment_claim_type",
+                      "subject_creation",
+                      "condition_coupling",
+                      "mandate_terms_changed"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Demotion"
+              },
+              "identity": {
+                "title": "Identity",
+                "type": "string"
+              },
+              "kind": {
+                "const": "mandate",
+                "default": "mandate",
+                "title": "Kind",
+                "type": "string"
+              },
+              "line": {
+                "title": "Line",
+                "type": "string"
+              },
+              "loses_settle": {
+                "title": "Loses Settle",
+                "type": "boolean"
+              },
+              "new_artifact_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "New Artifact Digest"
+              },
+              "new_grant": {
+                "default": "propose",
+                "enum": [
+                  "propose",
+                  "settle"
+                ],
+                "title": "New Grant",
+                "type": "string"
+              },
+              "new_line_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "New Line Digest"
+              },
+              "old_artifact_digest": {
+                "title": "Old Artifact Digest",
+                "type": "string"
+              },
+              "old_grant": {
+                "enum": [
+                  "propose",
+                  "settle"
+                ],
+                "title": "Old Grant",
+                "type": "string"
+              },
+              "old_line_digest": {
+                "title": "Old Line Digest",
+                "type": "string"
+              },
+              "phase": {
+                "default": "validated",
+                "enum": [
+                  "planned",
+                  "validated"
+                ],
+                "title": "Phase",
+                "type": "string"
+              },
+              "retained_scope": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Retained Scope",
+                "type": "array"
+              },
+              "subject_creation_namespace_limitation": {
+                "default": false,
+                "title": "Subject Creation Namespace Limitation",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "identity",
+              "line",
+              "old_line_digest",
+              "old_artifact_digest",
+              "old_grant",
+              "loses_settle"
+            ],
+            "title": "CarriedMandateV1",
+            "type": "object"
+          },
           "ProviderOperationReadiness": {
             "additionalProperties": false,
             "properties": {
@@ -82736,10 +83051,126 @@
             ],
             "title": "ProviderOperationReadiness",
             "type": "object"
+          },
+          "ProviderRepinV1": {
+            "additionalProperties": false,
+            "description": "One live Line moved (or not) from a provider build to another.",
+            "properties": {
+              "action": {
+                "enum": [
+                  "successor",
+                  "kept",
+                  "refused"
+                ],
+                "title": "Action",
+                "type": "string"
+              },
+              "from_build": {
+                "title": "From Build",
+                "type": "string"
+              },
+              "identity": {
+                "title": "Identity",
+                "type": "string"
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "contract_changed",
+                      "not_movable",
+                      "keep_build"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Reason"
+              },
+              "tag": {
+                "const": "cruxible-provider-repin-v1",
+                "default": "cruxible-provider-repin-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "to_build": {
+                "title": "To Build",
+                "type": "string"
+              }
+            },
+            "required": [
+              "identity",
+              "from_build",
+              "to_build",
+              "action"
+            ],
+            "title": "ProviderRepinV1",
+            "type": "object"
+          },
+          "StoppedAutomationV1": {
+            "additionalProperties": false,
+            "description": "Automation retired with a retired definition; live successors instead carry\nLines disabled and their Mandates propose-only.",
+            "properties": {
+              "identity": {
+                "title": "Identity",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "line",
+                  "trigger",
+                  "mandate"
+                ],
+                "title": "Kind",
+                "type": "string"
+              },
+              "stopped_by": {
+                "title": "Stopped By",
+                "type": "string"
+              },
+              "tag": {
+                "const": "cruxible-stopped-automation-v1",
+                "default": "cruxible-stopped-automation-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "identity",
+              "kind",
+              "stopped_by"
+            ],
+            "title": "StoppedAutomationV1",
+            "type": "object"
           }
         },
         "additionalProperties": false,
         "properties": {
+          "automation_carries": {
+            "default": [],
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "line": "#/$defs/CarriedLineV1",
+                  "mandate": "#/$defs/CarriedMandateV1"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/CarriedLineV1"
+                },
+                {
+                  "$ref": "#/$defs/CarriedMandateV1"
+                }
+              ]
+            },
+            "title": "Automation Carries",
+            "type": "array"
+          },
           "build": {
             "anyOf": [
               {
@@ -82794,6 +83225,14 @@
           "installed": {
             "title": "Installed",
             "type": "boolean"
+          },
+          "moved": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/ProviderRepinV1"
+            },
+            "title": "Moved",
+            "type": "array"
           },
           "not_run": {
             "default": [],
@@ -82858,6 +83297,14 @@
             ],
             "title": "Status",
             "type": "string"
+          },
+          "stops": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/StoppedAutomationV1"
+            },
+            "title": "Stops",
+            "type": "array"
           },
           "tag": {
             "const": "playbill-provider-install-result-v1",

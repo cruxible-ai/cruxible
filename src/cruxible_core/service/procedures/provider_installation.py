@@ -12,7 +12,7 @@ import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from urllib.parse import unquote, urlsplit
 
 from pydantic import TypeAdapter
@@ -21,12 +21,15 @@ from cruxible_client.contracts.canonical import canonical_bytes, canonical_diges
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.provider_installation import (
+    AutomationCarryV1,
     InstalledProvider,
     ProviderCatalog,
     ProviderInstallRequest,
     ProviderInstallResult,
     ProviderOperationReadiness,
     ProviderPackageSummary,
+    ProviderRepinV1,
+    StoppedAutomationV1,
 )
 from cruxible_client.contracts.providers import (
     Provider,
@@ -47,6 +50,7 @@ from cruxible_client.contracts.repairs import (
 )
 from cruxible_core.derived.derived_state import fork_tree
 from cruxible_core.errors import ConfigError, ProviderLaneRefusedError, RequestRefusedError
+from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.providers.package_index import (
     DEFAULT_PROVIDER_INDEX_URLS,
@@ -524,6 +528,94 @@ def _definition_changes(
     return candidate, tuple(sorted(changed)), desired
 
 
+@dataclass(frozen=True)
+class _InstallMove:
+    """A build move laid over an install's candidate: the Lines moved to the build,
+    their carried automation and what stopped, or why the move cannot be made."""
+
+    moved: tuple[ProviderRepinV1, ...] = ()
+    automation_carries: tuple[AutomationCarryV1, ...] = ()
+    stops: tuple[StoppedAutomationV1, ...] = ()
+    refused: str | None = None
+
+    def fields(self) -> dict[str, Any]:
+        return {
+            "moved": self.moved,
+            "automation_carries": self.automation_carries,
+            "stops": self.stops,
+        }
+
+
+def _with_build_move(
+    instance: PlaybillInstance,
+    base: AcceptedProjectionCoordinate,
+    candidate: Mapping[str, bytes],
+    changed: tuple[str, ...],
+    build: ProviderBuild,
+    only: tuple[str, ...],
+) -> tuple[Mapping[str, bytes], tuple[str, ...], _InstallMove]:
+    """The install's candidate with ``provider move --to <build>`` in the same change.
+
+    Exactly what ``provider move`` writes once the build is accepted, computed
+    against the candidate that adds it: each live Line binding another build of
+    the name moves to this build (``only`` narrows them), Mandates carry with
+    their Lines, and under compiler revision 74 an observation-only settle grant
+    the move leaves pure and non-widening keeps settle (the law judges the old
+    side from the parent tree and the new side from this candidate). Cost: the
+    moved Lines and their dependents, from the maintained reverse pins.
+    """
+
+    from collections import ChainMap
+
+    from cruxible_client.contracts.artifacts import ArtifactIdentity
+    from cruxible_core.compiler.compiler import admits_revision_74
+    from cruxible_core.providers.build_moves import Mover, build_move, settle_changes
+    from cruxible_core.providers.builds import indexed_move_pinners
+
+    tree = instance.immutable_tree_at(base.git_oid)
+    added = {path: candidate[path] for path in changed}
+    target = build.identity.name
+    view: Mapping[str, bytes] = ChainMap(added, cast("dict[str, bytes]", tree))
+    movers = []
+    moves = {}
+    with instance.bind_accepted_projection(base) as projection:
+        connection = projection.typed.connection
+        for identity, path, source in indexed_move_pinners(
+            connection, build.provider_name, "Provider:" + target, only
+        ):
+            kind, _, name = identity.partition(":")
+            movers.append(
+                Mover(
+                    ArtifactIdentity(kind=kind, name=name), path, source.partition(":")[2], target
+                )
+            )
+            if source not in moves:
+                moves[source] = build_move(view, source.partition(":")[2], target)
+        observation_settle = admits_revision_74(base.compiler)
+        settled = settle_changes(
+            tree,
+            writes=added,
+            connection=connection,
+            movers=movers,
+            moves=moves,
+            by_name=True,
+            retain_observation_settle=observation_settle,
+            settle_demotion="line_changed" if observation_settle else "compiler_revision",
+        )
+    outcome = _InstallMove(
+        moved=tuple(settled.repins),
+        automation_carries=tuple(settled.automation_carries),
+        stops=tuple(settled.stops),
+    )
+    if settled.refused or any(item.action == "refused" for item in settled.repins):
+        detail = "; ".join(settled.refused) or "one or more Lines cannot move to this build"
+        return candidate, changed, replace(outcome, refused=detail)
+    moved = fork_tree(tree)
+    for path, content in settled.writes.items():
+        moved[path] = content
+    return moved, tuple(sorted({*changed, *settled.writes})), outcome
+
+
 _PREPARED_PROVIDER: TypeAdapter[ProviderAny] = TypeAdapter(ProviderAny)
 
 
@@ -538,6 +630,18 @@ def _prepared_provider(value: object) -> Provider:
     if not isinstance(provider, Provider):
         raise ConfigError("a retained provider preparation names no package runtime")
     return provider
+
+
+def _retained_registration(
+    prepared_path: Path,
+) -> tuple[PackageRegistrationDocumentV1, Provider]:
+    """A retained preparation's registration document and Provider."""
+
+    saved = json.loads(prepared_path.read_bytes())
+    return (
+        PackageRegistrationDocumentV1.model_validate(saved["document"]),
+        _prepared_provider(saved["provider"]),
+    )
 
 
 def _repository_fingerprint(operator: ProviderRuntimeOperator, package: str) -> str:
@@ -637,7 +741,11 @@ def service_install_provider(
     identifier = "sha256:" + canonical_digest(
         "playbill-provider-installation-request-v1",
         {
-            "request": request.model_dump(mode="json", exclude={"reverify", "dry_run", "at"}),
+            # The preparation is the package's alone: whether its registration
+            # also moves Lines changes the proposal, never what is prepared.
+            "request": request.model_dump(
+                mode="json", exclude={"reverify", "dry_run", "at", "move", "move_only"}
+            ),
             "source": source,
         },
     )
@@ -719,12 +827,29 @@ def _preview_installation(
                 "after installing reports it prepared"
             ),
         )
-    saved = json.loads(prepared_path.read_bytes())
-    document = PackageRegistrationDocumentV1.model_validate(saved["document"])
-    provider = _prepared_provider(saved["provider"])
+    document, provider = _retained_registration(prepared_path)
     candidate_tree, changed, build = _definition_changes(
         instance, document, provider, mode.head.git_oid
     )
+    registered = not changed
+    move = _InstallMove()
+    if request.move:
+        candidate_tree, changed, move = _with_build_move(
+            instance, mode.head, candidate_tree, changed, build, request.move_only
+        )
+        if move.refused is not None:
+            return ProviderInstallResult(
+                installation_id=identifier,
+                provider_id=build.provider_name,
+                build=build.identity.name,
+                status="would_install",
+                installed=True,
+                registered=registered,
+                not_run=("package_preparation", "deployment_readiness"),
+                **label,
+                **move.fields(),
+                detail=f"the move would block: {move.refused}",
+            )
     if not changed:
         return ProviderInstallResult(
             installation_id=identifier,
@@ -735,15 +860,10 @@ def _preview_installation(
             registered=True,
             not_run=("package_preparation", "deployment_readiness"),
             **label,
+            **move.fields(),
             detail="prepared and registered already; an install changes no definition",
         )
-    suffix = canonical_digest(
-        "playbill-provider-registration-target-v1",
-        {
-            "base": mode.head.semantic_root,
-            "members": {path: candidate_tree[path].hex() for path in changed},
-        },
-    ).removeprefix("sha256:")
+    suffix = _registration_suffix(mode.head, candidate_tree, changed)
     admitted = admit_change_set(
         instance,
         mode,
@@ -761,10 +881,11 @@ def _preview_installation(
         build=build.identity.name,
         status="would_install",
         installed=True,
-        registered=False,
+        registered=registered,
         candidate_digest=admitted.candidate_digest,
         not_run=("package_preparation", "deployment_readiness"),
         **label,
+        **move.fields(),
         detail=(
             admitted.refusal_detail()
             if not admitted.admitted
@@ -772,6 +893,21 @@ def _preview_installation(
             + (" (approval required)" if admitted.approval_required else " and activate them")
         ),
     )
+
+
+def _registration_suffix(
+    base: AcceptedProjectionCoordinate, candidate: Mapping[str, bytes], changed: tuple[str, ...]
+) -> str:
+    """The proposal ref suffix of one registration: its base and exact members, so a
+    retry finds the same pending proposal and any other change names another."""
+
+    return canonical_digest(
+        "playbill-provider-registration-target-v1",
+        {
+            "base": base.semantic_root,
+            "members": {path: candidate[path].hex() for path in changed},
+        },
+    ).removeprefix("sha256:")
 
 
 def _refuse_unavailable_lane(operator: ProviderRuntimeOperator) -> None:
@@ -823,20 +959,29 @@ def _register_deployment(
         ) from exc
 
 
-def _install_locked(
+@dataclass(frozen=True)
+class _PreparedInstallation:
+    """A package prepared here: its registration document, Provider and deployment."""
+
+    document: PackageRegistrationDocumentV1
+    provider: Provider
+    configured: ProviderDeploymentConfigV1
+    deployment: Any
+    #: The retained preparation must be rewritten (a newer verification proof).
+    rewrite_prepared: bool
+
+
+def _prepare_installation(
     instance: PlaybillInstance,
     operator: ProviderRuntimeOperator,
     request: ProviderInstallRequest,
-    identifier: str,
     directory: Path,
-    actor_id: str,
-    timestamp: str,
     source: str | dict[str, str] | None,
     release: IndexRelease | None,
-    *,
-    mode: ChangeMode,
-    expected_build: ExpectedProviderBuild | None = None,
-) -> ProviderInstallResult:
+    expected_build: ExpectedProviderBuild | None,
+) -> _PreparedInstallation:
+    """The retained preparation of this installation, or a fresh one (fetch, build, verify)."""
+
     prepared_path = directory / "prepared.json"
     rewrite_prepared = False
     if prepared_path.exists():
@@ -940,10 +1085,50 @@ def _install_locked(
                 }
             ),
         )
+    return _PreparedInstallation(document, provider, configured, deployment, rewrite_prepared)
+
+
+def _install_locked(
+    instance: PlaybillInstance,
+    operator: ProviderRuntimeOperator,
+    request: ProviderInstallRequest,
+    identifier: str,
+    directory: Path,
+    actor_id: str,
+    timestamp: str,
+    source: str | dict[str, str] | None,
+    release: IndexRelease | None,
+    *,
+    mode: ChangeMode,
+    expected_build: ExpectedProviderBuild | None = None,
+) -> ProviderInstallResult:
+    prepared_path = directory / "prepared.json"
+    prepared = _prepare_installation(
+        instance, operator, request, directory, source, release, expected_build
+    )
+    document, provider, configured = prepared.document, prepared.provider, prepared.configured
+    deployment, rewrite_prepared = prepared.deployment, prepared.rewrite_prepared
     # Before the deployment is registered: the Provider law holds against the
     # Contracts its operations pin.
     base = instance.accepted_coordinate()
     candidate_tree, changed, build = _definition_changes(instance, document, provider, base.git_oid)
+    registered = not changed
+    move = _InstallMove()
+    if request.move:
+        candidate_tree, changed, move = _with_build_move(
+            instance, base, candidate_tree, changed, build, request.move_only
+        )
+        if move.refused is not None:
+            return ProviderInstallResult(
+                installation_id=identifier,
+                provider_id=build.provider_name,
+                build=build.identity.name,
+                status="blocked",
+                installed=True,
+                registered=registered,
+                **move.fields(),
+                detail=f"Nothing proposed; the move is blocked: {move.refused}",
+            )
     _register_deployment(operator, configured)
     if rewrite_prepared:
         _write(
@@ -957,16 +1142,12 @@ def _install_locked(
             ),
         )
     proposal_id = candidate_digest = None
-    registered = not changed
+    # ``registered``: the build is accepted; ``landed``: nothing this install
+    # proposes (the build, and with ``move`` the Lines moved to it) is pending.
+    landed = not changed
     activation_blocked = False
     if changed:
-        suffix = canonical_digest(
-            "playbill-provider-registration-target-v1",
-            {
-                "base": base.semantic_root,
-                "members": {path: candidate_tree[path].hex() for path in changed},
-            },
-        ).removeprefix("sha256:")
+        suffix = _registration_suffix(base, candidate_tree, changed)
         target = f"refs/proposals/{actor_id}/provider-install-{suffix}"
         pending = open_proposal_at_target(instance, target)
         if pending is None:
@@ -990,8 +1171,9 @@ def _install_locked(
                     build=build.identity.name,
                     status="blocked",
                     installed=True,
-                    registered=False,
+                    registered=registered,
                     proposal_id=submitted.admission.proposal_id,
+                    **move.fields(),
                     detail="Registration refused: "
                     + "; ".join(item.code for item in submitted.evaluation.diagnostics),
                 )
@@ -1007,8 +1189,9 @@ def _install_locked(
             activation = service_activate_playbill_proposal(
                 instance, proposal_id=proposal_id, activated_by=actor_id
             )
-            registered = activation.status == "accepted"
-            activation_blocked = not registered
+            landed = activation.status == "accepted"
+            registered = registered or landed
+            activation_blocked = not landed
     operations: list[ProviderOperationReadiness] = []
     prepared_entrypoints = {
         item.entrypoint: item.implementation_digest for item in provider.implementations
@@ -1063,7 +1246,7 @@ def _install_locked(
         status="blocked"
         if activation_blocked
         else "awaiting_approval"
-        if not registered
+        if not landed
         else "blocked"
         if any(item.missing_requirements for item in operations)
         else "ready",
@@ -1072,6 +1255,7 @@ def _install_locked(
         operations=tuple(operations),
         proposal_id=proposal_id,
         candidate_digest=candidate_digest,
+        **move.fields(),
         detail=(
             "Installation and registration grant no execution permissions. "
             "Runtime resources require verification."

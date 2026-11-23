@@ -33,6 +33,16 @@ class ProviderWheelObject(_Strict):
         return value
 
 
+def _line_names(value: tuple[str, ...], *, label: str) -> tuple[str, ...]:
+    if value != tuple(sorted(set(value))):
+        raise ValueError(f"{label} must be sorted and unique")
+    for identity in value:
+        kind, separator, name = identity.partition(":")
+        if not separator or kind != "Line" or not name:
+            raise ValueError(f"{label} names Lines as Line:NAME")
+    return value
+
+
 class ProviderInstallRequest(_Strict):
     package: str | None = None
     # An exact release of a package installed by name from the provider index;
@@ -44,10 +54,21 @@ class ProviderInstallRequest(_Strict):
     extras: tuple[str, ...] = ()
     control_domain: str = "operator"
     reverify: bool = False
+    #: Also move the live Lines binding other builds of the provider to this
+    #: build, in the same proposal as its registration (``provider move`` to
+    #: it, as one change): one review covers the build and every carry.
+    move: bool = False
+    #: With ``move``, only these Lines (``Line:<name>``, sorted unique).
+    move_only: tuple[str, ...] = ()
     #: Preview: resolve the package and, for one already prepared here, evaluate
     #: the registration it would propose; fetch, build and register nothing.
     dry_run: DryRun = None
     at: PreviewAt = None
+
+    @field_validator("move_only")
+    @classmethod
+    def _move_only(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        return _line_names(value, label="move_only")
 
     @field_validator("lock_digest")
     @classmethod
@@ -82,6 +103,8 @@ class ProviderInstallRequest(_Strict):
             for extra in self.extras
         ):
             raise ValueError("extras must be sorted unique package extra names")
+        if self.move_only and not self.move:
+            raise ValueError("move_only names Lines to move; it requires move")
         return self
 
 
@@ -96,42 +119,6 @@ class ProviderOperationReadiness(_Strict):
 #: wheels, building its environment), checking deployment readiness, and --
 #: for a package not yet prepared -- evaluating its registration.
 ProviderInstallPreviewStep = Literal["package_preparation", "deployment_readiness", "registration"]
-
-
-class ProviderInstallResult(_Strict):
-    tag: Literal["playbill-provider-install-result-v1"] = "playbill-provider-install-result-v1"
-    installation_id: str
-    provider_id: str
-    #: ``would_install`` answers a preview, which installed and proposed nothing.
-    status: Literal["ready", "awaiting_approval", "blocked", "would_install"]
-    installed: bool
-    registered: bool
-    operations: tuple[ProviderOperationReadiness, ...] = ()
-    proposal_id: str | None = None
-    candidate_digest: str | None = None
-    detail: str | None = None
-    #: A v1 install preview validates and writes nothing, but is not the whole
-    #: install: ``validation_only`` says so, and ``not_run`` names the steps it
-    #: did not run. Present exactly on a preview.
-    preview_scope: Literal["validation_only"] | None = None
-    not_run: tuple[ProviderInstallPreviewStep, ...] = ()
-    #: The accepted coordinate a preview evaluated at; commit it with ``at``.
-    coordinate: AcceptedCoordinate | None = None
-    #: The build this install registers (``name/<build key>``), once the package
-    #: is prepared. Installing adds this build beside any other build of the
-    #: name; every Procedure keeps the build it pins.
-    build: str | None = None
-
-    @model_validator(mode="after")
-    def _preview_label(self) -> "ProviderInstallResult":
-        previewed = self.status == "would_install"
-        if previewed != (self.preview_scope == "validation_only"):
-            raise ValueError("exactly an install preview is labelled validation_only")
-        if previewed and (self.coordinate is None or not self.not_run):
-            raise ValueError("an install preview names its coordinate and the steps not run")
-        if not previewed and (self.not_run or self.coordinate is not None):
-            raise ValueError("only an install preview names steps not run and a coordinate")
-        return self
 
 
 class ProviderPackageSummary(_Strict):
@@ -324,6 +311,49 @@ class StoppedAutomationV1(_Strict):
     stopped_by: str
 
 
+class ProviderInstallResult(_Strict):
+    tag: Literal["playbill-provider-install-result-v1"] = "playbill-provider-install-result-v1"
+    installation_id: str
+    provider_id: str
+    #: ``would_install`` answers a preview, which installed and proposed nothing.
+    status: Literal["ready", "awaiting_approval", "blocked", "would_install"]
+    installed: bool
+    registered: bool
+    operations: tuple[ProviderOperationReadiness, ...] = ()
+    proposal_id: str | None = None
+    candidate_digest: str | None = None
+    detail: str | None = None
+    #: A v1 install preview validates and writes nothing, but is not the whole
+    #: install: ``validation_only`` says so, and ``not_run`` names the steps it
+    #: did not run. Present exactly on a preview.
+    preview_scope: Literal["validation_only"] | None = None
+    not_run: tuple[ProviderInstallPreviewStep, ...] = ()
+    #: The accepted coordinate a preview evaluated at; commit it with ``at``.
+    coordinate: AcceptedCoordinate | None = None
+    #: The build this install registers (``name/<build key>``), once the package
+    #: is prepared. Installing adds this build beside any other build of the
+    #: name; every Procedure keeps the build it pins.
+    build: str | None = None
+    #: With ``move``: each live Line moved (or not) to ``build`` in the same
+    #: proposal, the automation carried with them, and what stopped.
+    moved: tuple[ProviderRepinV1, ...] = Field(default=(), exclude_if=lambda value: not value)
+    automation_carries: tuple[AutomationCarryV1, ...] = Field(
+        default=(), exclude_if=lambda value: not value
+    )
+    stops: tuple[StoppedAutomationV1, ...] = Field(default=(), exclude_if=lambda value: not value)
+
+    @model_validator(mode="after")
+    def _preview_label(self) -> "ProviderInstallResult":
+        previewed = self.status == "would_install"
+        if previewed != (self.preview_scope == "validation_only"):
+            raise ValueError("exactly an install preview is labelled validation_only")
+        if previewed and (self.coordinate is None or not self.not_run):
+            raise ValueError("an install preview names its coordinate and the steps not run")
+        if not previewed and (self.not_run or self.coordinate is not None):
+            raise ValueError("only an install preview names steps not run and a coordinate")
+        return self
+
+
 class ProviderRetireRequest(_Strict):
     """Retire one provider build: new authoring and unpinned references stop
     resolving to it. Refused while any live definition pins it; its runtime
@@ -390,13 +420,7 @@ class ProviderMoveRequest(_Strict):
     @field_validator("only")
     @classmethod
     def _only(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        if value != tuple(sorted(set(value))):
-            raise ValueError("only must be sorted and unique")
-        for identity in value:
-            kind, separator, name = identity.partition(":")
-            if not separator or kind != "Line" or not name:
-                raise ValueError("only names Lines as Line:NAME")
-        return value
+        return _line_names(value, label="only")
 
 
 class ProviderMoveResult(_Strict):
