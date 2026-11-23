@@ -504,6 +504,17 @@ NAMED_REFERENCE_SUCCESSOR_FORMATS: dict[str, frozenset[str]] = {
     "query-definition": frozenset({"cruxible-query-definition-v4"}),
 }
 
+#: A governed move of the accepted head to another installed compiler along one
+#: explicit forward edge (``compiler/upgrades.py``): the whole proposal, signed
+#: by an ordinary principal, bound to the exact base it moves.
+COMPILER_UPGRADE_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=_artifact_law_coordinate(
+        "cruxible.compiler-upgrade.v1", "playbill-compiler-upgrade-v1", semantic_revision=1
+    ),
+    artifact_kind="compiler-upgrade",
+    artifact_tag="playbill-compiler-upgrade-v1",
+)
+
 NAMED_PROVIDER_IDENTITY_LAW = InstalledAcceptanceLaw(
     coordinate=_artifact_law_coordinate(
         "cruxible.provider-identity.v3", "cruxible-provider-identity-v3", semantic_revision=1
@@ -543,6 +554,7 @@ ACCEPTANCE_LAWS = AcceptanceLawRegistry(
         PROCEDURE_MANDATE_V3_ACCEPTANCE_LAW,
         PROCEDURE_MANDATE_V4_ACCEPTANCE_LAW,
         SUBJECT_ACCEPTANCE_LAW,
+        COMPILER_UPGRADE_ACCEPTANCE_LAW,
     ),
     historical=(DOCUMENT_V3_ACCEPTANCE_LAW,),
 )

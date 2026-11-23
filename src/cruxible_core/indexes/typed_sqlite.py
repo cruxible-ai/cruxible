@@ -145,7 +145,7 @@ def parse_static_owners(
     from dataclasses import replace
 
     from cruxible_client.contracts.documents import document_digest, parse_document
-    from cruxible_core.compiler.compiler import require_current_compiler
+    from cruxible_core.compiler.compiler import require_installed_compiler
     from cruxible_core.compiler.projection_artifacts import (
         ArtifactEnvelopeRow,
         PinRow,
@@ -153,7 +153,7 @@ def parse_static_owners(
         registered_path_kind,
     )
 
-    require_current_compiler(accepted.compiler)
+    require_installed_compiler(accepted.compiler)
     source_kinds = {
         path: None if is_candidate_card_path(path) else registered_path_kind(path)
         for path in sources

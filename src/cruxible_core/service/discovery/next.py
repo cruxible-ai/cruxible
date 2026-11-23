@@ -5319,10 +5319,14 @@ def _ledger_mirror_health(instance: PlaybillInstance) -> PlaybillNextHealthV1:
 
 
 def _compiler_health(instance: PlaybillInstance) -> PlaybillNextHealthV1:
-    """The accepted compiler, which is always the one this process installs.
+    """The accepted compiler against the one this process writes at genesis.
 
-    An instance under any other coordinate refuses to open.
+    ``upgrade_available`` when an explicit edge leads from the accepted
+    compiler to the running one (a revision-73 head under this release); an
+    instance under a coordinate this release does not install refuses to open.
     """
+
+    from cruxible_core.compiler.upgrades import supported_upgrade_targets
 
     accepted = instance.accepted_coordinate().compiler
     running = current_compiler_coordinate()
@@ -5332,7 +5336,19 @@ def _compiler_health(instance: PlaybillInstance) -> PlaybillNextHealthV1:
         "running_compiler_digest": running.rule_digest,
         "running_compiler_revision": compiler_revision_label(running),
     }
-    return PlaybillNextHealthV1(state="current", detail=detail)
+    if accepted == running:
+        return PlaybillNextHealthV1(state="current", detail=detail)
+    if running.rule_digest in supported_upgrade_targets(accepted):
+        return PlaybillNextHealthV1(
+            state="upgrade_available",
+            detail=detail,
+            repair=PlaybillNextRepairV1(
+                operation="cruxible.compiler.upgrade",
+                target=running.rule_digest,
+                required_change="back_up_then_upgrade_the_compiler",
+            ),
+        )
+    return PlaybillNextHealthV1(state="no_upgrade_path", detail=detail)
 
 
 #: One `line dispatch` admits at most this many occurrences.

@@ -79,7 +79,7 @@ from cruxible_core.authoring.assignment_records import SubjectAssignmentRecords
 from cruxible_core.compiler.assembler import ProjectionAssembler
 from cruxible_core.compiler.compiler import (
     current_compiler_coordinate,
-    require_current_compiler,
+    require_installed_compiler,
 )
 from cruxible_core.compiler.projection_artifacts import (
     ArtifactEnvelopeRow,
@@ -748,7 +748,7 @@ class PlaybillInstance:
             raise BootstrapError("descriptor instance ID differs from trust root")
         if descriptor.daemon_public_key != trust_root.daemon_public_key:
             raise BootstrapError("descriptor daemon key differs from trust root")
-        require_current_compiler(descriptor.compiler)
+        require_installed_compiler(descriptor.compiler)
         if descriptor.authority != initial_authority_matrix():
             raise BootstrapError(
                 "PB-A descriptor authority matrix differs from the initial migration state"

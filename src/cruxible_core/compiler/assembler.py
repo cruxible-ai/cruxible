@@ -14,7 +14,7 @@ from cruxible_client.contracts.errors import (
     ProjectionIntegrityError,
     ProjectionPublicationError,
 )
-from cruxible_core.compiler.compiler import require_current_compiler
+from cruxible_core.compiler.compiler import require_installed_compiler
 from cruxible_core.compiler.projection_artifacts import ParsedProjectionTree, parse_projection_tree
 from cruxible_core.compiler.projection_tree import read_registered_tree
 from cruxible_core.indexes.projection import (
@@ -155,7 +155,7 @@ class ProjectionAssembler:
             raise ProjectionPublicationError(
                 "projection publication directory must be an existing regular directory"
             )
-        require_current_compiler(accepted.compiler)
+        require_installed_compiler(accepted.compiler)
         self._repository = repository
         self.accepted = accepted
         self.publication_directory = publication_directory.resolve(strict=True)

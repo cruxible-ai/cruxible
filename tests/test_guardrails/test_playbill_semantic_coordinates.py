@@ -26,6 +26,7 @@ from cruxible_client.contracts.laws import (
     CLAIM_ACCEPTANCE_LAW,
     CLAIM_LAW,
     CLAIM_TYPE_ACCEPTANCE_LAW,
+    COMPILER_UPGRADE_ACCEPTANCE_LAW,
     CONTRACT_ACCEPTANCE_LAW,
     DOCUMENT_ACCEPTANCE_LAW,
     EXHAUST_PROMOTION_ACCEPTANCE_LAW,
@@ -57,7 +58,7 @@ from cruxible_core.compiler.compiler import (
     CURRENT_COMPILER_REVISION,
     compiler_revision_label,
     current_compiler_coordinate,
-    require_current_compiler,
+    require_installed_compiler,
 )
 from cruxible_core.proposals.candidate_cards import CARD_RENDERER_DIGEST
 
@@ -231,6 +232,13 @@ LAW_COORDINATES: tuple[
 
 LAW_COORDINATES += (
     (
+        COMPILER_UPGRADE_ACCEPTANCE_LAW,
+        "cruxible.compiler-upgrade.v1",
+        "playbill-compiler-upgrade-v1",
+        1,
+        "sha256:fe82aed28f2a88a299abdd79e3547859f14dd6250b59a915f828cabeed5bca43",
+    ),
+    (
         LIGHT_CAPTURE_CONTRACT_LAW,
         "cruxible.capture-contract.v2",
         "cruxible-capture-contract-v2",
@@ -354,6 +362,26 @@ def test_playbill_acceptance_law_coordinates_are_exact() -> None:
 
 
 def test_playbill_compiler_coordinate_is_exact() -> None:
+    expected = "sha256:5925eaa1f538489f6de2befc2bc44718d8d317eefa12a192d16af1f94c884dac"
+    computed = "sha256:" + canonical_digest(
+        "playbill-compiler-v1",
+        {
+            "implementation": "python-reference",
+            "schema_version": 1,
+            "projection_content": "claims-procedures-runtime-v1",
+            "semantic_revision": 74,
+            "candidate_card_renderer_digest": CARD_RENDERER_DIGEST,
+            "revision_name": "based-on-observation-carry",
+        },
+    )
+    assert computed == expected
+    assert CURRENT_COMPILER.rule_digest == expected
+    assert current_compiler_coordinate() == CURRENT_COMPILER
+
+
+def test_the_0_5_compiler_coordinate_is_kept_exactly_as_the_upgrade_source() -> None:
+    """Revision 73's preimage never changes: every 0.5.x generation names its digest."""
+
     expected = "sha256:5b1e93a005c680b1709f9c58c6fba03ef8ff87f9ec4b38b1b7fab6fb04891be8"
     computed = "sha256:" + canonical_digest(
         "playbill-compiler-v1",
@@ -367,8 +395,11 @@ def test_playbill_compiler_coordinate_is_exact() -> None:
         },
     )
     assert computed == expected
-    assert CURRENT_COMPILER.rule_digest == expected
-    assert current_compiler_coordinate() == CURRENT_COMPILER
+    assert compiler_module.COMPILER_REVISION_73.rule_digest == expected
+    assert compiler_revision_label(compiler_module.COMPILER_REVISION_73) == (
+        "retiring-query-traversal"
+    )
+    require_installed_compiler(compiler_module.COMPILER_REVISION_73)
 
 
 def test_no_revision_literal_lives_outside_the_compiler_and_this_guard() -> None:
@@ -405,12 +436,17 @@ def test_capture_v1_run_id_grammar_is_retained_exactly() -> None:
     )
 
 
-def test_the_release_installs_exactly_one_compiler_coordinate() -> None:
-    """One coordinate: an earlier build's is refused, not replayed (no 0.3.2 porting)."""
+def test_the_release_installs_the_current_compiler_and_its_upgrade_source() -> None:
+    """Two coordinates: revision 74, and revision 73 (0.5.x) only as its upgrade source.
 
-    assert CURRENT_COMPILER_REVISION == "retiring-query-traversal"
-    assert compiler_revision_label(CURRENT_COMPILER) == "retiring-query-traversal"
+    An earlier build's coordinate is refused, not replayed (no 0.3.2 porting).
+    """
+
+    assert CURRENT_COMPILER_REVISION == "based-on-observation-carry"
+    assert compiler_revision_label(CURRENT_COMPILER) == "based-on-observation-carry"
     for earlier_digest in (
+        # Revision 72: before a retiring query's traversal skipped the kinds it walks.
+        "sha256:f537406e1e88e7a0d5ebd1950156c03723dff0569fe29a1a7fa41585c8823680",
         # Revision 71: before located own words were one Capture (a coordinator
         # self-source plus a second working-selection Capture locating it).
         "sha256:5741d2d917c92dc1068bc1ee7552f2a7a2a97b43f6030eebb81ab1566a0db1fa",
@@ -474,9 +510,9 @@ def test_the_release_installs_exactly_one_compiler_coordinate() -> None:
         earlier = CompilerCoordinate(rule_digest=earlier_digest)
         assert compiler_revision_label(earlier) is None
         with pytest.raises(ReseedRequired):
-            require_current_compiler(earlier)
+            require_installed_compiler(earlier)
     assert {
         name
         for name, value in vars(compiler_module).items()
         if isinstance(value, CompilerCoordinate)
-    } == {"CURRENT_COMPILER"}
+    } == {"COMPILER_REVISION_73", "CURRENT_COMPILER"}
