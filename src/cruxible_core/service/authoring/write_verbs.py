@@ -199,6 +199,7 @@ from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.authoring.lowering import AuthoringLoweringError, subject_creation_paths
 from cruxible_core.authoring.preflight import ComputedPreflight
 from cruxible_core.claims.claim_retirement import ClaimRetireError, claim_retirement_inventory
+from cruxible_core.derived.derived_state import SnapshotTree
 from cruxible_core.errors import RequestRefusedError
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.indexes.subject_aliases import (
@@ -722,8 +723,28 @@ class _Planner:
         # Each re-bind a ``from_capture`` expanded into, by its position in the
         # expanded changes: the Capture whose citation it replaces.
         self._rebind_from: dict[int, str] = {}
+        # The Claims the changes planned so far retire and revise, kept as each
+        # is planned (``_add_planned``): one set update per change, never a walk
+        # of every earlier change.
+        self._retiring_claims: set[str] = set()
+        self._revising_claims: set[str] = set()
+        # The shared resolver's overlay, kept across this write's resolutions:
+        # each retired Claim is laid over it once (``identity_view``), from the
+        # queue of those not yet laid.
+        self._identity: IdentityView | None = None
+        self._unoverlaid: list[str] = []
+        # The paths of live Subjects a create change landed on, by label.
+        self._landed_paths: set[str] = set()
+        self._head_tree: SnapshotTree | None = None
 
     # -- accepted state ----------------------------------------------------------
+
+    def head_tree(self) -> SnapshotTree:
+        """The head's accepted tree, verified once for the whole write."""
+
+        if self._head_tree is None:
+            self._head_tree = self.instance.immutable_tree_at(self.head.git_oid)
+        return self._head_tree
 
     def subject_exists(self, path: str) -> bool:
         if path not in self._subject_exists:
@@ -1008,12 +1029,19 @@ class _Planner:
         """
 
         if self._key_reader is None:
-            self._key_reader = tree_key_reader(self.instance.immutable_tree_at(self.head.git_oid))
-        overlay = IdentityOverlay()
-        retiring = self._retiring()
+            self._key_reader = tree_key_reader(self.head_tree())
         with self.instance.bind_accepted_projection(self.head) as projection:
             connection = projection.typed.connection
-            for claim_id in sorted(retiring):
+            view = self._identity
+            if view is None:
+                view = IdentityView(connection, IdentityOverlay(), key_reader=self._key_reader)
+                self._identity = view
+            view.connection = connection
+            # Only the Claims retired since the last resolution are read and
+            # laid: what each lays (an alias row ended, a key freed) is a set
+            # member or a None key, so the overlay is the same in any order.
+            while self._unoverlaid:
+                claim_id = self._unoverlaid.pop()
                 row = connection.execute(
                     "SELECT subject_path, predicate FROM claims WHERE identity=?",
                     (f"Claim:{claim_id}",),
@@ -1025,11 +1053,11 @@ class _Planner:
                     "SELECT term FROM vocabulary_terms WHERE source_identity=? AND basis='alias'",
                     (f"Claim:{claim_id}",),
                 ):
-                    overlay.aliases_removed.add((subject, str(term[0])))
+                    view.overlay.aliases_removed.add((subject, str(term[0])))
                 declared = self.declared_kind(subject_kind_of(subject)[0])
                 if declared is not None and predicate in declared.keys:
-                    overlay.keys[subject] = None
-            yield IdentityView(connection, overlay, key_reader=self._key_reader)
+                    view.free_key(subject)
+            yield view
 
     def resolve_ref(
         self, kind: str, subject_id: str, *, index: int, path: str
@@ -1475,6 +1503,8 @@ class _Planner:
         else:
             bound = self._keyed_creation(index, change, declared, backing=backing)
         self.plan.labels[label] = bound
+        if bound.path is not None:
+            self._landed_paths.add(bound.path)
         if bound.member is not None:
             self.plan.creation_changes.setdefault(bound.member, index)
         return _Planned(
@@ -2923,13 +2953,26 @@ class _Planner:
         info = self.vocabulary.predicates.get(predicate)
         return info is not None and claim_value_kind(info.claim_type.value) == "subject"
 
+    def _add_planned(self, planned: _Planned) -> None:
+        """Keep one planned change, with the Claims it retires and revises."""
+
+        self.plan.changes.append(planned)
+        if planned.revises is not None:
+            self._revising_claims.add(planned.revises)
+        for claim in (planned.retires, *planned.retires_also):
+            if claim is not None and claim not in self._retiring_claims:
+                self._retiring_claims.add(claim)
+                self._unoverlaid.append(claim)
+
     def _retiring(self) -> set[str]:
-        retiring = {item.retires for item in self.plan.changes if item.retires is not None}
-        retiring.update(claim for item in self.plan.changes for claim in item.retires_also)
-        return retiring
+        """The Claims the changes planned so far retire (read-only: kept by ``_add_planned``)."""
+
+        return self._retiring_claims
 
     def _revising(self) -> set[str]:
-        return {item.revises for item in self.plan.changes if item.revises is not None}
+        """The Claims the changes planned so far revise (read-only: kept by ``_add_planned``)."""
+
+        return self._revising_claims
 
     def _live_claim(self, index: int, claim_id: str, *, path: str) -> ClaimArtifact:
         """One live Claim by ID at the head, refusing when it moved since the read."""
@@ -3385,7 +3428,7 @@ class _Planner:
         def identity_of(ref: str, position: int, field: str) -> str:
             element = f"{path}.{field}[{position}]"
             _kind, _id, subject_file = self.resolve_subject(ref, index=index, path=element)
-            created = any(bound.path == subject_file for bound in self.plan.labels.values())
+            created = subject_file in self._landed_paths
             # An unlink names a Subject the note holds, live or since retired.
             if subject_file.startswith("pending:") or not (
                 field == "unlink" or created or self.subject_exists(subject_file)
@@ -3491,7 +3534,7 @@ class _Planner:
             )
         declared = self.declared_kind(kind)
         keys = frozenset(() if declared is None else declared.keys)
-        changing = self._retiring() | self._revising()
+        retiring, revising = self._retiring(), self._revising()
         with self.instance.bind_accepted_projection(self.head) as projection:
             connection = projection.typed.connection
             own = [
@@ -3501,7 +3544,7 @@ class _Planner:
                     "AND +lifecycle='live' ORDER BY identity",
                     (path,),
                 )
-                if _bare(str(row[0])) not in changing
+                if _bare(str(row[0])) not in retiring and _bare(str(row[0])) not in revising
             ]
             incoming = [
                 (str(row[0]), str(row[1]), str(row[2]))
@@ -3511,7 +3554,7 @@ class _Planner:
                     "AND +lifecycle='live' ORDER BY identity",
                     (path, path),
                 )
-                if _bare(str(row[0])) not in changing
+                if _bare(str(row[0])) not in retiring and _bare(str(row[0])) not in revising
             ]
         retired_here = self._subjects_retired_here()
         pairs: list[tuple[str, str, str]] = []
@@ -3608,7 +3651,7 @@ class _Planner:
                 repair=_render_subject_retire(self.request.surface, named),
                 field_path=prefix,
             )
-        tree = self.instance.immutable_tree_at(self.head.git_oid)
+        tree = self.head_tree()
         members: list[AuthoringChangeSetMember] = []
         covered: set[str] = set()
         for identity, _predicate in stated:
@@ -3822,7 +3865,7 @@ class _Planner:
         content = self.instance.blob_at(self.head.git_oid, claim_path(claim_id))
         assert content is not None
         claim = parse_claim(content, path=claim_path(claim_id))
-        tree = self.instance.immutable_tree_at(self.head.git_oid)
+        tree = self.head_tree()
         try:
             inventory = claim_retirement_inventory(
                 self.instance,
@@ -3902,7 +3945,7 @@ class _Planner:
         slots: dict[tuple[str, str], int] = {}
         for index, change in order:
             if isinstance(change, CreateChange):
-                self.plan.changes.append(self.create_change(index, change))
+                self._add_planned(self.create_change(index, change))
                 continue
             if isinstance(change, RetireChange):
                 planned = self.retire_change(index, change)
@@ -3940,7 +3983,7 @@ class _Planner:
                         repair="Keep one set per field in a write",
                     )
                 slots[planned.slot] = index
-            self.plan.changes.append(planned)
+            self._add_planned(planned)
         self.plan.changes.sort(key=lambda item: item.index)
         return self.plan
 

@@ -766,6 +766,19 @@ class IdentityView:
         if key is not None:
             self._overlay_holders.setdefault((kind, key_encoding(key)), set()).add(path)
 
+    def free_key(self, path: str) -> None:
+        """Lay one Subject whose key the change frees over the view (it holds no key).
+
+        Like ``add_creation``, the holder map already built is kept in step in
+        place, so a view kept across a write's resolutions is never rebuilt.
+        """
+
+        held = self.overlay.keys.get(path)
+        self.overlay.keys[path] = None
+        if self._overlay_holders is not None and held is not None:
+            kind = subject_kind_of(path)[0]
+            self._overlay_holders.get((kind, key_encoding(held)), set()).discard(path)
+
     def taken(self, kind: str, subject_id: str) -> bool:
         """Whether a new ``kind/<id>`` would reuse a name: a Subject's id, or a live alias."""
 

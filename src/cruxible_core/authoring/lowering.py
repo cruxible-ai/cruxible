@@ -250,6 +250,7 @@ from cruxible_client.contracts.source_references import (
     LedgerSourceReference,
 )
 from cruxible_client.contracts.subject_kinds import (
+    SUBJECT_KIND_PREFIX,
     KeyClaimTypeShape,
     SubjectEnd,
     SubjectIdUnassignable,
@@ -5253,12 +5254,13 @@ def _naming_creations(
     key named (review F-002) -- never a path predicted from raw key values.
     """
 
-    by_digest = {identity.rpartition("@")[2]: creation for identity, creation in creations.items()}
-
     def landed(address: SemanticAddress, field_name: str) -> SemanticAddress:
         if address.selector.scheme != "subject-creation-v1":
             return address
-        creation = by_digest.get(address.selector.value)
+        # One keyed lookup by the member identity the address spells (its
+        # kind and digest), never an index of every creation per Claim.
+        kind = address.artifact_path.removeprefix(SUBJECT_KIND_PREFIX).removesuffix(".json")
+        creation = creations.get(f"SubjectCreation:{kind}@{address.selector.value}")
         if creation is None or address.artifact_path != subject_kind_path(creation.kind):
             _refuse(
                 SUBJECT_CREATION_REFERENCE_UNRESOLVED,
