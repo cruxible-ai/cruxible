@@ -409,7 +409,7 @@ is the namespace of Cruxible's built-in fields `semantic.alias` and
 `semantic.distinct_from`, which apply to Subjects of every kind (their
 `allowed_subject_kinds` is the pseudo-kind `semantic.subject`). There is no
 `semantic` SubjectKind and no `semantic/...` Subject. Leave the group as export
-writes it ([Duplicates](keeping-knowledge-current.md#duplicates-beta) says what
+writes it ([Duplicates](keeping-knowledge-current.md#duplicates) says what
 the two fields are for).
 
 ## A worked example: splitting a category
@@ -679,7 +679,7 @@ one first.
 ### Adopt a built-in field
 
 Cruxible ships `semantic.alias` and `semantic.distinct_from` ([Keeping
-knowledge current](keeping-knowledge-current.md#duplicates-beta)). An instance
+knowledge current](keeping-knowledge-current.md#duplicates)). An instance
 created before one shipped adopts it with `cruxible claim-type propose
 --builtin NAME`.
 
