@@ -454,13 +454,9 @@ whose copy covers the new record set is installed and the Lines move to it
 (`cruxible provider move`). A raw kind, one a generic fetch returns verbatim
 (any `capture<*>`), is the instance's own: grow it freely.
 
-A pure provider can be one Python file of `@derive` functions. `cruxible
-provider publish FILE` builds and installs it, and after an edit `cruxible
-provider publish FILE --move` registers the new build and moves the Lines bound
-to the old one in a single proposal, so one approval lands both. An
-observation-only settle grant whose operation the edit leaves no wider keeps
-settle, and an enabled Line stays enabled; `provider install --move` does the
-same for a wheel or a package by name.
+A provider whose operations only compute can be one Python file of `@derive`
+functions, built and installed by `cruxible provider publish FILE`; see [A pure
+provider in one file](#a-pure-provider-in-one-file).
 
 ## Running on a schedule
 
@@ -473,6 +469,14 @@ Enabled by: owner at 2026-11-16T05:19:30.392139+00:00
 Matched through: 2026-11-16T05:19:30.392139+00:00
 Pending: 0 automatic, 0 awaiting explicit dispatch
 ~~~
+
+`line enable` takes several Lines at once (`cruxible line enable A B`), and
+`--runbook RUNBOOK` adds every Line the Runbook's steps name, after those named,
+each once. Each Line gets its own receipt line (enabled, already enabled, or
+refused with its code and repair), and a refusal exits 1 only after every Line
+was tried, so one bad Line never leaves the rest unknown. A missing or retired
+Runbook, or one whose steps are all actions, refuses before any Line is
+enabled.
 
 Enabling is consent to run on the Line's current definition and Triggers.
 Changing either stops the enablement until someone enables it again, and
@@ -649,6 +653,58 @@ Values (1):
 Delegate facts copied verbatim from a source, like this list. Keep judgments
 for review: whether a part still fits a car stays with a person.
 
+### One grant for a Line that observes
+
+The grant above names its ClaimType and bases by hand because it adds a
+condition. A Line whose writes are all observations, values copied or measured
+from a source, can instead take one grant over everything its Procedure
+writes, `scope: observations`:
+
+~~~bash
+cruxible line grant catalog.acme-discontinued --settle-observations --dry-run   # what it would pin
+cruxible line grant catalog.acme-discontinued --settle-observations             # author it
+~~~
+
+The command authors one settle Mandate named `LINE-settle` (`--name` picks
+another), valid from now for `--expires` (default `90d`), and lists each
+ClaimType it pins with the change kinds and bases that settle. In a change set,
+such as a kit's automation template, the same grant is:
+
+~~~json
+{
+  "kind": "change_set",
+  "rationale": "Settle what the Acme discontinued check observes.",
+  "members": [
+    {
+      "kind": "procedure_mandate",
+      "name": "catalog.acme-discontinued-settle",
+      "line_name": "catalog.acme-discontinued",
+      "grants": "settle",
+      "scope": "observations",
+      "expires": "90d"
+    }
+  ]
+}
+~~~
+
+Lowering turns it into the exact per-ClaimType scope you would write by hand,
+pinned at each ClaimType's digest: creates and revises on `extracted` and
+`measured` (`--include-derived`, `include_derived: true`, adds `derived`), and
+the absence changes the templates make ([the rules](#declare-claims-as-templates)).
+Every ClaimType the Procedure writes must permit only the observation role, so
+a judgment never settles under it: a ClaimType that also permits `normative`
+refuses the grant, and so does a Procedure that invokes another. Subjects the
+run creates by key settle only for the kinds `--create-subjects KIND`
+(`subject_creation`) names; the rest still propose. The Line still needs
+`max_authority` of `settle` or none, and the grant lands as any change set does,
+under your approval policy.
+
+A mandate's validity is `expires_at` (an instant) or `expires`, a span:
+`36h`, `90d`, `12w`, `1y` or ISO 8601 `P90D`. `valid_from` may be left out and
+defaults to when the change is prepared; the span counts from it, and the
+accepted Mandate stores both as instants. An `expires_at` not after the
+defaulted `valid_from` refuses `cruxible.authoring.procedure_mandate_window`.
+
 ## The inbox: findings a Line can't decide
 
 A rule of thumb: propose when the automation can state the belief, post when
@@ -791,6 +847,104 @@ read another value, such as a Claim of the row's Subject, declare it as a
 column of the Query. A filter or dedupe step over the rows keeps them whole, so
 its `rows` offer the same. A claims step whose `for_each` is a read's `rows`
 reads rows the same way.
+
+## A pure provider in one file
+
+A provider whose operations only compute, never fetch, can be one Python file.
+Each operation is a function decorated with `@derive` from
+`cruxible-provider-runtime` 0.6.0 or later: it declares `effect: pure`,
+contacts no endpoint, reads no secret and no clock, and gives the same output
+for the same input. This one turns the discontinued-parts listing the worked
+example reads into a JSON summary:
+
+~~~python
+import csv
+import io
+
+from cruxible_provider_runtime import CaptureView, derive
+
+
+@derive(
+    "catalog.discontinued-summary",
+    serves="catalog.discontinued-summary",
+    input_contract="catalog.discontinued-summary-in@1",
+    output_contract="catalog.discontinued-summary-out@1",
+)
+def discontinued_summary(listing: CaptureView, limit: int = 50) -> dict:
+    """Summarizes Acme's discontinued-parts listing as JSON."""
+    rows = list(csv.DictReader(io.StringIO(listing.text)))
+    summary = {"count": len(rows), "parts": [row["part"] for row in rows[:limit]]}
+    return {"summary": listing.derive(summary)}
+~~~
+
+- **What it declares.** The first argument names the operation; `serves` the
+  capability (or capabilities) a Procedure slot binds it by; `input_contract`
+  and `output_contract` its Contracts, as `name@N`. The capability, those
+  Contracts and every CaptureKind they name must be accepted on the instance
+  (or given in `--declares FILE`), and the slot's capability must declare
+  `pure`. The description defaults to the docstring's first paragraph;
+  `may_truncate` and `refusals` (each code `decline` may raise, with its detail
+  Contract) are optional. A bad declaration raises when the file is imported.
+- **Its input.** Each parameter receives the input field of the same name; one
+  with a default may be absent, and `**fields` receives the rest. A parameter
+  annotated `CaptureView` (or `list[CaptureView]`) receives a `capture<K>`
+  field as its exact bytes, digest-checked: `.raw_bytes`, `.text`,
+  `.json()`, and the metadata (`observed_at`, `coordinate`, `selector`).
+  That Capture must be an external observation this run fetched or was
+  admitted (a fetch, a `workspace.file` read, an upload); a `procedure_output`
+  Capture is not a derive input (`contract_input_refused`).
+- **Its output.** A mapping is the result. A `capture<K>` field of it takes the
+  wire `derived_capture(body, derived_from=..., observed_at=...)` builds, or
+  `view.derive(body)` for a document derived from one input; a mapping or list
+  is committed as canonical JSON, text as UTF-8 and bytes as given. The observation time comes from the inputs or
+  is stated, never the clock. Under a `derived` kind the Capture records its
+  inputs and the reducer; under a `procedure_output` kind its bytes are its
+  own source ([Evidence and
+  admission](evidence-and-admission.md#define-captured-evidence)). A derived
+  kind declared on `http_response` or `foreign_span` pins its own source
+  labels, so pass them (`source_identity`, `coordinate_type`, `selector_type`);
+  the defaults suit `procedure_output`.
+
+`discontinued_summary.fn` is the plain function and
+`discontinued_summary.run(payload)` runs it over an input mapping as the
+harness would, so the file tests with ordinary pytest.
+
+Publish it from the workspace:
+
+~~~bash
+cruxible provider publish discontinued_summary.py           # build, install, register
+cruxible provider publish discontinued_summary.py --move    # after an edit: new build, Lines moved to it
+~~~
+
+The client reads the Contracts and CaptureKinds the operations reach from the
+instance (one `get` per shape), builds a one-module wheel in a temporary
+directory with `uv lock` and `uv build` under a pinned build backend, and
+installs it as `provider install WHEEL --lock` would, so it also works against
+a remote daemon. The provider is named after the file (`discontinued-summary`),
+and its version defaults to `0.0.0.devN` from a digest of the file and its
+shapes: publishing an unchanged file is the same build, with nothing proposed,
+and an edit is a new build beside the old one. `--runtime-wheel` and
+`--dependency` build with local wheels, and `--offline` builds from the uv
+cache ([CLI reference](cli-reference.md#provider)).
+
+Installing grants nothing. The registration is reviewed like any change, and
+`proposal review` shows what is being approved: the build's package, version
+and control domain, and per operation its effect, the capabilities it serves,
+its Contracts in and out, its entrypoint and any declared endpoints.
+
+With `--move` (on `provider publish`, or `provider install` for a wheel or a
+package by name) the new build's registration and every live Line bound to an
+older build of the same provider move together, in one proposal, so one
+approval lands both; `--only Line:NAME` narrows which Lines move. A settle
+grant normally drops to propose when its Line moves, but an observation-only
+grant keeps settle, and an enabled Line stays enabled, when the Line changes
+only its bindings and each new operation serves the same capabilities under
+the same Contracts with no wider effect, no new endpoint and no `may_truncate`
+the old one lacked, and the grant creates no Subjects and no live mandate's
+condition reads its fields ([the full
+rule](upgrading.md#provider-moves-and-observation-settle)). The output and the
+proposal's review say which applied: `retains observation settle on ...;
+retains Line enablement`, or `settle -> propose:` and the reason.
 
 ## Recovering missed work
 
