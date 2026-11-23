@@ -902,7 +902,7 @@ original receipt, the accepted generation stays unchanged, and freshness
 advances, through the run's observation of the same row, or, when another
 field of the record changed, through a per-Claim re-observation that records
 the new Capture ([what freshness does in
-0.5.0](evidence-and-admission.md#what-freshness-does-and-does-not-do-in-050)). A one-valued slot revises
+0.6.0](evidence-and-admission.md#what-freshness-does-and-does-not-do-in-060)). A one-valued slot revises
 its one eligible holder when the value changes; several eligible holders
 report `slot_contested`. A protected holder with the same value is a counted,
 quiet no-op; a different value reports `held_disagrees` with both values.
