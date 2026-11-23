@@ -251,6 +251,57 @@ def test_an_observation_settle_grant_keeps_settle_across_a_pure_build_move(
     )
 
 
+def test_a_scope_observations_grant_from_line_grant_keeps_settle_across_a_build_move(
+    tmp_path: Path,
+) -> None:
+    """The one-grant form (D-R50) composes with the revision-74 carry.
+
+    ``cruxible line grant LINE --settle-observations`` submits exactly this
+    authoring input (``scope: observations``, named ``LINE-settle``); its lowered
+    per-ClaimType v4 scope is what the carry predicate then reads.
+    """
+
+    from datetime import timedelta
+
+    from cruxible_client.contracts.authoring.inputs import ProcedureMandateInput
+    from tests.support.operation_world import NOW, author
+
+    instance, root, score = _world(tmp_path)
+    changed = author(
+        instance,
+        ProcedureMandateInput(
+            kind="procedure_mandate",
+            name=GRANT,
+            line_name=LINE,
+            grants="settle",
+            valid_from=NOW - timedelta(days=1),
+            expires_at=NOW + timedelta(days=90),
+            scope="observations",
+        ),
+        name="observation-grant",
+    )
+    path = procedure_mandate_path(GRANT)
+    granted = parse_procedure_mandate(changed[path], path=path)
+    assert [item.claim_type.target.name for item in granted.scope] == [score.predicate]
+    first = run_measured(instance, root, value=1)
+    assert first.terminal_egress[0].settle_outcome == "settled"
+
+    carried = _carried(_move(instance, operation_build(build="d")))
+    assert (carried.old_grant, carried.new_grant) == ("settle", "settle")
+    assert carried.retained_scope == (score.predicate,)
+    assert carried.carries_line_enablement and carried.demotion is None
+
+    mandate = parse_procedure_mandate(_accepted(instance, path), path=path)
+    assert mandate.grants == "settle" and mandate.scope == granted.scope
+    again = run_measured(instance, root, minute=2, value=2)
+    assert again.status == "succeeded", again.terminal
+    assert again.terminal_egress[0].settle_outcome == "settled"
+    assert (
+        again.terminal_egress[0].procedure_mandate_digest
+        == procedure_mandate_digest(mandate).tagged
+    )
+
+
 @pytest.mark.parametrize(
     ("case", "demotion"),
     [
