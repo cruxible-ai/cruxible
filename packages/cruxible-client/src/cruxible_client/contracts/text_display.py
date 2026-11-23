@@ -672,12 +672,15 @@ def review_definition_lines(
         ReviewLineDefinition,
         ReviewMandateDefinition,
         ReviewNoteDefinition,
+        ReviewProviderDefinition,
         ReviewRunbookDefinition,
         ReviewTriggerDefinition,
     )
 
     # Names read in their public spelling (`playbill.` -> `cruxible.`); JSON keeps them.
-    lines = [f"  {item.kind} {_public_name(item.name)}: {item.action}"]
+    # A provider build reads as ``NAME/<12 hex>``; its ``build`` row has the whole key.
+    name = short_provider_build(item.name) if item.kind == "Provider" else item.name
+    lines = [f"  {item.kind} {_public_name(name)}: {item.action}"]
     rows: list[tuple[str, str]] = []
     detail = item.detail
     if isinstance(detail, ReviewLineDefinition):
@@ -745,8 +748,34 @@ def review_definition_lines(
         section = "/".join(detail.section)
         rows.append(("section", f"{file_shown(detail.file, file_paths)}#{section}"))
         rows.extend(("about", subject) for subject in detail.about)
+    elif isinstance(detail, ReviewProviderDefinition):
+        if detail.package is not None:
+            source = "" if detail.materialization is None else f" ({detail.materialization})"
+            rows.append(("package", f"{detail.package} {detail.version}{source}"))
+        if detail.build is not None:
+            rows.append(("build", detail.build))
+        rows.append(("control", detail.control_domain))
+        if detail.capture_contracts:
+            rows.append(("captures", ", ".join(detail.capture_contracts)))
+        if not detail.operations:
+            rows.append(("operations", "none"))
     if rows:
         lines.extend(_table([(label, printable(value)) for label, value in rows], "    "))
+    if isinstance(detail, ReviewProviderDefinition):
+        for operation in detail.operations:
+            truncates = "  may truncate" if operation.may_truncate else ""
+            lines.append(
+                printable(
+                    f"    op {operation.name}: {operation.effect}  "
+                    f"{operation.in_} -> {operation.out}{truncates}"
+                )
+            )
+            facts = [("serves", ", ".join(operation.serves)), ("entry", operation.entrypoint)]
+            if operation.declared_endpoints:
+                facts.append(("endpoints", ", ".join(operation.declared_endpoints)))
+            if operation.requires_extras:
+                facts.append(("extras", ", ".join(operation.requires_extras)))
+            lines.extend(_table([(label, printable(value)) for label, value in facts], "      "))
     if isinstance(detail, ReviewMandateDefinition) and detail.scope:
         moves = any(scope.value is not None for scope in detail.scope)
         binds = any(scope.binds != "subject" for scope in detail.scope)

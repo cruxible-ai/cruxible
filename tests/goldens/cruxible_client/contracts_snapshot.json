@@ -79905,7 +79905,7 @@
           },
           "ReviewDefinition": {
             "additionalProperties": false,
-            "description": "One proposed definition: its kind, name and action, and its typed fields.\n\n``detail`` is the definition as it would stand (Line, ProcedureMandate,\nRunbook, Trigger, Document, note; a ClaimType when created); other kinds,\nand retirements, carry none. ``changed`` lists a revision's changed fields.",
+            "description": "One proposed definition: its kind, name and action, and its typed fields.\n\n``detail`` is the definition as it would stand (Line, ProcedureMandate,\nRunbook, Trigger, Document, note, Provider; a ClaimType when created);\nother kinds, and retirements (but a Provider's), carry none. ``changed``\nlists a revision's changed fields.",
             "properties": {
               "action": {
                 "enum": [
@@ -79934,6 +79934,7 @@
                         "line": "#/$defs/ReviewLineDefinition",
                         "note": "#/$defs/ReviewNoteDefinition",
                         "procedure-mandate": "#/$defs/ReviewMandateDefinition",
+                        "provider": "#/$defs/ReviewProviderDefinition",
                         "runbook": "#/$defs/ReviewRunbookDefinition",
                         "trigger": "#/$defs/ReviewTriggerDefinition"
                       },
@@ -79960,6 +79961,9 @@
                       },
                       {
                         "$ref": "#/$defs/ReviewNoteDefinition"
+                      },
+                      {
+                        "$ref": "#/$defs/ReviewProviderDefinition"
                       }
                     ]
                   },
@@ -80341,6 +80345,169 @@
               "about"
             ],
             "title": "ReviewNoteDefinition",
+            "type": "object"
+          },
+          "ReviewProviderDefinition": {
+            "additionalProperties": false,
+            "description": "A Provider build as it would stand: the package it runs and what it serves.\n\n``package``, ``version`` and ``materialization`` are absent for a signing\nidentity with no package runtime.",
+            "properties": {
+              "build": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Build"
+              },
+              "capture_contracts": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Capture Contracts",
+                "type": "array"
+              },
+              "control_domain": {
+                "title": "Control Domain",
+                "type": "string"
+              },
+              "kind": {
+                "const": "provider",
+                "default": "provider",
+                "title": "Kind",
+                "type": "string"
+              },
+              "materialization": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "registry",
+                      "local"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Materialization"
+              },
+              "operations": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/ReviewProviderOperation"
+                },
+                "title": "Operations",
+                "type": "array"
+              },
+              "package": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Package"
+              },
+              "provider": {
+                "title": "Provider",
+                "type": "string"
+              },
+              "version": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Version"
+              }
+            },
+            "required": [
+              "provider",
+              "control_domain"
+            ],
+            "title": "ReviewProviderDefinition",
+            "type": "object"
+          },
+          "ReviewProviderOperation": {
+            "additionalProperties": false,
+            "description": "One operation a provider build declares: what it serves and how it runs.\n\n``in`` and ``out`` are Contract refs (``name@N``). ``declared_endpoints``\nand ``requires_extras`` are the manifest row of the operation's entrypoint.",
+            "properties": {
+              "declared_endpoints": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Declared Endpoints",
+                "type": "array"
+              },
+              "effect": {
+                "enum": [
+                  "pure",
+                  "external_read",
+                  "external_mutation"
+                ],
+                "title": "Effect",
+                "type": "string"
+              },
+              "entrypoint": {
+                "title": "Entrypoint",
+                "type": "string"
+              },
+              "in": {
+                "title": "In",
+                "type": "string"
+              },
+              "may_truncate": {
+                "default": false,
+                "title": "May Truncate",
+                "type": "boolean"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "out": {
+                "title": "Out",
+                "type": "string"
+              },
+              "requires_extras": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Requires Extras",
+                "type": "array"
+              },
+              "serves": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Serves",
+                "type": "array"
+              }
+            },
+            "required": [
+              "name",
+              "effect",
+              "serves",
+              "in",
+              "out",
+              "entrypoint"
+            ],
+            "title": "ReviewProviderOperation",
             "type": "object"
           },
           "ReviewRunbookDefinition": {

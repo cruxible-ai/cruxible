@@ -12,7 +12,7 @@ import json
 from collections.abc import Callable, Mapping
 from typing import Any, Literal, cast
 
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter
 
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_path
@@ -38,9 +38,17 @@ from cruxible_client.contracts.proposal_summary import (
     ReviewLink,
     ReviewMandateDefinition,
     ReviewNoteDefinition,
+    ReviewProviderDefinition,
+    ReviewProviderOperation,
     ReviewRunbookDefinition,
     ReviewSummaryValue,
     ReviewTriggerDefinition,
+)
+from cruxible_client.contracts.providers import (
+    NamedProviderBuild,
+    NamedProviderIdentity,
+    ProviderAny,
+    ProviderV2,
 )
 from cruxible_client.contracts.public_names import public_name
 from cruxible_client.contracts.read_values import summary_value, whole_value_read
@@ -61,6 +69,7 @@ _ACTION: dict[str, Literal["created", "revised", "retired"]] = {
 #: Definitions with a text block come first, in this order; the rest by kind.
 _DETAIL_ORDER = {"line": 0, "procedure-mandate": 1, "runbook": 2, "trigger": 3}
 _SERVICE_ACCESS = BodyAccessContext(principal_id="playbill-review-view", can_read_body=True)
+_PROVIDER: TypeAdapter[ProviderAny] = TypeAdapter(ProviderAny)
 
 
 def _value(value: Any, limit: int = 1024) -> ReviewSummaryValue:
@@ -516,9 +525,54 @@ def _note_detail(note: Note) -> ReviewNoteDefinition:
     )
 
 
+def _provider_detail(provider: ProviderAny) -> ReviewProviderDefinition:
+    """The package a Provider build runs, and each operation with where it may reach."""
+
+    if isinstance(provider, NamedProviderBuild | NamedProviderIdentity):
+        captures = [ref.target.qualified for ref in provider.capture_contracts]
+    else:
+        captures = [pin.target.qualified for pin in provider.pins if pin.role == "capture-contract"]
+    package = version = None
+    materialization: Literal["registry", "local"] | None = None
+    operations: list[ReviewProviderOperation] = []
+    if isinstance(provider, ProviderV2):
+        runtime = provider.runtime_artifact
+        package, version = runtime.distribution.name, runtime.distribution.version
+        materialization = runtime.distribution.materialization_source
+        rows = {item.entrypoint: item for item in runtime.manifest.implementations}
+        for operation in provider.operations:
+            row = rows.get(operation.entrypoint)
+            operations.append(
+                ReviewProviderOperation(
+                    name=operation.name,
+                    effect=operation.effect,
+                    serves=operation.serves,
+                    # The field's wire name is ``in``, as on the build itself.
+                    **{"in": operation.in_.spelling},
+                    out=operation.out.spelling,
+                    may_truncate=operation.may_truncate,
+                    entrypoint=operation.entrypoint,
+                    declared_endpoints=() if row is None else row.declared_endpoints,
+                    requires_extras=() if row is None else row.requires_extras,
+                )
+            )
+    return ReviewProviderDefinition(
+        provider=provider.provider_name,
+        build=provider.build_key,
+        control_domain=provider.control_domain,
+        package=package,
+        version=version,
+        materialization=materialization,
+        capture_contracts=tuple(
+            public_name(name).removeprefix("CaptureContract:") for name in captures
+        ),
+        operations=tuple(operations),
+    )
+
+
 def _detail(artifact_kind: str, artifact: Mapping[str, Any]) -> ReviewDefinitionDetail | None:
-    """The typed text block of a Line, Mandate, Runbook, Trigger, ClaimType, Document or
-    note; None for other kinds."""
+    """The typed text block of a Line, Mandate, Runbook, Trigger, ClaimType, Document,
+    note or Provider; None for other kinds."""
 
     parse: dict[str, Callable[[Mapping[str, Any]], BaseModel]] = {
         "line": lambda item: _line_detail(LineSpec.model_validate(item)),
@@ -531,6 +585,7 @@ def _detail(artifact_kind: str, artifact: Mapping[str, Any]) -> ReviewDefinition
         "claim-type": lambda item: _claim_type_detail(ClaimType.model_validate(item)),
         "document": lambda item: _document_detail(DocumentShell.model_validate(item)),
         "note": lambda item: _note_detail(Note.model_validate(item)),
+        "provider": lambda item: _provider_detail(_PROVIDER.validate_python(item)),
     }
     builder = parse.get(artifact_kind)
     if builder is None:
@@ -562,14 +617,19 @@ def definition_row(
     action: Literal["created", "revised", "retired"] = _ACTION[disposition]
     if action == "revised" and not _live(new):
         action = "retired"
-    detail = (
-        None
-        if action == "retired"
-        or new is None
-        # A revised ClaimType lists its changed fields below instead.
-        or (artifact_kind == "claim-type" and action != "created")
-        else _detail(artifact_kind, new)
-    )
+    if artifact_kind == "provider":
+        # A Provider shows the build it adds, revises or retires: the reviewer
+        # approves (or withdraws) exactly that code and what it may reach.
+        detail = _detail(artifact_kind, artifact)
+    else:
+        detail = (
+            None
+            if action == "retired"
+            or new is None
+            # A revised ClaimType lists its changed fields below instead.
+            or (artifact_kind == "claim-type" and action != "created")
+            else _detail(artifact_kind, new)
+        )
     changed: tuple[ReviewFieldChange, ...] = ()
     if action == "revised" and before is not None and after is not None:
         changed = tuple(

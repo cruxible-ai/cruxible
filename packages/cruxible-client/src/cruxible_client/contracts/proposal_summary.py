@@ -17,6 +17,7 @@ from cruxible_client.contracts.governance import (
 from cruxible_client.contracts.operational_reads import GetCaptureErasure, MandateScope
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.proposal_models import OriginatingLine
+from cruxible_client.contracts.provider_operations import OperationEffect
 from cruxible_client.contracts.refusal_receipts import PriorRefusalCoverage
 from cruxible_client.contracts.write import ChangeOutcome
 
@@ -233,6 +234,58 @@ class ReviewNoteDefinition(_SummaryModel):
     about: tuple[str, ...]
 
 
+class ReviewProviderOperation(_SummaryModel):
+    """One operation a provider build declares: what it serves and how it runs.
+
+    ``in`` and ``out`` are Contract refs (``name@N``). ``declared_endpoints``
+    and ``requires_extras`` are the manifest row of the operation's entrypoint.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+        frozen=True,
+        populate_by_name=True,
+        serialize_by_alias=True,
+        json_schema_mode_override="validation",
+    )
+
+    name: str
+    effect: OperationEffect
+    #: Capability names, sorted.
+    serves: tuple[str, ...]
+    in_: str = Field(alias="in")
+    out: str
+    may_truncate: bool = Field(default=False, exclude_if=lambda value: not value)
+    #: ``module:object`` in the package that runs this operation.
+    entrypoint: str
+    declared_endpoints: tuple[str, ...] = Field(default=(), exclude_if=_omit_empty)
+    requires_extras: tuple[str, ...] = Field(default=(), exclude_if=_omit_empty)
+
+
+class ReviewProviderDefinition(_SummaryModel):
+    """A Provider build as it would stand: the package it runs and what it serves.
+
+    ``package``, ``version`` and ``materialization`` are absent for a signing
+    identity with no package runtime.
+    """
+
+    kind: Literal["provider"] = "provider"
+    provider: str
+    #: The 64-hex build key; None for a single-path Provider.
+    build: str | None = Field(default=None, exclude_if=_omit_none)
+    control_domain: str
+    #: The distribution (wheel) name and version.
+    package: str | None = Field(default=None, exclude_if=_omit_none)
+    version: str | None = Field(default=None, exclude_if=_omit_none)
+    #: Where the wheel comes from: a package index, or the operator's own copy.
+    materialization: Literal["registry", "local"] | None = Field(
+        default=None, exclude_if=_omit_none
+    )
+    #: CaptureContracts this provider may produce, by public name.
+    capture_contracts: tuple[str, ...] = Field(default=(), exclude_if=_omit_empty)
+    operations: tuple[ReviewProviderOperation, ...] = ()
+
+
 ReviewDefinitionDetail = Annotated[
     ReviewLineDefinition
     | ReviewMandateDefinition
@@ -240,7 +293,8 @@ ReviewDefinitionDetail = Annotated[
     | ReviewTriggerDefinition
     | ReviewClaimTypeDefinition
     | ReviewDocumentDefinition
-    | ReviewNoteDefinition,
+    | ReviewNoteDefinition
+    | ReviewProviderDefinition,
     Field(discriminator="kind"),
 ]
 
@@ -257,8 +311,9 @@ class ReviewDefinition(_SummaryModel):
     """One proposed definition: its kind, name and action, and its typed fields.
 
     ``detail`` is the definition as it would stand (Line, ProcedureMandate,
-    Runbook, Trigger, Document, note; a ClaimType when created); other kinds,
-    and retirements, carry none. ``changed`` lists a revision's changed fields.
+    Runbook, Trigger, Document, note, Provider; a ClaimType when created);
+    other kinds, and retirements (but a Provider's), carry none. ``changed``
+    lists a revision's changed fields.
     """
 
     kind: str

@@ -166,8 +166,12 @@ def operation_build(
     build: str = "a",
     operations: tuple[DeclaredOperation, ...] | None = None,
     contracts: tuple[Contract, ...] = (),
+    endpoints: tuple[str, ...] = (),
+    extras: tuple[str, ...] = (),
 ) -> NamedProviderBuild:
     """One provider build declaring ``operations`` (pinned), as an install lowers it.
+
+    ``endpoints`` and ``extras`` go on every entrypoint's manifest row.
 
     The build carries exactly the Contracts its operations reach, taken from
     the fixture Contracts, the ``workspace.file`` ones and ``contracts``.
@@ -186,6 +190,8 @@ def operation_build(
             ProviderImplementationManifest(
                 entrypoint=entry,
                 backends=("local_env",),
+                declared_endpoints=endpoints,
+                requires_extras=extras,
                 deterministic=True,
             )
             for entry in entrypoints
@@ -201,7 +207,9 @@ def operation_build(
         ),
         local_env=ProviderLocalEnvBackendPin(
             lock_sha256="sha256:" + "b" * 64,
-            materialization_digests={"linux-cp311": "sha256:" + "c" * 64},
+            materialization_digests={
+                "+".join(("linux-cp311", *sorted(extras))): "sha256:" + "c" * 64
+            },
         ),
         control_domain=provider_id,
         operations=document.pinned_operations(),

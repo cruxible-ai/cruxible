@@ -4,7 +4,7 @@ import sqlite3
 from contextlib import closing
 from pathlib import Path
 
-REVIEW_PROJECTION_VERSION = 6
+REVIEW_PROJECTION_VERSION = 7
 REVIEW_PROJECTION_FILENAME = "proposal-review.sqlite3"
 REVIEW_TABLES = (
     "review_builds",
