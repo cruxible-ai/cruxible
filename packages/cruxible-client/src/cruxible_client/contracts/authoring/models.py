@@ -105,7 +105,7 @@ from cruxible_client.contracts.subject_kinds import (
     key_value_problem,
 )
 from cruxible_client.contracts.subjects import SubjectShell
-from cruxible_client.contracts.temporal import ensure_utc, format_datetime
+from cruxible_client.contracts.temporal import ensure_utc, format_datetime, parse_validity_span
 from cruxible_client.contracts.triggers import (
     CadenceSchedule,
     CronSchedule,
@@ -141,7 +141,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.5.1"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:5b44c2459c7171f64385b51f53745aab40c4f71d948f74535efff1b249646a83"
+    "sha256:a91336727677e536aef26a7c1b0c47b25c45907a14838eaecdc9e1e2fd8e097a"
 )
 
 MAX_DIAGNOSTICS = 128
@@ -1012,8 +1012,43 @@ class MandateConditionAuthoring(_StrictAuthoringModel):
     fallback: Literal["refuse", "propose"]
 
 
+#: ``valid_from``, ``expires_at`` and ``expires`` on a Mandate's authoring input.
+MANDATE_VALIDITY_DESCRIPTION = (
+    "Give exactly one of expires_at (an instant) or expires (a span: 36h, 90d, 12w, 1y, "
+    "P90D). valid_from defaults to the intent's time; expires counts from valid_from."
+)
+
+
+def mandate_validity_problem(
+    valid_from: datetime | None, expires_at: datetime | None, expires: str | None
+) -> str | None:
+    """Why a Mandate's authored validity is not one window, or ``None``.
+
+    Exactly one of ``expires_at`` and ``expires``; ``expires`` must parse as a
+    span. Lowering makes both instants concrete (``valid_from`` defaults to the
+    intent's timestamp), so a stored Mandate never carries a span.
+    """
+
+    del valid_from
+    if expires_at is None and expires is None:
+        return "procedure_mandate validity: give expires_at (an instant) or expires (a span)"
+    if expires_at is not None and expires is not None:
+        return "procedure_mandate validity: give expires_at or expires, not both"
+    if expires is not None:
+        try:
+            parse_validity_span(expires)
+        except ValueError as exc:
+            return f"procedure_mandate expires: {exc}"
+    return None
+
+
 class ProcedureMandateAuthoringPayload(_StrictAuthoringModel):
-    """Decision-only grant input; lowering owns every exact digest it pins."""
+    """Decision-only grant input; lowering owns every exact digest it pins.
+
+    The validity window is exactly one of ``expires_at`` or ``expires`` (a
+    span such as ``90d``); ``valid_from`` omitted is the intent's timestamp.
+    Lowering stores both as concrete UTC instants.
+    """
 
     tag: Literal["cruxible-procedure-mandate-authoring-payload-v3"] = (
         "cruxible-procedure-mandate-authoring-payload-v3"
@@ -1023,8 +1058,10 @@ class ProcedureMandateAuthoringPayload(_StrictAuthoringModel):
     grants: Literal["propose", "settle"]
     #: Omitted with ``scope: observations``: lowering reaches ``claims``.
     namespace: tuple[str, ...] = ()
-    valid_from: datetime
-    expires_at: datetime
+    valid_from: datetime | None = Field(default=None, exclude_if=lambda value: value is None)
+    expires_at: datetime | None = Field(default=None, exclude_if=lambda value: value is None)
+    #: A span (``36h``, ``90d``, ``12w``, ``1y``, ``P90D``) from ``valid_from``.
+    expires: str | None = Field(default=None, exclude_if=lambda value: value is None)
     #: Per ClaimType, or ``observations``: one grant over every observation-only
     #: ClaimType the Line's Procedure writes, lowered to that exact per-ClaimType scope.
     scope: tuple[MandateScopeAuthoring, ...] | Literal["observations"] = ()
@@ -1038,6 +1075,13 @@ class ProcedureMandateAuthoringPayload(_StrictAuthoringModel):
     subject_creation: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
     suspended: bool = False
     retire: bool = False
+
+    @model_validator(mode="after")
+    def _validity(self) -> ProcedureMandateAuthoringPayload:
+        problem = mandate_validity_problem(self.valid_from, self.expires_at, self.expires)
+        if problem is not None:
+            raise ValueError(problem)
+        return self
 
 
 class CaptureContractAuthoringPayload(_StrictAuthoringModel):
@@ -2733,6 +2777,8 @@ class BlockDetachResult(_StrictAuthoringModel):
 
 __all__ = [
     "BlockDetachResult",
+    "MANDATE_VALIDITY_DESCRIPTION",
+    "mandate_validity_problem",
     "AUTHORING_INTENT_ID_RE",
     "AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST",
     "AUTHORING_SDK_VERSION",

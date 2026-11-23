@@ -807,7 +807,8 @@ The standard start:
 
 1. **Tailor** the template: the Line names (and the start Runbook's steps with
    them), the sources each Line reads, the cron times (UTC), and each
-   mandate's `valid_from` and `expires_at`.
+   mandate's `valid_from` and `expires_at` (or a span, `expires: 90d`, that
+   starts when you submit).
 2. **Submit** it (`cruxible authoring submit automation.json`) and **approve**
    the proposal under your approval policy. A Runbook may name Lines the same
    change set adds, and a Trigger may aim at a Runbook it adds.

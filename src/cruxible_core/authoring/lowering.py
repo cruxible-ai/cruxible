@@ -276,6 +276,11 @@ from cruxible_client.contracts.subjects import (
     subject_digest,
     subject_path,
 )
+from cruxible_client.contracts.temporal import (
+    ensure_utc,
+    format_datetime,
+    parse_validity_span,
+)
 from cruxible_client.contracts.triggers import (
     ActionTarget,
     CaptureEventInput,
@@ -3759,10 +3764,53 @@ def _mandate_alias_resolver(
     return resolve
 
 
+def _mandate_window(
+    payload: ProcedureMandateAuthoringPayload, *, intent_time: datetime
+) -> tuple[datetime, datetime]:
+    """The concrete UTC ``(valid_from, expires_at)`` a Mandate's authored validity lowers to.
+
+    ``valid_from`` omitted is the intent's canonical timestamp, so a dry run,
+    a preflight and the submission of one intent lower to the same instants;
+    ``expires`` counts its span from ``valid_from``. A stored Mandate never
+    carries a span.
+    """
+
+    valid_from = ensure_utc(payload.valid_from if payload.valid_from is not None else intent_time)
+    if payload.expires is not None:
+        try:
+            expires_at = valid_from + parse_validity_span(payload.expires)
+        except (ValueError, OverflowError) as exc:
+            _refuse(
+                "cruxible.authoring.procedure_mandate_window",
+                "expires",
+                f"expires {payload.expires!r} does not give an instant after valid_from: {exc}",
+                repair_kind="revise_procedure_mandate",
+                repair_description="Give a span such as 90d, 12w, 1y, 36h or P90D.",
+            )
+    else:
+        assert payload.expires_at is not None
+        expires_at = ensure_utc(payload.expires_at)
+    if expires_at <= valid_from and payload.valid_from is None:
+        # Both instants given and out of order refuse as an invalid Mandate,
+        # as they always have; this names the default the author did not see.
+        _refuse(
+            "cruxible.authoring.procedure_mandate_window",
+            "expires_at",
+            f"expires_at {format_datetime(expires_at)} is not after the intent's time "
+            f"{format_datetime(valid_from)}, which valid_from defaults to.",
+            repair_kind="revise_procedure_mandate",
+            repair_description=(
+                "Give a later expires_at, or a span (expires: 90d) counted from valid_from."
+            ),
+        )
+    return valid_from, expires_at
+
+
 def _render_procedure_mandate_member(
     payload: ProcedureMandateAuthoringPayload,
     *,
     tree: Mapping[str, bytes],
+    intent_time: datetime,
     resolve: Callable[[str, str], str] | None = None,
 ) -> tuple[str, bytes, str]:
     if payload.grants == "propose":
@@ -3883,6 +3931,7 @@ def _render_procedure_mandate_member(
             required_fields=tuple(sorted(set(payload.condition.required_fields))),
             fallback=payload.condition.fallback,
         )
+    valid_from, expires_at = _mandate_window(payload, intent_time=intent_time)
     try:
         mandate = ProcedureMandate(
             identity=ArtifactIdentity(kind="ProcedureMandate", name=payload.name),
@@ -3893,8 +3942,8 @@ def _render_procedure_mandate_member(
             ),
             grants=payload.grants,
             namespace=namespace,
-            valid_from=payload.valid_from,
-            expires_at=payload.expires_at,
+            valid_from=valid_from,
+            expires_at=expires_at,
             scope=tuple(sorted(scope, key=lambda item: item.claim_type.target.qualified.encode())),
             subject_scope=(
                 None
@@ -6075,6 +6124,7 @@ def _stage_change_set_member(
         mandate_path, content, digest = _render_procedure_mandate_member(
             member,
             tree=staged_tree,
+            intent_time=_observed_at(intent.canonical_timestamp),
             resolve=_mandate_alias_resolver(instance, base, staged_tree),
         )
         candidate_tree = fork_tree(staged_tree)
@@ -7125,6 +7175,7 @@ def _lower_authoring(
         path, content, digest = _render_procedure_mandate_member(
             intent.payload,
             tree=base_tree,
+            intent_time=_observed_at(intent.canonical_timestamp),
             resolve=_mandate_alias_resolver(instance, base, base_tree),
         )
         candidate_tree = fork_tree(base_tree)

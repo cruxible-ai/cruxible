@@ -9415,24 +9415,18 @@ def disable_line(line: str, dry_run: bool | None, at: str | None, output_json: b
 
 #: A settle grant's validity when ``--expires`` is not given.
 LINE_GRANT_DEFAULT_EXPIRES = "90d"
-_RELATIVE_EXPIRY_UNITS = {"h": 3600, "d": 86400, "w": 7 * 86400, "y": 365 * 86400}
 
 
 def _grant_expiry(value: str, *, now: datetime) -> datetime:
     """``--expires``: a span (``30d``, ``12w``, ``1y``, ``36h``, ``P90D``) or an instant."""
 
-    from datetime import timedelta
-
-    from cruxible_client.contracts.temporal import ensure_utc, parse_iso_duration_microseconds
+    from cruxible_client.contracts.temporal import ensure_utc, parse_validity_span
 
     text = value.strip()
-    unit = _RELATIVE_EXPIRY_UNITS.get(text[-1:].lower())
-    if unit is not None and text[:-1].isdigit():
-        expires = now + timedelta(seconds=int(text[:-1]) * unit)
-    elif text.startswith("P"):
+    if text.startswith("P") or text[-1:].lower() in {"h", "d", "w", "y"}:
         try:
-            expires = now + timedelta(microseconds=parse_iso_duration_microseconds(text))
-        except ValueError as exc:
+            expires = now + parse_validity_span(text)
+        except (ValueError, OverflowError) as exc:
             raise click.BadParameter(str(exc), param_hint="--expires") from exc
     else:
         try:

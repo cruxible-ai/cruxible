@@ -10380,10 +10380,30 @@
                 ],
                 "default": null
               },
+              "expires": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Expires"
+              },
               "expires_at": {
-                "format": "date-time",
-                "title": "Expires At",
-                "type": "string"
+                "anyOf": [
+                  {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Expires At"
               },
               "grants": {
                 "enum": [
@@ -10490,18 +10510,25 @@
                 "type": "string"
               },
               "valid_from": {
-                "format": "date-time",
-                "title": "Valid From",
-                "type": "string"
+                "anyOf": [
+                  {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Give exactly one of expires_at (an instant) or expires (a span: 36h, 90d, 12w, 1y, P90D). valid_from defaults to the intent's time; expires counts from valid_from.",
+                "title": "Valid From"
               }
             },
             "required": [
               "kind",
               "name",
               "line_name",
-              "grants",
-              "valid_from",
-              "expires_at"
+              "grants"
             ],
             "title": "ProcedureMandateInput",
             "type": "object"

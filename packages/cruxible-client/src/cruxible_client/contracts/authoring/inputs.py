@@ -23,6 +23,7 @@ from pydantic_core import PydanticCustomError
 
 from cruxible_client.contracts.approval_policy import ApprovalPolicy
 from cruxible_client.contracts.authoring.models import (
+    MANDATE_VALIDITY_DESCRIPTION,
     ApprovalPolicyAuthoringPayload,
     AuthoringChangeSetMember,
     AuthoringClaimStatement,
@@ -56,6 +57,7 @@ from cruxible_client.contracts.authoring.models import (
     TriggerAuthoringPayload,
     WorkingSelectionObservation,
     authoring_member_identity,
+    mandate_validity_problem,
 )
 from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.claims import (
@@ -399,8 +401,13 @@ class ProcedureMandateInput(_StrictInputModel):
     line_name: str
     grants: Literal["propose", "settle"]
     namespace: tuple[str, ...] = ()
-    valid_from: datetime
-    expires_at: datetime
+    valid_from: datetime | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+        description=MANDATE_VALIDITY_DESCRIPTION,
+    )
+    expires_at: datetime | None = Field(default=None, exclude_if=lambda value: value is None)
+    expires: str | None = Field(default=None, exclude_if=lambda value: value is None)
     scope: tuple[MandateScopeAuthoring, ...] | Literal["observations"] = ()
     include_derived: bool = Field(
         default=False,
@@ -431,6 +438,13 @@ class ProcedureMandateInput(_StrictInputModel):
                 "budget (Line budgets)"
             )
         return value
+
+    @model_validator(mode="after")
+    def _validity(self) -> ProcedureMandateInput:
+        problem = mandate_validity_problem(self.valid_from, self.expires_at, self.expires)
+        if problem is not None:
+            raise ValueError(problem)
+        return self
 
 
 class LineInput(_StrictInputModel):

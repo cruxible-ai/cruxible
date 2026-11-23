@@ -293,8 +293,7 @@ go in through authoring as one change set, saved here as `automation.json`:
       "line_name": "catalog.acme-discontinued",
       "grants": "propose",
       "namespace": ["claims"],
-      "valid_from": "2026-11-15T00:00:00Z",
-      "expires_at": "2027-02-13T00:00:00Z"
+      "expires": "90d"
     }
   ]
 }
@@ -339,7 +338,11 @@ the one it found (here the built-in `workspace.file`) as the Line's binding.
 (how old a reading may be, and what to do when one is unavailable, stale or
 oversized); an output left out runs under the core default: any age, refuse
 when unavailable, stale or oversized. A mandate's `line_name` names the Line
-it authorizes. Cron schedules are always UTC: 06:00 UTC, here. `cruxible
+it authorizes. Its validity is `expires_at` (an instant) or `expires` (a span:
+`36h`, `90d`, `12w`, `1y`, `P90D`), exactly one; `valid_from` defaults to when
+the change was prepared, and the span counts from it. The accepted Mandate
+holds both as instants, so a template with `expires` is portable and its
+window starts when it is submitted. Cron schedules are always UTC: 06:00 UTC, here. `cruxible
 authoring example line`, `trigger` and `procedure-mandate` print templates.
 
 ### Run it once

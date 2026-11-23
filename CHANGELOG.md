@@ -33,6 +33,13 @@ the project's own state instance.
   (enabled, already enabled, or refused with code and repair; `--json`:
   `{"lines": [...]}`), exiting 1 after every Line is tried if any refused. One
   `LINE` alone prints and serializes exactly as before.
+- **Mandate validity as a span:** a `procedure_mandate` takes `expires` (`36h`,
+  `90d`, `12w`, `1y`, `P90D`, the spelling `line grant --expires` uses) instead
+  of `expires_at`, exactly one of the two; `valid_from` may be omitted and
+  defaults to the intent's timestamp. Lowering stores concrete UTC instants, so
+  kit automation templates no longer need hand-edited dates. An `expires_at`
+  not after the defaulted `valid_from` refuses
+  `cruxible.authoring.procedure_mandate_window`.
 - **Observation settle survives a pure provider build move:** `provider move`
   keeps an observation-only settle grant (terms unchanged) across a Line
   successor that changes only slot bindings, when every moved slot's new
