@@ -582,6 +582,18 @@ was captured under two versions of one contract pins both.
 """
 
 
+BASED_ON_CLAIM_PIN_ROLE = "based-on"
+"""The pin role that records which exact version of another Claim this one rests on.
+
+A judgment pins the observations it was made from. It is provenance (compiler
+revision 74): the pinned Claim moving to a new version, or retiring, never
+obliges the judgment to move or retire with it; ``next`` surfaces the judgment
+as ``claim_dependency_stale`` until it is revised to pin the current version,
+drops the pin, or is retired. Unlike ``input_claim_digests`` it is not a
+derivation input, so any Claim may carry it.
+"""
+
+
 def _pin_key(pin: ArtifactPin) -> tuple[bytes, bytes, bytes]:
     return (
         pin.role.encode("utf-8"),
@@ -3580,6 +3592,7 @@ def evaluate_claim_law(
 
 
 __all__ = [
+    "BASED_ON_CLAIM_PIN_ROLE",
     "AcceptedClaim",
     "ClaimArtifact",
     "ClaimBacking",

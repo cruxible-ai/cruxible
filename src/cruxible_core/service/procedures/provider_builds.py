@@ -22,6 +22,7 @@ from cruxible_client.contracts.providers import (
     provider_path,
     render_provider,
 )
+from cruxible_core.compiler.compiler import admits_revision_74
 from cruxible_core.proposals.proposals import ProposalAdmissionRequest
 from cruxible_core.providers.build_moves import Mover, build_move, settle_changes
 from cruxible_core.providers.builds import (
@@ -251,6 +252,9 @@ def service_move_provider(
                 )
                 if source not in moves:
                     moves[source] = build_move(tree, source.partition(":")[2], resolution.resolved)
+            # Compiler revision 74 keeps an observation-only settle grant across
+            # a pure, non-widening build move; on revision 73 every grant demotes.
+            observation_settle = admits_revision_74(mode.head.compiler)
             settled = settle_changes(
                 tree,
                 writes={},
@@ -258,6 +262,8 @@ def service_move_provider(
                 movers=movers,
                 moves=moves,
                 by_name=True,
+                retain_observation_settle=observation_settle,
+                settle_demotion="line_changed" if observation_settle else "compiler_revision",
             )
         if settled.refused or any(item.action == "refused" for item in settled.repins):
             status, proposal_id, approval, detail = (

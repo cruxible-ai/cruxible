@@ -193,10 +193,12 @@ from cruxible_client.contracts.types import PrincipalKind, PrincipalRecord
 from cruxible_client.contracts.validation_messages import validation_summary
 from cruxible_client.contracts.workspace_layout import WorkspaceDirectoryConflict
 from cruxible_client.contracts.write import (
+    AddChange,
     Change,
     ContractEvidence,
     DocOp,
     RetireRequest,
+    SetChange,
     SetRequest,
     SubjectRef,
     WriteOutcome,
@@ -2239,7 +2241,11 @@ def move_provider(
     at: str | None,
     output_json: bool,
 ) -> None:
-    """Move Lines to NAME's build; carry Lines disabled and Mandates propose-only."""
+    """Move Lines to NAME's build; carry Lines disabled and Mandates propose-only.
+
+    Under compiler revision 74 an observation-only settle grant the move leaves
+    pure and non-widening keeps settle, and its enabled Line stays enabled.
+    """
     request = ProviderMoveRequest(
         provider=provider, to=to, only=tuple(sorted(set(only))), dry_run=dry_run, at=at
     )
@@ -2272,9 +2278,15 @@ def _echo_provider_repins(repins: Any, stops: Any, carries: Any = ()) -> None:
                 f"  {phase}carry: {item.identity}: disabled by upgrade to "
                 f"{item.new_procedure_digest or 'pending Procedure version'}; line enable to resume"
             )
+        elif item.new_grant == "settle":
+            click.echo(
+                f"  {phase}carry: {item.identity}: retains observation settle on "
+                f"{', '.join(item.retained_scope)}; retains Line enablement"
+            )
         else:
             click.echo(
                 f"  {phase}carry: {item.identity}: {item.old_grant} -> propose"
+                + (f" ({item.demotion.replace('_', ' ')})" if item.demotion else "")
                 + ("; settle re-grant required" if item.loses_settle else "")
             )
             if item.subject_creation_namespace_limitation:
@@ -6146,6 +6158,22 @@ def _write_request(model: type[ResultT], fields: Mapping[str, Any], *, example: 
         ) from None
 
 
+_BASED_ON_HELP = (
+    "A Claim (CLM-...) this value was judged from, pinned at its current version; "
+    "repeatable. A later revision or retirement of it flags this value in next."
+)
+
+
+def _based_on_option_value(based_on: tuple[str, ...], clear: bool) -> list[str] | None:
+    """--based-on IDs, [] for --clear-based-on, None to keep a revision's pins."""
+
+    if clear and based_on:
+        raise click.UsageError("pass --based-on or --clear-based-on, not both")
+    if clear:
+        return []
+    return list(based_on) if based_on else None
+
+
 def _expect_option_value(values: tuple[str, ...]) -> str | tuple[str, ...] | None:
     """``--expect`` given once is the value; given again, every live value."""
 
@@ -6226,6 +6254,18 @@ _NONE_HELP = (
     help="Refuse unless the field holds no value now (compare-and-set on an empty field).",
 )
 @click.option(
+    "--based-on",
+    "based_on",
+    multiple=True,
+    metavar="CLAIM_ID",
+    help=_BASED_ON_HELP,
+)
+@click.option(
+    "--clear-based-on",
+    is_flag=True,
+    help="Drop the based-on pins this revision would keep.",
+)
+@click.option(
     "--workspace-root",
     default=".",
     show_default=True,
@@ -6247,6 +6287,8 @@ def set_value(
     contend: bool,
     expect: tuple[str, ...],
     expect_absent: bool,
+    based_on: tuple[str, ...],
+    clear_based_on: bool,
     workspace_root: str,
     dry_run: bool,
     no_accept: bool,
@@ -6260,6 +6302,8 @@ def set_value(
     not exist yet is added by that key. VALUE is text: an enum member, a number or true/false
     for such fields, a Subject as kind/id, or bounded text. --none
     instead states that FIELD holds nothing (a none), replacing the live value.
+    --based-on CLM-... pins a Claim the value was judged from: a later revision
+    or retirement of it flags this value in next (claim_dependency_stale).
     """
 
     if expect_absent and expect:
@@ -6279,6 +6323,7 @@ def set_value(
             "role": role,
             "contend": contend,
             "expect": () if expect_absent else _expect_option_value(expect),
+            "based_on": _based_on_option_value(based_on, clear_based_on),
             "dry_run": dry_run,
             "accept": "never" if no_accept else "if_allowed",
             "at": at_oid,
@@ -6340,6 +6385,18 @@ def set_value(
     help="Refuse when the value is already there, instead of answering it as done.",
 )
 @click.option(
+    "--based-on",
+    "based_on",
+    multiple=True,
+    metavar="CLAIM_ID",
+    help=_BASED_ON_HELP,
+)
+@click.option(
+    "--clear-based-on",
+    is_flag=True,
+    help="Drop the based-on pins this revision would keep.",
+)
+@click.option(
     "--workspace-root",
     default=".",
     show_default=True,
@@ -6359,6 +6416,8 @@ def add_value(
     evidence_contract: str | None,
     role: str | None,
     expect_absent: bool,
+    based_on: tuple[str, ...],
+    clear_based_on: bool,
     workspace_root: str,
     dry_run: bool,
     no_accept: bool,
@@ -6387,6 +6446,7 @@ def add_value(
                     ),
                     "role": role,
                     "expect_absent": expect_absent,
+                    "based_on": _based_on_option_value(based_on, clear_based_on),
                 }
             ],
             "because": because,
@@ -6614,6 +6674,13 @@ def rebind(
     type=click.Path(file_okay=False),
     help="Workspace whose file catalog file evidence reads.",
 )
+@click.option(
+    "--based-on",
+    "based_on",
+    multiple=True,
+    metavar="CLAIM_ID",
+    help=_BASED_ON_HELP + " Applies to each set and add change that names no based_on.",
+)
 @_write_options
 @handle_errors
 def write_changes(
@@ -6621,6 +6688,7 @@ def write_changes(
     because: str | None,
     schema: bool,
     workspace_root: str,
+    based_on: tuple[str, ...],
     dry_run: bool,
     no_accept: bool,
     at_oid: str | None,
@@ -6660,10 +6728,18 @@ def write_changes(
     rationale = because or parsed.because
     if rationale is None:
         raise click.UsageError("give the write a reason: --because, or because in FILE")
+    changes: Sequence[Change] = parsed.changes
+    if based_on:
+        changes = tuple(
+            change.model_copy(update={"based_on": _based_on_option_value(based_on, False)})
+            if isinstance(change, SetChange | AddChange) and change.based_on is None
+            else change
+            for change in changes
+        )
     request = _write_request(
         WriteRequest,
         {
-            "changes": parsed.changes,
+            "changes": changes,
             "docs": parsed.docs,
             "subject": parsed.subject,
             "because": rationale,

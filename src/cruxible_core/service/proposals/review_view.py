@@ -605,10 +605,12 @@ def definition_row(
     new: Mapping[str, Any] | None,
     before: Mapping[str, Any] | None,
     after: Mapping[str, Any] | None,
+    carry: str | None = None,
 ) -> tuple[tuple[Any, ...], dict[str, Any]]:
     """One definition member: (sort key, the stored ``ReviewDefinition``).
 
-    ``before`` and ``after`` are a revision's changed top-level fields only.
+    ``before`` and ``after`` are a revision's changed top-level fields only;
+    ``carry`` is a carried Mandate's note (``mandate_carry_note``).
     """
 
     artifact = new if new is not None else old
@@ -630,6 +632,8 @@ def definition_row(
             or (artifact_kind == "claim-type" and action != "created")
             else _detail(artifact_kind, new)
         )
+    if carry is not None and isinstance(detail, ReviewMandateDefinition):
+        detail = detail.model_copy(update={"carry": carry})
     changed: tuple[ReviewFieldChange, ...] = ()
     if action == "revised" and before is not None and after is not None:
         changed = tuple(
@@ -648,6 +652,31 @@ def definition_row(
     return (rank, kind, name), definition.model_dump(mode="json")
 
 
+def mandate_carry_note(
+    old: Mapping[str, Any], new: Mapping[str, Any], demotion: Callable[[], str | None]
+) -> str | None:
+    """What carrying a Mandate to its Line's successor did to its grant; None otherwise.
+
+    ``demotion`` names why a settle grant demoted (``providers.observation_carry``),
+    asked only for one that did.
+    """
+
+    try:
+        previous = ProcedureMandate.model_validate(old)
+        current = ProcedureMandate.model_validate(new)
+    except ValueError:
+        return None
+    if previous.line == current.line or current.lifecycle.state != "live":
+        return None
+    if current.grants == "settle":
+        scope = ", ".join(item.claim_type.target.name for item in current.scope)
+        return f"retains observation settle on {scope}; retains Line enablement"
+    if previous.grants != "settle":
+        return None
+    reason = demotion()
+    return "settle -> propose" + (f": {reason.replace('_', ' ')}" if reason else "")
+
+
 def subject_revision_row(path: str) -> tuple[tuple[Any, ...], dict[str, Any]]:
     """A Subject revised in place (its pins): a one-line definition row."""
 
@@ -662,6 +691,7 @@ __all__ = [
     "claim_type_cardinality",
     "definition_row",
     "drops_citation",
+    "mandate_carry_note",
     "review_change",
     "subject_change_row",
     "subject_revision_row",

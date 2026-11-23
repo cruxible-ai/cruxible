@@ -90,6 +90,7 @@ def _object_properties(schema: dict[str, Any], defs: dict[str, Any]) -> list[dic
                 "role",
                 "contend",
                 "expect",
+                "based_on",
                 "dry_run",
                 "accept",
                 "at",

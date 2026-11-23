@@ -1458,6 +1458,10 @@ def register_tools(
                 )
             ),
         ] = None,
+        based_on: Annotated[
+            list[str] | None,
+            Field(description="CLM-… it rests on."),
+        ] = None,
         dry_run: Annotated[
             bool, Field(description="Run every check up to the commit; write nothing.")
         ] = False,
@@ -1486,6 +1490,7 @@ def register_tools(
             role=role,
             contend=contend,
             expect=expect,
+            based_on=based_on,
             dry_run=dry_run,
             accept=accept,
             at=at,

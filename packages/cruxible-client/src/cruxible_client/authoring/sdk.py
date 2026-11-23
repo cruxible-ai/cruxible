@@ -1910,6 +1910,19 @@ def _write_expect(expect: WriteExpect | None) -> ExpectedValue | None:
     return tuple(_expected_value(item) for item in expect)
 
 
+def _based_on(claims: Sequence[str | ClaimRef] | None) -> tuple[str, ...] | None:
+    """Claim IDs for ``based_on``; ``None`` keeps a revision's pins as they are."""
+
+    if claims is None:
+        return None
+    if isinstance(claims, str | ClaimRef):
+        claims = (claims,)
+    return tuple(
+        item.address if isinstance(item, ClaimRef) else item.removeprefix("Claim:")
+        for item in claims
+    )
+
+
 def _write_target(target: str | ClaimRef | SubjectRef | SlotRef) -> str | SlotRef:
     if isinstance(target, ClaimRef):
         return target.address
@@ -2152,6 +2165,7 @@ class WriteBatch:
         role: WriteRole | None = None,
         contend: bool = False,
         expect: WriteExpect | None = None,
+        based_on: Sequence[str | ClaimRef] | None = None,
     ) -> WriteBatch: ...
 
     @overload
@@ -2167,6 +2181,7 @@ class WriteBatch:
         role: WriteRole | None = None,
         contend: bool = False,
         expect: WriteExpect | None = None,
+        based_on: Sequence[str | ClaimRef] | None = None,
     ) -> WriteBatch: ...
 
     def set(
@@ -2178,11 +2193,14 @@ class WriteBatch:
         role: WriteRole | None = None,
         contend: bool = False,
         expect: WriteExpect | None = None,
+        based_on: Sequence[str | ClaimRef] | None = None,
     ) -> WriteBatch:
         """Replace the live value of one single-value field.
 
         Spelled ``set(field, value)`` or ``set(subject, field, value)``. ``expect`` refuses
-        unless the field holds that value now. Next: more changes, then ``.write()``.
+        unless the field holds that value now. ``based_on`` names the Claims the value was
+        judged from (each pinned at its current version; ``[]`` drops the pins a revision
+        would keep). Next: more changes, then ``.write()``.
         """
 
         if supported_by is not None:
@@ -2199,6 +2217,7 @@ class WriteBatch:
                 role=role,
                 contend=contend,
                 expect=_write_expect(expect),
+                based_on=_based_on(based_on),
             )
         )
         return self
@@ -2215,6 +2234,7 @@ class WriteBatch:
         supported_by: SectionEvidence | None = None,
         role: WriteRole | None = None,
         expect_absent: bool = False,
+        based_on: Sequence[str | ClaimRef] | None = None,
     ) -> WriteBatch: ...
 
     @overload
@@ -2229,6 +2249,7 @@ class WriteBatch:
         supported_by: SectionEvidence | None = None,
         role: WriteRole | None = None,
         expect_absent: bool = False,
+        based_on: Sequence[str | ClaimRef] | None = None,
     ) -> WriteBatch: ...
 
     def add(
@@ -2239,6 +2260,7 @@ class WriteBatch:
         supported_by: SectionEvidence | None = None,
         role: WriteRole | None = None,
         expect_absent: bool = False,
+        based_on: Sequence[str | ClaimRef] | None = None,
     ) -> WriteBatch:
         """Add one more value to a many-valued field.
 
@@ -2260,6 +2282,7 @@ class WriteBatch:
                 evidence=evidence,
                 role=role,
                 expect_absent=expect_absent,
+                based_on=_based_on(based_on),
             )
         )
         return self
@@ -4088,6 +4111,7 @@ class Cruxible:
         role: WriteRole | None = None,
         contend: bool = False,
         expect: WriteExpect | None = None,
+        based_on: Sequence[str | ClaimRef] | None = None,
         dry_run: bool = False,
         accept: WriteAccept = "if_allowed",
         at: WriteAt | _Unset = _UNSET,
@@ -4103,7 +4127,11 @@ class Cruxible:
         none). ``value=NoneValue(none=None)`` states that the field holds
         nothing (a none, on a ClaimType that declares an inverse; cite evidence
         its inverse rules admit). A refusal raises ``WriteRefusalError``; check
-        ``outcome.warnings`` for a verdict that is not supported.
+        ``outcome.warnings`` for a verdict that is not supported. ``based_on``
+        names the Claims the value was judged from: each is pinned at its current
+        version, and a later revision or retirement of one flags this value in
+        ``next`` (``claim_dependency_stale``) without retiring it. Omitted, a
+        revision keeps its pins; ``[]`` drops them.
 
         Next: ``outcome.next`` names what is still needed; ``cx.get(f"{subject}")`` reads
         the value back with its verdict.
@@ -4123,6 +4151,7 @@ class Cruxible:
                             role=role,
                             contend=contend,
                             expect=_write_expect(expect),
+                            based_on=_based_on(based_on),
                         ),
                     ),
                     dry_run=dry_run,
@@ -4141,6 +4170,7 @@ class Cruxible:
             role=role,
             contend=contend,
             expect=_write_expect(expect),
+            based_on=_based_on(based_on),
             dry_run=dry_run,
             accept=write_accept(accept),
             at=self._write_at(at),
@@ -4163,6 +4193,7 @@ class Cruxible:
         evidence: Evidence | AuthoredSection | None = None,
         role: WriteRole | None = None,
         expect_absent: bool = False,
+        based_on: Sequence[str | ClaimRef] | None = None,
         dry_run: bool = False,
         accept: WriteAccept = "if_allowed",
         at: WriteAt | _Unset = _UNSET,
@@ -4194,6 +4225,7 @@ class Cruxible:
                     evidence=evidence,
                     role=role,
                     expect_absent=expect_absent,
+                    based_on=_based_on(based_on),
                 ),
             ),
             dry_run=dry_run,

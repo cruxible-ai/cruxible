@@ -1707,7 +1707,9 @@ def _planned_automation(
                     identity=trigger, kind="trigger", stopped_by=line.identity.qualified
                 )
             continue
-        row = carry_automation(item.path, tree[item.path], {}, planned=True)[1]
+        row = carry_automation(item.path, tree[item.path], {}, planned=True, demotion="kit_change")[
+            1
+        ]
         stopped_by = item.triggering_identity.qualified
         if stopped_by not in retiring_procedures:
             carries.append(row)

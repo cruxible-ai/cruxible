@@ -15,6 +15,7 @@ import json
 import sqlite3
 from collections.abc import Callable
 from contextlib import closing
+from functools import partial
 from typing import Any
 
 from cruxible_client.contracts.candidates import CandidateRecord
@@ -48,6 +49,7 @@ from cruxible_core.service.proposals.review_view import (
     claim_change_row,
     claim_type_cardinality,
     definition_row,
+    mandate_carry_note,
     review_change,
     subject_change_row,
     subject_revision_row,
@@ -157,6 +159,49 @@ def _subject_kind(artifact: dict[str, Any], artifact_kind: str) -> str:
             return "semantic.claim_type"
         return str(path.split("/", 1)[0])
     return str(artifact.get("subject_kind", artifact_kind))
+
+
+def _settle_demotion(
+    instance: PlaybillInstance, *, path: str, base_oid: str, tree_oid: str, proposal_id: str
+) -> str | None:
+    """Why a Mandate carried in this proposal demoted to propose (the law's own question).
+
+    Read only for a settle grant that demoted: the base and proposed trees, the
+    moved Line and its builds, and the reverse pins of the grant's ClaimTypes.
+    """
+
+    from cruxible_client.contracts.procedure_mandates import parse_procedure_mandate_any
+    from cruxible_client.contracts.procedures.line_specs import line_spec_path, parse_line_spec
+    from cruxible_core.compiler.compiler import admits_revision_74
+    from cruxible_core.providers.observation_carry import (
+        LazyNeighbors,
+        observation_carry_refusal,
+    )
+
+    if not admits_revision_74(instance.coordinate_for_oid(base_oid).compiler):
+        return "compiler_revision"
+    before = instance.immutable_tree_at(base_oid)
+    after = instance.proposal_tree(tree_oid, proposal_id=proposal_id)
+    mandate = parse_procedure_mandate_any(before[path], path=path)
+    line_path = line_spec_path(mandate.line.target.name)
+    if line_path not in before or line_path not in after:
+        return "line_changed"
+    old_line = parse_line_spec(before[line_path], path=line_path)
+    new_line = parse_line_spec(after[line_path], path=line_path)
+    if old_line.procedure != new_line.procedure:
+        return "procedure_changed"
+    neighbors = LazyNeighbors(before)
+    try:
+        return observation_carry_refusal(
+            old_mandate=mandate,
+            old_line=old_line,
+            new_line=new_line,
+            before=before,
+            after=after,
+            neighbors=neighbors,
+        )
+    finally:
+        neighbors.close()
 
 
 def _columns(before: dict[str, Any] | None, after: dict[str, Any] | None) -> dict[str, Any]:
@@ -293,6 +338,24 @@ def _build(
                         new=new,
                         before=before,
                         after=after,
+                        carry=(
+                            mandate_carry_note(
+                                old,
+                                new,
+                                partial(
+                                    _settle_demotion,
+                                    instance,
+                                    path=member.path,
+                                    base_oid=base_oid,
+                                    tree_oid=tree_oid,
+                                    proposal_id=proposal_id,
+                                ),
+                            )
+                            if member.artifact_kind == "procedure-mandate"
+                            and old is not None
+                            and new is not None
+                            else None
+                        ),
                     )
                 )
             if row is not None:

@@ -176,6 +176,10 @@ class ReviewMandateDefinition(_SummaryModel):
     condition: str | None = Field(default=None, exclude_if=_omit_none)
     subject_creation: tuple[str, ...] = Field(default=(), exclude_if=_omit_empty)
     suspended: bool = Field(default=False, exclude_if=lambda value: not value)
+    #: A grant carried to its Line's successor: whether it kept settle (an
+    #: observation-only grant across a pure, non-widening build move) and the
+    #: Line's enablement, or why settle demoted to propose.
+    carry: str | None = Field(default=None, exclude_if=_omit_none)
 
 
 class ReviewRunbookDefinition(_SummaryModel):

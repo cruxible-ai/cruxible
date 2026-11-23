@@ -598,6 +598,26 @@ class SlotRef(_StrictWriteModel):
     value: ClaimValue | None = None
 
 
+_BASED_ON_DESCRIPTION = (
+    "Claims (CLM-…) this value rests on, pinned at their current versions; omitted keeps "
+    "a revision's pins, [] drops them."
+)
+
+
+_CLAIM_ID = re.compile(r"^CLM-[0-9a-f]{32}$")
+
+
+def _based_on_ids(value: tuple[str, ...] | None) -> tuple[str, ...] | None:
+    """Sorted and once each: the order a list was typed in carries no meaning."""
+
+    if value is None:
+        return None
+    names = {item.removeprefix("Claim:") for item in value}
+    if any(not _CLAIM_ID.fullmatch(name) for name in names):
+        raise ValueError("based_on names Claims as CLM-<32 hex>")
+    return tuple(sorted(names, key=str.encode))
+
+
 class SetChange(_StrictWriteModel):
     """Replace a single-value field; contend=true contests it instead."""
 
@@ -617,6 +637,9 @@ class SetChange(_StrictWriteModel):
     )
     contend: bool = False
     expect: ExpectedValue | None = Field(default=None, description=_EXPECT_DESCRIPTION)
+    based_on: tuple[str, ...] | None = Field(default=None, exclude_if=_omit_none)
+
+    _based_on = field_validator("based_on")(_based_on_ids)
 
 
 class AddChange(_StrictWriteModel):
@@ -640,6 +663,9 @@ class AddChange(_StrictWriteModel):
         default=False,
         description="Refuse value_already_present if the value is live.",
     )
+    based_on: tuple[str, ...] | None = Field(default=None, exclude_if=_omit_none)
+
+    _based_on = field_validator("based_on")(_based_on_ids)
 
 
 def _with_claims_target(target: object, with_claims: bool) -> None:
@@ -894,6 +920,9 @@ class SetRequest(_WriteRequestBase):
     evidence: Evidence | None = None
     contend: bool = False
     expect: ExpectedValue | None = Field(default=None, description=_EXPECT_DESCRIPTION)
+    based_on: tuple[str, ...] | None = Field(default=None, exclude_if=_omit_none)
+
+    _based_on = field_validator("based_on")(_based_on_ids)
 
     @model_validator(mode="after")
     def _because_states_a_claim(self) -> SetRequest:
@@ -909,6 +938,7 @@ class SetRequest(_WriteRequestBase):
             evidence=self.evidence,
             contend=self.contend,
             expect=self.expect,
+            based_on=self.based_on,
         )
 
 

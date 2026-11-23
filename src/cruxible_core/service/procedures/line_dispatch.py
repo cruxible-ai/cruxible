@@ -866,6 +866,157 @@ def _arm_stop(
     return None
 
 
+#: Mandate revisions walked back to find the one a build move carried.
+_CARRY_CHAIN_LIMIT = 16
+
+
+def _observation_carried(
+    instance: PlaybillInstance,
+    coordinate: Any,
+    accepted: Any,
+    *,
+    pinned_digest: str,
+    occurrence_epoch: int,
+) -> bool:
+    """Whether accepted state carries an arm from ``pinned_digest`` to ``accepted``.
+
+    One change does (maintainer ruling 2): a pure, non-widening provider build
+    move that kept an observation settle grant on the Line (compiler revision
+    74). Proved from accepted state, never from the proposal: the Line's
+    predecessor is the pinned version, in the same epoch, and among the live
+    Mandates on this version, each one carried from the pinned version kept its
+    grant and at least one kept ``settle`` unsuspended. The pair law admits a
+    Mandate retargeted only with its Line's successor, and a carried settle
+    grant only for that move, so nothing else satisfies this. Cost: the
+    Line's live Mandates and their recent revisions.
+    """
+
+    from cruxible_client.contracts.procedure_mandates import (
+        ProcedureMandate,
+        parse_procedure_mandate_any,
+    )
+    from cruxible_core.compiler.compiler import admits_revision_74
+
+    if (
+        accepted.line.occurrence_epoch != occurrence_epoch
+        or accepted.line.lifecycle.predecessor_digest != pinned_digest
+        or not admits_revision_74(coordinate.compiler)
+    ):
+        return False
+    with instance.bind_accepted_projection(coordinate) as projection:
+        mandates = [
+            projection.typed.source(str(row[0]))
+            for row in projection.typed.connection.execute(
+                "SELECT identity FROM procedure_mandates WHERE line_identity=? "
+                "AND line_digest=? AND lifecycle='live' ORDER BY identity",
+                (accepted.line.identity.qualified, accepted.artifact_digest),
+            )
+        ]
+    public = AcceptedCoordinate.from_internal(coordinate)
+    retained = False
+    for mandate in mandates:
+        if not isinstance(mandate, ProcedureMandate):
+            return False
+        current = mandate
+        for _step in range(_CARRY_CHAIN_LIMIT):
+            digest = current.lifecycle.predecessor_digest
+            found = (
+                None
+                if digest is None
+                else instance.accepted_artifact_version(
+                    public, digest, family="procedure-mandates/"
+                )
+            )
+            if found is None:
+                break
+            previous = parse_procedure_mandate_any(found[1], path=found[0])
+            if previous.line.artifact_digest == pinned_digest:
+                if previous.grants != current.grants:
+                    return False  # demoted by the same move: the arm stops
+                if mandate.grants == "settle" and not mandate.suspended:
+                    retained = True
+                break
+            if previous.line.artifact_digest != accepted.artifact_digest:
+                break
+            current = previous
+    return retained
+
+
+def _carry_arm(
+    instance: PlaybillInstance,
+    store: LineDispatchStore,
+    session: dict[str, Any],
+    accepted: Any,
+    *,
+    actor: GovernedActorContext,
+    now: datetime,
+) -> dict[str, Any] | None:
+    """Carry an enabled arm to its Line's successor after an observation build move.
+
+    The enablement keeps who enabled it, its Triggers and its coverage; its
+    pending work matched under the old version is rebound to the new one.
+    Anything else that changed the Line leaves it to ``_arm_stop``.
+    """
+
+    pinned = str(session["line_artifact_digest"])
+    coordinate = instance.accepted_coordinate()
+    if not _observation_carried(
+        instance,
+        coordinate,
+        accepted,
+        pinned_digest=pinned,
+        occurrence_epoch=int(session["occurrence_epoch"]),
+    ):
+        return None
+    evaluated = AcceptedCoordinate.from_internal(coordinate).model_dump(mode="json")
+    with line_arm_boundary(instance.root, session["line_id"]), store.locked() as conn:
+        current = _active_session(conn, session["line_id"])
+        if (
+            current is None
+            or current["session_id"] != session["session_id"]
+            or current["line_artifact_digest"] != pinned
+        ):
+            return current
+        current["line_artifact_digest"] = accepted.artifact_digest
+        current["carried_from"] = [*current.get("carried_from", ()), pinned]
+        store.append(conn, "coverage", current, actor=actor, now=now)
+        for (payload,) in conn.execute(
+            "SELECT payload FROM pending WHERE session_id=? AND disposition='pending'",
+            (current["session_id"],),
+        ).fetchall():
+            data = json.loads(payload)
+            if data.get("line_artifact_digest") != pinned:
+                continue
+            data.update(line_artifact_digest=accepted.artifact_digest, coordinate=evaluated)
+            store.append(conn, "reconciled", data, actor=actor, now=now)
+        return current
+
+
+def service_carry_line_arm(
+    instance: PlaybillInstance,
+    arm: dict[str, Any],
+    *,
+    actor: GovernedActorContext,
+    now: datetime,
+) -> bool:
+    """Carry an arm a dispatch found on a superseded Line, when the move carries it."""
+
+    if not dispatch_root(instance).exists():
+        return False
+    coordinate = instance.accepted_coordinate()
+    try:
+        accepted = _accepted_line_by_reference(
+            instance, coordinate=coordinate, reference=arm["line"]
+        )
+    except (CruxibleError, OSError, ValueError):
+        return False
+    if accepted.artifact_digest == arm["line_artifact_digest"]:
+        return False
+    store = LineDispatchStore(instance)
+    carried = _carry_arm(instance, store, arm, accepted, actor=actor, now=now)
+    return carried is not None and carried["line_artifact_digest"] == accepted.artifact_digest
+
+
 def _timed(trigger: AcceptedTrigger) -> bool:
     """Whether a Trigger fires by time (ticks, fixed windows) rather than on events."""
 
@@ -944,6 +1095,10 @@ def service_match_listening_lines(
                         store.append(conn, "coverage", session, actor=actor, now=now)
             continue
         pins = line_trigger_pins(triggers)
+        if accepted.artifact_digest != session["line_artifact_digest"]:
+            carried = _carry_arm(instance, store, session, accepted, actor=actor, now=now)
+            if carried is not None:
+                session = carried
         stop: tuple[LineEnablementStopReason, str] | None
         stop = _arm_stop(
             session,

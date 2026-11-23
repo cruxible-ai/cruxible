@@ -2772,6 +2772,8 @@ class _Planner:
         }
         if isinstance(change.evidence, SectionEvidence) and change.evidence.own_words:
             values["located_at"] = change.evidence.observation
+        if change.based_on is not None:
+            values["based_on"] = change.based_on
         member = ClaimAuthoringPayload(**values)
         used_contract = (
             COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity.name

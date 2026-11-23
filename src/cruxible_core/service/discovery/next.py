@@ -3498,7 +3498,9 @@ def _claim_dependency_items(
     # unobserved end (``subject_end_entries``), with no input edge at all.
     if (
         claims is not None
-        and not any(claim.backing.input_claim_digests for claim in claims)
+        and not any(
+            claim.backing.input_claim_digests or _based_on_digests(claim) for claim in claims
+        )
         and not _any_unobserved_pair_end(instance, coordinate)
     ):
         # The skipped retired build would have refused an accepted retired
@@ -3533,7 +3535,12 @@ def _claim_dependency_items(
         current_claims=current_claims,
     )
     recorded_input_digests = frozenset(
-        digest for row in visible_rows for digest in row.accepted.claim.backing.input_claim_digests
+        digest
+        for row in visible_rows
+        for digest in (
+            *row.accepted.claim.backing.input_claim_digests,
+            *_based_on_digests(row.accepted.claim),
+        )
     )
     dependency_sources = tuple(
         row
@@ -3569,6 +3576,14 @@ def _claim_dependency_items(
         claim_dependency_row(identity, by_dependent[identity])
         for identity in sorted(by_dependent, key=lambda item: item.encode("utf-8"))
     )
+
+
+def _based_on_digests(claim: ClaimArtifact) -> tuple[str, ...]:
+    """The exact Claim versions a Claim's ``based-on`` pins name."""
+
+    from cruxible_client.contracts.claims import BASED_ON_CLAIM_PIN_ROLE
+
+    return tuple(pin.artifact_digest for pin in claim.pins if pin.role == BASED_ON_CLAIM_PIN_ROLE)
 
 
 def _any_unobserved_pair_end(
@@ -3705,29 +3720,38 @@ def stale_input_entries(
     *,
     lineage_complete: bool,
 ) -> list[tuple[str, dict[str, object]]]:
-    """Each dependent one source's move leaves stale: a superseded or contradicted backing input."""
+    """Each dependent one source's move leaves stale: a superseded or contradicted input.
+
+    An input is a backing input (a derivation's) or a ``based-on`` pin (a
+    judgment's): the source revised or retired since the dependent pinned it
+    (superseded), or contradicted now.
+    """
+
+    from cruxible_client.contracts.claims import BASED_ON_CLAIM_PIN_ROLE
 
     entries: list[tuple[str, dict[str, object]]] = []
     for dependent in dependents:
+        based_on = (
+            dependent.dependency_kind == "pin"
+            and dependent.used_pin_role == BASED_ON_CLAIM_PIN_ROLE
+        )
         if (
             dependent.kind != "Claim"
-            or dependent.dependency_kind != "backing_input"
+            or (dependent.dependency_kind != "backing_input" and not based_on)
             or not dependent.repair_candidate
             or not ({SOURCE_SUPERSEDED, SOURCE_CONTRADICTED} & set(dependent.impact_reasons))
         ):
             continue
-        entries.append(
-            (
-                dependent.identity,
-                {
-                    "source_claim_identity": source_identity,
-                    "used_artifact_digest": dependent.used_artifact_digest,
-                    "current_artifact_digest": dependent.current_artifact_digest,
-                    "impact_reasons": list(dependent.impact_reasons),
-                    "lineage_complete": lineage_complete,
-                },
-            )
-        )
+        entry: dict[str, object] = {
+            "source_claim_identity": source_identity,
+            "used_artifact_digest": dependent.used_artifact_digest,
+            "current_artifact_digest": dependent.current_artifact_digest,
+            "impact_reasons": list(dependent.impact_reasons),
+            "lineage_complete": lineage_complete,
+        }
+        if based_on:
+            entry["pin_role"] = BASED_ON_CLAIM_PIN_ROLE
+        entries.append((dependent.identity, entry))
     return entries
 
 

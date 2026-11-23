@@ -141,7 +141,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.5.1"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:4cbbf476c672022f8eff6fc84567da231253e18484528d26da67296c0079bf3f"
+    "sha256:81b31e42ef5953921928940e66dd6b599a2f63ec07798eab622bebb873e39993"
 )
 
 MAX_DIAGNOSTICS = 128
@@ -745,8 +745,26 @@ class ClaimAuthoringPayload(_StrictAuthoringModel):
     procedure_evidence: ClaimEvidenceReceipt | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    #: The Claims (``CLM-...``) this one rests on, each pinned ``based-on`` at its
+    #: current version (compiler revision 74). Omitted: a revision keeps the
+    #: based-on pins it revises, stale or not. Given: they replace them, so an
+    #: empty list drops every one and naming a Claim again re-pins its current
+    #: version (which clears ``claim_dependency_stale``).
+    based_on: tuple[str, ...] | None = Field(default=None, exclude_if=lambda value: value is None)
 
     _replaces = field_validator("replaces_citations")(_replaced_citations)
+
+    @field_validator("based_on")
+    @classmethod
+    def _based_on(cls, value: tuple[str, ...] | None) -> tuple[str, ...] | None:
+        if value is None:
+            return None
+        names = tuple(item.removeprefix("Claim:") for item in value)
+        for name in names:
+            claim_path(name)
+        if names != tuple(sorted(set(names), key=lambda item: item.encode("ascii"))):
+            raise ValueError("based_on names Claims sorted and once each")
+        return names
 
     @model_serializer(mode="wrap")
     def _preserve_location_presence(self, handler: Any) -> dict[str, object]:

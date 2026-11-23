@@ -124,6 +124,7 @@ from cruxible_client.contracts.claim_types import (
     render_claim_type,
 )
 from cruxible_client.contracts.claims import (
+    BASED_ON_CLAIM_PIN_ROLE,
     CitationOrigin,
     CitationRole,
     ClaimArtifact,
@@ -304,6 +305,7 @@ from cruxible_core.claims.claim_type_migrations import (
     resolve_claim_type_succession,
 )
 from cruxible_core.claims.enum_resolution import tree_enum_resolver
+from cruxible_core.compiler.compiler import admits_revision_74
 from cruxible_core.derived.derived_state import CandidateTree, SnapshotTree, fork_tree
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.indexes.subject_aliases import (
@@ -1559,6 +1561,81 @@ def _claim_pin(
     )
 
 
+def _based_on_of(claim: ClaimArtifact) -> tuple[ArtifactPin, ...]:
+    return tuple(pin for pin in claim.pins if pin.role == BASED_ON_CLAIM_PIN_ROLE)
+
+
+def _based_on_pins(
+    payload: ClaimAuthoringPayload,
+    *,
+    base: AcceptedProjectionCoordinate,
+    tree: Mapping[str, bytes],
+    claim_id: str,
+    predecessor: ClaimArtifact | None,
+) -> tuple[ArtifactPin, ...]:
+    """The ``based-on`` pins this Claim version carries.
+
+    ``based_on`` omitted keeps the predecessor's pins exactly (a stale pin
+    stays stale, and ``next`` keeps saying so). Given, it replaces them: each
+    named Claim must be live in ``tree`` (the base with this change's earlier
+    members) and is pinned at its version there; an empty list drops them all.
+    Cost: one parse and digest per named Claim.
+    """
+
+    if payload.based_on is None:
+        return () if predecessor is None else _based_on_of(predecessor)
+    if payload.based_on and not admits_revision_74(base.compiler):
+        _refuse(
+            "cruxible.authoring.based_on_requires_compiler_upgrade",
+            "based_on",
+            "A based-on Claim pin needs compiler revision 74; this instance is on an earlier "
+            "revision.",
+            repair_kind="upgrade_compiler",
+            repair_description="Back up the instance, then run `cruxible compiler upgrade`.",
+        )
+    pins: list[ArtifactPin] = []
+    for name in payload.based_on:
+        if name == claim_id:
+            _refuse(
+                "cruxible.authoring.based_on_self",
+                "based_on",
+                f"{name} cannot rest on itself.",
+                repair_kind="replace_based_on",
+                repair_description="Name the Claims this one was judged from.",
+            )
+        path = claim_path(name)
+        content = tree.get(path)
+        target = None if content is None else parse_claim(content, path=path)
+        if target is None:
+            _refuse(
+                "cruxible.authoring.based_on_not_found",
+                "based_on",
+                f"{name} is not an accepted Claim at the intent base.",
+                repair_kind="replace_based_on",
+                repair_description="Name an accepted live Claim (`cruxible get CLM-...`).",
+                replacement={"claim": name},
+            )
+        if target.lifecycle.state != "live":
+            _refuse(
+                "cruxible.authoring.based_on_retired",
+                "based_on",
+                f"{name} is retired; a Claim rests only on live Claims.",
+                repair_kind="replace_based_on",
+                repair_description="Name the live Claim that replaced it, or drop it.",
+                replacement={"claim": name},
+            )
+        previous = () if predecessor is None else predecessor.pins
+        pins.append(
+            _claim_pin(
+                role=BASED_ON_CLAIM_PIN_ROLE,
+                target=target.identity,
+                artifact_digest=claim_artifact_digest(target).tagged,
+                previous=previous,
+            )
+        )
+    return tuple(pins)
+
+
 def _lower_claim(
     instance: PlaybillInstance,
     *,
@@ -2174,6 +2251,15 @@ def _lower_claim(
                 artifact_digest=object_referent[1],
             )
         )
+    pins.extend(
+        _based_on_pins(
+            payload,
+            base=base,
+            tree=candidate_base_tree,
+            claim_id=identity.name,
+            predecessor=predecessor,
+        )
+    )
     if derivation is not None:
         try:
             if statement.role != "derivation":
@@ -2246,9 +2332,13 @@ def _lower_claim(
             else tuple(
                 pin
                 for pin in inherited.pins
-                if rebound is None
-                or pin.role != "capture-contract"
-                or pin.artifact_digest not in rebound.contract_versions
+                # Based-on pins are decided by ``_based_on_pins`` alone.
+                if pin.role != BASED_ON_CLAIM_PIN_ROLE
+                and (
+                    rebound is None
+                    or pin.role != "capture-contract"
+                    or pin.artifact_digest not in rebound.contract_versions
+                )
             ),
             tuple(pins),
         ),
@@ -2353,6 +2443,8 @@ def _lower_claim(
     same_statement = (
         predecessor is not None
         and final.statement == predecessor.statement
+        # Re-pinning what the Claim rests on is a revision, never a no-op.
+        and _based_on_of(final) == _based_on_of(predecessor)
         and all(item.disposition == "not_tested" for item in payload.existing_claim_dispositions)
         and not dependency_paths
     )

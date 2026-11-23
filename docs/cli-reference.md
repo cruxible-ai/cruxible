@@ -4130,18 +4130,19 @@ scope, and operational input head remain unchanged.
 cruxible set SUBJECT FIELD (VALUE | --none) --because TEXT
   [--evidence-file PATH#ANCHOR | --capture CAP-HANDLE|DIGEST | --evidence-contract NAME]
   [--role ROLE] [--contend] [--expect VALUE... | --expect-absent]
+  [--based-on CLAIM_ID... | --clear-based-on]
   [--workspace-root DIR] [--dry-run] [--no-accept] [--at GIT_OID] [--json]
 cruxible add SUBJECT FIELD VALUE [--none] --because TEXT
   [--evidence-file PATH#ANCHOR | --capture CAP-HANDLE|DIGEST | --evidence-contract NAME]
-  [--role ROLE] [--expect-absent]
+  [--role ROLE] [--expect-absent] [--based-on CLAIM_ID... | --clear-based-on]
   [--workspace-root DIR] [--dry-run] [--no-accept] [--at GIT_OID] [--json]
 cruxible retire TARGET [FIELD [VALUE]] --because TEXT
   [--reason was-rescinded|was-wrong|superseded] [--expect VALUE]... [--with-claims]
   [--dry-run] [--no-accept] [--at GIT_OID] [--json]
 cruxible rebind CLAIM (--file FILE#ANCHOR | --section FILE#Heading/Path | --capture CAP) --because TEXT
   [--citation HEX] [--workspace-root DIR] [--dry-run] [--no-accept] [--at GIT_OID] [--json]
-cruxible write FILE [--because TEXT] [--workspace-root DIR] [--dry-run] [--no-accept]
-  [--at GIT_OID] [--json]
+cruxible write FILE [--because TEXT] [--based-on CLAIM_ID]... [--workspace-root DIR]
+  [--dry-run] [--no-accept] [--at GIT_OID] [--json]
 cruxible write --schema
 ~~~
 
@@ -4272,6 +4273,17 @@ value of a many-valued field); `--expect-absent` expects the field to hold
 nothing. Both compose with `--at`. Each change prints
 before and after, its Claim and its verdict; a verdict other than `supported`
 prints a warning with its repair.
+
+`--based-on CLAIM_ID` (repeatable) names a Claim the value was judged from: the
+Claim is pinned at its current version (a `based-on` pin, compiler revision 74).
+Revising or retiring that Claim later never retires this one; `next` lists it
+as `claim_dependency_stale` until it is set again with `--based-on` the same
+Claim (pinning its current version), set with `--clear-based-on` (dropping the
+pins), or retired. A revision without either keeps the pins it had. A Claim
+named must be live and not the one written (`cruxible.authoring.based_on_not_found`,
+`based_on_retired`, `based_on_self`); an instance still on revision 73 refuses
+the option (`based_on_requires_compiler_upgrade`). On `write`, `--based-on`
+applies to each set and add change whose own `based_on` is unset.
 
 A none states that a field holds nothing: an inverse Claim, on a ClaimType
 whose `inverse` declares how (any other refuses

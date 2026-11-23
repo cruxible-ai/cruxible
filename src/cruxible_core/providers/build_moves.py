@@ -10,7 +10,10 @@ successor, in the same change set.
 
 A Line successor is a new Line digest, so a grant never follows it (ruling C3):
 each Mandate pinning the old Line digest takes a same-name propose-only
-successor pinning the new one, settle fields cleared. A Line over a live
+successor pinning the new one, settle fields cleared -- except, on a ``provider
+move`` under compiler revision 74, an observation-only settle grant the move
+leaves pure and non-widening, which keeps its terms
+(``providers.observation_carry``). A Line over a live
 Procedure successor (a kit's new Procedure version) takes a successor pinning
 that version the same way. Triggers stay byte-identical. Retirement still
 retires dependent automation.
@@ -44,6 +47,7 @@ from cruxible_client.contracts.procedures.line_specs import (
 from cruxible_client.contracts.provider_installation import (
     AutomationCarryV1,
     ProviderRepinV1,
+    SettleDemotion,
     StoppedAutomationV1,
 )
 from cruxible_client.contracts.provider_operations import LineBinding
@@ -68,7 +72,13 @@ from cruxible_core.providers.automation_carry import (
     carry_line,
     carry_mandate,
     parse_carry_line,
+    parse_carry_mandate,
     validate_carried_line,
+)
+from cruxible_core.providers.observation_carry import (
+    LazyNeighbors,
+    ReverseNeighbors,
+    observation_carry_refusal,
 )
 
 #: Families a move stops (retires) or carries instead of re-pinning in place.
@@ -328,6 +338,38 @@ def _retired_trigger(path: str, content: bytes, *, by_name: bool = False) -> byt
     return render_trigger(parse_trigger(retired, path=path))
 
 
+def _settle_demotion(
+    path: str,
+    tree: Mapping[str, bytes],
+    final_tree: Mapping[str, bytes],
+    *,
+    procedure_lines: set[str],
+    retain: bool,
+    default: SettleDemotion,
+    neighbors: ReverseNeighbors,
+) -> SettleDemotion | None:
+    """Why the Mandate at ``path`` carries propose-only, or None when it keeps settle."""
+
+    from cruxible_client.contracts.procedures.line_specs import line_spec_path
+
+    mandate = parse_carry_mandate(tree[path], path=path)
+    if mandate.grants != "settle":
+        return default
+    if mandate.line.artifact_digest in procedure_lines:
+        return "procedure_changed"
+    if not retain:
+        return default
+    line_path = line_spec_path(mandate.line.target.name)
+    return observation_carry_refusal(
+        old_mandate=mandate,
+        old_line=parse_carry_line(tree[line_path], path=line_path),
+        new_line=parse_carry_line(final_tree[line_path], path=line_path),
+        before=tree,
+        after=final_tree,
+        neighbors=neighbors,
+    )
+
+
 def live_triggers_of(connection: sqlite3.Connection, line: str) -> tuple[tuple[str, str], ...]:
     """(identity, path) of the live Triggers aimed at one Line (``triggers_by_target``)."""
 
@@ -367,6 +409,8 @@ def settle_changes(
     keep: frozenset[str] = frozenset(),
     retire_with: frozenset[str] = frozenset(),
     by_name: bool = False,
+    retain_observation_settle: bool = False,
+    settle_demotion: SettleDemotion = "kit_change",
 ) -> SettledMoves:
     """Every write, the moved Lines, and one successor per dependent they owe.
 
@@ -374,7 +418,11 @@ def settle_changes(
     exists here is carried to its final bytes, or retired with it when its
     identity is in ``retire_with``. Each mover takes the build move unless its
     identity is in ``keep``. Lines over live Procedure successors arrive
-    disabled; every Mandate pinning a Line that changed arrives propose-only.
+    disabled; every Mandate pinning a Line that changed arrives propose-only
+    (its row names ``settle_demotion``, or ``procedure_changed``), except, with
+    ``retain_observation_settle`` (``provider move`` under compiler revision
+    74), an observation-only settle grant on a moved Line that the move leaves
+    pure and non-widening (``providers.observation_carry``): it keeps settle.
     Triggers are untouched except on retirement.
     """
 
@@ -554,6 +602,9 @@ def settle_changes(
     final_enums = tree_enum_resolver(final_tree)
     # Moved Lines are live successors too: their Mandates carry to them.
     live_lines: dict[str, str] = {}
+    #: Old digests of Lines carried to a Procedure successor (never a pure move).
+    procedure_lines: set[str] = set()
+    neighbors = LazyNeighbors(tree)
     for path in mover_paths:
         old_line = parse_dependency_artifact(path, tree[path])
         new_line = parse_dependency_artifact(path, final[path])
@@ -596,12 +647,26 @@ def settle_changes(
                         new_state = parse_dependency_artifact(item.path, line_content)
                         assert new_state is not None
                         live_lines[state.artifact_digest] = new_state.artifact_digest
+                        procedure_lines.add(state.artifact_digest)
                         replacements[state.artifact_digest] = new_state.artifact_digest
                         settled.automation_carries.append(outcome)
                         settled.carried += 1
                         continue
                 elif _mandate_line_digest(item.path, tree[item.path]) in live_lines:
-                    mandate_content, outcome = carry_mandate(item.path, tree[item.path], live_lines)
+                    mandate_content, outcome = carry_mandate(
+                        item.path,
+                        tree[item.path],
+                        live_lines,
+                        demotion=_settle_demotion(
+                            item.path,
+                            tree,
+                            final_tree,
+                            procedure_lines=procedure_lines,
+                            retain=retain_observation_settle,
+                            default=settle_demotion,
+                            neighbors=neighbors,
+                        ),
+                    )
                     assert mandate_content is not None
                     final[item.path] = mandate_content
                     settled.automation_carries.append(outcome)
@@ -645,6 +710,7 @@ def settle_changes(
                         identity=trigger, kind="trigger", stopped_by=item.identity.qualified
                     )
                 )
+    neighbors.close()
     settled.writes = final if not settled.refused else {}
     settled.automation_carries.sort(key=lambda item: item.identity)
     settled.stops.sort(key=lambda item: item.identity)

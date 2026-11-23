@@ -7,6 +7,30 @@ that lands it; entries move under a version heading when the release is
 tagged. Work items for these changes live on the active release line in
 the project's own state instance.
 
+### Added
+
+- **Compiler revision 74 (`based-on-observation-carry`)** is written at
+  genesis. Revision 73 (0.5.x) instances open and keep working under revision
+  73's laws, report the compiler facet `upgrade_available`, and move forward by
+  `cruxible compiler upgrade` along the one edge 73 -> 74.
+- **`based-on` Claim pins:** `set` and `add` take `--based-on CLAIM_ID`
+  (repeatable; `--clear-based-on` drops them), `write` takes `--based-on`, and
+  the SDK (`cx.set`, `cx.add`, `WriteBatch.set`/`add`), the MCP `cruxible_set`
+  tool and write files take `based_on`. A judgment pins the exact version of
+  each Claim it was made from; revising or retiring that Claim (by `retire` or
+  a Procedure's mirror retirement) never retires the judgment, and `next` lists
+  it as `claim_dependency_stale` until it is re-pinned, the pin is dropped, or
+  it is retired.
+- **Observation settle survives a pure provider build move:** `provider move`
+  keeps an observation-only settle grant (terms unchanged) across a Line
+  successor that changes only slot bindings, when every moved slot's new
+  operation is no wider than the old (capability, effect, declared endpoints,
+  `may_truncate`), the grant creates no Subjects and no live condition query
+  reads its scope; an enabled Line stays enabled on its successor. The move
+  output and `cruxible review` say "retains observation settle on ..."; every
+  other carried settle grant says why it demoted. `kit add`, `kit upgrade` and
+  Procedure edits still demote.
+
 ## [0.5.1] - 2026-11-22
 
 ### Added

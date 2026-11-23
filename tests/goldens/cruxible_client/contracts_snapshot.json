@@ -80233,6 +80233,18 @@
           "ReviewMandateDefinition": {
             "additionalProperties": false,
             "properties": {
+              "carry": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Carry"
+              },
               "condition": {
                 "anyOf": [
                   {
@@ -83420,7 +83432,7 @@
           },
           "CarriedLineV1": {
             "additionalProperties": false,
-            "description": "A same-identity Line successor; exact-version enablement never transfers.",
+            "description": "A same-identity Line successor over a Procedure successor; its enablement stops.",
             "properties": {
               "enablement": {
                 "const": "disabled",
@@ -83495,8 +83507,39 @@
           },
           "CarriedMandateV1": {
             "additionalProperties": false,
-            "description": "A same-name propose successor pinning its Line's successor; settle fields removed.",
+            "description": "A same-name successor pinning its Line's successor.\n\nPropose-only, settle fields removed (``demotion`` says why a settle grant\nlost settle); or, for an observation-only settle grant across a pure,\nnon-widening provider build move, the same grant with its terms unchanged\n(``new_grant`` settle, ``retained_scope`` its ClaimTypes), and an enabled\nLine stays enabled on its successor (``carries_line_enablement``).",
             "properties": {
+              "carries_line_enablement": {
+                "default": false,
+                "title": "Carries Line Enablement",
+                "type": "boolean"
+              },
+              "demotion": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "compiler_revision",
+                      "procedure_changed",
+                      "kit_change",
+                      "line_changed",
+                      "capability_changed",
+                      "effect_widened",
+                      "endpoints_widened",
+                      "may_truncate_widened",
+                      "judgment_claim_type",
+                      "subject_creation",
+                      "condition_coupling",
+                      "mandate_terms_changed"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Demotion"
+              },
               "identity": {
                 "title": "Identity",
                 "type": "string"
@@ -83528,8 +83571,11 @@
                 "title": "New Artifact Digest"
               },
               "new_grant": {
-                "const": "propose",
                 "default": "propose",
+                "enum": [
+                  "propose",
+                  "settle"
+                ],
                 "title": "New Grant",
                 "type": "string"
               },
@@ -83569,6 +83615,14 @@
                 ],
                 "title": "Phase",
                 "type": "string"
+              },
+              "retained_scope": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Retained Scope",
+                "type": "array"
               },
               "subject_creation_namespace_limitation": {
                 "default": false,

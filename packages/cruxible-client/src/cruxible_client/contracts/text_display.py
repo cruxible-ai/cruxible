@@ -720,6 +720,8 @@ def review_definition_lines(
             rows.append(("may create", ", ".join(detail.subject_creation)))
         if detail.suspended:
             rows.append(("suspended", "yes"))
+        if detail.carry:
+            rows.append(("carry", detail.carry))
     elif isinstance(detail, ReviewRunbookDefinition):
         if detail.description:
             lines.append(f"    {printable(detail.description)}")

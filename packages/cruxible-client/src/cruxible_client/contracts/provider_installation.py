@@ -234,7 +234,7 @@ class ProviderRepinV1(_Strict):
 
 
 class CarriedLineV1(_Strict):
-    """A same-identity Line successor; exact-version enablement never transfers."""
+    """A same-identity Line successor over a Procedure successor; its enablement stops."""
 
     kind: Literal["line"] = "line"
     identity: str
@@ -247,8 +247,41 @@ class CarriedLineV1(_Strict):
     enablement: Literal["disabled"] = "disabled"
 
 
+#: Why a carried settle grant demoted to propose (compiler revision 74 keeps
+#: settle only for an observation-only grant across a pure, non-widening build move):
+#: ``compiler_revision`` the instance is on an earlier revision; ``procedure_changed``
+#: the Line follows a Procedure successor; ``kit_change`` a kit moved it;
+#: ``line_changed`` the Line changed more than its bindings; ``capability_changed``,
+#: ``effect_widened``, ``endpoints_widened``, ``may_truncate_widened`` a moved slot's
+#: operation serves less or reaches further; ``judgment_claim_type`` a scoped ClaimType
+#: admits more than observations; ``subject_creation`` the grant creates Subjects;
+#: ``condition_coupling`` a live Mandate's condition reads a scoped predicate;
+#: ``mandate_terms_changed`` the carry would change the grant's terms.
+SettleDemotion = Literal[
+    "compiler_revision",
+    "procedure_changed",
+    "kit_change",
+    "line_changed",
+    "capability_changed",
+    "effect_widened",
+    "endpoints_widened",
+    "may_truncate_widened",
+    "judgment_claim_type",
+    "subject_creation",
+    "condition_coupling",
+    "mandate_terms_changed",
+]
+
+
 class CarriedMandateV1(_Strict):
-    """A same-name propose successor pinning its Line's successor; settle fields removed."""
+    """A same-name successor pinning its Line's successor.
+
+    Propose-only, settle fields removed (``demotion`` says why a settle grant
+    lost settle); or, for an observation-only settle grant across a pure,
+    non-widening provider build move, the same grant with its terms unchanged
+    (``new_grant`` settle, ``retained_scope`` its ClaimTypes), and an enabled
+    Line stays enabled on its successor (``carries_line_enablement``).
+    """
 
     kind: Literal["mandate"] = "mandate"
     identity: str
@@ -259,9 +292,23 @@ class CarriedMandateV1(_Strict):
     new_artifact_digest: str | None = None
     phase: Literal["planned", "validated"] = "validated"
     old_grant: Literal["propose", "settle"]
-    new_grant: Literal["propose"] = "propose"
+    new_grant: Literal["propose", "settle"] = "propose"
     loses_settle: bool
     subject_creation_namespace_limitation: bool = False
+    demotion: SettleDemotion | None = Field(default=None, exclude_if=lambda value: value is None)
+    retained_scope: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
+    carries_line_enablement: bool = Field(default=False, exclude_if=lambda value: not value)
+
+    @model_validator(mode="after")
+    def _grant(self) -> "CarriedMandateV1":
+        retained = self.new_grant == "settle"
+        if retained and (self.old_grant != "settle" or self.loses_settle or self.demotion):
+            raise ValueError("only a settle grant kept whole retains settle")
+        if self.loses_settle != (self.old_grant == "settle" and not retained):
+            raise ValueError("a settle grant loses settle exactly when it carries propose")
+        if bool(self.retained_scope) != retained or self.carries_line_enablement != retained:
+            raise ValueError("a retained settle grant names its scope and carries enablement")
+        return self
 
 
 AutomationCarryV1 = Annotated[CarriedLineV1 | CarriedMandateV1, Field(discriminator="kind")]
