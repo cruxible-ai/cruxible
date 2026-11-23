@@ -2,8 +2,8 @@
   "format": "playbill-served-surface-v1",
   "succession": {
     "ratified_by": "maintainer",
-    "register_entry": "2026-11-23:provider-publish",
-    "surface_digest": "sha256:3e1599dce3b5c036d9ebd549184ef09d6f8660914de7c38c137b14d0e95475ed"
+    "register_entry": "2026-11-23:security-kit-ergonomics",
+    "surface_digest": "sha256:e71c9be68982b7fa6c69f052da321d3597d248bbc9531e7fee14ac32920ce64f"
   },
   "surface": {
     "cli_leaves": [
@@ -2886,7 +2886,7 @@
           "write"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_set",
-        "input_schema_digest": "sha256:a758faf2977adedf67e1aa2e41d8d578f12e69a555c3bd0e56f9f798de9e0cdd",
+        "input_schema_digest": "sha256:f0cbb0ff9cc6221f65640c8b3308147eee42bdd54df733533d7e8788e56457c3",
         "name": "cruxible_set",
         "output_schema_digest": "sha256:65b4b0b580aeae463399725bc5427f508ff64cba5fb95ebf6d34ce430362e0a5",
         "permission": "GOVERNED_WRITE"

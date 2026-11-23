@@ -22,6 +22,7 @@ from cruxible_client.contracts.claims import (
 )
 from cruxible_core.consumers.next import facts
 from tests.core_support._pair_world import (
+    AFFECTED_BY,
     APP_EXPOSURE,
     COMPONENT,
     INVENTORY,
@@ -312,3 +313,209 @@ def test_a_revision_73_instance_refuses_based_on_until_it_upgrades(
     assert outcome.refusal is not None
     assert outcome.refusal.code == "cruxible.authoring.based_on_requires_compiler_upgrade"
     assert instance.accepted_coordinate() == before
+
+
+# -- kind/id#field: a field's one live Claim, resolved by the write ---------------
+
+
+def _exposure(instance: Any, judgment: str) -> str:
+    return (
+        _read(instance, judgment)
+        .statement.subject.artifact_path.removeprefix("subjects/")
+        .removesuffix(".json")
+    )
+
+
+def _judge(instance: Any, subject: str, *based_on: str) -> Any:
+    return write(
+        instance,
+        {
+            "op": "set",
+            "subject": subject,
+            "field": "justification",
+            "value": "component_not_present",
+            "based_on": list(based_on),
+        },
+    )
+
+
+@pytest.mark.parametrize("field", ["scope", f"{OCCURRENCE}.scope"])
+def test_based_on_names_a_fields_one_live_claim_as_subject_hash_field(
+    tmp_path: Path, field: str
+) -> None:
+    instance, scope, judgment, occurrence = _world(tmp_path)
+    accepted(
+        write(instance, {"op": "set", "subject": occurrence, "field": "scope", "value": "optional"})
+    )
+    # Named by the shorthand (short field or predicate, '@' optional) and by id
+    # at once: one pin, on the Claim's current version, which clears the row.
+    accepted(_judge(instance, _exposure(instance, judgment), f"@{occurrence}#{field}", scope))
+    assert _based_on(instance, judgment) == {
+        scope: claim_artifact_digest(_read(instance, scope)).tagged
+    }
+    assert _stale(instance) == []
+    _check(instance)
+
+
+def test_based_on_shorthand_resolves_a_subject_by_its_key(tmp_path: Path) -> None:
+    instance = pair_world(tmp_path)
+    built = accepted(
+        write(
+            instance,
+            create("c", COMPONENT, "pkg:maven/log4j-core@2.14.1"),
+            create("v", VULN, "CVE-2021-44228"),
+            create("w", VULN, "CVE-2021-44832"),
+            {
+                "op": "add",
+                "subject": {"created": "c"},
+                "field": "affected_by",
+                "value": {"created": "v"},
+            },
+            create("i", INVENTORY, "web"),
+            create("o", OCCURRENCE, {"inventory": {"created": "i"}, "component": {"created": "c"}}),
+        )
+    )
+    affected = next(item.claim for item in built.changes if item.op == "add")
+    assert affected is not None
+    occurrence = next(
+        item.subject
+        for item in built.changes
+        if item.op == "create" and item.subject and item.subject.startswith(OCCURRENCE)
+    )
+    component = f"{COMPONENT}/pkg:maven/log4j-core@2.14.1"
+    outcome = accepted(
+        write(
+            instance,
+            {
+                "op": "set",
+                "subject": occurrence,
+                "field": "scope",
+                "value": "required",
+                "based_on": [f"{component}#affected_by"],
+            },
+        )
+    )
+    scope = _claim(outcome, "scope")
+    assert set(_based_on(instance, scope)) == {affected.removeprefix("Claim:")}
+
+    # A second live value: the shorthand no longer names one Claim.
+    second = accepted(
+        write(
+            instance,
+            {
+                "op": "add",
+                "subject": component,
+                "field": "affected_by",
+                "value": f"{VULN}/CVE-2021-44832",
+            },
+        )
+    )
+    other = next(item.claim for item in second.changes if item.op == "add")
+    assert other is not None
+    before = instance.accepted_coordinate()
+    refused = write(
+        instance,
+        {
+            "op": "set",
+            "subject": occurrence,
+            "field": "scope",
+            "value": "optional",
+            "based_on": [f"{component}#{AFFECTED_BY}"],
+        },
+    )
+    assert refused.refusal is not None
+    assert refused.refusal.code == "cruxible.write.based_on_ambiguous", refused.refusal
+    assert set(refused.refusal.candidates) == {
+        affected.removeprefix("Claim:"),
+        other.removeprefix("Claim:"),
+    }
+    assert refused.refusal.repair is not None and "by ID" in refused.refusal.repair
+    assert instance.accepted_coordinate() == before
+
+
+@pytest.mark.parametrize(
+    ("case", "code"),
+    [
+        ("empty", "cruxible.write.based_on_not_found"),
+        ("retired_here", "cruxible.write.based_on_not_found"),
+        ("unknown_field", "cruxible.write.unknown_field"),
+        ("unknown_subject", "cruxible.write.subject_not_found"),
+        ("unknown_kind", "cruxible.write.unknown_kind"),
+    ],
+)
+def test_based_on_shorthand_refuses_rather_than_guessing(
+    tmp_path: Path, case: str, code: str
+) -> None:
+    instance, scope, judgment, occurrence = _world(tmp_path)
+    exposure = _exposure(instance, judgment)
+    changes: list[dict[str, Any]] = []
+    if case == "empty":
+        accepted(write(instance, {"op": "retire", "target": scope, "reason": "was-wrong"}))
+        named = f"{occurrence}#scope"
+    elif case == "retired_here":
+        # Retired by this same write: what the write leaves holds no Claim.
+        changes.append({"op": "retire", "target": scope, "reason": "was-wrong"})
+        named = f"{occurrence}#scope"
+    elif case == "unknown_field":
+        named = f"{occurrence}#no_such_field"
+    elif case == "unknown_subject":
+        named = f"{OCCURRENCE}/no-such-occurrence#scope"
+    else:
+        named = "sec.nothing/x#scope"
+    before = instance.accepted_coordinate()
+    outcome = write(
+        instance,
+        *changes,
+        {
+            "op": "set",
+            "subject": exposure,
+            "field": "justification",
+            "value": "component_not_present",
+            "based_on": [named],
+        },
+    )
+    assert outcome.status != "accepted"
+    assert outcome.refusal is not None and outcome.refusal.code == code, outcome.refusal
+    assert outcome.refusal.field_path is not None
+    assert outcome.refusal.field_path.endswith(".based_on")
+    assert instance.accepted_coordinate() == before
+
+
+def test_based_on_shorthand_on_the_slot_written_refuses_as_self(tmp_path: Path) -> None:
+    instance, _scope, judgment, _occurrence = _world(tmp_path)
+    exposure = _exposure(instance, judgment)
+    outcome = _judge(instance, exposure, f"{exposure}#justification")
+    assert outcome.refusal is not None
+    assert outcome.refusal.code == "cruxible.authoring.based_on_self", outcome.refusal
+
+
+@pytest.mark.parametrize(
+    ("given", "kept"),
+    [
+        (["@sec.finding/a#kev_status"], ("sec.finding/a#kev_status",)),
+        (
+            ["Claim:CLM-" + "a" * 32, "sec.finding/CVE#1#x.y", "CLM-" + "a" * 32],
+            ("CLM-" + "a" * 32, "sec.finding/CVE#1#x.y"),
+        ),
+    ],
+)
+def test_the_write_contract_takes_claim_ids_and_subject_hash_field(
+    given: list[str], kept: tuple[str, ...]
+) -> None:
+    from cruxible_client.contracts.write import SetChange, based_on_slot
+
+    change = SetChange(field="f", value=1, based_on=tuple(given))
+    assert change.based_on == kept
+    assert based_on_slot("sec.finding/CVE#1#x.y") == ("sec.finding/CVE#1", "x.y")
+
+
+@pytest.mark.parametrize(
+    "bad", ["CLM-123", "kev_status", "sec.finding/a#", "#kev_status", "Sec/a#f", "a#f"]
+)
+def test_the_write_contract_refuses_other_based_on_names(bad: str) -> None:
+    from pydantic import ValidationError
+
+    from cruxible_client.contracts.write import SetChange
+
+    with pytest.raises(ValidationError, match="CLM-<32 hex> or kind/id#field"):
+        SetChange(field="f", value=1, based_on=(bad,))

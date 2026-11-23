@@ -4321,6 +4321,14 @@ named must be live and not the one written (`cruxible.authoring.based_on_not_fou
 `based_on_retired`, `based_on_self`); an instance still on revision 73 refuses
 the option (`based_on_requires_compiler_upgrade`). On `write`, `--based-on`
 applies to each set and add change whose own `based_on` is unset.
+`--based-on SUBJECT#FIELD` (for example
+`sec.finding/acme-cve-2026-1234#kev_status`; the field short or as its
+predicate, the Subject by id, alias or key) names that field's one live Claim at
+the write's base, less any the same write retires; the write pins its
+`CLM-...` id, never the shorthand. A field holding none refuses
+`cruxible.write.based_on_not_found`, one holding several refuses
+`cruxible.write.based_on_ambiguous` listing their ids, and an unknown Subject or
+field refuses as `set` does (`subject_not_found`, `unknown_field`).
 
 A none states that a field holds nothing: an inverse Claim, on a ClaimType
 whose `inverse` declares how (any other refuses

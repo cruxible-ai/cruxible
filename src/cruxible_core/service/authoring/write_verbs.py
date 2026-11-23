@@ -190,6 +190,7 @@ from cruxible_client.contracts.write import (
     WriteRequest,
     WriteStatus,
     WriteWarning,
+    based_on_slot,
     capture_handle,
     change_set_rationale,
     change_set_rationale_too_long,
@@ -1716,6 +1717,69 @@ class _Planner:
     def field_name(self, info: PredicateInfo, kind: str) -> str:
         return self.vocabulary.field_name(info, (kind,))
 
+    def based_on(self, names: tuple[str, ...], *, index: int) -> tuple[str, ...]:
+        """``based_on`` as the Claim ids it pins: each ``kind/id#field`` resolved.
+
+        The shorthand names its field's one live Claim at the head, less any
+        this write retires: none refuses ``based_on_not_found`` and several
+        refuse ``based_on_ambiguous`` naming each, so a pin never guesses. A
+        Claim named both ways is pinned once. Cost: one slot read per shorthand.
+        """
+
+        path = f"changes[{index}].based_on"
+        resolved: set[str] = set()
+        for name in names:
+            slot = based_on_slot(name)
+            if slot is None:
+                resolved.add(name)
+                continue
+            owner, written_field = slot
+            kind, _subject_id, subject_path_value = self.resolve_subject(
+                owner, index=index, path=path
+            )
+            if not self.subject_exists(subject_path_value):
+                raise _refuse(
+                    "cruxible.write.subject_not_found",
+                    f"{owner} names no accepted Subject, so {name} names no Claim",
+                    change=index,
+                    repair="Name a Subject as kind/id; orient and query list them",
+                    field_path=path,
+                )
+            info = self.resolve_field(kind, written_field, index=index, path=path)
+            field_name = self.field_name(info, kind)
+            retiring = self._retiring()
+            live = tuple(
+                claim
+                for claim in self.slot_pin(subject_path_value, info.predicate).live
+                if claim not in retiring
+            )
+            shown = (
+                f"{subject_path_value.removeprefix('subjects/').removesuffix('.json')} {field_name}"
+            )
+            if not live:
+                raise _refuse(
+                    "cruxible.write.based_on_not_found",
+                    f"{shown} holds no live Claim to rest on (at the write's base, "
+                    "less any this write retires)",
+                    change=index,
+                    repair=(
+                        "Name a field that holds a value; "
+                        f"{_render_get(self.request.surface, owner)} lists its Claims"
+                    ),
+                    field_path=path,
+                )
+            if len(live) > 1:
+                raise _refuse(
+                    "cruxible.write.based_on_ambiguous",
+                    f"{shown} holds {len(live)} live Claims; based_on names one",
+                    change=index,
+                    candidates=live,
+                    repair="Name the Claim it rests on by ID (one of the listed CLM-...)",
+                    field_path=path,
+                )
+            resolved.add(live[0])
+        return tuple(sorted(resolved, key=str.encode))
+
     def role(
         self,
         claim_type: ClaimType,
@@ -2803,7 +2867,7 @@ class _Planner:
         if isinstance(change.evidence, SectionEvidence) and change.evidence.own_words:
             values["located_at"] = change.evidence.observation
         if change.based_on is not None:
-            values["based_on"] = change.based_on
+            values["based_on"] = self.based_on(change.based_on, index=index)
         member = ClaimAuthoringPayload(**values)
         used_contract = (
             COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity.name

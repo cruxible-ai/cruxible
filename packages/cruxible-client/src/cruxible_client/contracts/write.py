@@ -598,23 +598,46 @@ class SlotRef(_StrictWriteModel):
     value: ClaimValue | None = None
 
 
-_BASED_ON_DESCRIPTION = (
-    "Claims (CLM-…) this value rests on, pinned at their current versions; omitted keeps "
-    "a revision's pins, [] drops them."
-)
-
-
 _CLAIM_ID = re.compile(r"^CLM-[0-9a-f]{32}$")
 
 
+def based_on_slot(name: str) -> tuple[str, str] | None:
+    """``kind/id#field`` as (Subject reference, field); ``None`` for anything else.
+
+    The shorthand names the one live Claim of a Subject's field: the write
+    planner resolves it at the write's base to that Claim's ``CLM-...`` id, so
+    a stored pin never floats. The field follows the last ``#`` (no field name
+    holds one); the Subject is a reference as ``set`` takes it, ``@`` optional.
+    """
+
+    subject, sep, field = name.rpartition("#")
+    if not sep or not field or len(field) > 512:
+        return None
+    subject = cast(str, subject_reference(subject))
+    if not _SUBJECT_REF.fullmatch(subject):
+        return None
+    return subject, field
+
+
 def _based_on_ids(value: tuple[str, ...] | None) -> tuple[str, ...] | None:
-    """Sorted and once each: the order a list was typed in carries no meaning."""
+    """Sorted and once each: the order a list was typed in carries no meaning.
+
+    A Claim is named by id (``CLM-...``) or as ``kind/id#field``, its field's
+    one live Claim, which the write resolves to the id before it is pinned.
+    """
 
     if value is None:
         return None
-    names = {item.removeprefix("Claim:") for item in value}
-    if any(not _CLAIM_ID.fullmatch(name) for name in names):
-        raise ValueError("based_on names Claims as CLM-<32 hex>")
+    names: set[str] = set()
+    for item in value:
+        name = item.removeprefix("Claim:")
+        if _CLAIM_ID.fullmatch(name):
+            names.add(name)
+            continue
+        slot = based_on_slot(item)
+        if slot is None:
+            raise ValueError("based_on names Claims as CLM-<32 hex> or kind/id#field")
+        names.add(f"{slot[0]}#{slot[1]}")
     return tuple(sorted(names, key=str.encode))
 
 
@@ -1375,5 +1398,6 @@ __all__ = [
     "WriteStatus",
     "WriteValue",
     "as_write_request",
+    "based_on_slot",
     "capture_handle",
 ]

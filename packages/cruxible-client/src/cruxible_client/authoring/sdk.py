@@ -1911,7 +1911,8 @@ def _write_expect(expect: WriteExpect | None) -> ExpectedValue | None:
 
 
 def _based_on(claims: Sequence[str | ClaimRef] | None) -> tuple[str, ...] | None:
-    """Claim IDs for ``based_on``; ``None`` keeps a revision's pins as they are."""
+    """Claims for ``based_on`` (``CLM-...``, or ``kind/id#field`` for that field's one
+    live Claim, resolved by the write); ``None`` keeps a revision's pins as they are."""
 
     if claims is None:
         return None

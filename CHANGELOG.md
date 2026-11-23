@@ -21,6 +21,12 @@ the project's own state instance.
   a Procedure's mirror retirement) never retires the judgment, and `next` lists
   it as `claim_dependency_stale` until it is re-pinned, the pin is dropped, or
   it is retired.
+- **`based_on` takes `SUBJECT#FIELD`:** beside a `CLM-...` id, `--based-on`,
+  write files, the SDK and MCP accept `kind/id#field` (field short or as its
+  predicate; Subject by id, alias or key). The write resolves it at its base to
+  the field's one live Claim and pins that id; a field holding none refuses
+  `cruxible.write.based_on_not_found`, several `cruxible.write.based_on_ambiguous`
+  naming each.
 - **Observation settle survives a pure provider build move:** `provider move`
   keeps an observation-only settle grant (terms unchanged) across a Line
   successor that changes only slot bindings, when every moved slot's new

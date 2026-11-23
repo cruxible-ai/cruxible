@@ -6295,8 +6295,9 @@ def _write_request(model: type[ResultT], fields: Mapping[str, Any], *, example: 
 
 
 _BASED_ON_HELP = (
-    "A Claim (CLM-...) this value was judged from, pinned at its current version; "
-    "repeatable. A later revision or retirement of it flags this value in next."
+    "A Claim (CLM-..., or SUBJECT#FIELD for that field's one live Claim) this value was "
+    "judged from, pinned at its current version; repeatable. A later revision or "
+    "retirement of it flags this value in next."
 )
 
 

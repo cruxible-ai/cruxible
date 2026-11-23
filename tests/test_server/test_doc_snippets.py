@@ -438,7 +438,7 @@ NOT_RUN: dict[tuple[str, int], str] = {
         "the Procedure's shape: its slot, CaptureContract and row Contract are not accepted "
         "in the page world"
     ),
-    ("cli-reference.md", 4914): (
+    ("cli-reference.md", 4922): (
         "a script `cruxible python --check` type-checks: it imports the generated "
         "`world` stub, which exists only on the checker's path"
     ),
