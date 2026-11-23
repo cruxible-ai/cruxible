@@ -26,18 +26,47 @@ The scan, and why truncation is honest
 --------------------------------------
 The accepted-state caller may supply exact selected bytes after verifying them
 against an accepted commitment. Those bytes are only a search needle: every
-candidate occurrence is still digest-verified. When retained bytes are not
-available, commitments of one length share one exhaustive window-hashing pass.
-Both routes are bounded explicitly and admit each source/commitment proof only
-after its full debit fits. Skipping work is never silent -- the overlay records
-the truncation and withholds the affected proof. Recall shrinks; nothing lies.
+candidate occurrence is still verified byte for byte against the needle that
+reproduced the commitment. When retained bytes are not available, commitments
+of one length share one exhaustive window-hashing pass. Both routes are bounded
+explicitly and admit each source/commitment proof only after its full debit
+fits. Skipping work is never silent -- the overlay records the truncation and
+withholds the affected proof. Recall shrinks; nothing lies.
+
+What the needle route costs
+---------------------------
+Every retained needle is searched in every source in one pass per source: one
+automaton over all needles' anchors walks the source once, and each anchor hit
+is verified against the needles it can start. A source is therefore charged its
+length once, however many citations it holds, and the debit for one
+source/commitment proof is
+
+* the source's length, on the first needle admitted in that source;
+* the needle's length, on the first source that admits that needle (the
+  automaton is built once per overlay, not once per source);
+* the needle's length per candidate verified in that source.
+
+The debit is a deterministic model of the work the scan stands for, never a
+measure of work this process happened to do, so the overlay -- truncation
+included -- is a pure function of the snapshot, the wanted set and the budget.
+
+Unchanged sources are not searched again. Occurrences of a needle in a source
+are a pure function of the two byte strings, so the per-process memo keyed by
+(whole-source digest, needle digest) answers an unchanged file without a pass.
+A citation's recorded home offset alone could not do this: it shows the cited
+bytes are still there, not that they occur exactly once, and the ordinal and
+ambiguity laws below need the exact enumeration.
 """
 
 from __future__ import annotations
 
 import bisect
+import functools
 import hashlib
-from collections.abc import Iterable, Sequence
+import re
+import threading
+from collections import OrderedDict
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
@@ -70,6 +99,16 @@ OCCURRENCE_OVERLAY_DIGEST_DOMAIN = "playbill-coverage-occurrence-overlay-v1"
 OCCURRENCE_OVERLAY_V2_DIGEST_DOMAIN = "playbill-coverage-occurrence-overlay-v2"
 
 DEFAULT_MAX_SCANNED_BYTES = 32 * 1024 * 1024
+
+# How many leading bytes of a needle the shared automaton matches before the
+# whole needle is compared. Long enough that anchor hits are nearly always real
+# matches in prose; short enough that the automaton stays small.
+_NEEDLE_ANCHOR_BYTES = 32
+# The memo of complete per-(source content, needle) scans. Bounded in entries
+# and in offsets per entry, so a pathological source cannot grow it without
+# limit; a result it declines to keep is only searched again.
+_SCAN_MEMO_MAX_ENTRIES = 32768
+_SCAN_MEMO_MAX_OFFSETS = 4096
 
 
 class _StrictCoverageIndexModel(BaseModel):
@@ -476,6 +515,188 @@ def _overlay(starts: Sequence[int], *, start_byte: int, end_byte: int) -> Covera
     )
 
 
+@dataclass(frozen=True)
+class _NeedleScan:
+    """Every overlapping occurrence of one needle in one source, in byte order.
+
+    ``candidates`` counts the positions where the needle's anchor matched and the
+    whole needle fits, each of which was compared in full: the verification work
+    the budget charges for, and itself a pure function of the two byte strings.
+    """
+
+    offsets: tuple[int, ...]
+    candidates: int
+
+
+@dataclass(frozen=True)
+class _NeedleAutomaton:
+    """One compiled pass over a set of needles, shared by every source."""
+
+    pattern: re.Pattern[bytes]
+    # needle indexes whose anchor is exactly this anchor
+    by_anchor: Mapping[bytes, tuple[int, ...]]
+    # every anchor that is a prefix of this anchor, itself included
+    prefix_anchors: Mapping[bytes, tuple[bytes, ...]]
+
+
+_TrieNode = dict[int, "_TrieNode"]
+
+
+def _anchor(needle: bytes) -> bytes:
+    return needle[:_NEEDLE_ANCHOR_BYTES]
+
+
+def _trie_pattern(anchors: Iterable[bytes]) -> bytes:
+    """A regular expression that matches the longest anchor starting at a position.
+
+    The anchors form a trie: siblings start with distinct bytes, so at most one
+    branch can proceed, and a node that ends an anchor tries to continue first
+    (a greedy optional group). The first match found is therefore the longest
+    anchor at that position, and every other anchor matching there is one of its
+    prefixes.
+    """
+
+    root: _TrieNode = {}
+    terminal = -1  # not a byte value, so it never collides with a child
+    for anchor in anchors:
+        node = root
+        for byte in anchor:
+            node = node.setdefault(byte, {})
+        node[terminal] = {}
+
+    def emit(node: _TrieNode) -> bytes:
+        parts = [
+            re.escape(bytes((byte,))) + emit(child)
+            for byte, child in sorted(node.items())
+            if byte != terminal
+        ]
+        if not parts:
+            return b""
+        body = parts[0] if len(parts) == 1 else b"(?:" + b"|".join(parts) + b")"
+        return b"(?:" + body + b")?" if terminal in node else body
+
+    return emit(root)
+
+
+@functools.lru_cache(maxsize=16)
+def _needle_automaton(needles: tuple[bytes, ...]) -> _NeedleAutomaton:
+    anchors = sorted({_anchor(needle) for needle in needles})
+    by_anchor: dict[bytes, list[int]] = {}
+    for index, needle in enumerate(needles):
+        by_anchor.setdefault(_anchor(needle), []).append(index)
+    known = set(anchors)
+    prefix_anchors = {
+        anchor: tuple(anchor[:size] for size in range(1, len(anchor) + 1) if anchor[:size] in known)
+        for anchor in anchors
+    }
+    return _NeedleAutomaton(
+        pattern=re.compile(b"(?=(" + _trie_pattern(anchors) + b"))"),
+        by_anchor={anchor: tuple(indexes) for anchor, indexes in by_anchor.items()},
+        prefix_anchors=prefix_anchors,
+    )
+
+
+def _multi_needle_scan(
+    content: bytes,
+    needles: tuple[bytes, ...],
+    *,
+    max_candidates: Sequence[int],
+) -> tuple[_NeedleScan | None, ...]:
+    """Find every overlapping occurrence of every needle in one pass over ``content``.
+
+    A needle whose candidate count passes its ``max_candidates`` can never be
+    admitted by the budget, so its scan stops there and it answers ``None``.
+    """
+
+    automaton = _needle_automaton(needles)
+    offsets: list[list[int]] = [[] for _ in needles]
+    candidates = [0] * len(needles)
+    alive = [True] * len(needles)
+    remaining_alive = len(needles)
+    size = len(content)
+    for match in automaton.pattern.finditer(content):
+        position = match.start()
+        longest = match.group(1)
+        for anchor in automaton.prefix_anchors[longest]:
+            for index in automaton.by_anchor[anchor]:
+                if not alive[index]:
+                    continue
+                needle = needles[index]
+                if position + len(needle) > size:
+                    continue
+                candidates[index] += 1
+                if candidates[index] > max_candidates[index]:
+                    alive[index] = False
+                    remaining_alive -= 1
+                    continue
+                if len(needle) == len(anchor) or content.startswith(needle, position):
+                    offsets[index].append(position)
+        if not remaining_alive:
+            break
+    return tuple(
+        _NeedleScan(offsets=tuple(offsets[index]), candidates=candidates[index])
+        if alive[index]
+        else None
+        for index in range(len(needles))
+    )
+
+
+_scan_memo: OrderedDict[tuple[str, str], _NeedleScan] = OrderedDict()
+_scan_memo_lock = threading.Lock()
+
+
+def _clear_scan_memo() -> None:
+    with _scan_memo_lock:
+        _scan_memo.clear()
+
+
+def _needle_scans(
+    content: bytes,
+    *,
+    content_digest: str,
+    needles: Mapping[str, bytes],
+    remaining: int,
+) -> dict[str, _NeedleScan]:
+    """Scan one source for every needle that fits in it, answering from the memo first.
+
+    A needle missing from the answer was abandoned because no remaining budget
+    could admit it. Only the needles the memo does not hold for this exact
+    content are searched, all of them in one pass.
+    """
+
+    found: dict[str, _NeedleScan] = {}
+    missing: list[str] = []
+    with _scan_memo_lock:
+        for digest in sorted(needles):
+            cached = _scan_memo.get((content_digest, digest))
+            if cached is None:
+                missing.append(digest)
+            else:
+                _scan_memo.move_to_end((content_digest, digest))
+                found[digest] = cached
+    # Admitting any needle here costs the source's length; with less budget than
+    # that left, nothing could be admitted, so nothing is searched.
+    if not missing or remaining < len(content):
+        return found
+    ordered = tuple(needles[digest] for digest in missing)
+    scanned = _multi_needle_scan(
+        content,
+        ordered,
+        max_candidates=tuple(remaining // len(needle) for needle in ordered),
+    )
+    with _scan_memo_lock:
+        for digest, scan in zip(missing, scanned):
+            if scan is None:
+                continue
+            found[digest] = scan
+            if len(scan.offsets) <= _SCAN_MEMO_MAX_OFFSETS:
+                _scan_memo[(content_digest, digest)] = scan
+                _scan_memo.move_to_end((content_digest, digest))
+        while len(_scan_memo) > _SCAN_MEMO_MAX_ENTRIES:
+            _scan_memo.popitem(last=False)
+    return found
+
+
 def build_working_occurrence_overlay(
     sources: Iterable[WorkingSourceContent],
     *,
@@ -490,9 +711,9 @@ def build_working_occurrence_overlay(
        occurrence, which is what makes a whole-file citation resolvable and what
        the manifest binds its per-source commitments to;
     2. every wanted `(digest, byte_length, verified_needle)` drawn from accepted
-       evidence is exhaustively searched in every named source, by overlapping
-       needle search when retained bytes are available and by one length-shared
-       digest pass otherwise.
+       evidence is exhaustively searched in every named source, by one shared
+       overlapping multi-needle pass per source when retained bytes are
+       available and by one length-shared digest pass otherwise.
 
     Ordinals are assigned per `(source, observed digest)` in byte order, so an
     occurrence that is unique in its source keeps ordinal 0 no matter where it
@@ -539,23 +760,37 @@ def build_working_occurrence_overlay(
     reasons: set[str] = set()
     remaining = budget.max_scanned_bytes
 
+    commitments_by_key: dict[bytes, WorkingSourceCommitmentV1] = {}
     for material in materials:
         content = material.content
         source_key = material.source.sort_key
         line_starts[source_key] = _line_starts(content)
         whole = Sha256Value(hashlib.sha256(content).hexdigest()).tagged
-        commitments.append(
-            WorkingSourceCommitmentV1(
-                source=material.source,
-                content_digest=whole,
-                byte_length=len(content),
-            )
+        commitment = WorkingSourceCommitmentV1(
+            source=material.source,
+            content_digest=whole,
+            byte_length=len(content),
         )
+        commitments.append(commitment)
+        commitments_by_key[source_key] = commitment
         found.setdefault((source_key, whole), []).append((0, len(content)))
 
+    needles = {
+        digest: needle for (digest, _length), needle in wanted_values.items() if needle is not None
+    }
+    charged_needles: set[str] = set()
     for material in materials:
         source_key = material.source.sort_key
         content = material.content
+        scans = _needle_scans(
+            content,
+            content_digest=commitments_by_key[source_key].content_digest,
+            needles={
+                digest: needle for digest, needle in needles.items() if len(needle) <= len(content)
+            },
+            remaining=remaining,
+        )
+        pass_charged = False
         for byte_length in sorted(wanted_by_length):
             selections = wanted_by_length[byte_length]
             if len(content) < byte_length:
@@ -572,27 +807,24 @@ def build_working_occurrence_overlay(
             for digest, needle in selections:
                 if needle is None:
                     continue
-                offsets: list[int] = []
-                start = 0
-                while True:
-                    offset = content.find(needle, start)
-                    if offset < 0:
-                        break
-                    offsets.append(offset)
-                    start = offset + 1
-                debit = len(content) + len(needle) + len(offsets) * byte_length
+                scan = scans.get(digest)
+                if scan is None:
+                    reasons.add("scan_budget_exceeded")
+                    continue
+                debit = (
+                    (0 if pass_charged else len(content))
+                    + (0 if digest in charged_needles else byte_length)
+                    + scan.candidates * byte_length
+                )
                 if debit > remaining:
                     reasons.add("scan_budget_exceeded")
                     continue
-                candidate_spans: list[tuple[int, int]] = []
-                for offset in offsets:
-                    window = content[offset : offset + byte_length]
-                    observed = Sha256Value(hashlib.sha256(window).hexdigest()).tagged
-                    if observed != digest:  # pragma: no cover - digest equality follows bytes
-                        raise CoverageError("needle occurrence failed commitment verification")
-                    candidate_spans.append((offset, offset + byte_length))
                 remaining -= debit
-                found.setdefault((source_key, digest), []).extend(candidate_spans)
+                pass_charged = True
+                charged_needles.add(digest)
+                found.setdefault((source_key, digest), []).extend(
+                    (offset, offset + byte_length) for offset in scan.offsets
+                )
                 proofs.append(
                     CoverageCommitmentScanProof(
                         source=material.source,

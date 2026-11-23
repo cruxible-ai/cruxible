@@ -44,6 +44,20 @@ the project's own state instance.
   iterating on a pure provider is one command and one approval, and an
   observation-only settle grant keeps settle with its Line's enablement.
 
+### Fixed
+
+- **Coverage scans no longer truncate on citation-dense workspaces.** The
+  working-occurrence scan searches each source once for all cited passages
+  (a shared multi-needle pass) and charges the scan budget the source's length
+  once, not once per citation, so a 2 MB document holding 200 citations scans
+  in about 2 MB of budget instead of 400 MB; unchanged files are answered from a
+  per-process memo without a rescan. `next` no longer reports every citation of
+  a large document `citation_source_unobserved` with `coverage_partial`. The
+  per-source cap on coverage cards, scan proofs and citation windows in a
+  `next` observation rises from 256 to 4096, so an instance with more than 256
+  cited passages, or a document with more than 256 citations, keeps its
+  evidence.
+
 ## [0.5.1] - 2026-11-22
 
 ### Added
