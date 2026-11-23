@@ -211,7 +211,10 @@ from cruxible_client.contracts.shapes import (
     InvalidRecordArm,
     KeyCanonicalizer,
 )
-from cruxible_client.contracts.source_references import ExternalSourceReference
+from cruxible_client.contracts.source_references import (
+    CasSourceReference,
+    ExternalSourceReference,
+)
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime, utc_now
 from cruxible_client.contracts.workspace_file import (
     ExecutedWorkspaceFileSourceRequestV2,
@@ -5241,8 +5244,13 @@ class ProcedureExecutor:
             )
         for field, item in built.items():
             envelope = item.envelope
-            source = envelope.source
-            assert isinstance(source, ExternalSourceReference)
+            # A pure operation's output under a CAS-only contract has a CAS
+            # source: the acquisition receipt then states the provider wire's
+            # own source labels, which its invocation receipt digests.
+            stated = envelope.source
+            if not isinstance(stated, ExternalSourceReference):
+                assert isinstance(stated, CasSourceReference)
+                stated = wires[field]
             results[field] = ProcedureSourceAcquisitionResultV1(
                 node_id=node.node_id,
                 input_name=rules[field].input_name,
@@ -5252,14 +5260,14 @@ class ProcedureExecutor:
                         capture_contract_digest=envelope.capture_contract_digest,
                         producer=envelope.producer,
                         producer_binding_digest=envelope.producer_binding_digest,
-                        source_identity=source.source_identity,
-                        coordinate_type=source.coordinate_type,
-                        coordinate=source.coordinate,
-                        selector_type=source.selector_type,
-                        selector=source.selector,
+                        source_identity=stated.source_identity,
+                        coordinate_type=stated.coordinate_type,
+                        coordinate=stated.coordinate,
+                        selector_type=stated.selector_type,
+                        selector=stated.selector,
                         commitment=envelope.commitment,
                         observed_at=envelope.observed_at,
-                        replayability=source.replayability,
+                        replayability=stated.replayability,
                         source_effective_time=envelope.source_effective_time,
                     ),
                     envelope=envelope,

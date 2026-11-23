@@ -457,7 +457,9 @@ EPSS_RECORDS = {
 }
 
 
-def _derived_kind() -> Any:
+def _derived_kind(shape: str = "http_response", grade: str = "derived") -> Any:
+    """The derive's view kind: ``procedure_output`` is CAS-only, with no source schemas."""
+
     from cruxible_client.contracts.capture_contract_inputs import (
         CaptureContractInputRecord,
         lower_capture_contract_input,
@@ -466,8 +468,8 @@ def _derived_kind() -> Any:
     kind = lower_capture_contract_input(
         CaptureContractInputRecord(
             name=KEV_VIEW_KIND,
-            shape="http_response",
-            grade="derived",
+            shape=shape,
+            grade=grade,
             replay="attested",
             max_bytes=1_048_576,
             decoding=JSON_DECODING,
@@ -486,7 +488,13 @@ def _kev_kind(access: str) -> Any:
     return kind if access == "open" else kind.model_copy(update={"body_access": access})
 
 
-def skeleton_world(tmp_path: Path, *, kev_access: str = "open") -> Any:
+def skeleton_world(
+    tmp_path: Path,
+    *,
+    kev_access: str = "open",
+    view_shape: str = "http_response",
+    view_grade: str = "derived",
+) -> Any:
     from tests.core_support._support import initialize_local
 
     checkout = require_provider_checkout()  # the skeleton runs the real web.fetch
@@ -495,7 +503,7 @@ def skeleton_world(tmp_path: Path, *, kev_access: str = "open") -> Any:
     kinds = (
         _kev_kind(kev_access),
         with_layout(http_contract(name=EPSS_KIND, decoding=JSON_DECODING), EPSS_RECORDS),
-        _derived_kind(),
+        _derived_kind(view_shape, view_grade),
     )
     inverse = ClaimInverse(key={"kind": "object"}, evidence_rules=("captured",))
     types = (
@@ -930,6 +938,12 @@ DERIVE_REQUEST = boundary_contract(
     {"source": "capture<*>", "watched": "list<test.watched-row@1>{max_items: 100}"},
     WATCH_ROW,
 )
+#: A pure operation computing a document from parameters alone: no Capture input.
+COMPUTE_REQUEST = boundary_contract(
+    "test.compute.request",
+    {"watched": "list<test.watched-row@1>{max_items: 100}"},
+    WATCH_ROW,
+)
 DERIVE_PROVIDER = "test-derive"
 VIEW_URL = "https://derive.test/kev-view"
 
@@ -968,6 +982,15 @@ def _derive_build(checkout: Path, *, effect: str = "pure") -> Any:
             "refusals": {},
             "entrypoint": "demo.runtime:Derive",
         },
+        {
+            "name": "compute",
+            "serves": [compute_capability_name(effect)],
+            "in": "test.compute.request@1",
+            "out": "web.fetch.result@1",
+            "effect": effect,
+            "refusals": {},
+            "entrypoint": "demo.runtime:Derive",
+        },
     )
     manifest = ProviderRuntimeManifest(
         provider_id=DERIVE_PROVIDER,
@@ -980,7 +1003,7 @@ def _derive_build(checkout: Path, *, effect: str = "pure") -> Any:
         ),
     )
     document = registration_document(
-        manifest, served, (DERIVE_REQUEST, WATCH_ROW, *_web_contracts(checkout))
+        manifest, served, (DERIVE_REQUEST, COMPUTE_REQUEST, WATCH_ROW, *_web_contracts(checkout))
     )
     return document.provider_definition(
         distribution=ProviderLocalDistributionPin(
@@ -1004,12 +1027,28 @@ def derive_capability_name(effect: str = "pure") -> str:
     return "test.derive" if effect == "pure" else "test.derive-" + effect.replace("_", "-")
 
 
-def derive_world(tmp_path: Path, *, kev_access: str = "open", effect: str = "pure") -> Any:
-    instance = skeleton_world(tmp_path, kev_access=kev_access)
-    accept_tree(instance, contract_files(DERIVE_REQUEST), name="derive-contracts")
+def compute_capability_name(effect: str = "pure") -> str:
+    """The compute slot's capability, one per effect like the derive's."""
+
+    return "test.compute" if effect == "pure" else "test.compute-" + effect.replace("_", "-")
+
+
+def derive_world(
+    tmp_path: Path,
+    *,
+    kev_access: str = "open",
+    effect: str = "pure",
+    view_shape: str = "http_response",
+    view_grade: str = "derived",
+) -> Any:
+    instance = skeleton_world(
+        tmp_path, kev_access=kev_access, view_shape=view_shape, view_grade=view_grade
+    )
+    accept_tree(instance, contract_files(DERIVE_REQUEST, COMPUTE_REQUEST), name="derive-contracts")
     ensure_capabilities(
         instance,
         (derive_capability_name(effect), "test.derive.request@1", "web.fetch.result@1", effect),
+        (compute_capability_name(effect), "test.compute.request@1", "web.fetch.result@1", effect),
         name="derive-capabilities",
     )
     build = _derive_build(require_provider_checkout(), effect=effect)
@@ -1030,6 +1069,18 @@ def kev_view(source: bytes, watched: list[Mapping[str, Any]]) -> bytes:
     return json.dumps(document, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
+def computed_view(watched: list[Mapping[str, Any]]) -> bytes:
+    """The compute: a listing of the watched CVEs (all but the unlisted one), no Capture read."""
+
+    rows = [
+        {"cveID": row["cve_id"], "dateAdded": "2024-01-01"}
+        for row in watched
+        if row["cve_id"] != UNLISTED
+    ]
+    document = {"vulnerabilities": sorted(rows, key=lambda row: row["cveID"])}
+    return json.dumps(document, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
 class DeriveReplay(Replay):
     """web.fetch from recorded exchanges, and the pure derive double beside it."""
 
@@ -1045,11 +1096,17 @@ class DeriveReplay(Replay):
             if "url" in context.input:
                 return fetch(context)
             self.derive_inputs.append(dict(context.input))
-            # The derive reads the Capture's exact bytes from the wire core passed.
-            source = context.input["source"]
-            body = kev_view(base64.b64decode(source["content_base64"]), context.input["watched"])
+            if "source" in context.input:
+                # The derive reads the Capture's exact bytes from the wire core passed.
+                source = context.input["source"]
+                body = kev_view(
+                    base64.b64decode(source["content_base64"]), context.input["watched"]
+                )
+                named = source["bytes_digest"]
+            else:
+                body = computed_view(context.input["watched"])
+                named = "compute"
             digest = "sha256:" + hashlib.sha256(body).hexdigest()
-            named = source["bytes_digest"]
             # A Capture is a named field of the result: web.fetch.result's ``capture``.
             return {
                 "capture": {
@@ -1087,10 +1144,20 @@ def _derive_step(alias: str, source: str) -> dict[str, Any]:
     }
 
 
-def derive_spec(*, chain: bool = False, mix: bool = False, effect: str = "pure") -> Any:
+def derive_spec(
+    *,
+    chain: bool = False,
+    mix: bool = False,
+    effect: str = "pure",
+    absence: bool = True,
+    compute: bool = False,
+) -> Any:
     """fetch -> derive (-> derive) -> extract -> claims, with absence over the watched CVEs.
 
-    ``mix`` cites a second, unrelated fetched Capture in each Claim's rationale.
+    ``mix`` cites a second, unrelated fetched Capture in each Claim's rationale;
+    without ``absence`` the Claims are written from the extracted records alone;
+    ``compute`` takes the view from the pure ``compute`` operation, which reads
+    no Capture, instead of the derive.
     """
 
     view = "chained" if chain else "view"
@@ -1099,6 +1166,13 @@ def derive_spec(*, chain: bool = False, mix: bool = False, effect: str = "pure")
         {"read": "watched", "query": "test.watched-vulnerabilities"},
         _derive_step("view", "$steps.catalog.capture"),
     ]
+    if compute:
+        steps[-1] = {
+            "call": "view",
+            "slot": "compute",
+            "captures": {"capture": KEV_VIEW_KIND},
+            "input": {"watched": "$steps.watched.rows"},
+        }
     if chain:
         steps.append(_derive_step("chained", "$steps.view.capture"))
     if mix:
@@ -1132,6 +1206,11 @@ def derive_spec(*, chain: bool = False, mix: bool = False, effect: str = "pure")
             ],
         },
     ]
+    if not absence:
+        (write,) = (step for step in steps if step.get("id") == "write")
+        write.pop("expect")
+        for claim in write["claims"]:
+            claim.pop("when_absent")
     return build_spec(
         "test.kev-derive" + ("-chain" if chain else "") + ("-mix" if mix else ""),
         reference_text=True,
@@ -1144,7 +1223,11 @@ def derive_spec(*, chain: bool = False, mix: bool = False, effect: str = "pure")
         },
         slots={
             "fetch": {"capability": "web.fetch@1"},
-            "derive": {"capability": f"{derive_capability_name(effect)}@1"},
+            **(
+                {"compute": {"capability": f"{compute_capability_name(effect)}@1"}}
+                if compute
+                else {"derive": {"capability": f"{derive_capability_name(effect)}@1"}}
+            ),
         },
         hard_caps=procedure_limits(provider_calls=4, capture_bytes=1_048_576, read_rows=500),
         steps=steps,
@@ -1395,3 +1478,162 @@ def test_a_derive_input_must_be_a_capture_this_run_fetched_or_admitted() -> None
             )
         assert refused.value.refusal.code == "contract_input_refused"
         assert "replay" in str(refused.value)
+
+
+# -- a pure operation's output under a CAS-only (procedure_output) CaptureKind -------------
+
+
+def _verified_view(instance: Any, root: str) -> Any:
+    """``verify_capture`` (unchanged law) over the view, requiring its production proof."""
+
+    from cruxible_client.contracts.captures import parse_capture_contract, verify_capture
+
+    view = _envelope(instance, root)
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    path = capture_contract_path(KEV_VIEW_KIND)
+    contract = parse_capture_contract(tree[path], path=path)
+    assert contract.shape == "procedure_output"
+    verified = verify_capture(
+        root,
+        store=instance.body_store(),
+        contract=contract,
+        producer_artifact_digests={view.producer.qualified: view.run_coordinate.executable_digest},
+        producer_receipt_resolver=instance.capture_verification_context(),
+        require_production_proof=True,
+    )
+    assert verified == view
+    return view
+
+
+def _assert_accepted(instance: Any, claims: Mapping[tuple[str, str], Any]) -> None:
+    """Activation admitted every proposed Claim into accepted state."""
+
+    from cruxible_client.contracts.claims import claim_path
+
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    for claim in claims.values():
+        assert claim_path(claim.identity.name) in tree
+
+
+@pytest.mark.parametrize("grade", ["derived", "observed"])
+def test_a_pure_operation_output_commits_a_cas_capture_under_a_procedure_output_kind(
+    tmp_path: Path, grade: str
+) -> None:
+    """A procedure_output kind has no source schemas: the Capture's source is its bytes.
+
+    The provider still returns the Capture wire (its labels are digested by the
+    invocation receipt); the envelope is CAS-sourced with the invocation's
+    evidence, verify_capture admits it unchanged, extraction reads it, and the
+    Claims citing it are admitted on activation.
+    """
+
+    from cruxible_client.contracts.captures import ProviderInvocationCaptureEvidence
+    from cruxible_client.contracts.source_references import CasSourceReference
+
+    instance = derive_world(tmp_path, view_shape="procedure_output", view_grade=grade)
+    # A derived view is a derive over the fetched catalog; an observed one is the
+    # pure compute's own output, from no Capture (only a derive takes Capture inputs).
+    spec = derive_spec(absence=False, compute=grade == "observed")
+    _install(instance, spec, line="test.kev-derive-line", parameters=KEV_PARAMS)
+    state, replay = _derive_run(instance, line="test.kev-derive-line")
+    assert state.status == "succeeded", state.terminal
+    claims = _by(proposed(instance, state))
+    listed = [cve for cve in WATCHED if cve != UNLISTED]
+    assert set(claims) == {
+        *((_cve(c), LISTED_IN) for c in listed),
+        *((_cve(c), DATE_ADDED) for c in listed),
+    }
+    root = claims[(_cve(listed[0]), DATE_ADDED)].backing.procedure_evidence.value.capture_digest
+    spec_digest = pinned_extract_digest(instance, "test.kev-derive", "entries")
+    for cve in listed:
+        _extracted(claims[(_cve(cve), DATE_ADDED)], root, spec_digest)
+    view = _verified_view(instance, root)
+    (derive_input,) = replay.derive_inputs
+    body = (
+        kev_view(replay.body("kev-catalog"), derive_input["watched"])
+        if grade == "derived"
+        else computed_view(derive_input["watched"])
+    )
+    assert view.source == CasSourceReference(content_digest=view.commitment.digest)
+    assert view.commitment.digest == "sha256:" + hashlib.sha256(body).hexdigest()
+    assert instance.body_store().read(view.commitment.digest, access=ACCESS) == body
+    assert isinstance(view.production_evidence, ProviderInvocationCaptureEvidence)
+    assert view.production_evidence.operation == ("derive" if grade == "derived" else "compute")
+    assert view.producer.kind == "Provider"
+    if grade == "derived":
+        (catalog,) = _manifest(instance, root).input_capture_digests
+        _assert_payload_capture(instance, catalog, replay.body("kev-catalog"), KEV_URL)
+        assert view.reducer_digest is not None
+    else:
+        assert view.reducer_digest is None and view.input_receipt_set_manifest_digest is None
+
+    activate(instance, state)
+    _assert_accepted(instance, claims)
+    # A re-run over the same bytes reuses the held CAS-sourced Capture.
+    second, _ = _derive_run(instance, line="test.kev-derive-line", minute=1)
+    assert second.status == "succeeded", second.terminal
+    (written,) = _summaries(second, "claims")
+    assert written.written == 0 and written.revised == 0 and written.delivery == "unchanged"
+
+
+def _final_record(instance: Any, state: Any) -> dict[str, Any]:
+    """The run's journaled final record (``attempt_finalized``)."""
+
+    import cruxible_core.service.procedures.procedure_runs as service
+    from cruxible_core.exhaust.records import parse_journal_payload
+
+    journal, _root = service._journal(instance)  # noqa: SLF001
+    stream = service._stream(instance)  # noqa: SLF001
+    (stored,) = journal.select_records(stream, run_id=state.run_id, event_kind="attempt_finalized")
+    return parse_journal_payload(
+        instance.body_store().read(stored.record.payload_digest, access=ACCESS)
+    )
+
+
+def test_an_external_operation_cannot_produce_a_procedure_output_capture(tmp_path: Path) -> None:
+    """A non-pure operation's output is an external observation; the refusal says why."""
+
+    instance = derive_world(
+        tmp_path, effect="external_read", view_shape="procedure_output", view_grade="observed"
+    )
+    spec = derive_spec(effect="external_read", absence=False, compute=True)
+    _install(instance, spec, line="test.kev-impure-line", parameters=KEV_PARAMS)
+    state, _ = _derive_run(instance, line="test.kev-impure-line")
+    assert state.status == "internal_failed"
+    assert state.terminal.code == "provider_protocol_violation", state.terminal
+    detail = (
+        "CaptureContract does not permit external observations (a procedure_output "
+        "CaptureKind takes only a pure operation's output; operation 'compute' declares "
+        "effect: external_read)"
+    )
+    # The served terminal names the cause; the journal's final record keeps it typed.
+    assert state.terminal.message == (
+        "Provider execution violated an internal integrity contract. "
+        f"Capture conversion failed at view.capture: {detail}"
+    )
+    final = _final_record(instance, state)
+    assert final["failure_details"] == {
+        "node_id": "view",
+        "field": "capture",
+        "reason": "Capture conversion failed",
+        "error": "CaptureFormatError",
+        "detail": detail,
+    }
+
+
+def test_absence_over_a_cas_sourced_view_refuses_for_want_of_a_logical_source(
+    tmp_path: Path,
+) -> None:
+    """Known limit: absence enumerates one logical source, which a CAS Capture lacks.
+
+    A procedure_output Capture names its bytes, not an origin, so a complete
+    read over it cannot retire or invert by absence; the Claims it lists still
+    write (see the test above).
+    """
+
+    instance = derive_world(tmp_path, view_shape="procedure_output", view_grade="derived")
+    _install(instance, derive_spec(), line="test.kev-derive-line", parameters=KEV_PARAMS)
+    state, _ = _derive_run(instance, line="test.kev-derive-line")
+    assert state.status == "node_refused"
+    assert state.terminal.code == "claims_absence_invalid", state.terminal
+    assert "enumeration Capture has no logical source" in state.terminal.message

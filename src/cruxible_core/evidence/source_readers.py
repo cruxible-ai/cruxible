@@ -24,6 +24,7 @@ from cruxible_client.contracts.captures import (
     CaptureObjectStoreProtocol,
     CaptureRunCoordinateV1,
     CaptureSelectionBudget,
+    ProviderInvocationCaptureEvidence,
     SourceEffectiveTime,
     capture_components,
     capture_digest,
@@ -34,6 +35,7 @@ from cruxible_client.contracts.captures import (
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.providers import ProviderV1, provider_declares_capture_contract
 from cruxible_client.contracts.source_references import (
+    CasSourceReference,
     EvidenceCommitment,
     ExternalSourceReference,
 )
@@ -239,19 +241,32 @@ class ExternalCaptureAcquisitionV1(_StrictSourceReaderModel):
         else:
             assert isinstance(envelope, CaptureEnvelope)
             source = envelope.source
-            if not isinstance(source, ExternalSourceReference) or (
+            if (
                 self.receipt.capture_contract_digest != envelope.capture_contract_digest
                 or self.receipt.producer != envelope.producer
                 or self.receipt.producer_binding_digest != envelope.producer_binding_digest
-                or self.receipt.source_identity != source.source_identity
-                or self.receipt.coordinate_type != source.coordinate_type
-                or self.receipt.coordinate != source.coordinate
-                or self.receipt.selector_type != source.selector_type
-                or self.receipt.selector != source.selector
                 or self.receipt.commitment != envelope.commitment
                 or self.receipt.observed_at != envelope.observed_at
-                or self.receipt.replayability != source.replayability
                 or self.receipt.source_effective_time != envelope.source_effective_time
+            ):
+                raise ValueError("Capture v2 differs from its acquisition receipt")
+            if isinstance(source, ExternalSourceReference):
+                if (
+                    self.receipt.source_identity != source.source_identity
+                    or self.receipt.coordinate_type != source.coordinate_type
+                    or self.receipt.coordinate != source.coordinate
+                    or self.receipt.selector_type != source.selector_type
+                    or self.receipt.selector != source.selector
+                    or self.receipt.replayability != source.replayability
+                ):
+                    raise ValueError("Capture v2 differs from its acquisition receipt")
+            elif not (
+                # A pure provider operation's output under a CAS-only contract
+                # (``provider_capture_is_cas_output``): its bytes are its source,
+                # and the receipt's source labels are the provider's wire.
+                isinstance(source, CasSourceReference)
+                and isinstance(envelope.production_evidence, ProviderInvocationCaptureEvidence)
+                and source.content_digest == envelope.commitment.digest
             ):
                 raise ValueError("Capture v2 differs from its acquisition receipt")
         if capture_digest(self.envelope).tagged != self.capture_digest:
