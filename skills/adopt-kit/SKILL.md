@@ -33,7 +33,10 @@ names, timing and grants, then submit and obtain review and approval from a
 separate agent session (its own principal); after acceptance, inspect
 `cruxible runbook preview <start>` and run `cruxible runbook run <start>` when
 authorized. A review stop leaves a proposal, not permission to approve it
-yourself. Enabling scheduled Lines is separate consent. Facts copied from
+yourself. Enabling scheduled Lines is separate consent: `cruxible line enable
+--runbook <start>` enables every Line the Runbook runs, one receipt line each.
+A template mandate's span `expires` (`"90d"`) counts from submission, so it
+needs no hand-edited dates. Facts copied from
 sources settle under a Line's Mandate; judgments always need review.
 
 Installed kit definitions, Procedures and guidance Documents included, can be

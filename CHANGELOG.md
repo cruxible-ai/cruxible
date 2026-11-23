@@ -63,6 +63,16 @@ the project's own state instance.
   iterating on a pure provider is one command and one approval, and an
   observation-only settle grant keeps settle with its Line's enablement.
 
+### Changed
+
+- **Plugin skills teach the 0.6.0 surfaces.** The governance reference sorts
+  changes into cold (trust boundaries, always reviewed), warm (one observation
+  settle grant, a pure `provider publish --move`, `line enable --runbook`) and
+  hot (judgments pinned with `--based-on kind/id#field`, reading
+  `procedure_output` Captures); the skills drop the hand-made reviewer key
+  directory and cover `@derive` providers, span `expires` and the provider
+  review summary.
+
 ### Fixed
 
 - **Coverage scans no longer truncate on citation-dense workspaces.** The
