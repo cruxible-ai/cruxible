@@ -2596,6 +2596,44 @@ def _provider_failure_cause(
     )
 
 
+#: The longest exception text a provider-protocol failure carries in its details.
+_CONVERSION_DETAIL_MAX_CHARS = 512
+
+
+def _capture_conversion_detail(exc: BaseException) -> str:
+    """Why a provider's capture field failed Capture conversion, safe to journal.
+
+    A pydantic error names each failing location and message, never its input
+    value (which may be the Capture's base64 bytes); any other error is its own
+    message on one line. Either is bounded.
+    """
+
+    if isinstance(exc, ValidationError):
+        text = "; ".join(
+            f"{'.'.join(str(part) for part in error['loc']) or '<root>'}: {error['msg']}"
+            for error in exc.errors(include_url=False, include_input=False)
+        )
+    else:
+        text = str(exc)
+    text = " ".join(text.split()) or type(exc).__name__
+    if len(text) > _CONVERSION_DETAIL_MAX_CHARS:
+        text = text[: _CONVERSION_DETAIL_MAX_CHARS - 1] + "\u2026"
+    return text
+
+
+def _capture_conversion_failure(node_id: str, field: str, exc: BaseException) -> "_InternalFailure":
+    return _InternalFailure(
+        "provider_protocol_violation",
+        details={
+            "node_id": node_id,
+            "field": field,
+            "reason": "Capture conversion failed",
+            "error": type(exc).__name__,
+            "detail": _capture_conversion_detail(exc),
+        },
+    )
+
+
 class _InternalFailure(Exception):
     def __init__(self, code: str, *, details: object | None = None) -> None:
         super().__init__(code)
@@ -5089,10 +5127,7 @@ class ProcedureExecutor:
                     source_read_receipt=source_reads[field],
                 )
             except (CaptureFormatError, ValidationError, ValueError) as exc:
-                raise _InternalFailure(
-                    "provider_protocol_violation",
-                    details={"node_id": node.node_id, "reason": "Capture conversion failed"},
-                ) from exc
+                raise _capture_conversion_failure(node.node_id, field, exc) from exc
         reserved_store = ReservedCaptureStore(
             bodies=self.bodies,
             reservations=self.material_reservations,
@@ -5167,10 +5202,7 @@ class ProcedureExecutor:
                     state.fetched_captures.add(built[field].capture_digest)
                 bodies[field] = base64.b64decode(wire.content_base64, validate=True)
             except (CaptureFormatError, CasError, ValidationError, ValueError) as exc:
-                raise _InternalFailure(
-                    "provider_protocol_violation",
-                    details={"node_id": node.node_id, "reason": "Capture conversion failed"},
-                ) from exc
+                raise _capture_conversion_failure(node.node_id, field, exc) from exc
         digests = {field: item.capture_digest for field, item in built.items()}
         material: CanonicalValue
         if glob_request is not None:
