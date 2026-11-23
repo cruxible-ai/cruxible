@@ -40,8 +40,9 @@ DEFAULT_PROFILE_MODEL_VISIBLE_TOKENS = 10_400
 #: by the maintainer (2026-11-23) for ``based_on`` across cruxible_set and
 #: cruxible_write. ``provider install --move`` (0.6.0 slice D2) adds ``move`` and
 #: ``move_only`` to cruxible_provider_install's request, measured at 18,715.25:
-#: ceiling 18,750, PENDING maintainer approval. The ceiling exists so each addition is a deliberate decision,
-#: not drift.
+#: ceiling 18,750, approved by the maintainer (2026-11-23) for slice D2's ``move``
+#: and ``move_only`` on cruxible_provider_install. The ceiling exists so each
+#: addition is a deliberate decision, not drift.
 #: This separate ceiling does not widen the existing default profile's budget.
 PLUGIN_PROFILE_MODEL_VISIBLE_TOKENS = 18_750
 
