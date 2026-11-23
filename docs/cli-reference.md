@@ -1920,7 +1920,9 @@ cruxible capture-contract propose --template [--expanded]
 The authored input is `{name: catalog.fetched, shape: http_response}`.
 `shape` is `http_response`, `procedure_output`, `foreign_span` or
 `database_snapshot`. Optional fields: `grade` (`observed` by default;
-`derived` for a provider derive's output, declared on `http_response`), `replay` (`attested` for HTTP,
+`derived` for a provider derive's output, declared on `procedure_output`, `http_response` or
+`foreign_span` with `json` or `csv` decoding; a `procedure_output` kind takes only a pure
+operation's output), `replay` (`attested` for HTTP,
 `exact` otherwise), `retention` (`P30D`), `erasable` (`false`), `max_bytes`
 (16777216) and `selector_privacy` (`direct_allowed` or `pseudonymous_required`).
 The engine expands the shape into stored components. The template requires no

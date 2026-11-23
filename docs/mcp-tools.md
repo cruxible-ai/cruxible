@@ -695,7 +695,9 @@ CaptureContract input uses the closed shapes `http_response`, `procedure_output`
 `foreign_span`, `database_snapshot`. Defaults: `grade: observed`, `replay: attested`
 for HTTP and `exact` otherwise, `retention: P30D`, `erasable: false`,
 `max_bytes: 16777216`, `selector_privacy: direct_allowed`. Derived grade (a
-provider derive's output) is declared on `http_response`. The engine supplies components; clients author this compact
+provider derive's output) is declared on `procedure_output`, `http_response` or
+`foreign_span`, with `json` or `csv` decoding. A `procedure_output` kind takes
+only a pure operation's output, committed with its bytes as its source. The engine supplies components; clients author this compact
 form. A rule's `capture_contracts` accepts names or
 `{contract: NAME, logical_sources: [SOURCE]}`. Empty sources means any; a
 restricted entry matches the external Capture's recorded source and cannot
