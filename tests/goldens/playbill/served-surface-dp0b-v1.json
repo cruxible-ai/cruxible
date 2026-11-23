@@ -2,8 +2,8 @@
   "format": "playbill-served-surface-v1",
   "succession": {
     "ratified_by": "maintainer",
-    "register_entry": "2026-11-23:provider-install-move",
-    "surface_digest": "sha256:1ccc6b0447b4e1d162cc633a7fb4efb8bd6f67d58c22bd62c34ec754a49dce87"
+    "register_entry": "2026-11-23:provider-publish",
+    "surface_digest": "sha256:3e1599dce3b5c036d9ebd549184ef09d6f8660914de7c38c137b14d0e95475ed"
   },
   "surface": {
     "cli_leaves": [
@@ -679,6 +679,11 @@
         ],
         "command": "provider move",
         "delegate": "cruxible_core.cli.commands.playbill.move_provider"
+      },
+      {
+        "client_operations": [],
+        "command": "provider publish",
+        "delegate": "cruxible_core.cli.commands.playbill.publish_provider"
       },
       {
         "client_operations": [

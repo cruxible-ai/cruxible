@@ -343,9 +343,7 @@ def test_move_is_not_part_of_the_installation_identity() -> None:
 
     wheel = ProviderWheelObject(filename="demo_provider-1.0.0-py3-none-any.whl", digest=ZERO)
     plain = ProviderInstallRequest(wheel=wheel, lock_digest=ZERO)
-    moving = ProviderInstallRequest(
-        wheel=wheel, lock_digest=ZERO, move=True, move_only=("Line:a",)
-    )
+    moving = ProviderInstallRequest(wheel=wheel, lock_digest=ZERO, move=True, move_only=("Line:a",))
     excluded = {"reverify", "dry_run", "at", "move", "move_only"}
     assert plain.model_dump(mode="json", exclude=excluded) == moving.model_dump(
         mode="json", exclude=excluded

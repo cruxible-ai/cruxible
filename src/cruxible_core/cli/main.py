@@ -65,6 +65,7 @@ MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     ("body", "store"): "active",
     ("provider", "install"): "active",
     ("provider", "move"): "active",
+    ("provider", "publish"): "active",
     ("provider", "retire"): "active",
     ("kit", "add"): "active",
     ("kit", "remove"): "active",
@@ -737,6 +738,11 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 "playbill", "install_provider", "Install and register a provider package."
             ),
             "move": _command("playbill", "move_provider", "Move Lines to a provider build."),
+            "publish": _command(
+                "playbill",
+                "publish_provider",
+                "Build a provider from one Python file and install it.",
+            ),
             "retire": _command("playbill", "retire_provider", "Retire an unpinned provider build."),
         },
         module="playbill",

@@ -160,6 +160,7 @@ from cruxible_client.contracts.procedures.windows import TriggerEventReference
 from cruxible_client.contracts.proposal_models import canonical_proposal_ref_name
 from cruxible_client.contracts.provider_installation import (
     ProviderInstallRequest,
+    ProviderInstallResult,
     ProviderMoveRequest,
     ProviderRetireRequest,
 )
@@ -2091,6 +2092,25 @@ def list_provider_packages(output_json: bool) -> None:
         click.echo(result.detail)
 
 
+def _provider_move_options(fn: Callable[..., Any]) -> Callable[..., Any]:
+    """``--move`` and ``--only LINE``: move Lines to the installed build, in one proposal."""
+
+    command = click.option(
+        "--only",
+        "only",
+        multiple=True,
+        help="With --move, move only this Line (Line:NAME, repeatable).",
+    )(fn)
+    return click.option(
+        "--move",
+        is_flag=True,
+        help=(
+            "Also move the live Lines binding other builds of this provider to the new "
+            "build, in the same proposal as its registration."
+        ),
+    )(command)
+
+
 @provider_group.command("install")
 @click.argument("package_or_wheel")
 @click.option(
@@ -2114,6 +2134,7 @@ def list_provider_packages(output_json: bool) -> None:
     help="The control domain the Provider definition records for this package.",
 )
 @click.option("--reverify", is_flag=True, help="Recheck a retained installation explicitly.")
+@_provider_move_options
 @change_control_options
 @json_option
 @handle_errors
@@ -2124,6 +2145,8 @@ def install_provider(
     extras: tuple[str, ...],
     control_domain: str,
     reverify: bool,
+    move: bool,
+    only: tuple[str, ...],
     dry_run: bool | None,
     at: str | None,
     output_json: bool,
@@ -2137,8 +2160,12 @@ def install_provider(
     (awaiting_approval) for the ordinary review and activation. ``--dry-run`` is
     a validation-only preview by name: it resolves the package and, if it is
     already prepared here, evaluates the registration it would propose; it
-    fetches, builds, registers and proposes nothing.
+    fetches, builds, registers and proposes nothing. ``--move`` also moves the
+    live Lines binding other builds of the provider to this build, in the same
+    proposal (``provider move --to`` it, as one review).
     """
+    if only and not move:
+        raise click.UsageError("--only names Lines to move; it requires --move")
     if package_or_wheel.endswith(".whl"):
         if lock_path is None:
             raise click.UsageError("a local wheel requires --lock")
@@ -2157,6 +2184,8 @@ def install_provider(
                 extras=extras,
                 control_domain=control_domain,
                 reverify=reverify,
+                move=move,
+                move_only=only,
                 at=at,
             ),
             command_name="cruxible provider install",
@@ -2171,6 +2200,8 @@ def install_provider(
             extras=tuple(sorted(set(extras))),
             control_domain=control_domain,
             reverify=reverify,
+            move=move,
+            move_only=tuple(sorted(set(only))),
             dry_run=dry_run,
             at=at,
         )
@@ -2181,20 +2212,125 @@ def install_provider(
     if output_json:
         _emit_json(result.model_dump(mode="json"))
     else:
-        click.echo(f"{result.build or result.provider_id}: {result.status}")
-        if result.detail:
-            click.echo(result.detail)
-        if result.preview_scope == "validation_only":
-            click.echo(
-                "Validation-only preview; it did not run: "
-                + ", ".join(step.replace("_", " ") for step in result.not_run)
-            )
-            echo_preview_next(result.status, result.coordinate)
-        if result.proposal_id:
-            click.echo(f"Proposal: {result.proposal_id}")
-        for operation in result.operations:
-            if operation.missing_requirements:
-                click.echo(f"{operation.operation}: {', '.join(operation.missing_requirements)}")
+        _echo_provider_install(result)
+
+
+def _echo_provider_install(result: ProviderInstallResult) -> None:
+    click.echo(f"{result.build or result.provider_id}: {result.status}")
+    _echo_provider_repins(result.moved, result.stops, result.automation_carries)
+    if result.detail:
+        click.echo(result.detail)
+    if result.preview_scope == "validation_only":
+        click.echo(
+            "Validation-only preview; it did not run: "
+            + ", ".join(step.replace("_", " ") for step in result.not_run)
+        )
+        echo_preview_next(result.status, result.coordinate)
+    if result.proposal_id:
+        click.echo(f"Proposal: {result.proposal_id}")
+    for operation in result.operations:
+        if operation.missing_requirements:
+            click.echo(f"{operation.operation}: {', '.join(operation.missing_requirements)}")
+
+
+@provider_group.command("publish")
+@click.argument(
+    "file", type=click.Path(exists=True, dir_okay=False, path_type=Path), metavar="FILE"
+)
+@click.option("--name", default=None, help="Distribution and provider name (default: FILE's stem).")
+@click.option(
+    "--version",
+    "version",
+    default=None,
+    help="Normalized version (default: 0.0.0.devN from the file and the shapes it carries).",
+)
+@_provider_move_options
+@click.option(
+    "--control-domain",
+    default="operator",
+    show_default=True,
+    help="The control domain the Provider definition records for this package.",
+)
+@click.option(
+    "--runtime-wheel",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="A cruxible-provider-runtime wheel to build with and transfer (else the published one).",
+)
+@click.option(
+    "--dependency",
+    "dependencies",
+    multiple=True,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="A dependency wheel to lock against and transfer (repeatable).",
+)
+@click.option(
+    "--declares",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="A declares block of Contracts and CaptureKinds the instance does not hold.",
+)
+@click.option("--offline", is_flag=True, help="Lock and build from the uv cache and local wheels.")
+@change_control_options
+@json_option
+@handle_errors
+def publish_provider(  # noqa: PLR0913
+    file: Path,
+    name: str | None,
+    version: str | None,
+    move: bool,
+    only: tuple[str, ...],
+    control_domain: str,
+    runtime_wheel: Path | None,
+    dependencies: tuple[Path, ...],
+    declares: Path | None,
+    offline: bool,
+    dry_run: bool | None,
+    at: str | None,
+    output_json: bool,
+) -> None:
+    """Build FILE's @derive operations into a provider and install it.
+
+    The Contracts and CaptureKinds the operations reach come from this instance
+    (and --declares); the wheel is locked and built here, then installed as
+    `provider install WHEEL --lock` would. Without --version the version derives
+    from the file, so an edit is a new build and an unchanged file the same one.
+    With --move the build's registration and the Lines moved to it are one
+    proposal: an observation-only settle grant across a pure build keeps settle.
+    """
+
+    from cruxible_core.cli.provider_publish import publish_provider_file
+
+    if only and not move:
+        raise click.UsageError("--only names Lines to move; it requires --move")
+    result = _server_call(
+        lambda client, instance_id: publish_provider_file(
+            client,
+            instance_id,
+            file,
+            name=name,
+            version=version,
+            move=move,
+            only=tuple(sorted(set(only))),
+            control_domain=control_domain,
+            runtime_wheel=runtime_wheel,
+            dependency_wheels=dependencies,
+            declares=declares,
+            offline=offline,
+            dry_run=dry_run,
+            at=at,
+        ),
+        command_name="cruxible provider publish",
+    )
+    if output_json:
+        _emit_json(result.as_json())
+        return
+    package = result.package
+    click.echo(
+        f"Built {package.distribution} {package.version} ({Path(package.file).name}): "
+        + ", ".join(package.operations)
+    )
+    _echo_provider_install(result.install)
 
 
 @provider_group.command("retire")

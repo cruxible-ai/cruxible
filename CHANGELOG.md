@@ -30,6 +30,19 @@ the project's own state instance.
   output and `cruxible review` say "retains observation settle on ..."; every
   other carried settle grant says why it demoted. `kit add`, `kit upgrade` and
   Procedure edits still demote.
+- **`cruxible provider publish FILE`** builds a provider from one Python file of
+  `@derive` operations (`cruxible-provider-runtime` 0.6.0) and installs it: the
+  Contracts and CaptureKinds the operations reach come from the instance (and
+  `--declares`), the wheel and its lock are built locally and reproducibly, and
+  the default version (`0.0.0.devN`) derives from the file, so an edit is a new
+  build and an unchanged file the same one. `--runtime-wheel` and
+  `--dependency` build and install with local wheels; `--offline` locks from
+  the uv cache.
+- **`provider install --move` and `provider publish --move`** register the new
+  build and move the Lines bound to other builds of the provider onto it in ONE
+  proposal (`--only Line:NAME` narrows them): under independent approval,
+  iterating on a pure provider is one command and one approval, and an
+  observation-only settle grant keeps settle with its Line's enablement.
 
 ## [0.5.1] - 2026-11-22
 

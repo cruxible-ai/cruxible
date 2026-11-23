@@ -65,7 +65,7 @@ A request that names no principal acts as the implicit local operator
 names who did it: authoring and the write verbs, approve (submitting an
 approval), activate, reject, withdraw and readmit, `capture erase`, `claim
 attest`, `prediction propose` and `settle`, `instance decommission` and
-`rebuild-next`, `provider install`, `retire` and `move`, `kit build`, `add` and
+`rebuild-next`, `provider install`, `publish`, `retire` and `move`, `kit build`, `add` and
 `remove`, `compiler upgrade` and principal changes (`principal add`, `rotate`,
 `recover`, `revoke`), `procedure measure` and `dispose`, `inbox ack`, `dismiss` and `link`, the block
 declarations and observations `files add`, `block repin` and `block sync`
@@ -1157,6 +1157,10 @@ cruxible provider move NAME --to newest|BUILD [--only Line:NAME]...
 cruxible provider retire NAME/BUILD [--dry-run|--commit] [--at OID] [--json]
 cruxible provider install NAME[==VERSION] | WHEEL [--lock FILE]
   [--dependency WHEEL]... [--extra NAME]... [--control-domain NAME] [--reverify]
+  [--move [--only Line:NAME]...] [--dry-run|--commit] [--at OID] [--json]
+cruxible provider publish FILE [--name NAME] [--version VERSION]
+  [--move [--only Line:NAME]...] [--control-domain NAME] [--runtime-wheel WHEEL]
+  [--dependency WHEEL]... [--declares FILE] [--offline]
   [--dry-run|--commit] [--at OID] [--json]
 ~~~
 
@@ -1212,6 +1216,39 @@ only if accepted state is still the coordinate a preview answered at.
 Installation requires the current compiler; an instance on an older one runs
 `cruxible compiler upgrade` first. Installing grants nothing: credentials,
 grants, and invocation remain separate.
+
+`--move` also moves every live Line bound to another build of the provider onto
+the installed build (`--only Line:NAME` narrows them), in the same proposal as
+the registration: exactly what `provider move NAME --to BUILD` would write once
+the build landed, judged as one change. A carried observation-only settle grant
+keeps settle (and its Line's enablement) under the same conditions as `provider
+move`; any other carried grant demotes in that proposal and says why. The
+result lists each Line moved, the automation carried and what stopped; a move
+that cannot be made is `blocked` with nothing proposed. With no Line on another
+build, `--move` installs plainly. The installation itself does not depend on
+`--move`: the same package keeps its prepared installation either way.
+
+`provider publish FILE` builds a provider from one Python file whose operations
+are `@derive` functions (`cruxible-provider-runtime` 0.6.0 and later) and
+installs it as `provider install WHEEL --lock` would. The client runs `python -m
+cruxible_provider_runtime.single_file` in the interpreter
+`CRUXIBLE_PROVIDER_RUNTIME_PYTHON` names, else from `--runtime-wheel`, else in
+its own interpreter when its runtime has the packager, else through `uv run`
+with the published runtime. The Contracts and CaptureKinds the operations
+reach are read from this instance (one `get` per shape, following each
+Contract's pins and each CaptureKind's record-set rows); `--declares` supplies
+shapes the instance does not hold and wins over the instance's copy. The file
+becomes `<module>/__init__.py` of a one-module project (the module is FILE's
+stem; the distribution and provider name default to the stem's canonical form,
+`stock_signals.py` -> `stock-signals`), which is locked with `uv lock` and
+built with `uv build --wheel` under a pinned build backend, so one file and
+pool give one wheel and one build. Without `--version` the version is
+`0.0.0.devN`, `N` taken from the digest of the file, its names and its shape
+pool. `--runtime-wheel` locks against that runtime wheel and transfers it;
+`--dependency` wheels are lock sources (`--find-links`) and are transferred;
+`--offline` locks and builds from the uv cache and those wheels. A file the
+packager refuses (it fails to import, a `@derive` is invalid, or it defines no
+operation) is reported as that typed error before anything reaches the daemon.
 
 Retries reuse the prepared installation and an open registration proposal.
 Package updates create a new environment and preserve earlier deployments.

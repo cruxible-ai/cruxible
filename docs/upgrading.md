@@ -239,8 +239,9 @@ is observation-only; the grant creates no Subjects; and no live Mandate's
 condition query reads a predicate in its scope. Then the grant keeps `settle`
 with its terms unchanged, an enabled Line stays enabled on its successor, and
 the move and `cruxible review` say "retains observation settle on …". Any
-other carried settle grant names why it demoted. A `kit add` or `kit upgrade`
-always demotes.
+other carried settle grant names why it demoted. `provider install --move` and
+`provider publish --move` carry the same way, with the new build's registration
+in the same proposal. A `kit add` or `kit upgrade` always demotes.
 
 A ClaimType has one format (`cruxible-claim-type-v11`) with one evidence
 policy (`cruxible-claim-evidence-admission-policy-v4`), and a Claim one artifact

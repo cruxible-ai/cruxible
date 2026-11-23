@@ -453,6 +453,14 @@ whose copy covers the new record set is installed and the Lines move to it
 (`cruxible provider move`). A raw kind, one a generic fetch returns verbatim
 (any `capture<*>`), is the instance's own: grow it freely.
 
+A pure provider can be one Python file of `@derive` functions. `cruxible
+provider publish FILE` builds and installs it, and after an edit `cruxible
+provider publish FILE --move` registers the new build and moves the Lines bound
+to the old one in a single proposal, so one approval lands both. An
+observation-only settle grant whose operation the edit leaves no wider keeps
+settle, and an enabled Line stays enabled; `provider install --move` does the
+same for a wheel or a package by name.
+
 ## Running on a schedule
 
 A Trigger does nothing until the Line is enabled:
