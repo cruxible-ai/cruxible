@@ -26,6 +26,20 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 DOCS = REPO_ROOT / "docs"
 SITE_URL = "https://docs.cruxible.ai"
 
+
+class _MkDocsLoader(yaml.SafeLoader):
+    """SafeLoader that tolerates mkdocs.yml's ``!!python/name:`` tags.
+
+    MkDocs config names Python objects (e.g. superfences' fence format);
+    this script only reads ``site_name`` and ``nav``, so those tags load
+    as their plain names instead of failing safe_load.
+    """
+
+
+_MkDocsLoader.add_multi_constructor(
+    "tag:yaml.org,2002:python/", lambda loader, suffix, node: suffix
+)
+
 SUMMARY = (
     "Cruxible is one shared truth for humans and AI agents: a typed "
     "state layer where every write is governed before it is "
@@ -79,7 +93,7 @@ def walk_nav(nav, acc):
 
 
 def main() -> None:
-    config = yaml.safe_load((REPO_ROOT / "mkdocs.yml").read_text())
+    config = yaml.load((REPO_ROOT / "mkdocs.yml").read_text(), Loader=_MkDocsLoader)
     entries: list[tuple[str, str | None, str | None]] = []
     walk_nav(config["nav"], entries)
 

@@ -85,5 +85,6 @@ nav:
       - MCP tools: mcp-tools.md
   - Operations:
       - Upgrading: upgrading.md
+      - Data and network: data-and-network.md
       - Isolated deployment: isolated-deployment.md
       - Hosted runtime image: hosted-runtime-image.md

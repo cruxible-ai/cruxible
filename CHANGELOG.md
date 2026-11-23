@@ -7,6 +7,15 @@ that lands it; entries move under a version heading when the release is
 tagged. Work items for these changes live on the active release line in
 the project's own state instance.
 
+### Fixed
+
+- **docs.cruxible.ai deploys again.** The docs workflow had failed on every
+  push since 0.5.0, leaving the site on the 0.3 docs: `generate_llms_txt.py`
+  read `mkdocs.yml` with `yaml.safe_load`, which refuses its
+  `!!python/name:` tag. The script now loads those tags as plain names. The
+  Data and network page joins the nav, and a stale `#duplicates-beta` anchor
+  is fixed, so `mkdocs build --strict` reports nothing.
+
 ## [0.5.1] - 2026-11-22
 
 ### Added
