@@ -142,11 +142,15 @@ def read_live_values(
     with instance.bind_accepted_projection(coordinate) as projection:
         connection = projection.typed.connection
         # A none (an inverse Claim) states no value: it never enters the value
-        # stream, where it would read as a literal null.
+        # stream, where it would read as a literal null. Named Subjects are
+        # sought on the Subject-and-predicate index: the lifecycle term is kept
+        # off every index (``+``), else SQLite walks every live Claim in identity
+        # order to answer one slot, work that grows with the instance.
+        lifecycle_term = "c.lifecycle=?" if subject_paths is None else "+c.lifecycle=?"
         base = (
             f"SELECT {_VALUE_COLUMNS} FROM claims c "
             "LEFT JOIN subjects s ON s.path = c.object_path "
-            f"WHERE c.lifecycle=? AND {_NOT_NONE}"
+            f"WHERE {lifecycle_term} AND {_NOT_NONE}"
         )
         predicate_clause = ""
         predicate_values: tuple[str, ...] = ()
@@ -255,7 +259,9 @@ def read_live_nones(
     """The live nones of the given slots, in Claim id order: keyed reads, one per chunk.
 
     Only the slots named are read (a page's Subjects and its inverse-bearing
-    predicates), never a predicate's whole population.
+    predicates), never a predicate's whole population: the lifecycle term is
+    kept off every index (``+``), so SQLite seeks the Subject-and-predicate
+    index rather than walking the predicate's live Claims.
     """
 
     wanted = sorted(set(predicates))
@@ -268,7 +274,7 @@ def read_live_nones(
         for identity, path, predicate, qualifier, unit in connection.execute(
             "SELECT identity, subject_path, predicate, qualifier, none_of FROM claims "
             f"WHERE subject_path IN ({marks}) AND predicate IN ({predicate_marks}) "
-            "AND lifecycle='live' AND object_kind='none'",
+            "AND +lifecycle='live' AND object_kind='none'",
             (*chunk, *wanted),
         ):
             found.append(
