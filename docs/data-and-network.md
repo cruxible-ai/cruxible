@@ -1,6 +1,6 @@
 # Data and network
 
-What Cruxible 0.5 reads, writes and connects to, for a security or procurement
+What Cruxible 0.6 reads, writes and connects to, for a security or procurement
 review. Each statement cites the code it comes from. **[unverified]** marks
 anything that was not confirmed in code.
 
@@ -14,8 +14,9 @@ Source prefixes:
 | `kit:` | `kits/security/source/` in the [cruxible-kits](https://github.com/cruxible-ai/cruxible-kits) repository |
 | `osv:` | `kits/security/source/providers/security-osv-provider/src/security_osv_provider/osv.py` in the same repository (identical to the copy in the shipped wheel) |
 
-Line numbers were checked against the source before the 0.5.0 tag. They can
-drift in later releases.
+Line numbers were checked against the source before the 0.5.0 tag; the
+reviewer key directory and `provider publish` rows, new in 0.6, were checked
+against the 0.6.0 source. They can drift in later releases.
 
 ## Files it writes
 
@@ -29,9 +30,10 @@ drift in later releases.
 | Bootstrap secret (auth on only) | `<state root>/daemon/` | 0600, never printed; removed when auth is off | core:server/bootstrap_secret.py:42-45, 66-95 |
 | Provider secrets (if an operator stores any) | `<state root>/daemon/provider-secrets/` | directories 0700, files 0600, **plaintext at rest** | core:runtime/provider_runtime.py:411-418; core:providers/provider_local_runtime.py:455-478 |
 | Request log | `<state root>/daemon/logs/server.log` (and `fatal.log`), rotated at 10 MiB, 5 files kept | each request logs method, route template, status, credential ID, label and type, principal ID, role, instance scope and ID, operation ID; no token and no body | core:server/config.py:208-228; core:server/request_logging.py:18-19, 174-188, 236-241 |
-| Principal (agent or person) key and settings | `~/.config/cruxible/keys/<instance>/<principal>/` (`$XDG_CONFIG_HOME` honoured) | key unencrypted, 0600; `cruxible.env` holds the **bearer token in plaintext**, 0600 | core:cli/principal_settings.py:39-53, 83-87, 107-117; core:governance/keys.py:134 |
+| Principal (agent or person) key and settings | `~/.config/cruxible/keys/<instance>/<principal>/` (`$XDG_CONFIG_HOME` honoured); the reviewer `cruxible init --require-independent-approval` creates goes in `<instance>/reviewer/` unless `--reviewer-key-dir` names another directory | key unencrypted, 0600; `cruxible.env` holds the **bearer token in plaintext**, 0600 | core:cli/principal_settings.py:39-53, 83-87, 107-117; core:governance/keys.py:134; client:authoring/principal_settings.py:163-177; core:cli/commands/playbill.py:1298-1309 |
 | Workspace directory | `<your repo>/.cruxible/` (floor export, `world.pyi` stub) | refuses `$HOME` and any path inside the state root | client:contracts/workspace_layout.py:23-26, 109-125 |
 | Login service (only after `cruxible server install-service`) | `~/Library/LaunchAgents/*.plist` or `~/.config/systemd/user/cruxible.service` | holds no secrets, only `CRUXIBLE_SERVER_AUTH=true/false` | core:server/service_install.py:68-74, 94-124 |
+| `provider publish` build directory | a temporary directory (`cruxible-publish-*`) on the client, removed when the command ends; it holds the generated project, its `uv.lock` and the wheel, which are sent to the daemon as bytes | | core:cli/provider_publish.py:471, 509-537 |
 | Provider environments | under the state root, built with `uv` | offline: `uv pip sync --no-index`, `uv build --offline` | runtime:backends.py:272-285; core:service/procedures/provider_installation.py:324-325 |
 
 ## What it listens on
@@ -70,6 +72,7 @@ longer in the source, and they only ever counted locally
 | Destination | Triggered by | What is sent | Source |
 |---|---|---|---|
 | `pypi.org/simple`, `files.pythonhosted.org` (or operator-set `provider_index_urls`) | ADMIN `provider install`, which fetches dependency wheels | the package names and versions requested; files are checked against the index's sha256; no redirects followed; 60 s timeout; 512 MiB cap | core:providers/package_index.py:32, 176-181; core:providers/package_materialization.py:113-138; core:service/procedures/provider_installation.py:207-208 |
+| `pypi.org` (or the index uv is configured with on the client) | `provider publish FILE`, on the client: `uv lock` and `uv build` resolve the runtime, the pinned build backend (`hatchling==1.33.0`) and any dependencies, and without `--runtime-wheel`, `CRUXIBLE_PROVIDER_RUNTIME_PYTHON` or a local runtime that has the packager, `uv run --with cruxible-provider-runtime>=0.6.0` fetches the runtime. `--offline` uses only the uv cache and the wheels given. The packager imports FILE, running its top-level code, on the client | package names and versions | core:cli/provider_publish.py:52-57, 172-197, 529-537 |
 | `ghcr.io/cruxible-ai/kits` (or any OCI registry named) | `kit add <registry ref>`; `kit status`, which checks for newer tags with a 5 s timeout unless `--offline` | the kit name; registry credentials go only to the host named in `CRUXIBLE_REGISTRY` | client:kits.py:401-414, 498, 520-558; client:artifacts/registry.py:33, 140-150 |
 | An operator-configured git remote | ledger mirror publication, only if a mirror is bound | the accepted ledger refs (all governed state); the token goes to git as an HTTPS header through the environment, never on the command line | core:ledger/git.py:1186-1201; core:ledger/ledger_mirror.py:57-84 |
 | A provider's declared endpoints | a Procedure, Line or Runbook run that calls a provider | whatever that provider sends (below) | core:providers/provider_local_runtime.py:919-931 |
