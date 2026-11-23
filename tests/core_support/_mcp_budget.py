@@ -38,10 +38,12 @@ DEFAULT_PROFILE_MODEL_VISIBLE_TOKENS = 10_400
 #: measured at 18,674.75 with every based_on description dropped from the MCP
 #: schemas, the floor short of removing the parameter: ceiling 18,700, approved
 #: by the maintainer (2026-11-23) for ``based_on`` across cruxible_set and
-#: cruxible_write. The ceiling exists so each addition is a deliberate decision,
+#: cruxible_write. ``provider install --move`` (0.6.0 slice D2) adds ``move`` and
+#: ``move_only`` to cruxible_provider_install's request, measured at 18,715.25:
+#: ceiling 18,750, PENDING maintainer approval. The ceiling exists so each addition is a deliberate decision,
 #: not drift.
 #: This separate ceiling does not widen the existing default profile's budget.
-PLUGIN_PROFILE_MODEL_VISIBLE_TOKENS = 18_700
+PLUGIN_PROFILE_MODEL_VISIBLE_TOKENS = 18_750
 
 
 def model_visible_tokens(tool: Any) -> float:
