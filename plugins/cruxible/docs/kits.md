@@ -334,9 +334,9 @@ kit.
   stops at a proposal:
 
   ~~~text
-  $ cruxible provider install ./cruxible_provider_web-0.7.0-py3-none-any.whl \
-      --lock ./cruxible-provider-web-0.7.0.uv.lock \
-      --dependency ./cruxible_provider_runtime-0.5.0-py3-none-any.whl --commit
+  $ cruxible provider install ./cruxible_provider_web-0.7.1-py3-none-any.whl \
+      --lock ./cruxible-provider-web-0.7.1.uv.lock \
+      --dependency ./cruxible_provider_runtime-0.6.0-py3-none-any.whl --commit
   cruxible-provider-web/f3543a2990f61a7aaab8bfcd7263fc0334577142e7ef1ee40de389ab68373e93: awaiting_approval
   Installation and registration grant no execution permissions. Runtime resources require verification.
   Proposal: sha256:7e748e91dc8d94ddbbe867c1d906e536a4fd41c356342ac4f20064734cd4d624
@@ -344,6 +344,13 @@ kit.
   ~~~
 
   `--dry-run` previews an install by name only; a local wheel refuses it.
+- **From one Python file.** A provider whose operations are all `@derive`
+  functions needs no package of its own: `cruxible provider publish FILE`
+  builds the wheel and its lock on the client (`cruxible-provider-runtime`
+  0.6.0 or later) and installs it as above, and after an edit `cruxible
+  provider publish FILE --move` registers the new build and moves your Lines
+  to it in one proposal ([Lines and
+  automation](lines-and-automation.md#a-pure-provider-in-one-file)).
 - **From a kit.** A kit's own domain provider arrives bundled in the kit; a
   kit's default provider is installed by name when the kit is added and the
   kit's slots are not already served here.
@@ -605,10 +612,16 @@ Procedures, to the release's exact builds in the definitions change set. A
 Procedure names no build, so only Lines move. The preview lists each re-pin and
 every carried Line (disabled) and every Mandate losing settle. A build change
 or Procedure-definition change carries same-identity Lines to the final Procedure
-version and same-name Mandates to propose-only grants, with settle fields cleared.
-Triggers stay byte-identical. `next` names each disabled upgrade; use the existing
-`line enable` to resume its cadence or events, then explicitly author and approve
-a settle re-grant if needed. Normal kit approval policy applies. Subject-creating
+version and same-name Mandates to propose-only grants, with settle fields cleared:
+a kit add or upgrade never keeps settle, even for an observation-only grant
+across a pure build (only a `provider move`, `provider install --move` or
+`provider publish --move` of a build you install keeps it;
+Upgrading).
+Triggers stay byte-identical. `next` names each disabled upgrade; `line enable`
+resumes its cadence or events (`line enable --runbook RUNBOOK` enables every
+Line a Runbook names at once), then explicitly author and approve a settle
+re-grant if needed (`cruxible line grant LINE --settle-observations` for a Line
+whose writes are all observations). Normal kit approval policy applies. Subject-creating
 settle workflows retain their namespace: proposing Subjects needs explicit
 namespace authoring. Retiring a Procedure still retires its automation. To keep a Line on its current builds,
 pass `--keep-build Line:NAME` (repeatable). Lines bound to other providers
@@ -807,8 +820,13 @@ The standard start:
 
 1. **Tailor** the template: the Line names (and the start Runbook's steps with
    them), the sources each Line reads, the cron times (UTC), and each
-   mandate's `valid_from` and `expires_at` (or a span, `expires: 90d`, that
-   starts when you submit).
+   mandate's validity. A template can state it as a span, `expires: 90d`
+   (`36h`, `12w`, `1y` and `P90D` also work), with no `valid_from`: the window
+   starts when you submit, so the template needs no hand-edited dates. An
+   `expires_at` instant also works. A Line whose writes are all observations
+   can take one grant, `scope: observations`, instead of a per-ClaimType
+   scope ([Lines and
+   automation](lines-and-automation.md#one-grant-for-a-line-that-observes)).
 2. **Submit** it (`cruxible authoring submit automation.json`) and **approve**
    the proposal under your approval policy. A Runbook may name Lines the same
    change set adds, and a Trigger may aim at a Runbook it adds.
@@ -820,8 +838,10 @@ The standard start:
    whose writes go to review stops the run, so approve that proposal and run it
    again.
 
-Then enable each Line you want running on its schedule (`cruxible line enable
-NAME...`, or `--runbook RUNBOOK` for every Line a Runbook names). The kit's README says which Lines settle what and why
+Then enable the Lines you want running on their schedules: `cruxible line
+enable NAME...`, or `cruxible line enable --runbook security.start` for every
+Line the start Runbook names, each reported enabled, already enabled, or
+refused with its repair. The kit's README says which Lines settle what and why
 ([Lines and automation](lines-and-automation.md#earning-settle)).
 
 A Line in a kit's template that posts to the inbox follows the inbox rule
