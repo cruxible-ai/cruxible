@@ -101,9 +101,7 @@ Mandate settles a judgment.
 
 ~~~bash
 cruxible runbook preview security.start     # what each step reads, writes and calls; runs nothing
-for l in sbom-import.app osv-query osv-unkeyed kev-triage epss-triage exposure-attention.unjudged exposure-attention.contested; do
-  cruxible line enable security.$l
-done
+cruxible line enable security.osv-unkeyed --runbook security.start   # the seven Lines
 cruxible runbook run security.start         # SBOM import, OSV, KEV, EPSS, then the attention Lines
 ~~~
 

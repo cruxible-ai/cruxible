@@ -9235,12 +9235,119 @@ def _echo_line_enablement(result: Any) -> None:
     echo_preview_next(result.outcome or "", result.coordinate)
 
 
+def _runbook_lines(client: CruxibleClient, instance_id: str, runbook: str) -> tuple[str, ...]:
+    """The Lines RUNBOOK's steps name, in first-step order, once each (bare names)."""
+
+    from cruxible_client.contracts.get_reads import GetRequest
+    from cruxible_client.contracts.runbooks import Runbook
+
+    name = runbook.removeprefix("Runbook:")
+    found = client.get(instance_id, request=GetRequest(ref=f"Runbook:{name}", detail="proof"))
+    envelope = None if found.proof is None else found.proof.get("envelope")
+    if envelope is None:
+        raise click.ClickException(f"Runbook:{name} has no accepted definition to read Lines from")
+    accepted = Runbook.model_validate(envelope)
+    if accepted.lifecycle.state != "live":
+        raise click.ClickException(
+            f"Runbook:{name} is {accepted.lifecycle.state}; name its Lines instead"
+        )
+    if not accepted.lines:
+        raise click.ClickException(
+            f"Runbook:{name} lists no Lines (only actions); nothing to enable"
+        )
+    return tuple(identity.name for identity in accepted.lines)
+
+
+def _enable_lines(
+    lines: tuple[str, ...], dry_run: bool | None, at: str | None, output_json: bool
+) -> None:
+    """Enable each Line in turn and report each: enabled, unchanged, or refused and why.
+
+    Every Line is attempted; a refusal is reported beside the others and the
+    command exits 1 after its output when any Line was refused. A transport,
+    authentication or permission failure stops at once, as for one Line.
+    """
+
+    from cruxible_client.contracts.text_display import line_enablement_lines
+    from cruxible_client.errors import AuthenticationError, ServerUnreachableError
+    from cruxible_client.errors import CoreError as ClientCoreError
+    from cruxible_core.cli.main import _is_permission_denied
+
+    entries: list[dict[str, Any]] = []
+    rendered: list[str] = []
+    preview: Any = None
+    counts = {"enabled": 0, "unchanged": 0, "previewed": 0, "refused": 0}
+
+    def enable(name: str) -> Any:
+        return _server_call(
+            lambda client, instance_id: client.enable_line(
+                instance_id, name, dry_run=dry_run, at=at
+            ),
+            command_name="cruxible line enable",
+        )
+
+    for name in lines:
+        try:
+            result = enable(name)
+        except ClientCoreError as exc:
+            if isinstance(exc, ServerUnreachableError | AuthenticationError) or (
+                _is_permission_denied(exc)
+            ):
+                raise
+            counts["refused"] += 1
+            code = getattr(exc, "error_code", None)
+            message = str(exc)
+            repairs = [str(item) for item in getattr(exc, "repair_commands", ())]
+            entries.append(
+                {
+                    "line": name,
+                    "refused": {"code": code, "message": message, "repairs": repairs},
+                }
+            )
+            shown = message if not code or message.startswith(f"{code}:") else f"{code}: {message}"
+            rendered.append(f"Line:{name}: refused ({shown})")
+            rendered.extend(f"  repair: {item}" for item in repairs)
+            continue
+        entries.append({"line": name, "enablement": result.model_dump(mode="json")})
+        rendered.append(line_enablement_lines(result)[0])
+        if result.detail:
+            rendered.append(f"  {result.detail}")
+        outcome = result.outcome or ""
+        if outcome.startswith("would_"):
+            counts["previewed"] += 1
+            preview = preview or result
+        else:
+            counts["unchanged" if outcome.startswith("already_") else "enabled"] += 1
+    if output_json:
+        _emit_json({"lines": entries})
+    else:
+        for item in rendered:
+            click.echo(item)
+        click.echo("Lines: " + ", ".join(f"{n} {label}" for label, n in counts.items() if n))
+        if preview is not None and not counts["refused"]:
+            echo_preview_next(preview.outcome or "", preview.coordinate)
+    if counts["refused"]:
+        raise SystemExit(1)
+
+
 @line_group.command("enable")
-@click.argument("line")
+@click.argument("lines", nargs=-1, metavar="[LINE]...")
+@click.option(
+    "--runbook",
+    default=None,
+    metavar="RUNBOOK",
+    help="Also enable every Line RUNBOOK's steps name.",
+)
 @change_control_options
 @json_option
 @handle_errors
-def enable_line(line: str, dry_run: bool | None, at: str | None, output_json: bool) -> None:
+def enable_line(
+    lines: tuple[str, ...],
+    runbook: str | None,
+    dry_run: bool | None,
+    at: str | None,
+    output_json: bool,
+) -> None:
     """Enable LINE: its Triggers admit what they match from now on, under your credential.
 
     A Trigger aimed at a Line does nothing until the Line is enabled. The
@@ -9250,16 +9357,37 @@ def enable_line(line: str, dry_run: bool | None, at: str | None, output_json: bo
     `line evaluate` and `line dispatch`. Enabling needs governed write, even for
     an observe-only Line; a Line that proposes or settles also needs a covering
     ProcedureMandate. Read it with `cruxible get Line:LINE`.
+
+    Several LINEs, or `--runbook RUNBOOK` (every Line its steps name), enable
+    each in turn, once each, and print one receipt line per Line (`--json`:
+    `{"lines": [...]}`, each with its enablement or refusal); any refusal
+    exits 1 after every Line is tried.
     """
 
-    result = _server_call(
-        lambda client, instance_id: client.enable_line(instance_id, line, dry_run=dry_run, at=at),
-        command_name="cruxible line enable",
-    )
-    if output_json:
-        _emit_json(result.model_dump(mode="json"))
-    else:
-        _echo_line_enablement(result)
+    if not lines and runbook is None:
+        raise click.UsageError("name a LINE, or --runbook RUNBOOK")
+    if len(lines) == 1 and runbook is None:
+        line = lines[0]
+        result = _server_call(
+            lambda client, instance_id: client.enable_line(
+                instance_id, line, dry_run=dry_run, at=at
+            ),
+            command_name="cruxible line enable",
+        )
+        if output_json:
+            _emit_json(result.model_dump(mode="json"))
+        else:
+            _echo_line_enablement(result)
+        return
+    named = [item.removeprefix("Line:") for item in lines]
+    if runbook is not None:
+        named.extend(
+            _server_call(
+                lambda client, instance_id: _runbook_lines(client, instance_id, runbook),
+                command_name="cruxible line enable --runbook",
+            )
+        )
+    _enable_lines(tuple(dict.fromkeys(named)), dry_run, at, output_json)
 
 
 @line_group.command("disable")

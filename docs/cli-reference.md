@@ -2877,7 +2877,8 @@ PRD-c1… rollout-healthy procedure_unit satisfied run=RUN-3f…
 ## line
 
 ~~~text
-cruxible line enable LINE [--dry-run|--commit] [--at OID] [--yes] [--json]
+cruxible line enable [LINE]... [--runbook RUNBOOK] [--dry-run|--commit] [--at OID] [--yes]
+  [--json]
 cruxible line disable LINE [--dry-run|--commit] [--at OID] [--yes] [--json]
 cruxible line run LINE [--event FILE|-] [--repeat] [--resolution-contract FILE|-]
   [--occurrence-id ID] [--evaluation-time TS] [--parameters FILE|-] [--json]
@@ -2890,6 +2891,14 @@ cruxible line grant LINE --settle-observations [--include-derived] [--create-sub
 
 `enable`, `disable` and `run` are the normal flow; `evaluate` and `dispatch`
 recover what automation missed, and `cruxible next` points to them.
+`enable` takes several Lines (`LINE` or `Line:LINE`), and `--runbook RUNBOOK`
+adds every Line the Runbook's steps name, after those named, each once; a
+missing or retired Runbook, or one whose steps are all actions, refuses before
+any Line is enabled. One `LINE` alone prints its enablement as before; several
+print one receipt line per Line (enabled, already enabled, or refused with its
+code and repair) and a `Lines:` count, `--json` gives `{"lines": [...]}` with
+each Line's `enablement` or `refused`, and any refusal exits 1 after every
+Line is tried.
 `grant --settle-observations` authors one settle Mandate (`scope: observations`)
 over every ClaimType the Line's Procedure writes; each must permit only the
 observation role, and a Procedure with an `invoke` node refuses. It lowers to the

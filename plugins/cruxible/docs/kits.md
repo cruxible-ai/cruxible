@@ -820,7 +820,7 @@ The standard start:
    again.
 
 Then enable each Line you want running on its schedule (`cruxible line enable
-NAME`). The kit's README says which Lines settle what and why
+NAME...`, or `--runbook RUNBOOK` for every Line a Runbook names). The kit's README says which Lines settle what and why
 ([Lines and automation](lines-and-automation.md#earning-settle)).
 
 A Line in a kit's template that posts to the inbox follows the inbox rule

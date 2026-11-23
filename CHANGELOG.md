@@ -27,6 +27,12 @@ the project's own state instance.
   the field's one live Claim and pins that id; a field holding none refuses
   `cruxible.write.based_on_not_found`, several `cruxible.write.based_on_ambiguous`
   naming each.
+- **`cruxible line enable` takes several Lines or a Runbook's:** `line enable
+  LINE [LINE ...]` and `--runbook RUNBOOK` (every Line its steps name, after
+  those named, each once) enable each in turn with one receipt line per Line
+  (enabled, already enabled, or refused with code and repair; `--json`:
+  `{"lines": [...]}`), exiting 1 after every Line is tried if any refused. One
+  `LINE` alone prints and serializes exactly as before.
 - **Observation settle survives a pure provider build move:** `provider move`
   keeps an observation-only settle grant (terms unchanged) across a Line
   successor that changes only slot bindings, when every moved slot's new
