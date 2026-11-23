@@ -340,8 +340,8 @@ class InboxRow(_StrictInboxModel):
 
     ``kind`` is the terminal (Procedure node) that posted it; ``title`` a
     one-line reading of its payload (a ``title``, ``name``, ``summary``,
-    ``subject`` or ``id`` field, else its canonical JSON), cut to
-    ``INBOX_ROW_TITLE_MAX_CHARS``. ``inbox get`` returns every field.
+    ``subject`` or ``id`` field, else its fields as ``name=value`` pairs, else
+    its canonical JSON), cut to ``INBOX_ROW_TITLE_MAX_CHARS``. ``inbox get`` returns every field.
     """
 
     tag: Literal["cruxible-inbox-row-v1"] = "cruxible-inbox-row-v1"
@@ -364,18 +364,56 @@ class InboxRows(_StrictInboxModel):
     next_cursor: str | None = None
 
 
+def _leading_members(text: str) -> dict[str, object]:
+    """The complete top-level members at the head of a cut object's canonical JSON."""
+
+    import json
+
+    decoder = json.JSONDecoder()
+    members: dict[str, object] = {}
+    index = 1
+    while index < len(text):
+        try:
+            key, index = decoder.raw_decode(text, index)
+            if not isinstance(key, str) or text[index : index + 1] != ":":
+                break
+            value, index = decoder.raw_decode(text, index + 1)
+        except ValueError:
+            break
+        members[key] = value
+        if text[index : index + 1] != ",":
+            break
+        index += 1
+    return members
+
+
+def _title_scalar(value: object) -> str:
+    return value if isinstance(value, str) else canonical_bytes(value).decode("utf-8")
+
+
 def _row_title(entry: InboxListEntry) -> str:
     if entry.withheld is not None:
         return "(withheld)"
     preview: object = entry.payload_preview
+    fields: dict[str, object] | None = None
     if isinstance(preview, TruncatedText):
-        text = preview.preview
+        # A payload past the summary bound is its cut canonical JSON: an object's
+        # leading members still read as fields.
+        fields = _leading_members(preview.preview) if preview.preview.startswith("{") else None
+        text = preview.preview if not fields else ""
     else:
         plain = shown_plain(preview)
         if isinstance(plain, dict):
-            chosen = next((plain[key] for key in _TITLE_KEYS if key in plain), None)
-            plain = plain if chosen is None else chosen
-        text = plain if isinstance(plain, str) else canonical_bytes(plain).decode("utf-8")
+            fields = plain
+        text = "" if fields else _title_scalar(plain)
+    if fields:
+        chosen = next((fields[key] for key in _TITLE_KEYS if key in fields), None)
+        text = (
+            # Without a title field, the fields read as ``name=value`` pairs.
+            " ".join(f"{key}={_title_scalar(value)}" for key, value in fields.items())
+            if chosen is None
+            else _title_scalar(chosen)
+        )
     text = " ".join(text.split())
     if len(text) > INBOX_ROW_TITLE_MAX_CHARS:
         text = text[: INBOX_ROW_TITLE_MAX_CHARS - 1] + "…"

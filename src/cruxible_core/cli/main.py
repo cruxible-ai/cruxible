@@ -19,6 +19,7 @@ from cruxible_client.authoring.context import (
     ContextResolutionError,
     resolve_context,
 )
+from cruxible_client.authoring.env_file import EnvFileError, apply_env_file
 from cruxible_client.authoring.principal_settings import principal_key
 from cruxible_client.contracts.repair_spelling import render_repair, repair_spelling
 from cruxible_client.contracts.repairs import HandEditRepair, RepairOperation
@@ -1181,6 +1182,9 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
         module="server",
         attr="server_group",
     ),
+    "python": _command(
+        "python_runner", "python_cmd", "Run or --check a script with Cruxible's interpreter."
+    ),
     "mcp": _command("mcp", "mcp_cmd", "Serve the MCP tools over stdio."),
     "console": _command(
         "console", "console_cmd", "Open the read-only console in a browser (loopback only)."
@@ -1289,6 +1293,16 @@ def _print_version(ctx: click.Context, _param: click.Parameter, value: bool) -> 
     ),
 )
 @click.option(
+    "--env-file",
+    "env_file",
+    default=None,
+    envvar="CRUXIBLE_ENV_FILE",
+    help=(
+        "Load Cruxible settings from a file (for example DIR/cruxible.env, also "
+        "CRUXIBLE_ENV_FILE). Explicit flags and process environment take precedence."
+    ),
+)
+@click.option(
     "--json-compact",
     is_flag=True,
     default=None,
@@ -1303,13 +1317,38 @@ def cli(
     principal_id: str | None,
     no_workspace: bool,
     no_autostart: bool,
+    env_file: str | None,
     json_compact: bool | None,
 ) -> None:
     """Cruxible — hard state for AI agents: governed, queryable, durable, with receipts."""
+    env_file_source = ctx.get_parameter_source("env_file")
+    if env_file_source is click.core.ParameterSource.ENVIRONMENT and not (env_file or "").strip():
+        env_file = None
+
     if ctx.invoked_subcommand == "mcp":
-        # The MCP server reads only its own environment; remembered CLI context,
-        # workspace discovery and root options must neither configure nor break it.
+        # The MCP server reads only its own environment (plus --env-file /
+        # CRUXIBLE_ENV_FILE); remembered CLI context, workspace discovery and
+        # other root options must neither configure nor break it.
+        if env_file is not None:
+            ctx.ensure_object(dict)["mcp_env_file"] = env_file
         return
+
+    loaded_env_file: Path | None = None
+    env_file_provided_principal = False
+    if env_file is not None:
+        try:
+            loaded_env_file, restore_env = apply_env_file(
+                env_file,
+                explicit_transport=bool(server_url or server_socket),
+                explicit_principal=(principal_id or "").strip() or None,
+            )
+        except EnvFileError as exc:
+            raise click.UsageError(str(exc)) from exc
+        ctx.call_on_close(restore_env)
+        if not (principal_id or "").strip() and (os.environ.get(PRINCIPAL_ID_ENV) or "").strip():
+            principal_id = os.environ.get(PRINCIPAL_ID_ENV)
+            env_file_provided_principal = True
+
     workspace_refusal: str | None = None
     try:
         stored = load_cli_context()
@@ -1415,6 +1454,13 @@ def cli(
             "no_workspace": no_workspace or workspace_refusal is not None,
             "no_autostart": no_autostart,
             "workspace_refusal": workspace_refusal,
+            "env_file": None if loaded_env_file is None else str(loaded_env_file),
+            "env_file_provided_principal": env_file_provided_principal,
+            **(
+                {"principal_settings": str(loaded_env_file)}
+                if env_file_provided_principal and loaded_env_file is not None
+                else {}
+            ),
         }
     )
     _load_remembered_principal(
@@ -1459,10 +1505,13 @@ def _load_remembered_principal(
 
     obj = ctx.obj
     if obj.get("principal_id"):
-        source = ctx.get_parameter_source("principal_id")
-        obj["principal_source"] = (
-            "environment" if source is click.core.ParameterSource.ENVIRONMENT else "explicit"
-        )
+        if obj.get("env_file_provided_principal"):
+            obj["principal_source"] = "env_file"
+        else:
+            source = ctx.get_parameter_source("principal_id")
+            obj["principal_source"] = (
+                "environment" if source is click.core.ParameterSource.ENVIRONMENT else "explicit"
+            )
         if instance_id is not None and transport is not None:
             _load_named_principal_key(ctx, stored, str(obj["principal_id"]), instance_id, folder)
         return

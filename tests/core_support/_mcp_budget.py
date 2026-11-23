@@ -31,10 +31,12 @@ DEFAULT_PROFILE_MODEL_VISIBLE_TOKENS = 10_400
 #: about 230 after redundancy-only trims elsewhere, measured at 18,287. The
 #: 2026-11-10 maintainer ruling raises it to 18,400 so the plugin is complete on
 #: its own: cruxible_console (the read-only console without the CLI) joins the
-#: allowlist, measured at 18,387.75. The ceiling exists so each addition is a
-#: deliberate decision, not drift.
+#: allowlist, measured at 18,387.75. The 2026-11-19 plugin release check adds
+#: reviewer/independent-approval parameters to cruxible_init and no_open to
+#: cruxible_console, measured at 18,544.25 (ceiling 18,600). The ceiling exists
+#: so each addition is a deliberate decision, not drift.
 #: This separate ceiling does not widen the existing default profile's budget.
-PLUGIN_PROFILE_MODEL_VISIBLE_TOKENS = 18_400
+PLUGIN_PROFILE_MODEL_VISIBLE_TOKENS = 18_600
 
 
 def model_visible_tokens(tool: Any) -> float:

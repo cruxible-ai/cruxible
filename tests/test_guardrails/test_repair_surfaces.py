@@ -171,7 +171,8 @@ COMPUTED_PRODUCERS: Mapping[tuple[str, str], Mapping[str, frozenset[str]]] = {
         "cruxible.authoring.example": frozenset({"example", "claim_id", "capture_digest"})
     },
     ("src/cruxible_core/service/discovery/next.py", "_citation_drift_item"): {
-        "cruxible.rebind": frozenset({"claim_id", "citation", "section_file", "section"})
+        "cruxible.rebind": frozenset({"claim_id", "citation", "section_file", "section"}),
+        "cruxible.set": frozenset({"claim_id", "subject", "field", "role"}),
     },
     ("src/cruxible_core/service/discovery/next.py", "_evidence_erased_items"): {
         "cruxible.rebind": frozenset({"claim_id", "citation"})

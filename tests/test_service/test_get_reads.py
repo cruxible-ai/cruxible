@@ -221,6 +221,12 @@ def test_evidence_names_each_capture_by_contract_identity_and_version(
     assert capture.capture.startswith("CAP-") and len(capture.capture) == len("CAP-") + 12
     digest = capture_contract_digest(_CONTRACT).tagged
     assert digest not in json.dumps(evidence.model_dump(mode="json"))
+    # The passage the Claim cites, as proposal review shows it, in JSON and text.
+    assert capture.passage == "status: ready" and not capture.passage_truncated
+    from cruxible_client.contracts.get_text import render_get
+
+    text = render_get(_get(instance, claim, detail="evidence"))
+    assert text is not None and "\n  | status: ready" in text
 
 
 def test_why_history_and_proof_reuse_todays_services(world: dict[str, Any]) -> None:
@@ -337,6 +343,19 @@ def test_a_detail_that_does_not_apply_refuses_naming_the_ones_that_do(
 
     assert refused.error_code == "cruxible.get.detail_unsupported"
     assert refused.context["allowed"] == ["summary", "why", "history", "proof", "body"]
+
+
+def test_evidence_on_a_subject_refuses_naming_the_claim_form(world: dict[str, Any]) -> None:
+    """Survey cold run: `get SUBJECT --detail evidence` gave no route to a Claim's evidence."""
+
+    refused = _refusal(world["instance"], _SUBJECT, detail="evidence", surface="cli")
+
+    assert refused.error_code == "cruxible.get.detail_unsupported"
+    assert "Evidence is read per Claim: cruxible get CLM-... --detail evidence" in str(refused)
+    assert "cruxible get CLM-... --detail evidence" in refused.context["repair_line"]
+    # Other details keep the plain refusal.
+    other = _refusal(world["instance"], "Document:design", detail="evidence")
+    assert "per Claim" not in str(other)
 
 
 def test_a_proposal_reads_by_id_prefix_with_its_next_step(world: dict[str, Any]) -> None:

@@ -185,8 +185,17 @@ def test_workspace_drift_is_verified_against_the_accepted_citation(
     assert "citation_drifted" in {item.reason for item in result.items}
     # An unconfigured floor is environment status, never a work row.
     assert result.status.floor.state in {"missing", "not_configured"}
-    drift = next(item for item in result.items if item.reason == "citation_drifted")
-    assert drift.related_identities == (citation.citation_id,)
+    drifted = [
+        item
+        for item in result.items
+        if item.reason == "citation_drifted"
+        and item.related_identities[:1] == (citation.citation_id,)
+    ]
+    # The citation, then the Subject the Claim is about (its field in detail).
+    # Which seeded Claim lists first varies with its id, so name its own Subject.
+    (drift,) = drifted
+    assert drift.related_identities == (citation.citation_id, claim.statement.subject.artifact_path)
+    assert drift.detail["predicate"]  # type: ignore[index]
     # The drift repair re-binds the Claim to its text now (the value stays).
     assert drift.repair.operation == "cruxible.rebind"
 
@@ -459,7 +468,10 @@ def test_backing_only_successor_keeps_edited_predecessor_span_in_drift_queue(
     )
 
     row = next(item for item in result.items if item.reason == "citation_drifted")
-    assert row.related_identities == (old_citation.citation_id,)
+    assert row.related_identities == (
+        old_citation.citation_id,
+        "subjects/project.work_item/wi-42.json",
+    )
     assert row.detail["expected_commitment_digest"] == envelope.commitment.digest  # type: ignore[index]
     assert row.detail["observed_window_digest"] == observed  # type: ignore[index]
     assert row.detail["drift_state"] == "changed"  # type: ignore[index]

@@ -459,7 +459,7 @@ def test_query_reserves_no_digest_row_key() -> None:
     from cruxible_core.service.discovery.field_names import RESERVED_FIELD_NAMES
 
     assert RESERVED_FIELD_NAMES == frozenset(
-        {"subject_id", "subject", "kind", "predicate", "claim", "flags"}
+        {"subject_id", "subject", "kind", "predicate", "claim", "flags", "last_changed"}
     )
 
 

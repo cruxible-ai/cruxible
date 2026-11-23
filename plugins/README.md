@@ -19,29 +19,49 @@ checkout, so they match the pinned runtime; a link to a doc outside the bundle
 keeps only its text.
 
 Claude Code uses `.claude-plugin/marketplace.json` at this repository's root
-and `.claude-plugin/plugin.json` plus `.mcp.json` inside `plugins/cruxible`.
-Add the repository as a marketplace, then install
-`cruxible@cruxible-plugins`. Codex uses the repository's
-`.agents/plugins/marketplace.json`, portable `plugin.json` and `mcp.json`.
-Add the repo marketplace through `codex plugin marketplace add /path/to/repo`
-and install from the supported client's plugin directory. The two catalogs
-have host-specific formats; the skill content and runtime selection are shared.
+and `.claude-plugin/plugin.json` plus `.mcp.json` inside `plugins/cruxible`:
+
+```bash
+claude plugin marketplace add cruxible-ai/cruxible
+claude plugin install cruxible@cruxible-plugins
+```
+
+Codex uses the repository's `.agents/plugins/marketplace.json`, portable
+`plugin.json` and `mcp.json`. Add the repo marketplace through
+`codex plugin marketplace add /path/to/repo` and install from the supported
+client's plugin directory. The two catalogs have host-specific formats; the
+skill content and runtime selection are shared.
+
+**Workspace discovery (Codex and hosts that launch inside a plugin cache).**
+The MCP server resolves the project workspace in this order:
+`CRUXIBLE_MCP_WORKSPACE_ROOT` if set, else MCP client `roots` (via
+`roots/list`), else the server's current working directory. If a host launches
+the server inside the installed plugin cache without advertising client `roots`,
+the server refuses to treat the plugin directory as a workspace; set
+`CRUXIBLE_MCP_WORKSPACE_ROOT=/absolute/path/to/your/project` in the host's MCP
+`env` override (or enable client roots).
 
 Supported: Linux x86-64 and macOS on Apple silicon; on Windows, use WSL2.
 
 The released stdio command is `uvx --from cruxible==VERSION cruxible mcp`.
-Install uv first. Keep the matching CLI available for setup (`init`,
-`workspace attach`, `principal add`), `authoring submit`, kit pulls and local
-kit directories, which the lean MCP catalog omits; the same pinned
-`uvx --from cruxible==VERSION cruxible ...` prefix runs those commands.
+Install uv first. The lean 26-tool MCP catalog includes `cruxible_init` (with
+optional `reviewer_id` and `require_independent_approval`),
+`cruxible_authoring_submit_file`, `cruxible_kit_add` (both registry pulls like
+`security:1.3.0` and local kit directories), and `cruxible_console` (with
+`no_open=true` to skip launching a browser). Keep the matching CLI available for
+commands the lean catalog omits — `vocabulary`, `inbox get/ack/link/dismiss`,
+`proposal reject`, `capture read`, `context use`, `workspace attach`, and
+`principal add` — using the same pinned
+`uvx --from cruxible==VERSION cruxible ...` prefix.
 
 ## First run, step by step
 
 One linear path from an empty project to an installed kit on one machine. The
 CLI does the setup; the plugin's MCP tools do the everyday work afterwards. An
-agent with no shell calls `cruxible_init` instead of steps 1 to 4 (a single
-owner, `self_approval_allowed`) and `cruxible_authoring_submit_file` to submit a
-file it tailored.
+agent with no shell calls `cruxible_init` instead of steps 1 to 4 (single owner
+under `self_approval_allowed` by default, or pass `reviewer_id="reviewer"` and
+`require_independent_approval=true` for independent review) and
+`cruxible_authoring_submit_file` to submit a file it tailored.
 `SOCKET` below is the daemon socket the MCP server auto-starts:
 `$CRUXIBLE_STATE_ROOT/run/daemon.sock`, or `~/.cruxible/run/daemon.sock` when
 `CRUXIBLE_STATE_ROOT` is unset. Use absolute paths throughout, and keep key
@@ -79,7 +99,7 @@ context or `cruxible.env` itself.
 | `CRUXIBLE_PRINCIPAL_ID` | the principal ID (`CRUXIBLE_PRINCIPAL_ID` in its `cruxible.env`) | every attributed write |
 | `CRUXIBLE_MCP_KEY_DIR` | the principal's key directory, the folder holding `<id>.ed25519` and `cruxible.env` | `cruxible_proposal_approve` signing |
 | `CRUXIBLE_PRINCIPAL_KEY` | the key file (`CRUXIBLE_PRINCIPAL_KEY` in its `cruxible.env`) | `cruxible_claim_attest` signing |
-| `CRUXIBLE_MCP_WORKSPACE_ROOT` | the absolute project root | only when the host starts MCP outside the project |
+| `CRUXIBLE_MCP_WORKSPACE_ROOT` | the absolute project root | when the host launches MCP outside the project (e.g. a plugin cache) without client `roots` |
 | `CRUXIBLE_INSTANCE_ID`, `CRUXIBLE_SERVER_SOCKET` | from `cruxible.env` | only when the project has no `.cruxible/coverage.json` binding |
 
 To stop the daemon: `cruxible --server-socket SOCKET server stop`.
@@ -100,8 +120,8 @@ principals, Mandates and approval policy still apply. A separate agent session
 (its own principal) reviews the exact candidate; never self-approve, including with auth off. The single
 plugin does not enforce separate identities while auth is off.
 
-The plugin catalog measures 18,387.75 estimated model-visible tokens (input
-schemas and descriptions, JSON characters/4), pinned below 18,400. The existing MCP
+The plugin catalog measures 18,544.25 estimated model-visible tokens (input
+schemas and descriptions, JSON characters/4), pinned below 18,600. The existing MCP
 default profile retains its separate 10,400 ceiling; full-catalog registration
 is not what this plugin advertises. Instructions remain below 300 estimated
 tokens, without exhaustive tool lists. Output-schema wire size is separate
@@ -110,7 +130,8 @@ from this estimate; actual host tokenization/tool deferral can differ.
 Before there is an instance, `cruxible_server_info` can auto-start its daemon;
 [First run, step by step](#first-run-step-by-step) initializes against it.
 `cruxible_console` opens the read-only console in the user's browser, no CLI
-needed. It never returns the sign-in link: when it cannot open a browser it
+needed (pass `no_open=true` to start or inspect the listener without opening a
+browser tab). It never returns the sign-in link: when it cannot open a browser it
 says to run `cruxible console` in your own terminal, which prints the link for
 you only. Never store keys or tokens in the plugin.
 

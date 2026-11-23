@@ -988,11 +988,18 @@ def _areas(root: Path) -> dict[str, int]:
 
     sizes: dict[str, int] = {}
     for path in root.rglob("*"):
-        if not path.is_file():
+        if path.suffix == ".lock":
+            continue
+        try:
+            if not path.is_file():
+                continue
+            size = path.stat().st_size
+        except FileNotFoundError:
+            # Transient git ref/pack lockfiles may disappear between rglob() and stat().
             continue
         parts = path.relative_to(root).parts
         area = parts[0] if parts[0] != "exhaust" or len(parts) < 2 else "exhaust/" + parts[1]
-        sizes[area] = sizes.get(area, 0) + path.stat().st_size
+        sizes[area] = sizes.get(area, 0) + size
     return sizes
 
 

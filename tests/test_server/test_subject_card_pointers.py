@@ -89,17 +89,18 @@ def test_a_held_proposal_shows_on_the_card_and_its_next_row_names_the_field(
     assert not any(proposal_id in step for step in pinned.next)
 
     instance = get_playbill_manager().get(instance_id)
-    actor = instance.proposal_evidence().read_admission(proposal_id).actor_id
+    # With a reviewer present, the held proposal is the reviewer's to approve:
+    # its next row lands in the reviewer's queue, not the author's.
     rows = [
         item
         for item in service_playbill_next(
             instance,
             request=_request(instance, evaluation_time=datetime.now(UTC)),
-            caller_principal_id=actor,
+            caller_principal_id="reviewer",
         ).items
         if item.subject_identity == proposal_id
     ]
-    assert rows, "the held proposal has no next row for its author"
+    assert rows, "the held proposal has no next row for the reviewer"
     assert all(item.detail["touches"] == [f"{SUBJECT} shop.part.status"] for item in rows)
 
     from cruxible_core.cli.commands.playbill import _next_claim_about

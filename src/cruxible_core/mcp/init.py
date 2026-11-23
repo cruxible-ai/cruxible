@@ -17,7 +17,7 @@ from __future__ import annotations
 import getpass
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any, Literal, TypeVar
 
 from cruxible_client import CruxibleClient, contracts
 from cruxible_client.authoring.context import ContextResolutionError, resolve_context
@@ -26,12 +26,15 @@ from cruxible_client.authoring.folder_identity import (
     read_folder_identity,
     write_folder_identity,
 )
+from cruxible_client.authoring.principal_settings import principal_key
 from cruxible_client.authoring.workspace import (
     validate_workspace_config_write,
     write_workspace_config,
 )
 from cruxible_client.authoring.world_stub import render_world_stub_for, write_world_stub
+from cruxible_client.compatibility import require_authoring_compatibility
 from cruxible_client.contracts.approval_policy import ApprovalPolicyMode
+from cruxible_client.contracts.get_reads import GetRequest
 from cruxible_client.contracts.principals import is_canonical_principal_id
 from cruxible_client.errors import CoreError as ClientCoreError
 from cruxible_core.cli.principal_settings import default_key_dir, write_principal_settings
@@ -47,6 +50,7 @@ ResultT = TypeVar("ResultT")
 DaemonCall = Callable[[Callable[[CruxibleClient], ResultT], str], ResultT]
 
 _TARGET_ENV = ("CRUXIBLE_SERVER_URL", "CRUXIBLE_SERVER_SOCKET", "CRUXIBLE_INSTANCE_ID")
+_DEFAULT_REVIEWER_ID = "reviewer"
 
 
 def _socket(value: str) -> str:
@@ -105,6 +109,26 @@ def _approval_policy(client: CruxibleClient, instance_id: str) -> ApprovalPolicy
     return _find_mode(page.model_dump(mode="json"))
 
 
+def _principal_active_ordinary(client: CruxibleClient, instance_id: str, principal_id: str) -> bool:
+    """True when ``principal_id`` is registered as an active ordinary principal."""
+
+    try:
+        page = client.get(
+            instance_id,
+            request=GetRequest(ref=f"Principal:{principal_id}", detail="proof"),
+        )
+    except (ClientCoreError, ValueError):
+        return False
+    dumped = page.model_dump(mode="json")
+    proof = dumped.get("proof")
+    record = proof.get("record") if isinstance(proof, dict) else None
+    return (
+        isinstance(record, dict)
+        and record.get("status") == "active"
+        and record.get("kind") == "ordinary"
+    )
+
+
 def _find_mode(value: Any) -> ApprovalPolicyMode | None:
     if isinstance(value, dict):
         mode = value.get("mode")
@@ -122,9 +146,26 @@ def _find_mode(value: Any) -> ApprovalPolicyMode | None:
     return None
 
 
+def _resolve_reviewer_id(
+    reviewer_id: str | None, *, require_independent_approval: bool
+) -> str | None:
+    if reviewer_id is not None:
+        if not is_canonical_principal_id(reviewer_id):
+            raise DataValidationError(
+                f"cruxible_init: reviewer_id {reviewer_id!r} is not a principal ID (a lowercase "
+                "letter, then letters, digits, '_', '.' or '-')"
+            )
+        return reviewer_id
+    if require_independent_approval:
+        return _DEFAULT_REVIEWER_ID
+    return None
+
+
 def run_mcp_init(
     *,
     principal_id: str | None,
+    reviewer_id: str | None = None,
+    require_independent_approval: bool = False,
     target: DaemonTarget,
     call: DaemonCall[Any],
 ) -> McpInitResult:
@@ -149,6 +190,9 @@ def run_mcp_init(
             f"cruxible_init: principal_id {principal_id!r} is not a principal ID (a lowercase "
             "letter, then letters, digits, '_', '.' or '-')"
         )
+    requested_reviewer = _resolve_reviewer_id(
+        reviewer_id, require_independent_approval=require_independent_approval
+    )
     selected = _bound_instance(root, socket)
     if selected is not None:
         bound: str = selected
@@ -159,18 +203,74 @@ def run_mcp_init(
             inspection = None
         if inspection is not None and inspection.compatibility != "uninitialized":
             record = read_folder_identity(root)
+            policy = call(lambda client: _approval_policy(client, bound), "cruxible_init")
+            if requested_reviewer is None and not require_independent_approval:
+                return McpInitResult(
+                    status="already_initialized",
+                    instance_id=bound,
+                    principal_id=None if record is None else record.principal_id,
+                    key_dir=None if record is None else record.key_dir,
+                    approval_policy=policy,
+                    workspace_root=str(root),
+                    folder_identity_path=(
+                        None if record is None else str(folder_identity_path(root))
+                    ),
+                )
+            # Never generate keys on an already-initialized instance: either the
+            # requested reviewer and policy are already in place, or we refuse.
+            missing: list[str] = []
+            resolved_reviewer_key_dir: str | None = None
+            if requested_reviewer is not None:
+                if record is not None and requested_reviewer == record.principal_id:
+                    raise DataValidationError(
+                        f"cruxible_init: reviewer_id {requested_reviewer!r} must differ from "
+                        f"the initialized owner {record.principal_id!r}"
+                    )
+                active = call(
+                    lambda client: _principal_active_ordinary(client, bound, requested_reviewer),
+                    "cruxible_init",
+                )
+                if not active:
+                    missing.append(f"active ordinary principal {requested_reviewer!r}")
+                found_key = principal_key(
+                    requested_reviewer,
+                    instance_id=bound,
+                    server_url=None,
+                    server_socket=socket,
+                )
+                if found_key is None:
+                    missing.append(f"local signing key for {requested_reviewer!r}")
+                else:
+                    resolved_reviewer_key_dir = str(found_key.private_key_path.parent)
+            if require_independent_approval and policy != "independent_approval_required":
+                missing.append("approval_policy=independent_approval_required")
+            if missing:
+                raise ConfigError(
+                    f"cruxible_init: instance {bound} is already initialized, without "
+                    f"{', '.join(missing)}; cruxible_init never generates keys on an "
+                    "initialized instance. Repair: add a reviewer via CLI (`cruxible principal "
+                    f"add {requested_reviewer or _DEFAULT_REVIEWER_ID} --key-dir DIR --mode "
+                    "graph_write`) and submit an approval_policy proposal."
+                )
             return McpInitResult(
                 status="already_initialized",
                 instance_id=bound,
                 principal_id=None if record is None else record.principal_id,
                 key_dir=None if record is None else record.key_dir,
-                approval_policy=call(
-                    lambda client: _approval_policy(client, bound), "cruxible_init"
-                ),
+                reviewer_id=requested_reviewer,
+                reviewer_key_dir=resolved_reviewer_key_dir,
+                approval_policy=policy,
                 workspace_root=str(root),
                 folder_identity_path=None if record is None else str(folder_identity_path(root)),
             )
+    # Refuse a write-incompatible daemon before keys are generated, not after.
+    call(require_authoring_compatibility, "cruxible_init")
     owner = principal_id or default_principal_id()
+    if requested_reviewer is not None and requested_reviewer == owner:
+        raise DataValidationError(
+            f"cruxible_init: reviewer_id {requested_reviewer!r} must differ from "
+            f"principal_id {owner!r}"
+        )
     validate_workspace_config_write(root, instance_id=selected, server_socket=socket)
     roots = tuple(
         dict.fromkeys(
@@ -187,6 +287,13 @@ def run_mcp_init(
             kind="ordinary",
             forbidden_roots=roots,
         )
+        if requested_reviewer is not None:
+            validate_client_principal_key_target(
+                default_key_dir(selected, requested_reviewer),
+                principal_id=requested_reviewer,
+                kind="ordinary",
+                forbidden_roots=roots,
+            )
     else:
         created = call(
             lambda client: client.create_host(workspace_root=str(root), dry_run=False),
@@ -197,20 +304,28 @@ def run_mcp_init(
         write_workspace_config(root, instance_id=selected, server_socket=socket)
     instance_id = selected
     key_dir = default_key_dir(instance_id, owner)
+    reviewer_key_dir = (
+        None if requested_reviewer is None else default_key_dir(instance_id, requested_reviewer)
+    )
+    specifications: list[tuple[Path, str, Literal["ordinary"]]] = [(key_dir, owner, "ordinary")]
+    if requested_reviewer is not None and reviewer_key_dir is not None:
+        specifications.append((reviewer_key_dir, requested_reviewer, "ordinary"))
     materials, markers = prepare_init_custody(
         transport=f"unix://{socket}",
         instance_id=instance_id,
-        specifications=((key_dir, owner, "ordinary"),),
+        specifications=tuple(specifications),
         forbidden_roots=roots,
     )
     material = materials[0]
+    reviewer_material = materials[1] if len(materials) > 1 else None
     # With daemon auth off the init request claims the owner it creates, as
     # `cruxible init` does; this one client carries that claim.
     with CruxibleClient(socket_path=socket, principal_id=owner) as client:
         result = client.init(
             instance_id,
-            principals=[material.principal.model_dump(mode="json")],
+            principals=[item.principal.model_dump(mode="json") for item in materials],
             operating_profile="local",
+            require_independent_approval=require_independent_approval,
             workspace_root=str(root),
         )
     write_workspace_config(root, instance_id=result.instance_id, server_socket=socket)
@@ -225,6 +340,20 @@ def run_mcp_init(
         token=None,
         written_by="cruxible_init",
     )
+    if (
+        reviewer_material is not None
+        and requested_reviewer is not None
+        and reviewer_key_dir is not None
+    ):
+        write_principal_settings(
+            reviewer_key_dir,
+            ctx_obj={"server_socket": socket},
+            instance_id=result.instance_id,
+            principal_id=requested_reviewer,
+            private_key_path=reviewer_material.private_key_path,
+            token=None,
+            written_by="cruxible_init",
+        )
     identity_path, _status = write_folder_identity(
         root, instance_id=result.instance_id, principal_id=owner, key_dir=key_dir, replace=True
     )
@@ -238,9 +367,12 @@ def run_mcp_init(
         instance_id=result.instance_id,
         principal_id=owner,
         key_dir=str(key_dir),
+        reviewer_id=requested_reviewer,
+        reviewer_key_dir=None if reviewer_key_dir is None else str(reviewer_key_dir),
         approval_policy=result.approval_policy_mode,
         workspace_root=str(root),
         folder_identity_path=str(identity_path),
+        base_kit_proposal_id=None if result.base_kit is None else result.base_kit.proposal_id,
     )
 
 

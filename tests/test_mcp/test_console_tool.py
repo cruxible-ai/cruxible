@@ -146,3 +146,26 @@ def test_read_only_is_enough_to_call_it(monkeypatch: pytest.MonkeyPatch) -> None
     names = {tool.name for tool in asyncio.run(create_server().list_tools())}
     assert "cruxible_console" in names
     reset_permissions()
+
+
+def test_no_open_starts_and_reuses_listener_without_launching_browser(
+    instance: str, opened: list[str]
+) -> None:
+    first = handlers.handle_console(instance, no_open=True)
+
+    assert first.status == "started" and first.port is not None
+    assert first.address == f"http://127.0.0.1:{first.port}/i/{instance}"
+    assert first.browser_opened is False and first.message is None
+    assert first.stop is not None and "stop=true" in first.stop
+    assert opened == []
+    assert _answers(first.port)
+    rendered = json.dumps(first.model_dump(mode="json"))
+    assert "bootstrap" not in rendered and "token" not in rendered
+
+    second = handlers.handle_console(instance, no_open=True)
+    assert (second.status, second.port, second.browser_opened) == ("running", first.port, False)
+    assert opened == []
+
+    stopped = handlers.handle_console(instance, stop=True)
+    assert stopped.status == "stopped"
+    assert not _answers(first.port)

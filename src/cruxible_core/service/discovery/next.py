@@ -2737,6 +2737,9 @@ class _CitationCommitment:
     set_arguments: tuple[tuple[str, object], ...] | None = None
     # The heading path a section citation was taken at, so a re-bind names it.
     section: tuple[str, ...] | None = None
+    # What the citing Claim is about: its Subject's artifact path and field.
+    subject_path: str | None = None
+    predicate: str | None = None
 
 
 @dataclass(frozen=True)
@@ -2964,6 +2967,8 @@ def claim_citation_commitments(
                 original_start=None if selection_span is None else selection_span[0],
                 original_end=None if selection_span is None else selection_span[1],
                 lineage_note=lineage_note,
+                subject_path=claim.statement.subject.artifact_path,
+                predicate=claim.statement.predicate,
                 section=(
                     tuple(str(item) for item in heading_path)
                     if isinstance(heading_path, list | tuple)
@@ -3807,17 +3812,37 @@ def claim_dependency_row(
             key=lambda item: item.encode("utf-8"),
         )
     )
+    claim_id = identity.removeprefix("Claim:")
+    # Read what changed: each unobserved end, else each changed input Claim.
+    reads = tuple(
+        dict.fromkeys(
+            str(item["subject_end"]).removeprefix("Subject:")
+            if item.get("subject_end")
+            else str(item["source_claim_identity"]).removeprefix("Claim:")
+            for item in stale_inputs
+        )
+    )
+    retire = _retire_alternative(identity, claim_id)
     return _item(
         severity="repair",
         reason="claim_dependency_stale",
         subject_identity=identity,
         related_identities=related,
         detail={"stale_inputs": stale_inputs},
-        repair=PlaybillNextRepairV1(
-            operation="cruxible.authoring.example",
-            target=identity,
-            required_change="reauthor_claim_from_current_inputs",
-            arguments={"claim_id": identity.removeprefix("Claim:")},
+        # Retiring clears the row; a revision from current inputs, or the end
+        # observed again, clears it too. The reads show what changed first.
+        repair=retire.model_copy(
+            update={
+                "alternatives": tuple(
+                    PlaybillNextRepairV1(
+                        operation="cruxible.get",
+                        target=identity,
+                        required_change="read_what_changed_then_judge_the_claim",
+                        arguments={"claim_id": claim_id, "ref": ref},
+                    )
+                    for ref in reads
+                )
+            }
         ),
     )
 
@@ -4018,6 +4043,11 @@ def _citation_drift_item(
         detail["observed_window_digest"] = observed_window_digest
     if commitment.lineage_note is not None:
         detail["lineage_note"] = commitment.lineage_note
+    if commitment.predicate is not None:
+        # Name what the Claim is about, as every Claim row does: the field here,
+        # the Subject among the related identities.
+        detail["predicate"] = commitment.predicate
+    about = () if commitment.subject_path is None else (commitment.subject_path,)
     claim_id = commitment.claim_identity.removeprefix("Claim:")
     rebind: dict[str, object] = {
         "claim_id": claim_id,
@@ -4029,13 +4059,41 @@ def _citation_drift_item(
         # its own; a file citation's new anchor is the re-binder's to choose.
         rebind.update({"section_file": source_id, "section": list(commitment.section)})
     # Core resurfaces, the agent judges: re-bind the Claim to the text it rests
-    # on now (the statement stays), or retire it -- whether the text changed,
-    # moved or is gone.
+    # on now (the statement stays), write a new value with new evidence (which
+    # supersedes the drifted Claim and clears the drift), or retire it --
+    # whether the text changed, moved or is gone.
+    alternatives: list[PlaybillNextRepairV1] = []
+    if commitment.set_arguments is not None:
+        set_args: dict[str, object] = {
+            "claim_id": claim_id,
+            **{key: value for key, value in commitment.set_arguments if key != "value"},
+        }
+        alternatives.append(
+            PlaybillNextRepairV1(
+                operation="cruxible.set",
+                operands_to_add=("value", "file", "because"),
+                target=commitment.claim_identity,
+                required_change="set_new_value_with_new_evidence",
+                arguments=set_args,
+            )
+        )
+    alternatives.append(
+        PlaybillNextRepairV1(
+            operation="cruxible.claim.retire",
+            operands_to_add=("because",),
+            target=commitment.claim_identity,
+            required_change="retire_claim_with_attribution",
+            arguments={
+                "claim_id": claim_id,
+                "expected_coordinate": coordinate.model_dump(mode="json"),
+            },
+        )
+    )
     return _item(
         severity="repair",
         reason="citation_drifted",
         subject_identity=commitment.claim_identity,
-        related_identities=(commitment.citation_id,),
+        related_identities=(commitment.citation_id, *about),
         detail=detail,
         repair=PlaybillNextRepairV1(
             operation="cruxible.rebind",
@@ -4045,18 +4103,7 @@ def _citation_drift_item(
             # A section citation locates its new text; a file citation's new
             # anchor is the re-binder's to choose.
             operands_to_add=("because",) if "section" in rebind else ("file", "because"),
-            alternatives=(
-                PlaybillNextRepairV1(
-                    operation="cruxible.claim.retire",
-                    operands_to_add=("because",),
-                    target=commitment.claim_identity,
-                    required_change="retire_claim_with_attribution",
-                    arguments={
-                        "claim_id": claim_id,
-                        "expected_coordinate": coordinate.model_dump(mode="json"),
-                    },
-                ),
-            ),
+            alternatives=tuple(alternatives),
         ),
     )
 
@@ -5962,7 +6009,7 @@ def _activation_items(
                 target=proposal.proposal_id,
                 required_change=(
                     "activate_your_proposal_its_approvals_are_met"
-                    if proposal.approval_required
+                    if proposal.approval_required or proposal.approvals > 0
                     else "activate_your_proposal_it_needs_no_approval"
                 ),
                 arguments={"proposal_id": proposal.proposal_id},

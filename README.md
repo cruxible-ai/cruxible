@@ -9,27 +9,28 @@
 
 # Cruxible
 
-**Governed, cross-source state for AI agents.**
+**Cruxible is a state layer that gives your agents and teams a shared model of what they believe to be true.**
 
-Cruxible is a local daemon that lets AI agents and people maintain typed,
-evidence-backed state across sources—so observations and judgments compound
-across sessions instead of getting re-derived from scratch or going quietly
-stale.
+It lets you:
 
-- **Automated pipelines** run pinned providers—from API fetches and static
-  analyzers to custom ML models—on a schedule or trigger, settling trusted
-  observations and derivations or proposing findings for review without an
-  agent in the loop.
-- **Agents record judgments** through a typed Python SDK, MCP server, or CLI,
-  citing the exact source data or code passages they rest on, subject to signed
-  review.
-- **When inputs move**, only the affected facts and judgments surface for
-  re-checking—everything else stays current and untouched.
+- **Accumulate evidence-backed knowledge** — agents and people build on what's
+  already verified instead of starting from scratch or overwriting each other,
+  recording typed facts and judgments through a Python SDK, MCP, or CLI with
+  citations and signed review.
+- **Keep it current automatically** — autonomous pipelines pull from APIs,
+  scanners, static analyzers, or custom models on a schedule or trigger,
+  without an agent in the loop.
+- **Draw attention only to what changed** — when an input moves, only the
+  affected facts and judgments surface for review; everything else stays
+  current and untouched.
 
-No LLM runs inside Cruxible. Accepted state is a signed Git ledger with
-per-field history and provenance. Runs on Linux (x86-64) and macOS (Apple
-silicon) with Python 3.11+; on Windows, use WSL2. [Install and
-start](#install-and-start).
+Cruxible doesn't replace your Markdown notes, code, or databases—prose and
+source records stay where they live, while Cruxible holds the typed claims
+pointing to them and tracks when they change.
+
+No LLM runs inside Cruxible. Everything runs locally on Linux (x86-64) and
+macOS (Apple silicon) with Python 3.11+ (Windows via WSL2), backed by a signed
+Git ledger with per-field history. [Install and start](#install-and-start).
 
 ## See it work: vulnerability triage across five sources
 
@@ -175,6 +176,11 @@ single-purpose tools alike:
   facts beat text alone; in
   [MemoryAgentBench](https://arxiv.org/abs/2507.05257), tested memory systems
   frequently failed to prefer newer statements over older contradicting ones.
+- **A plain database still needs this layer built around it.** SQLite or
+  Postgres stores rows cleanly (Cruxible itself indexes into SQLite), but for
+  agent-maintained knowledge you still end up building citations, freshness,
+  *verified none* vs. *unknown*, signed review, and versioned history on top.
+  Cruxible gives you that layer out of the box.
 - **Single-purpose tools do not own cross-source judgments.** Your repos,
   databases, and SaaS tools remain the sources of truth for their own records.
   Cruxible sits at the judgment layer across them—joining external feeds, local

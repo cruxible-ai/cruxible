@@ -40,7 +40,9 @@ registry listing). Every tool runs on a daemon; the server is only its client.
 - **Identity and auth**: `CRUXIBLE_PRINCIPAL_ID` names the principal the agent
   acts as; on a daemon with auth, `CRUXIBLE_SERVER_BEARER_TOKEN` carries its
   credential. `cruxible principal add NAME --key-dir DIR` writes all of these
-  settings to `DIR/cruxible.env`.
+  settings to `DIR/cruxible.env` (`0600`). Pass `--env-file DIR/cruxible.env`
+  (or set `CRUXIBLE_ENV_FILE=DIR/cruxible.env` in the MCP `env` block) to load
+  it directly without copying tokens into client JSON.
 
 **Initialization and cosign.** Setup (starting a daemon, `cruxible init`,
 adding principals) is operator work on the CLI. On MCP, `cruxible_init` is the
@@ -409,7 +411,9 @@ Passing `part.set(...)` itself to `w.write` fails (it has already tried to
 write, and lacks `because`); pass `part.edit().set(...)`.
 `.cruxible/world.pyi` holds the vocabulary as Python types, so an editor or a
 model completes real names; floor delivery keeps it current, and `cruxible
-stub` writes one.
+stub` writes one. `cruxible python script.py` runs an SDK script with the CLI's
+own interpreter and connection from any repository, and `cruxible python --check
+script.py` type-checks it against the vocabulary (`from world import World`).
 
 ### Definitions
 

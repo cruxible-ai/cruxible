@@ -184,10 +184,12 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_authoring_submit_file": (
         "Use to submit a workspace authoring file, such as a tailored kit automation template."
     ),
-    "cruxible_console": ("Use to open the read-only console in the user's browser."),
+    "cruxible_console": (
+        "Use to open the read-only console in the user's browser (no_open=true skips the browser)."
+    ),
     "cruxible_init": (
-        "Use once in a bare project folder: creates its instance and owner; this session "
-        "then acts as the owner."
+        "Use once in a bare project folder: creates its instance and owner (optionally a reviewer "
+        "and independent approval); this session then acts as the owner."
     ),
     "cruxible_authoring_status": (
         "Use when you need exactly what still separates an authored candidate from acceptance."
@@ -249,8 +251,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_query": (
         "Use to answer any question over accepted state in one call. Compact: kind "
         '(e.g. "project.work_item") with where filters such as '
-        '{"field": "status", "eq": "ready"}, select, follow and order_by; contains alone '
-        "searches every "
+        '{"field": "status", "eq": "ready"}, select, follow and order_by '
+        "(-last_changed: newest first); contains alone searches every "
         "Claim value; a definition kind (ClaimType, Procedure, Trigger, Line, SubjectKind, "
         "CaptureContract, ProcedureMandate, QueryDefinition) lists those definitions with "
         "typed columns. Or pass a query name "

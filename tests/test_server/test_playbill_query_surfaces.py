@@ -122,6 +122,76 @@ def test_every_surface_returns_the_same_page(
     assert result.receipt.mode == "inline"
 
 
+@pytest.mark.parametrize("surface", ["transport", "mcp", "cli", "sdk"])
+def test_every_surface_orders_by_last_changed_newest_first(
+    served: tuple[CruxibleClient, str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    surface: str,
+) -> None:
+    from cruxible_core.mcp import handlers
+
+    client, instance_id = served
+    fields: dict[str, Any] = {
+        "kind": SUBJECT_KIND,
+        "select": ["status"],
+        "order_by": ["-last_changed"],
+        "where": [{"field": "last_changed", "gte": 1}],
+    }
+    if surface == "transport":
+        result = client.query(
+            instance_id,
+            request=QueryRequest.model_validate({**fields, "evaluation_time": EVALUATION_TIME}),
+        )
+    elif surface == "cli":
+        from cruxible_core.cli.commands import playbill as commands
+
+        monkeypatch.setattr(commands, "_server_call", lambda op, **_: op(client, instance_id))
+        invoked = CliRunner().invoke(
+            cli,
+            [
+                "query",
+                SUBJECT_KIND,
+                "--select",
+                "status",
+                "--order-by",
+                "-last_changed",
+                "--where",
+                "last_changed>=1",
+                "--evaluation-time",
+                EVALUATION_TIME,
+                "--json",
+            ],
+        )
+        assert invoked.exit_code == 0, invoked.output
+        result = contracts.QueryResultRecord.model_validate(json.loads(invoked.output))
+        table = CliRunner().invoke(
+            cli,
+            ["query", SUBJECT_KIND, "--order-by", "-last_changed", "--select", "status"],
+        )
+        assert table.exit_code == 0, table.output
+        header = table.output.splitlines()[0].split()
+        assert "last_changed" in header
+    elif surface == "sdk":
+        playbill = Cruxible._from_client(  # type: ignore[arg-type]
+            client,
+            instance_id=instance_id,
+            workspace=tmp_path,
+            clock=lambda: datetime.fromisoformat(EVALUATION_TIME),
+        )
+        result = playbill.query(**fields).page
+    else:
+        monkeypatch.setattr(handlers, "_get_client", lambda: client)
+        result = handlers.handle_playbill_query(
+            instance_id, **fields, evaluation_time=EVALUATION_TIME
+        )
+    assert [row["subject_id"] for row in result.rows] == ["wi-43", "wi-42"]
+    generations = [row["last_changed"] for row in result.rows]
+    assert all(isinstance(value, int) for value in generations)
+    assert generations[0] > generations[1]
+    assert [column.name for column in result.columns] == ["status", "last_changed"]
+
+
 def test_wrong_names_refuse_over_http_with_code_and_nearest(
     served: tuple[CruxibleClient, str],
 ) -> None:

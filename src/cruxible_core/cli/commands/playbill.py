@@ -88,6 +88,7 @@ from cruxible_client.authoring.write_evidence import (
     observe_changes,
     rebind_evidence,
 )
+from cruxible_client.compatibility import require_authoring_compatibility
 from cruxible_client.contracts.artifacts import parse_artifact_identity
 from cruxible_client.contracts.attestations import ApprovalStatement
 from cruxible_client.contracts.authoring.models import BlockSyncResult
@@ -1282,6 +1283,10 @@ def init_playbill(
         specifications.append(
             (Path(recovery_key_dir).expanduser(), recovery_principal_id, "recovery")
         )
+    # Refuse a write-incompatible daemon before keys are generated, not after.
+    from cruxible_core.cli.commands import _common
+
+    require_authoring_compatibility(_common._get_client())
     materials, markers = prepare_init_custody(
         transport=transport,
         instance_id=selected,
@@ -4312,6 +4317,7 @@ def add_principal(
         existing = principal_records(client, instance_id)
         if any(item.principal_id == principal_id for item in existing):
             raise click.ClickException(f"Cruxible principal already exists: {principal_id}")
+        require_authoring_compatibility(client)
         material = generate_client_principal_key(
             custody,
             principal_id=principal_id,
@@ -4562,6 +4568,7 @@ def _principal_successor(
         target = next((item for item in matches if item.principal_id == target_id), None)
         if target is None:
             raise click.ClickException(f"Unknown Cruxible principal: {target_id}")
+        require_authoring_compatibility(client)
         material = generate_client_principal_key(
             Path(key_dir).expanduser(),
             principal_id=target_id,
@@ -8048,7 +8055,12 @@ def _follow_entry(spec: str, option: str) -> dict[str, str]:
         "that points at KIND, e.g. project.task.part_of:task."
     ),
 )
-@click.option("--order-by", "order_fields", multiple=True, help="Order: f or -f (repeatable).")
+@click.option(
+    "--order-by",
+    "order_fields",
+    multiple=True,
+    help="Order: f or -f (repeatable); -last_changed first lists recent changes first.",
+)
 @click.option(
     "--limit",
     type=click.IntRange(1, contracts.QUERY_ANSWER_MAX_RESULTS),
@@ -9662,7 +9674,15 @@ def audit(
 
 @playbill_group.command("since")
 @click.argument("generation", type=click.IntRange(min=0))
-@click.option("--max-rows", default=100, show_default=True, type=click.IntRange(1, 1000))
+@click.option(
+    "--limit",
+    "--max-rows",
+    "max_rows",
+    default=100,
+    show_default=True,
+    type=click.IntRange(1, 1000),
+    help="Rows per page; a truncated page prints the command that continues it.",
+)
 @click.option("--max-bytes", default=65_536, show_default=True, type=click.IntRange(1, 1_048_576))
 @click.option(
     "--access-profile",

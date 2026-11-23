@@ -1227,6 +1227,35 @@ def _sdk_context(at: ClientCoordinate | None) -> str:
     return f"cx.at(AcceptedCoordinate({fields}))"
 
 
+def _detail_unsupported(
+    detail: str, surface: ReadSurface, resolved: ResolvedRef, allowed: Sequence[str]
+) -> ReadRefusalError:
+    """``cruxible.get.detail_unsupported``: the details this kind takes, and the repair.
+
+    Evidence is read per Claim: on a Subject the refusal names the Claim form,
+    whose ids the Subject's summary card lists by field.
+    """
+
+    message = (
+        f'detail="{detail}" does not apply to a {resolved.kind.replace("_", " ")}; '
+        f"it takes {', '.join(allowed)}"
+    )
+    repair_line = f"Run {_render_get(surface, resolved.display)}"
+    if resolved.kind == "subject" and detail == "evidence":
+        claim_form = _render_get(surface, "CLM-...", "evidence")
+        message += f". Evidence is read per Claim: {claim_form}"
+        repair_line += f"; it names each field's Claim, then {claim_form}"
+    return ReadRefusalError(
+        "cruxible.get.detail_unsupported",
+        message,
+        repair=RepairOperation(
+            operation="cruxible.get", arguments={"ref": resolved.display, "detail": "summary"}
+        ),
+        repair_line=repair_line,
+        context={"ref": resolved.display, "kind": resolved.kind, "allowed": list(allowed)},
+    )
+
+
 def _render_get(
     surface: ReadSurface,
     ref: str,
@@ -2579,6 +2608,20 @@ def _claim_evidence(
                     sorted(withheld),
                 )
             }
+    with instance.bind_accepted_projection(coordinate) as projection:
+        claim = cast(ClaimArtifact, projection.typed.source(resolved.identity))
+    # The cited passage, read and cut as proposal review shows it: the spans the
+    # Claim maps onto each Capture's committed bytes.
+    from cruxible_core.service.proposals.review_view import CitedText
+
+    spans = sorted(
+        {
+            (span.content_digest, span.start_byte, span.end_byte)
+            for mapping in claim.backing.source_mappings
+            for span in mapping.spans
+        }
+    )
+    cited = CitedText(instance, reader, withheld=False)
     captures: list[GetCaptureEvidence] = []
     for account in explanation.admission_accounts:
         version = names.version_of(account.capture_contract_digest)
@@ -2600,6 +2643,14 @@ def _claim_evidence(
                 source = envelope.producer.qualified
             observed_at = envelope.observed_at
             byte_length = envelope.commitment.byte_length
+        shown = (
+            None
+            if account.capture_digest in withheld or erasure is not None or not spans
+            else cited.citation(
+                {"capture": account.capture_digest, "origin": account.citation_origin},
+                [list(span) for span in spans],
+            )
+        )
         captures.append(
             GetCaptureEvidence(
                 capture=capture_handle(account.capture_digest),
@@ -2618,6 +2669,8 @@ def _claim_evidence(
                 else GetCaptureErasure(
                     by=erasure.erased_by, at=erasure.erased_at, because=erasure.because
                 ),
+                passage=None if shown is None else shown.text,
+                passage_truncated=False if shown is None else shown.text_truncated,
             )
         )
     # Accepted attestations and the door's recorded events of this exact version.
@@ -2636,8 +2689,6 @@ def _claim_evidence(
         )
         for item in explanation.attestation_accounts
     )
-    with instance.bind_accepted_projection(coordinate) as projection:
-        claim = cast(ClaimArtifact, projection.typed.source(resolved.identity))
     value = _artifact_value(claim)
     return GetEvidence(
         value=value,
@@ -3843,16 +3894,7 @@ def service_playbill_get(
         coordinate = head
     allowed = GET_DETAILS_BY_KIND[resolved.kind]
     if request.detail not in allowed:
-        raise ReadRefusalError(
-            "cruxible.get.detail_unsupported",
-            f'detail="{request.detail}" does not apply to a {resolved.kind.replace("_", " ")}; '
-            f"it takes {', '.join(allowed)}",
-            repair=RepairOperation(
-                operation="cruxible.get", arguments={"ref": resolved.display, "detail": "summary"}
-            ),
-            repair_line=f"Run {_render_get(request.surface, resolved.display)}",
-            context={"ref": resolved.display, "kind": resolved.kind, "allowed": list(allowed)},
-        )
+        raise _detail_unsupported(request.detail, request.surface, resolved, allowed)
     card: GetCard | None = None
     fields: dict[str, Any] = {}
     surface = request.surface
@@ -4106,16 +4148,7 @@ def _get_backlinks(
     resolved, coordinate = resolve_backlink_target(instance, backlinks_request, access=access)
     allowed = GET_DETAILS_BY_KIND[resolved.kind]
     if request.detail not in allowed:
-        raise ReadRefusalError(
-            "cruxible.get.detail_unsupported",
-            f'detail="{request.detail}" does not apply to a {resolved.kind.replace("_", " ")}; '
-            f"it takes {', '.join(allowed)}",
-            repair=RepairOperation(
-                operation="cruxible.get", arguments={"ref": resolved.display, "detail": "summary"}
-            ),
-            repair_line=f"Run {_render_get(request.surface, resolved.display)}",
-            context={"ref": resolved.display, "kind": resolved.kind, "allowed": list(allowed)},
-        )
+        raise _detail_unsupported(request.detail, request.surface, resolved, allowed)
     page = backlinks_of_resolved(instance, resolved, request=backlinks_request, access=access)
     fields: dict[str, Any] = {}
     if request.full_coordinate:

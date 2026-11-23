@@ -37,6 +37,23 @@ connection so later commands in this folder need no flags. (To start with
 two-principal cosign from the first command instead, see step 7 or the
 [Security walkthrough](security-walkthrough.md).)
 
+What lands in `.cruxible/`, and what to commit:
+
+| File | Written by | Commit? |
+|---|---|---|
+| `coverage.json` | `init`: this folder's daemon transport and instance | no: machine-local, added to `.git/info/exclude` |
+| `identity.json` | `init`: the owner's principal ID and key directory path (never a key) | no: machine-local, added to `.git/info/exclude` |
+| `world.pyi` | the daemon's floor delivery: the vocabulary as Python types | no: derived, added to `.git/info/exclude` |
+| `floor/` | the daemon's floor delivery: one file per Subject, for grep | no: derived; its own `.gitignore` ignores it |
+| `files.yaml` | the first file you catalogue | yes: the portable file catalog (`files.yaml.lock` is excluded) |
+| `vocabulary.yaml` | `cruxible vocabulary export` | yes: your kinds and fields as one editable file |
+
+In a Git repository the daemon also mirrors the ledger into the repository as
+the `cruxible-ledger` remote (`cruxible-ledger/accepted` and
+`cruxible-ledger/proposals/*`, in `.git/config`, nothing to commit):
+`git diff cruxible-ledger/accepted...cruxible-ledger/proposals/<key>` shows a
+proposal's change, which `cruxible proposal review --detail` prints.
+
 ## 2. Install the security kit
 
 <!-- publish: kit tag -->

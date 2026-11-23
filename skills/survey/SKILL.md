@@ -44,14 +44,16 @@ is what the project-state kit models; `cruxible kit add REFERENCE` previews a
 kit's vocabulary without writing anything.
 
 Setting up follows the user's agreement. `cruxible init` attaches the project
-and proposes the base kit. The default sets up a second, reviewing principal
+and installs the base kit under a single owner (`self_approval_allowed`) by
+default. For independent review, pass a second reviewing principal
 (`cruxible init --principal-id owner --reviewer-key-dir DIR
---require-independent-approval`, the key directory outside the repository):
-nothing its author proposed activates until the reviewer, normally a separate
-agent session, approves it. `cruxible init --principal-id owner` alone lets
-one owner approve everything. Which one is the user's choice; `cruxible next`
-shows what waits for whom. The first vocabulary goes in
-`.cruxible/vocabulary.yaml` (`cruxible vocabulary export`, `plan`, `apply`);
+--require-independent-approval`, the key directory outside the repository, or
+`cruxible_init` with `reviewer_id="reviewer"` and
+`require_independent_approval=true`): nothing its author proposed activates
+until the reviewer, normally a separate agent session, approves it. Which one
+is the user's choice; `cruxible next` shows what waits for whom. The first
+vocabulary goes in `.cruxible/vocabulary.yaml` (`cruxible vocabulary export`,
+`plan`, `apply`);
 the bundled [vocabulary reference](../../docs/evolving-your-vocabulary.md)
 gives its format and what each later change costs. Start with what the
 assessment named and no more: adding a field or a kind later costs nothing,

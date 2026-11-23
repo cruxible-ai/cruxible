@@ -85,6 +85,7 @@ def test_a_judgment_on_a_pair_whose_end_lost_its_observation_resurfaces(tmp_path
     (entry,) = row.detail["stale_inputs"]
     assert entry["impact_reasons"] == [SUBJECT_END_UNOBSERVED]
     assert entry["subject_end"].startswith(f"Subject:{OCCURRENCE}/")
+    _assert_repair_and_text(row, judgment=judgment, end=entry["subject_end"])
     _check(instance)
 
     # Observed again: the end holds a live scope, so the judgment stands again.
@@ -112,6 +113,51 @@ def test_a_judgment_on_a_pair_whose_end_lost_its_observation_resurfaces(tmp_path
     accepted(write(instance, {"op": "retire", "target": judgment, "reason": "was-rescinded"}))
     assert _stale(instance) == []
     _check(instance)
+
+
+def _assert_repair_and_text(row: Any, *, judgment: str, end: str) -> None:
+    """Upgrade case: the row names the unobserved end, and its repair runs (not a bare
+    `authoring example`); the text carries what the JSON carries."""
+
+    from cruxible_client import contracts
+    from cruxible_client.contracts.text_display import next_lines
+
+    claim_id = judgment.removeprefix("Claim:")
+    assert row.repair.operation == "cruxible.claim.retire"
+    assert row.repair.arguments == {"claim_id": claim_id}
+    assert row.repair.command == f"cruxible retire {claim_id} --because '<TEXT>'"
+    (read,) = row.repair.alternatives
+    assert read.operation == "cruxible.get"
+    assert read.command == f"cruxible get {end.removeprefix('Subject:')}"
+    item = contracts.NextItem.model_validate(row.model_dump(mode="json"))
+    status = contracts.NextStatus.model_validate(
+        {
+            "blocking": False,
+            **{
+                facet: {"state": "current"}
+                for facet in (
+                    "instance",
+                    "floor",
+                    "ledger_mirror",
+                    "provider_lane",
+                    "procedure_catalog",
+                    "compiler",
+                    "line_dispatch",
+                    "consumers",
+                    "triggers",
+                )
+            },
+        }
+    )
+    text = "\n".join(next_lines(status=status, items=(item,), unobserved=()))
+    (source,) = row.related_identities
+    assert (
+        f"  end unobserved: {end.removeprefix('Subject:')}  retired={source.removeprefix('Claim:')}"
+        in text
+    )
+    assert f"  repair: {row.repair.command}" in text
+    assert f"  or: {read.command}" in text
+    assert "authoring example" not in text
 
 
 #: The subject-end shape before END keys (FORMAT 14): the key-object index as it was.

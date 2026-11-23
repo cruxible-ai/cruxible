@@ -485,8 +485,8 @@ def test_next_coalesces_multiple_stale_inputs_into_one_derived_claim_row(
             )
         )
     )
-    assert row.repair.operation == "cruxible.authoring.example"
-    assert row.repair.required_change == "reauthor_claim_from_current_inputs"
+    assert row.repair.operation == "cruxible.claim.retire"
+    assert row.repair.required_change == "retire_claim_with_attribution"
     assert walked_sources == [first_current.accepted.path, second_current.accepted.path]
 
 

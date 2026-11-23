@@ -197,7 +197,8 @@
       "values": [
         "because",
         "file",
-        "capture"
+        "capture",
+        "value"
       ]
     },
     "NextRepairOperation": {
@@ -34684,7 +34685,7 @@
       },
       "json_schema": {
         "additionalProperties": false,
-        "description": "One inbox item as a list shows it by default: what it is, and how often seen.\n\n``kind`` is the terminal (Procedure node) that posted it; ``title`` a\none-line reading of its payload (a ``title``, ``name``, ``summary``,\n``subject`` or ``id`` field, else its canonical JSON), cut to\n``INBOX_ROW_TITLE_MAX_CHARS``. ``inbox get`` returns every field.",
+        "description": "One inbox item as a list shows it by default: what it is, and how often seen.\n\n``kind`` is the terminal (Procedure node) that posted it; ``title`` a\none-line reading of its payload (a ``title``, ``name``, ``summary``,\n``subject`` or ``id`` field, else its fields as ``name=value`` pairs, else\nits canonical JSON), cut to ``INBOX_ROW_TITLE_MAX_CHARS``. ``inbox get`` returns every field.",
         "properties": {
           "item_id": {
             "pattern": "^INB-[0-9a-f]{64}$",
@@ -34858,7 +34859,7 @@
         "$defs": {
           "InboxRow": {
             "additionalProperties": false,
-            "description": "One inbox item as a list shows it by default: what it is, and how often seen.\n\n``kind`` is the terminal (Procedure node) that posted it; ``title`` a\none-line reading of its payload (a ``title``, ``name``, ``summary``,\n``subject`` or ``id`` field, else its canonical JSON), cut to\n``INBOX_ROW_TITLE_MAX_CHARS``. ``inbox get`` returns every field.",
+            "description": "One inbox item as a list shows it by default: what it is, and how often seen.\n\n``kind`` is the terminal (Procedure node) that posted it; ``title`` a\none-line reading of its payload (a ``title``, ``name``, ``summary``,\n``subject`` or ``id`` field, else its fields as ``name=value`` pairs, else\nits canonical JSON), cut to ``INBOX_ROW_TITLE_MAX_CHARS``. ``inbox get`` returns every field.",
             "properties": {
               "item_id": {
                 "pattern": "^INB-[0-9a-f]{64}$",
@@ -40375,7 +40376,8 @@
                   "enum": [
                     "because",
                     "file",
-                    "capture"
+                    "capture",
+                    "value"
                   ],
                   "type": "string"
                 },
@@ -40871,7 +40873,8 @@
                   "enum": [
                     "because",
                     "file",
-                    "capture"
+                    "capture",
+                    "value"
                   ],
                   "type": "string"
                 },
@@ -41523,7 +41526,8 @@
                   "enum": [
                     "because",
                     "file",
-                    "capture"
+                    "capture",
+                    "value"
                   ],
                   "type": "string"
                 },
@@ -42108,7 +42112,8 @@
                   "enum": [
                     "because",
                     "file",
-                    "capture"
+                    "capture",
+                    "value"
                   ],
                   "type": "string"
                 },
@@ -43145,7 +43150,8 @@
                   "enum": [
                     "because",
                     "file",
-                    "capture"
+                    "capture",
+                    "value"
                   ],
                   "type": "string"
                 },
@@ -43853,7 +43859,8 @@
                   "enum": [
                     "because",
                     "file",
-                    "capture"
+                    "capture",
+                    "value"
                   ],
                   "type": "string"
                 },
@@ -85001,7 +85008,7 @@
           "json_name": "field",
           "required": true,
           "schema": {
-            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, or alias.field after follow.",
+            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed, or alias.field after follow.",
             "maxLength": 256,
             "minLength": 1,
             "title": "Field",
@@ -85020,7 +85027,7 @@
             "type": "string"
           },
           "field": {
-            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, or alias.field after follow.",
+            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed, or alias.field after follow.",
             "maxLength": 256,
             "minLength": 1,
             "title": "Field",
@@ -85067,7 +85074,7 @@
           "json_name": "field",
           "required": true,
           "schema": {
-            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, or alias.field after follow.",
+            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed, or alias.field after follow.",
             "maxLength": 256,
             "minLength": 1,
             "title": "Field",
@@ -85094,7 +85101,7 @@
             "title": "Eq"
           },
           "field": {
-            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, or alias.field after follow.",
+            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed, or alias.field after follow.",
             "maxLength": 256,
             "minLength": 1,
             "title": "Field",
@@ -85131,7 +85138,7 @@
           "json_name": "field",
           "required": true,
           "schema": {
-            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, or alias.field after follow.",
+            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed, or alias.field after follow.",
             "maxLength": 256,
             "minLength": 1,
             "title": "Field",
@@ -85148,7 +85155,7 @@
             "type": "boolean"
           },
           "field": {
-            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, or alias.field after follow.",
+            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed, or alias.field after follow.",
             "maxLength": 256,
             "minLength": 1,
             "title": "Field",
@@ -85175,7 +85182,7 @@
           "json_name": "field",
           "required": true,
           "schema": {
-            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, or alias.field after follow.",
+            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed, or alias.field after follow.",
             "maxLength": 256,
             "minLength": 1,
             "title": "Field",
@@ -85207,7 +85214,7 @@
         "additionalProperties": false,
         "properties": {
           "field": {
-            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, or alias.field after follow.",
+            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed, or alias.field after follow.",
             "maxLength": 256,
             "minLength": 1,
             "title": "Field",
@@ -85248,7 +85255,7 @@
           "json_name": "field",
           "required": true,
           "schema": {
-            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, or alias.field after follow.",
+            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed, or alias.field after follow.",
             "maxLength": 256,
             "minLength": 1,
             "title": "Field",
@@ -85280,7 +85287,7 @@
         "additionalProperties": false,
         "properties": {
           "field": {
-            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, or alias.field after follow.",
+            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed, or alias.field after follow.",
             "maxLength": 256,
             "minLength": 1,
             "title": "Field",
@@ -85321,7 +85328,7 @@
           "json_name": "field",
           "required": true,
           "schema": {
-            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, or alias.field after follow.",
+            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed, or alias.field after follow.",
             "maxLength": 256,
             "minLength": 1,
             "title": "Field",
@@ -85359,7 +85366,7 @@
         "description": "The value is one of these.",
         "properties": {
           "field": {
-            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, or alias.field after follow.",
+            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed, or alias.field after follow.",
             "maxLength": 256,
             "minLength": 1,
             "title": "Field",
@@ -85405,7 +85412,7 @@
           "json_name": "field",
           "required": true,
           "schema": {
-            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, or alias.field after follow.",
+            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed, or alias.field after follow.",
             "maxLength": 256,
             "minLength": 1,
             "title": "Field",
@@ -85437,7 +85444,7 @@
         "additionalProperties": false,
         "properties": {
           "field": {
-            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, or alias.field after follow.",
+            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed, or alias.field after follow.",
             "maxLength": 256,
             "minLength": 1,
             "title": "Field",
@@ -85478,7 +85485,7 @@
           "json_name": "field",
           "required": true,
           "schema": {
-            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, or alias.field after follow.",
+            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed, or alias.field after follow.",
             "maxLength": 256,
             "minLength": 1,
             "title": "Field",
@@ -85510,7 +85517,7 @@
         "additionalProperties": false,
         "properties": {
           "field": {
-            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, or alias.field after follow.",
+            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed, or alias.field after follow.",
             "maxLength": 256,
             "minLength": 1,
             "title": "Field",
@@ -85551,7 +85558,7 @@
           "json_name": "field",
           "required": true,
           "schema": {
-            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, or alias.field after follow.",
+            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed, or alias.field after follow.",
             "maxLength": 256,
             "minLength": 1,
             "title": "Field",
@@ -85584,7 +85591,7 @@
         "description": "No value equals this one; a Subject without the value matches.",
         "properties": {
           "field": {
-            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, or alias.field after follow.",
+            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed, or alias.field after follow.",
             "maxLength": 256,
             "minLength": 1,
             "title": "Field",
@@ -91853,7 +91860,7 @@
           "required": false,
           "schema": {
             "default": [],
-            "description": "Fields to order by; prefix - for descending.",
+            "description": "Fields to order by; prefix - for descending. -last_changed (first) lists the most recently changed Subjects first.",
             "items": {
               "type": "string"
             },
@@ -92993,7 +93000,7 @@
                 "type": "string"
               },
               "field": {
-                "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, or alias.field after follow.",
+                "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed, or alias.field after follow.",
                 "maxLength": 256,
                 "minLength": 1,
                 "title": "Field",
@@ -93026,7 +93033,7 @@
                 "title": "Eq"
               },
               "field": {
-                "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, or alias.field after follow.",
+                "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed, or alias.field after follow.",
                 "maxLength": 256,
                 "minLength": 1,
                 "title": "Field",
@@ -93049,7 +93056,7 @@
                 "type": "boolean"
               },
               "field": {
-                "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, or alias.field after follow.",
+                "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed, or alias.field after follow.",
                 "maxLength": 256,
                 "minLength": 1,
                 "title": "Field",
@@ -93067,7 +93074,7 @@
             "additionalProperties": false,
             "properties": {
               "field": {
-                "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, or alias.field after follow.",
+                "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed, or alias.field after follow.",
                 "maxLength": 256,
                 "minLength": 1,
                 "title": "Field",
@@ -93099,7 +93106,7 @@
             "additionalProperties": false,
             "properties": {
               "field": {
-                "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, or alias.field after follow.",
+                "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed, or alias.field after follow.",
                 "maxLength": 256,
                 "minLength": 1,
                 "title": "Field",
@@ -93132,7 +93139,7 @@
             "description": "The value is one of these.",
             "properties": {
               "field": {
-                "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, or alias.field after follow.",
+                "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed, or alias.field after follow.",
                 "maxLength": 256,
                 "minLength": 1,
                 "title": "Field",
@@ -93169,7 +93176,7 @@
             "additionalProperties": false,
             "properties": {
               "field": {
-                "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, or alias.field after follow.",
+                "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed, or alias.field after follow.",
                 "maxLength": 256,
                 "minLength": 1,
                 "title": "Field",
@@ -93201,7 +93208,7 @@
             "additionalProperties": false,
             "properties": {
               "field": {
-                "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, or alias.field after follow.",
+                "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed, or alias.field after follow.",
                 "maxLength": 256,
                 "minLength": 1,
                 "title": "Field",
@@ -93234,7 +93241,7 @@
             "description": "No value equals this one; a Subject without the value matches.",
             "properties": {
               "field": {
-                "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, or alias.field after follow.",
+                "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, last_changed, or alias.field after follow.",
                 "maxLength": 256,
                 "minLength": 1,
                 "title": "Field",
@@ -94196,7 +94203,7 @@
           },
           "order_by": {
             "default": [],
-            "description": "Fields to order by; prefix - for descending.",
+            "description": "Fields to order by; prefix - for descending. -last_changed (first) lists the most recently changed Subjects first.",
             "items": {
               "type": "string"
             },

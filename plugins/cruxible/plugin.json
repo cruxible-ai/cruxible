@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "cruxible",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Typed, governed shared state and evidence for agents.",
   "extensions": {
     "com.openai": {
@@ -9,7 +9,9 @@
         "displayName": "Cruxible",
         "shortDescription": "Typed, governed shared state and evidence for agents.",
         "developerName": "Cruxible LLC",
-        "category": "Productivity"
+        "category": "Productivity",
+        "composerIcon": "./assets/icon.png",
+        "logo": "./assets/icon.png"
       }
     }
   }

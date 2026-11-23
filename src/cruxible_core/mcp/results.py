@@ -70,9 +70,15 @@ class McpInitResult(BaseModel):
     principal_id: str | None
     #: The owner's key directory, outside the project; the key never leaves it.
     key_dir: str | None
+    #: Optional second ordinary principal configured for independent review.
+    reviewer_id: str | None = None
+    #: The reviewer's key directory, outside the project; the key never leaves it.
+    reviewer_key_dir: str | None = None
     approval_policy: Literal["self_approval_allowed", "independent_approval_required"] | None
     workspace_root: str
     folder_identity_path: str | None
+    #: Open base-kit proposal when independent approval was enabled at init.
+    base_kit_proposal_id: str | None = None
 
 
 class McpConsoleResult(BaseModel):

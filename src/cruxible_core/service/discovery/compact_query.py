@@ -109,6 +109,7 @@ from cruxible_core.indexes.subject_aliases import resolve_subject_ref
 from cruxible_core.indexes.typed_state import LIVE_SUBJECT_PREDICATE_CLAIMS_SQL
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.contract_names import CaptureContractNames
+from cruxible_core.service.discovery.field_names import reserved_meaning
 from cruxible_core.service.discovery.kit_owners import kit_owners, owned_by
 from cruxible_core.service.discovery.listed_kinds import LISTED_KINDS, listed_kind_answer
 from cruxible_core.service.discovery.query import (
@@ -148,6 +149,12 @@ from cruxible_core.service.discovery.read_flags import (
     claim_reads,
     ordered_flags,
     verdict_flags,
+)
+from cruxible_core.service.discovery.recency import (
+    LAST_CHANGED_FIELD,
+    check_last_changed_filter,
+    last_changed_matches,
+    subject_last_changed,
 )
 from cruxible_core.service.list_pages import (
     ListCursorMismatch,
@@ -442,13 +449,14 @@ class _CompactPlan:
             if (
                 not alias
                 or alias in self.follows
-                or alias in {ROOT, SUBJECT_ID_FIELD, "value"}
+                or alias in {ROOT, SUBJECT_ID_FIELD, LAST_CHANGED_FIELD, "value"}
                 or alias in roots
             ):
                 raise query_refusal(
                     "cruxible.query.alias_invalid",
                     f"alias {follow.as_!r} must be a new lower-case identifier that is not "
-                    "subject, subject_id, value, another alias, or a predicate namespace",
+                    "subject, subject_id, last_changed, value, another alias, or a predicate "
+                    "namespace",
                     repair='pick a short alias such as "parent"',
                     field_path=f"{path}.as",
                 )
@@ -537,10 +545,23 @@ class _CompactPlan:
             label = rest if isinstance(info, str) else f"{head}.{info.predicate}"
             return _Field(name=name, binding=follow.alias, info=info, label=label)
         info = self.vocabulary.resolve_field(
-            (self.kind,), name, field_path=field_path, owner=self.kind
+            (self.kind,),
+            name,
+            field_path=field_path,
+            owner=self.kind,
+            reserved=(LAST_CHANGED_FIELD,),
         )
         label = SUBJECT_ID_FIELD if isinstance(info, str) else info.predicate
         return _Field(name=name, binding=ROOT, info=info, label=label)
+
+    def recency(self, name: str) -> bool:
+        """Whether ``name`` is the reserved ``last_changed`` of the queried Subject.
+
+        Like ``subject_id``, it keeps that meaning unless an accepted predicate's
+        full name is exactly ``last_changed``.
+        """
+
+        return name == LAST_CHANGED_FIELD and reserved_meaning(name, self.vocabulary.predicates)
 
     def column_name(self, item: _Field) -> str:
         """The column a selected field is served as: its shared short name."""
@@ -642,6 +663,8 @@ def _checked_filters(
 ) -> list[tuple[_Field, QueryFilterOperator, object]]:
     checked: list[tuple[_Field, QueryFilterOperator, object]] = []
     for index, item in enumerate(where):
+        if plan.recency(item.field):
+            continue
         path = f"where[{index}]"
         resolved = plan.field(item.field, field_path=f"{path}.field")
         check_operator(resolved.info, item.operator, field_path=path, label=resolved.label)
@@ -1159,6 +1182,8 @@ def _compact_columns(
             if name in plan.follows:
                 want(plan.follows[name], (name,))
                 continue
+            if plan.recency(name):
+                continue
             resolved = plan.field(name, field_path=f"select[{index}]")
             if resolved.binding == ROOT and isinstance(resolved.info, str):
                 continue
@@ -1207,11 +1232,38 @@ def _compact_subject_query(
             lowered.append(_lower_filter(resolved, operator, value))
         else:
             inline.append(_InlineFilter(field=resolved, operator=operator, value=value))
+    recent = [
+        (
+            item.operator,
+            check_last_changed_filter(item.operator, item.value, field_path=f"where[{index}]"),
+        )
+        for index, item in enumerate(request.where)
+        if plan.recency(item.field)
+    ]
+    recency_order: Literal["ascending", "descending"] | None = None
     orderings: list[QueryOrdering] = []
     for index, raw in enumerate(request.order_by):
         path = f"order_by[{index}]"
         descending = raw.startswith("-")
-        resolved = plan.field(raw.removeprefix("-").removeprefix("+"), field_path=path)
+        name = raw.removeprefix("-").removeprefix("+")
+        if plan.recency(name):
+            if recency_order is not None:
+                raise query_refusal(
+                    "cruxible.query.order_repeated",
+                    "order_by names the same field twice",
+                    repair="name each field once",
+                    field_path="order_by",
+                )
+            if index != 0:
+                raise query_refusal(
+                    "cruxible.query.order_not_applicable",
+                    f"{LAST_CHANGED_FIELD} orders only as the first key",
+                    repair=f"put {LAST_CHANGED_FIELD} (or -{LAST_CHANGED_FIELD}) first in order_by",
+                    field_path=path,
+                )
+            recency_order = "descending" if descending else "ascending"
+            continue
+        resolved = plan.field(name, field_path=path)
         if not isinstance(resolved.info, str) and (
             resolved.info.cardinality != "one" or resolved.info.value_type not in ORDERABLE_TYPES
         ):
@@ -1231,6 +1283,13 @@ def _compact_subject_query(
         )
     kind_predicates = vocabulary.predicates_of(plan.kind)
     columns, output, notes = _compact_columns(plan, request)
+    recency_column = (
+        bool(recent)
+        or recency_order is not None
+        or any(plan.recency(name) for name in request.select)
+    )
+    if recency_column:
+        output.append(QueryColumn(name=LAST_CHANGED_FIELD, type="integer", cardinality="one"))
 
     follows = tuple(plan.follows.values())
     path_shape = bool(follows)
@@ -1323,6 +1382,23 @@ def _compact_subject_query(
                 predicate: info.cardinality for predicate, info in vocabulary.predicates.items()
             },
         )
+    # last_changed is read for every candidate only when the answer is filtered
+    # or ordered by it; a column alone reads it for the rendered page.
+    changed: dict[str, int] = {}
+    if recent or recency_order is not None:
+        changed = subject_last_changed(
+            instance,
+            coordinate,
+            (bound for row in candidates if (bound := row.get(ROOT)) is not None),
+        )
+        candidates = [
+            row
+            for row in candidates
+            if all(
+                last_changed_matches(operator, expected, changed.get(row.get(ROOT) or "", 0))
+                for operator, expected in recent
+            )
+        ]
     keys = [tuple(row.get(binding) or "" for binding in bindings) for row in candidates]
     if follows and not orderings:
         # Rows about one Subject belong together: with no order_by, a follow
@@ -1332,6 +1408,36 @@ def _compact_subject_query(
         order = sorted(range(len(keys)), key=keys.__getitem__)
         candidates = [candidates[index] for index in order]
         keys = [keys[index] for index in order]
+    if recency_order is not None:
+        # Sorted on the generation; ties keep the evaluator's order (the rest of
+        # order_by, else the Subject path), so the page key and cursor continue
+        # one total order.
+        sign = -1 if recency_order == "descending" else 1
+        order = sorted(
+            range(len(candidates)),
+            key=lambda index: (sign * changed.get(candidates[index].get(ROOT) or "", 0), index),
+        )
+        candidates = [candidates[index] for index in order]
+        keys = [keys[index] for index in order]
+        if capped:
+            notes = (
+                *notes,
+                f"{LAST_CHANGED_FIELD} orders only the rows under the server cap; narrow the "
+                "query with where (e.g. last_changed>=N) to see the most recent",
+            )
+
+    def render(page: Sequence[Any]) -> list[dict[str, Any]]:
+        rendered = renderer.render(cast(Sequence[dict[str, str | None]], page))
+        if not recency_column:
+            return rendered
+        roots = [row.get(ROOT) for row in page]
+        missing = {root for root in roots if root is not None and root not in changed}
+        if missing:
+            changed.update(subject_last_changed(instance, coordinate, missing))
+        for row, root in zip(rendered, roots, strict=True):
+            row[LAST_CHANGED_FIELD] = None if root is None else changed.get(root, 0)
+        return rendered
+
     return _Answer(
         mode="inline",
         kind=plan.kind,
@@ -1339,7 +1445,7 @@ def _compact_subject_query(
         columns=tuple(output),
         candidates=candidates,
         keys=keys,
-        render=lambda page: renderer.render(cast(Sequence[dict[str, str | None]], page)),
+        render=render,
         capped=capped,
         notes=(*notes, *cap_notes),
         served=renderer.served,

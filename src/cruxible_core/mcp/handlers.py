@@ -1416,7 +1416,9 @@ def handle_playbill_authoring_submit_file(
     return handle_playbill_authoring_submit(instance_id, payload=document, accept=accept)
 
 
-def handle_console(instance_id: str, *, stop: bool = False) -> McpConsoleResult:
+def handle_console(
+    instance_id: str, *, stop: bool = False, no_open: bool = False
+) -> McpConsoleResult:
     """`cruxible_console`: start, reuse or stop this process's listener (`mcp.console`)."""
 
     from cruxible_core.mcp.console import open_console, stop_console
@@ -1431,10 +1433,16 @@ def handle_console(instance_id: str, *, stop: bool = False) -> McpConsoleResult:
         target=resolve_daemon_target(),
         token=get_runtime_bearer_token(),
         principal_id=identity.principal_id,
+        no_open=no_open,
     )
 
 
-def handle_init(principal_id: str | None = None) -> McpInitResult:
+def handle_init(
+    principal_id: str | None = None,
+    *,
+    reviewer_id: str | None = None,
+    require_independent_approval: bool = False,
+) -> McpInitResult:
     """`cruxible_init`: initialize the MCP workspace folder (`cruxible_core.mcp.init`)."""
 
     check_permission("cruxible_init")
@@ -1443,7 +1451,13 @@ def handle_init(principal_id: str | None = None) -> McpInitResult:
     def call(fn: Callable[[CruxibleClient], Any], operation: str) -> Any:
         return _daemon_call(fn, operation_name=operation)
 
-    return run_mcp_init(principal_id=principal_id, target=target, call=call)
+    return run_mcp_init(
+        principal_id=principal_id,
+        reviewer_id=reviewer_id,
+        require_independent_approval=require_independent_approval,
+        target=target,
+        call=call,
+    )
 
 
 def handle_playbill_authoring_status(

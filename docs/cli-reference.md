@@ -11,13 +11,23 @@ give machine-readable output.
 --server-socket TEXT
 --instance-id TEXT
 --principal-id TEXT
+--env-file TEXT
 --no-workspace
+--no-autostart
 --json-compact
 --version
 ~~~
 
+`--env-file PATH` (or `CRUXIBLE_ENV_FILE=PATH`) loads allowlisted `CRUXIBLE_*`
+variables from a file such as `DIR/cruxible.env` before target and principal
+resolution. Explicit CLI flags and existing process environment variables always
+take precedence; a file containing `CRUXIBLE_SERVER_BEARER_TOKEN` must be
+owner-only (`0600`) and not a symlink, and naming a different principal never
+loads another principal's key or token from the file.
+
 Target resolution is component-wise and deterministic: explicit flags, then
-`CRUXIBLE_SERVER_URL` / `CRUXIBLE_SERVER_SOCKET` / `CRUXIBLE_INSTANCE_ID`, then
+`CRUXIBLE_SERVER_URL` / `CRUXIBLE_SERVER_SOCKET` / `CRUXIBLE_INSTANCE_ID` (from
+the environment or `--env-file`), then
 the attached workspace discovered from `CRUXIBLE_WORKSPACE` or by
 walking up from the current directory to `.cruxible/coverage.json`, then the
 remembered global context. Automatic walk-up stops after the home directory and
@@ -708,18 +718,21 @@ the compile -- when it does not.
 ## mcp
 
 ```text
-cruxible mcp
+cruxible mcp [--env-file PATH]
 ```
 
 Serves the MCP tools over stdio. It is the same server as the `cruxible-mcp`
 script and reads the same environment (see [MCP tools](mcp-tools.md)); it exists
 so launchers that run a package by its own name, such as `uvx cruxible mcp`,
-reach the server. The root options and remembered CLI context do not configure
-it. Every tool runs on a daemon: with no transport configured, the server reuses
-the local daemon on `~/.cruxible/run/daemon.sock` or starts one (see
-[MCP tools](mcp-tools.md#the-daemon)). It logs warnings and errors on stderr;
-`FASTMCP_LOG_LEVEL` (`DEBUG`, `INFO`, `WARNING`, `ERROR` or `CRITICAL`) picks
-another level, and `CRUXIBLE_DEBUG` set to anything turns on `INFO`, which
+reach the server. `--env-file PATH` (also accepted before `mcp`, on
+`cruxible-mcp`, or via `CRUXIBLE_ENV_FILE`) loads allowlisted `CRUXIBLE_*`
+settings from a file such as `DIR/cruxible.env` before startup without copying
+bearer tokens into client JSON. Other root options and remembered CLI context do
+not configure it. Every tool runs on a daemon: with no transport configured, the
+server reuses the local daemon on `~/.cruxible/run/daemon.sock` or starts one
+(see [MCP tools](mcp-tools.md#the-daemon)). It logs warnings and errors on
+stderr; `FASTMCP_LOG_LEVEL` (`DEBUG`, `INFO`, `WARNING`, `ERROR` or `CRITICAL`)
+picks another level, and `CRUXIBLE_DEBUG` set to anything turns on `INFO`, which
 logs each daemon request and tool call.
 
 ## console
@@ -1931,7 +1944,12 @@ external source, or a same-version cited span with, with the relation kind, the
 shared capture, and the retired Claim and citation witnesses. It is read from
 accepted state alone, like the rest of the explanation.
 A real dependency on a retired Claim stays a `claim_dependency_stale` row in
-`next`.
+`next`. The row names each stale input: an `end unobserved` line names the
+pair end that lost its last observation (a package an import no longer lists)
+and the retired observation; an `input changed` line names the upstream Claim.
+Its repair retires the dependent Claim (`cruxible retire CLM-... --because`),
+with a `get` of each end or input beside it; revising the Claim from current
+inputs, or observing the end again, also clears the row.
 
 `attest` signs that the caller examined the current exact Claim. `--unsure` is
 how an agent leaves contested state contested instead of forcing a judgment it
@@ -2509,7 +2527,15 @@ many-valued column matches any of its values), list only live rows unless a
 `capped` and says so. `--order-by` sorts by each column's type (numbers as
 numbers, instants as instants), nulls last, ties by name. `--where` filters combine as
 all-of; a field is a predicate's full name, its name after the `KIND.` prefix,
-`subject_id`, or `alias.field` after `--follow`. `f!=v` also matches a Subject without the value.
+`subject_id`, `last_changed`, or `alias.field` after `--follow`. `f!=v` also matches a Subject without the value.
+`last_changed` is the generation in which the Subject, or any Claim about it,
+last changed (0 for genesis). It compares with `=`, `!=`, `<`, `<=`, `>`, `>=`
+and `in`, and selects as a column. As an order key it must come first:
+`--order-by -last_changed` lists the most recently changed Subjects first, and
+`--where 'last_changed>=835'` keeps only the Subjects changed since generation
+835. Either one adds the `last_changed` column. It is read from the
+accepted-history index, one lookup per Subject and Claim, never by replaying
+history.
 `f exists` matches a Subject whose field holds a live Claim, including an explicit
 none (a KEV field read in full that shows `none of security.catalog/cisa-kev`);
 `f !exists` matches only a field with no Claim at all, one nobody has answered.
@@ -4202,11 +4228,14 @@ daemon-fetched contract verifies for a new citation only when the journal
 records a run producing it; otherwise the write refuses
 `cruxible.authoring.capture_production_unproven` (or
 `capture_v1_citation_refused` for a version-1 envelope). `--evidence-contract NAME` cites the newest verified Capture of
-that CaptureContract about SUBJECT, cited or not: one an accepted Claim on
-SUBJECT cites, or whose own source names SUBJECT. The lookup reads the
-contract's retained Captures through the index the body store keeps of every
-Capture it holds, never by walking the body store; with none it refuses
-`cruxible.write.contract_capture_not_found`. Only a Capture committed as exact
+that CaptureContract about SUBJECT, cited or not: the newest reading of a
+source an accepted Claim on SUBJECT cites (the same source identity and
+selector, read again), or one whose own source names SUBJECT. The lookup seeks
+the index the body store keeps of every Capture it holds, by source, never by
+walking the body store or the contract's Captures; with none it refuses
+`cruxible.write.contract_capture_not_found`. When the newest reading does not
+verify it refuses `contract_capture_unverified` naming it, never citing an
+older one in its place. Only a Capture committed as exact
 bytes can back a Claim: when the newest is a canonical value (as the external
 record reader commits records) it refuses `contract_capture_not_citable`
 naming it, or cites an older exact-bytes Capture with a
@@ -4777,16 +4806,80 @@ the daemon keeps it current as part of each floor refresh, re-rendering it only
 when an accepted generation changed the vocabulary (it reads only the change
 records since the generation it last checked, and writes the file only when its
 bytes differ). With delivery off, `cruxible stub --out .cruxible/world.pyi` is
-the refresh.
+the refresh. `cruxible python --check` keeps its own per-instance copy and needs
+neither.
+
+## python
+
+~~~text
+cruxible python SCRIPT [ARGS]...
+cruxible python -c CODE [ARGS]...
+cruxible python - [ARGS]...
+cruxible python --check SCRIPT... | -c CODE | -
+~~~
+
+Runs a script with the interpreter the CLI itself runs on, so `import
+cruxible_client` is the SDK installed with this `cruxible`, from any repository
+or worktree and with nothing installed into that project's environment.
+`-c CODE` runs a string and `-` reads the script from standard input, as
+`python` does; options for the script go after SCRIPT, and the exit status is
+the script's.
+
+The connection this command resolved reaches the script through its
+environment: the daemon (`--server-url` / `--server-socket`, as
+`CRUXIBLE_SERVER_URL` or `CRUXIBLE_SERVER_SOCKET`, exactly one), the instance
+(`--instance-id`, as `CRUXIBLE_INSTANCE_ID`), the acting principal with its key
+and credential, and whatever `--env-file` / `CRUXIBLE_ENV_FILE` loaded (already
+applied with explicit flags kept, so the child does not read the file again).
+`Cruxible.connect()` in the script picks them up; nothing is printed or put on
+a command line.
+
+~~~bash
+cruxible --env-file ~/keys/reviewer/cruxible.env python triage.py --limit 20
+~~~
+
+`--check` type-checks instead of running, with pyright, against this
+instance's world stub. No pyright configuration is needed: the stub is put on
+the checker's path as the module `world`, the way `cruxible stub` documents
+importing it.
+
+~~~python
+from typing import TYPE_CHECKING, cast
+from cruxible_client import Cruxible
+
+if TYPE_CHECKING:
+    from world import World
+
+with Cruxible.connect() as cx:
+    w = cast("World", cx.world())
+~~~
+
+A misspelled kind, field or enum member prints one line per diagnostic
+(`FILE:LINE:COL: error: ...`), then `check: N error(s), files: N`, and exits 1;
+a clean check prints `check: ok` and exits 0. The first line names the stub used
+and whether it was `reused`, `revalidated` or `rendered`. pyright is found on
+`PATH` or beside the CLI's interpreter; without it the check refuses with
+`cruxible.python.pyright_unavailable` (repair: `uv tool install pyright`).
+
+The stub is cached per instance in the per-user Cruxible directory (beside the
+CLI context file: `~/.cruxible/stubs/<instance>/world.pyi`, or beside
+`CRUXIBLE_CLI_CONTEXT_PATH`), so every checkout and worktree shares one. Each
+check reads the accepted head; an unchanged head reuses the stub with no other
+read, a moved head re-reads only the vocabulary listing, and the stub is
+rendered again only when a ClaimType or SubjectKind changed (or the cache names
+another daemon endpoint). `cruxible stub --out PATH` is unchanged.
 
 ## since
 
 ~~~text
-cruxible since GENERATION [--max-rows N] [--max-bytes N]
+cruxible since GENERATION [--limit N] [--max-bytes N]
   [--access-profile FILE|-] [--cursor FILE|-] [--json]
 ~~~
 
 Returns signed accepted ChangeSet members in `(GENERATION, pinned head]` order.
+`--limit` (default 100, at most 1000; `--max-rows` is the same option and the
+wire field `max_rows`) bounds the rows on a page. A truncated page ends with
+`More: cruxible since ...`, the command that continues it.
 The text output prints one line per value, led by the generation and the
 action: `28  create  catalog.part/bp-1142  semantic.alias = bp1142  [CLM-…]`,
 and `retire subject KIND/ID` for a retired Subject.

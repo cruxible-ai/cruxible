@@ -166,7 +166,8 @@ EXPECTED_OPERATIONS = {
     # A marker the page has lost is repaired by releasing the registration that
     # demands it; a marker the page has mangled is repaired by restoring it.
     "projection_marker_invalid": frozenset({"cruxible.block.repin", "cruxible.block.depublish"}),
-    "claim_dependency_stale": "cruxible.authoring.example",
+    # Retire the judgment (reads of what changed beside it), or revise it.
+    "claim_dependency_stale": "cruxible.claim.retire",
     "claim_attestation_threshold_met": "cruxible.set",
     "claim_contradicting_evidence_available": "cruxible.authoring.example",
     "claim_new_evidence_supporting": "cruxible.authoring.example",
@@ -773,8 +774,20 @@ def _citation_drifted_changed(root: Path, _monkeypatch: pytest.MonkeyPatch) -> N
     key = ("citation_drifted", "changed")
     row = _row_by_key(instance, key, before)
     assert row.repair.operation == _expected_operation(key)
+    # The row names what the Claim is about (Subject and field), in JSON and text.
+    from cruxible_client.contracts.text_display import next_claim_about
+
+    assert row.detail["predicate"] == current.statement.predicate
+    assert current.statement.subject.artifact_path in row.related_identities
+    subject_ref = current.statement.subject.artifact_path.removeprefix("subjects/")
+    assert next_claim_about(row) == (
+        f"{subject_ref.removesuffix('.json')} {current.statement.predicate}"
+    )
     assert row.repair.required_change == "rebind_or_retire_drifted_claim"
-    assert [item.operation for item in row.repair.alternatives] == ["cruxible.claim.retire"]
+    assert [item.operation for item in row.repair.alternatives] == [
+        "cruxible.set",
+        "cruxible.claim.retire",
+    ]
 
     activate(instance, owner, successor)
     _assert_key_gone(
@@ -919,7 +932,10 @@ def _citation_drifted_v4(
     row = _row_by_key(instance, key, before)
     assert row.repair.operation == _expected_operation(key)
     assert row.repair.required_change == "rebind_or_retire_drifted_claim"
-    assert [item.operation for item in row.repair.alternatives] == ["cruxible.claim.retire"]
+    assert [item.operation for item in row.repair.alternatives] == [
+        "cruxible.set",
+        "cruxible.claim.retire",
+    ]
 
     if drift_state == "gone":
         from tests.core_support._retirement_support import retire_claim
@@ -1600,7 +1616,17 @@ def _proposal_awaiting_activation(root: Path, _monkeypatch: pytest.MonkeyPatch) 
             if item.reason == "proposal_awaiting_activation"
         ]
 
-    # Self-approval: the author's proposal needs nothing but activation.
+    def approval_rows(caller: str | None) -> list[object]:
+        return [
+            item
+            for item in service_playbill_next(
+                instance, request=_request(instance), caller_principal_id=caller
+            ).items
+            if item.reason == "proposal_awaiting_approval"
+        ]
+
+    # Self-approval: next does not steer the author to self-activate its own
+    # unapproved proposal; another active ordinary principal sees it for review.
     body = instance.store_document_body(b"# Ready to activate\n")
     ready = _submit_tree(
         instance,
@@ -1612,6 +1638,26 @@ def _proposal_awaiting_activation(root: Path, _monkeypatch: pytest.MonkeyPatch) 
     )
     assert ready.candidate is not None
     proposal_id = ready.admission.proposal_id
+    assert rows("owner") == []
+    assert approval_rows("owner") == []
+    (pending_review,) = approval_rows("reviewer")
+    assert pending_review.subject_identity == proposal_id
+    assert pending_review.repair.operation == EXPECTED_OPERATIONS["proposal_awaiting_approval"]
+
+    # Once a reviewer approves (held), the reviewer's queue clears and the
+    # author's next points at activating the reviewed proposal.
+    signed_self_policy = _sign(
+        client_material(root, instance),
+        ready.candidate.candidate_digest,
+        instance.accepted_coordinate().semantic_root,
+    )
+    service_submit_playbill_approval(
+        instance,
+        proposal_id=proposal_id,
+        attestation=signed_self_policy.attestation,
+        authenticated_submitter="reviewer",
+    )
+    assert approval_rows("reviewer") == []
     (row,) = rows("owner")
     assert row.subject_identity == proposal_id
     assert row.repair.operation == EXPECTED_OPERATIONS["proposal_awaiting_activation"]
@@ -2863,3 +2909,64 @@ def test_an_approver_sees_a_stale_proposal_awaiting_its_authors_readmit(tmp_path
     # The author's own row still names the readmit.
     author = _row(instance, "proposal_stale", _request(instance), caller_principal_id="owner")
     assert author.repair.command == f"cruxible proposal readmit {stale_id}"
+
+
+def test_sole_principal_still_sees_own_held_proposal_in_next(tmp_path: Path) -> None:
+    """With no second ordinary principal under self-approval, the author sees its held proposal."""
+
+    from cruxible_core.runtime.instance import PlaybillInstance
+    from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
+    from tests.core_support._support import FIXED_TIMESTAMP, generate_client
+    from tests.test_proposals.test_approval_policy import _submit_tree
+    from tests.test_proposals.test_proposals import DOCUMENT_PATH, _shell
+
+    managed_root = tmp_path / "managed-sole"
+    owner = generate_client(
+        tmp_path, managed_root=managed_root, principal_id="owner", roles=("owner",)
+    )
+    instance = PlaybillInstance.initialize(
+        managed_root,
+        instance_id="inst_sole_principal",
+        client_principals=(owner.principal,),
+        workspace_roots=(tmp_path / "workspace",),
+        git_object_format="sha256",
+        timestamp=FIXED_TIMESTAMP,
+    )
+
+    body = instance.store_document_body(b"# Sole principal held proposal\n")
+    held = _submit_tree(
+        instance,
+        {
+            **instance.tree_at(instance.accepted_coordinate().git_oid),
+            DOCUMENT_PATH: render_document(_shell(body.digest)),
+        },
+        name="sole-principal-held",
+    )
+    assert held.candidate is not None
+    proposal_id = held.admission.proposal_id
+
+    activation_rows = [
+        item
+        for item in service_playbill_next(
+            instance, request=_request(instance), caller_principal_id="owner"
+        ).items
+        if item.reason == "proposal_awaiting_activation"
+    ]
+    (row,) = activation_rows
+    assert row.subject_identity == proposal_id
+    assert row.repair is not None
+    assert row.repair.operation == EXPECTED_OPERATIONS["proposal_awaiting_activation"]
+    assert row.repair.command == f"cruxible proposal activate {proposal_id}"
+
+    receipt = service_activate_playbill_proposal(
+        instance, proposal_id=proposal_id, activated_by="owner"
+    )
+    assert receipt.status == "accepted"
+    remaining = [
+        item
+        for item in service_playbill_next(
+            instance, request=_request(instance), caller_principal_id="owner"
+        ).items
+        if item.reason == "proposal_awaiting_activation"
+    ]
+    assert remaining == []

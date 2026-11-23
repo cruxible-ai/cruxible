@@ -161,6 +161,7 @@ A Cruxible built on an injected client with no workspace (the internal
 
 | Setting | Default / behavior |
 |---|---|
+| `CRUXIBLE_ENV_FILE` | Used when `env_file` is omitted; loads allowlisted `CRUXIBLE_*` settings from a file (such as `DIR/cruxible.env`) into the connection without mutating `os.environ`. |
 | `CRUXIBLE_SERVER_BEARER_TOKEN` | Used when `token` is omitted; never creates a principal or grants rights. |
 | `CRUXIBLE_PRINCIPAL_ID` | Used when `principal_id` is omitted; the daemon checks it is a registered, active principal before any write and attributes the session to it; reads stay open. |
 | `CRUXIBLE_CLI_CONTEXT_PATH` | Otherwise `~/.cruxible/client-context.json`. |
@@ -182,6 +183,7 @@ that mismatch instead of guessing a local instance.
 connect(
     *,
     context: str | Path | None = None,
+    env_file: str | Path | None = None,
     target: str | None = None,
     instance: str | None = None,
     token: SecretStr | None = None,
@@ -194,11 +196,12 @@ connect(
 
 Opens a transport, checks client/daemon contract compatibility, resolves context, and ordinarily performs orientation. A supplied at skips live orientation and pins that coordinate.
 
-**Conditions and effects:** ValueError/ContextResolutionError for missing or inconsistent context; IncompatibleDaemonVersion for an incompatible authoring contract; authentication/transport errors.
+**Conditions and effects:** ValueError/ContextResolutionError for missing or inconsistent context; EnvFileError for an invalid or improperly permissioned env file; IncompatibleDaemonVersion for a daemon in another major.minor release series (within one series, a differing authoring contract lets reads through and refuses each write before sending it); authentication/transport errors.
 
 | Parameter | Default | Meaning |
 |---|---|---|
 | `context` | `None` | Remembered client-context JSON path; otherwise CRUXIBLE_CLI_CONTEXT_PATH or ~/.cruxible/client-context.json. |
+| `env_file` | `None` | Env file path (for example DIR/cruxible.env); otherwise CRUXIBLE_ENV_FILE. Layered into this connection without mutating os.environ; explicit arguments and process environment variables take precedence. |
 | `target` | `None` | Explicit HTTP(S) endpoint or unix:/absolute/socket. It does not select an arbitrary local instance directory. |
 | `instance` | `None` | Daemon instance ID. Omission uses resolved workspace/client context. |
 | `token` | `None` | Bearer credential as SecretStr; otherwise CRUXIBLE_SERVER_BEARER_TOKEN. |
@@ -403,7 +406,10 @@ outcome = cx.set("shop.part/bp-2210", "status", "in_stock", because="On the stoc
 field and enum before you define them. With floor delivery on, the daemon keeps `.cruxible/world.pyi`
 current: bind `world = cast("World", cx.world())` (`from world import World`
 under `TYPE_CHECKING`, with `.cruxible` on the checker's path) and a type checker
-refuses a misspelled kind, field or enum member in a script.
+refuses a misspelled kind, field or enum member in a script. From any repository, `cruxible python script.py`
+runs a script with the CLI's own interpreter and connection, and `cruxible python
+--check script.py` type-checks it against the instance's cached stub with no
+checker configuration.
 
 <a id="api-cruxible-subject"></a>
 
@@ -1135,7 +1141,7 @@ adds `receipt.replay`: `definition_path`, `result` (`ClaimQueryResult`) and
 | `contains` | `None` | Case-insensitive text in any live Claim value; alone, across kinds. |
 | `select` | `None` | Column fields; without it a kind shows up to 12 predicates. |
 | `follow` | `None` | One-hop relations as `(field, alias)`, or `(field, alias, "reverse")` along another kind's predicate that points here; later fields read `alias.field`. |
-| `order_by` | `None` | Fields, `-` prefixed for descending. |
+| `order_by` | `None` | Fields, `-` prefixed for descending; `-last_changed` first lists recently changed Subjects first (`last_changed` also filters and selects). |
 | `limit` / `cursor` | `50` / `None` | Rows per page (at most 500) and the `next_cursor` of the previous page. |
 | `spec` / `name` / `params` | `None` | The spec and named modes. |
 | `at` | `None` | A coordinate or git oid; the connection's otherwise. |
@@ -7371,7 +7377,7 @@ Retires one provider build, as `cruxible provider retire`. HTTP: `POST f'/api/v1
 | `CoreError` with `error_code` `cruxible.approval.reviewed_candidate_changed` | The reviewed proposal was proposed again at the head; nothing was signed. `exc.repair.arguments["proposal_id"]` names the successor to review and approve. `cruxible.approval.creator_forbidden` refuses a proposal's own author under independent approval. |
 | SigningKeyError | `cx.signer(...)` found no key for the principal, or the key is not the one the instance holds for it; the message names the repair. |
 | ProjectionMarkerError, ProjectionRepinError, ProjectionSyncError | Invalid/corrupt declaration, refused repin, or policy-enforced sync failure. |
-| IncompatibleDaemonVersion | Client and daemon authoring contract snapshots differ; upgrade deliberately. |
+| IncompatibleDaemonVersion | Client and daemon authoring contract snapshots differ: across release series every call refuses; within one `major.minor` series reads serve and writes refuse before sending. Upgrade deliberately. |
 | ServerUnreachableError | Connection failure or timeout; a timed-out mutation may have completed. |
 | AuthenticationError / PermissionDeniedError / typed daemon errors | Repair credentials, scope, authority, or the server’s structured refusal. |
 

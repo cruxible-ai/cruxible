@@ -98,6 +98,9 @@ def _orient_predicate_line(item: Mapping[str, Any]) -> str:
 #: A query's description in the default map: its first sentence, at most this long.
 _ORIENT_QUERY_TEXT_LIMIT = 100
 
+#: Under a field's first sentence: where its whole description is read.
+_ORIENT_DESCRIPTION_HINT = "(field text: first sentence; whole: cruxible get ClaimType:<predicate>)"
+
 
 def _orient_kind_summary(kind: Mapping[str, Any]) -> str:
     """One line per kind in the default map (`OrientKindSummary`): its first
@@ -208,7 +211,12 @@ def render_orient(result: Mapping[str, Any]) -> str:
             f"Kind {detail['kind']}  subjects={detail['subjects']}"
             + (f"  evidence={','.join(map(_public_name, shared))}" if shared else "")
         )
-        lines.extend(f"  {_orient_predicate_line(item)}" for item in detail["predicates"])
+        for item in detail["predicates"]:
+            lines.append(f"  {_orient_predicate_line(item)}")
+            if item.get("description"):
+                lines.append(f"    {_first_sentence(item['description'])}")
+        if any(item.get("description") for item in detail["predicates"]):
+            lines.append(_ORIENT_DESCRIPTION_HINT)
         if detail.get("incoming"):
             lines.append("Incoming (--follow-in): " + ", ".join(detail["incoming"]))
         if detail["sample_subject_ids"]:
@@ -366,6 +374,10 @@ def render_orient(result: Mapping[str, Any]) -> str:
                 + _orient_predicate_line(row).split("  ", 1)[1]
                 + (f"  kit={row['kit']}" if row.get("kit") else "")
             )
+            if row.get("description"):
+                lines.append(f"  {_first_sentence(row['description'])}")
+        if any(row.get("description") for row in result["claim_types"]):
+            lines.append(_ORIENT_DESCRIPTION_HINT)
     queries = result.get("queries")
     if queries:
         if section is None:
@@ -633,6 +645,18 @@ def review_change_lines(
     return lines
 
 
+def _first_citation_contract(item: Any) -> bool:
+    """A workspace file's own CaptureContract that a first citation of the file creates."""
+
+    from cruxible_client.contracts.captures import FOREIGN_SOURCE_CONTRACT_PREFIX
+
+    return (
+        getattr(item, "kind", None) == "CaptureContract"
+        and getattr(item, "action", None) == "created"
+        and str(getattr(item, "name", "")).startswith(FOREIGN_SOURCE_CONTRACT_PREFIX)
+    )
+
+
 def review_definition_lines(
     item: ReviewDefinition, *, file_paths: Mapping[str, str] | None = None
 ) -> list[str]:
@@ -888,14 +912,24 @@ def render_review_summary(
             if review.change_counts_truncated:
                 lines.append("  (more kinds and fields: --json)")
     if review.definition_count:
-        shown = len(review.definitions)
-        lines.append(
-            f"Definitions ({review.definition_count}):"
-            if shown == review.definition_count
-            else f"Definitions ({review.definition_count}; showing {shown}):"
-        )
-        for definition in review.definitions:
+        # A workspace file's own CaptureContract, installed by its first citation,
+        # is not a definition the reviewer judges: it is listed apart.
+        installed = [item for item in review.definitions if _first_citation_contract(item)]
+        judged = [item for item in review.definitions if not _first_citation_contract(item)]
+        total = review.definition_count - len(installed)
+        shown = len(judged)
+        if total:
+            lines.append(
+                f"Definitions ({total}):"
+                if shown == total and review.definitions_next is None
+                else f"Definitions ({total}; showing {shown}):"
+            )
+        for definition in judged:
             lines.extend(review_definition_lines(definition, file_paths=file_paths))
+        if installed:
+            lines.append(f"Installed by a first file citation ({len(installed)}):")
+            for definition in installed:
+                lines.extend(review_definition_lines(definition, file_paths=file_paths))
         if review.definitions_next is not None:
             lines.append(f"More definitions: {run}--definitions-from {review.definitions_next}")
     if review.item_reason_count:
@@ -1054,6 +1088,7 @@ NEXT_OPERAND_PLACEHOLDER_TEXT: dict[str, str] = {
     "because": "<TEXT> (why, in your words)",
     "file": "<FILE#ANCHOR> (the file and anchor holding the new text)",
     "capture": "<CAP> (the fresh Capture's handle)",
+    "value": "<VALUE> (the new value)",
 }
 
 
@@ -1070,6 +1105,44 @@ def next_input_lines(item: NextItem) -> list[str]:
     ]
     if isinstance(detail.get("description"), str):
         lines.append(f"  {detail['description']}")
+    return lines
+
+
+def _short_digest(value: object) -> str:
+    return "-" if not isinstance(value, str) else value.rpartition(":")[2][:SHORT_OID]
+
+
+def next_stale_input_lines(item: NextItem) -> list[str]:
+    """A stale dependency's row: each input as ``--json`` carries it, one line each.
+
+    An unobserved end names the end Subject and the retired observation; a
+    changed input names its Claim, the version used and the current one.
+    """
+
+    detail = item.detail if isinstance(item.detail, dict) else {}
+    inputs = detail.get("stale_inputs")
+    if item.reason != "claim_dependency_stale" or not isinstance(inputs, list):
+        return []
+    lines: list[str] = []
+    for entry in inputs:
+        if not isinstance(entry, dict):
+            continue
+        source = str(entry.get("source_claim_identity", "-")).removeprefix("Claim:")
+        reasons = ",".join(
+            str(reason).removeprefix("cruxible.impact.")
+            for reason in entry.get("impact_reasons") or ()
+        )
+        end = entry.get("subject_end")
+        current = _short_digest(entry.get("current_artifact_digest"))
+        used = _short_digest(entry.get("used_artifact_digest"))
+        if isinstance(end, str) and end:
+            line = f"end unobserved: {end.removeprefix('Subject:')}  retired={source}  used={used}"
+        else:
+            line = f"input changed: {source}  current={current}  used={used}"
+            line += f"  reasons={reasons}" if reasons else ""
+        if entry.get("lineage_complete") is False:
+            line += "  lineage incomplete"
+        lines.append(line)
     return lines
 
 
@@ -1093,15 +1166,25 @@ def next_run_failure_lines(item: NextItem) -> list[str]:
     return lines
 
 
+#: A proposal row names this many ``kind/id field`` slots inline; a larger one
+#: counts the rest and names the review that lists them.
+NEXT_TOUCHES_SHOWN = 3
+
+
 def next_claim_about(item: NextItem) -> str | None:
     """What a Claim row is about, as ``kind/id field``: its Subject and predicate.
 
-    A proposal row names every ``kind/id field`` its Claims would write.
+    A proposal row names the ``kind/id field`` slots its Claims would write: up
+    to ``NEXT_TOUCHES_SHOWN``, then ``+N more`` and the review that lists them.
     """
 
     touches = item.detail.get("touches") if isinstance(item.detail, dict) else None
     if isinstance(touches, list) and touches:
-        return "; ".join(str(touch) for touch in touches)
+        shown = "; ".join(str(touch) for touch in touches[:NEXT_TOUCHES_SHOWN])
+        rest = len(touches) - NEXT_TOUCHES_SHOWN
+        if rest <= 0:
+            return shown
+        return f"{shown}; +{rest} more: cruxible proposal review {item.subject_identity}"
     predicate = item.detail.get("predicate") if isinstance(item.detail, dict) else None
     subject = next((ref for ref in item.related_identities if ref.startswith("subjects/")), None)
     if not isinstance(predicate, str) or subject is None:
@@ -1245,7 +1328,11 @@ def next_lines(
             lines.append(row + (f"  next={item.repair.command}" if item.repair.command else ""))
             continue
         lines.append(f"{row}  next={item.repair.operation}")
-        for line in (*next_run_failure_lines(item), *next_input_lines(item)):
+        for line in (
+            *next_run_failure_lines(item),
+            *next_input_lines(item),
+            *next_stale_input_lines(item),
+        ):
             lines.append(f"  {line}")
         lines.append(f"  repair: {next_repair_hint(item.repair)}")
         for alternative in item.repair.alternatives:

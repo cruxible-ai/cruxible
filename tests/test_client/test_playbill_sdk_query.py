@@ -171,6 +171,27 @@ def test_world_where_and_select_build_the_same_query(
     assert minted.where[0].value == "high"
 
 
+def test_world_last_changed_wires_as_the_reserved_field(
+    connection: tuple[Cruxible, _QueryClient],
+) -> None:
+    playbill, _client = connection
+    kind = playbill.world().sec.vulnerability
+
+    request = (
+        kind.where(last_changed__gte=835, last_changed__in=[835, 836])
+        .select("severity", "last_changed")
+        .order_by("-last_changed", "severity")
+        .request()
+    )
+
+    assert [(item.field, item.operator, item.value) for item in request.where] == [
+        ("last_changed", "gte", 835),
+        ("last_changed", "in", (835, 836)),
+    ]
+    assert request.select == (SEVERITY, "last_changed")
+    assert request.order_by == ("-last_changed", SEVERITY)
+
+
 @pytest.mark.parametrize(
     ("build", "message", "nearest"),
     [
@@ -179,6 +200,13 @@ def test_world_where_and_select_build_the_same_query(
         (lambda kind: kind.where(severity__lt="high"), "does not apply", None),
         (lambda kind: kind.where(severity__bogus="high"), "names no operator", None),
         (lambda kind: kind.select("sevrity"), "has no field", "severity"),
+        (
+            lambda kind: kind.select("severity").order_by("-last_chnged"),
+            "has no field",
+            "last_changed",
+        ),
+        (lambda kind: kind.where(last_changed="recent"), "generation number", None),
+        (lambda kind: kind.where(last_changed__contains="8"), "does not apply", None),
     ],
 )
 def test_world_sugar_refuses_wrong_names_before_the_wire(
@@ -238,15 +266,18 @@ def test_a_type_checker_reads_where_as_typed_keywords(
         '    world.sec.vulnerability.where(sevrity="high")\n'
         '    world.sec.vulnerability.where(severity__lt="high")\n'
         '    world.sec.vulnerability.select("severity", "subject_id").limit(5)\n'
-        '    world.sec.vulnerability.select("sevrity")\n',
+        '    world.sec.vulnerability.select("sevrity")\n'
+        '    world.sec.vulnerability.where(last_changed__gte=835).select("last_changed")\n'
+        '    world.sec.vulnerability.where(last_changed__gte="835")\n',
         encoding="utf-8",
     )
 
     report = _mypy(project, "queries.py")
     assert "queries.py:7:" not in report, report
-    for line in (8, 9, 10, 12):
+    for line in (8, 9, 10, 12, 14):
         assert f"queries.py:{line}: error:" in report, report
     assert "queries.py:11:" not in report, report
+    assert "queries.py:13:" not in report, report
 
 
 # ---------------------------------------------------------------------------
