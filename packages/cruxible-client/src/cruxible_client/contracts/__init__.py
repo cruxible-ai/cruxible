@@ -67,6 +67,9 @@ from cruxible_client.contracts.capture_contract_inputs import (
 from cruxible_client.contracts.capture_reads import BodyRestricted as BodyRestricted
 from cruxible_client.contracts.change_control import StateCoordinate
 from cruxible_client.contracts.claim_evidence import ClaimsDiagnostic, RunCompleteness
+from cruxible_client.contracts.claim_type_structure import (
+    is_observation_only_claim_type as is_observation_only_claim_type,
+)
 from cruxible_client.contracts.claims import ClaimStatementCard as ClaimStatementCard
 from cruxible_client.contracts.codes import CurrentCode
 from cruxible_client.contracts.compact_query import (

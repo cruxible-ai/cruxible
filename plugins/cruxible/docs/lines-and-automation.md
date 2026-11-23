@@ -1014,6 +1014,18 @@ the grant (`cruxible.settle.outside_mandate_scope`), and the run result reports
 each typed `outside_scope` gap as `{claim_type, change, basis, term}`.
 Inadmissible values are excluded before that decision.
 
+For a Line that only observes, `scope: observations` (with no `namespace`;
+it defaults to `claims`) is one grant over every ClaimType its Procedure's
+claims templates write, and `cruxible line grant LINE --settle-observations`
+authors it. Lowering pins each ClaimType exactly, as if listed by hand: creates
+and revises on `extracted` and `measured` (plus `derived` with
+`include_derived: true`), `retire` on `absence` for `mirror` and `inverse`
+templates, and `create`/`revise` on `absence` for `inverse`. Every ClaimType
+must permit only the observation role (a ClaimType that also permits
+`normative` refuses), and a Procedure that invokes another refuses, because its
+own definition cannot show the child's templates. `subject_creation` stays
+explicit and must name kinds the Procedure creates.
+
 An incomplete run includes a bounded typed `completeness` summary in its result,
 run card and activity entry: `complete: false`, reasons naming the affected
 nodes and inputs, and counts of downgraded and skipped writes. A complete run

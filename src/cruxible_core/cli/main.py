@@ -973,7 +973,7 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
         attr="procedure_group",
     ),
     "line": _group(
-        "Enable, run and recover accepted Lines.",
+        "Enable, run, grant and recover accepted Lines.",
         {
             "enable": _command(
                 "playbill", "enable_line", "Enable a Line so its Triggers admit work."
@@ -986,6 +986,9 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 "playbill", "evaluate_line", "Turn a missed range into pending Line work."
             ),
             "dispatch": _command("playbill", "dispatch_line", "Run a Line's pending work."),
+            "grant": _command(
+                "playbill", "grant_line", "Grant a Line settle over the observations it writes."
+            ),
         },
         module="playbill",
         attr="line_group",

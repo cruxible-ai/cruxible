@@ -384,6 +384,13 @@ class ProcedureMandateInput(_StrictInputModel):
     condition query (which may bind ``$target.value`` and ``$target.before``);
     lowering pins every exact digest. ``subjects: expected`` limits the grant
     to Subjects the Line's claims templates fence with ``within``.
+
+    ``scope: observations`` is one settle grant over the observations the Line
+    writes: lowering pins every ClaimType of the Procedure's claims templates
+    (each must permit only the observation role), with creates and revises on
+    ``extracted`` and ``measured`` (plus ``derived`` with ``include_derived``)
+    and the absence changes its ``when_absent`` templates make; the namespace
+    defaults to ``claims``.
     """
 
     tag: Literal["cruxible-procedure-mandate-input-v3"] = "cruxible-procedure-mandate-input-v3"
@@ -391,10 +398,15 @@ class ProcedureMandateInput(_StrictInputModel):
     name: str
     line_name: str
     grants: Literal["propose", "settle"]
-    namespace: tuple[str, ...]
+    namespace: tuple[str, ...] = ()
     valid_from: datetime
     expires_at: datetime
-    scope: tuple[MandateScopeAuthoring, ...] = ()
+    scope: tuple[MandateScopeAuthoring, ...] | Literal["observations"] = ()
+    include_derived: bool = Field(
+        default=False,
+        exclude_if=lambda value: not value,
+        description="scope: observations only: also settle values on basis derived.",
+    )
     subject_scope: tuple[SemanticAddress, ...] | None = None
     subjects: Literal["expected"] | None = None
     condition: MandateConditionAuthoring | None = None

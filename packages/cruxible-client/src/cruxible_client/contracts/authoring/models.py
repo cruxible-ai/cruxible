@@ -141,7 +141,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.5.1"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:1b92531eceabfd921853ddbd615ad82181c0b9c4ccb3261d5c23704b845ec5e1"
+    "sha256:4cbbf476c672022f8eff6fc84567da231253e18484528d26da67296c0079bf3f"
 )
 
 MAX_DIAGNOSTICS = 128
@@ -1003,10 +1003,15 @@ class ProcedureMandateAuthoringPayload(_StrictAuthoringModel):
     name: str
     line_name: str
     grants: Literal["propose", "settle"]
-    namespace: tuple[str, ...]
+    #: Omitted with ``scope: observations``: lowering reaches ``claims``.
+    namespace: tuple[str, ...] = ()
     valid_from: datetime
     expires_at: datetime
-    scope: tuple[MandateScopeAuthoring, ...] = ()
+    #: Per ClaimType, or ``observations``: one grant over every observation-only
+    #: ClaimType the Line's Procedure writes, lowered to that exact per-ClaimType scope.
+    scope: tuple[MandateScopeAuthoring, ...] | Literal["observations"] = ()
+    #: ``scope: observations`` only: also settle values on basis ``derived``.
+    include_derived: bool = Field(default=False, exclude_if=lambda value: not value)
     subject_scope: tuple[SemanticAddress, ...] | None = None
     #: ``expected``: every target lies within the Line's claims templates' fence.
     subjects: Literal["expected"] | None = None

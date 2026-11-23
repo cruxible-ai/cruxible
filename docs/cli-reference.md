@@ -2847,10 +2847,23 @@ cruxible line run LINE [--event FILE|-] [--repeat] [--resolution-contract FILE|-
 cruxible line evaluate LINE [--since TS --until TS] [--dry-run | --dispatch] [--limit N]
   [--cursor CURSOR] [--json]
 cruxible line dispatch LINE [--occurrence-id DIGEST] [--retry] [--limit N] [--json]
+cruxible line grant LINE --settle-observations [--include-derived] [--create-subjects KIND]...
+  [--expires SPAN|TS] [--name NAME] [--dry-run] [--no-accept] [--json]
 ~~~
 
 `enable`, `disable` and `run` are the normal flow; `evaluate` and `dispatch`
 recover what automation missed, and `cruxible next` points to them.
+`grant --settle-observations` authors one settle Mandate (`scope: observations`)
+over every ClaimType the Line's Procedure writes; each must permit only the
+observation role, and a Procedure with an `invoke` node refuses. It lowers to the
+exact per-ClaimType scope: creates and revises on `extracted` and `measured`
+(`--include-derived` adds `derived`), `retire` on `absence` for `mirror` and
+`inverse` templates, and `create`/`revise` on `absence` for `inverse`. Subject
+creation settles only for the kinds `--create-subjects` names. `--expires`
+defaults to `90d` (a span such as `30d`, `12w`, `1y`, `P90D`, or an ISO-8601
+instant); `--name` defaults to `LINE-settle`. Text output lists each pinned
+ClaimType with its change kinds and bases; the grant lands when policy and your
+tier allow, like any change set.
 Manual `run --occurrence-id` only asserts the id derived at admission, including
 that admission's daemon evaluation instant. A later retry derives a different
 manual id. Select retained pending work with `line dispatch --occurrence-id ID`,

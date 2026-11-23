@@ -9005,10 +9005,11 @@ def inbox_link(item_id: str, proposal: str | None, subject: str | None, output_j
 
 @playbill_group.group("line")
 def line_group() -> None:
-    """Enable, run and recover accepted Lines.
+    """Enable, run, grant and recover accepted Lines.
 
     enable, disable and run are the normal flow; evaluate and dispatch recover
-    what automation missed, as `cruxible next` names it. `cruxible get
+    what automation missed, as `cruxible next` names it; grant writes the one
+    settle Mandate over the observations a Line writes. `cruxible get
     Line:NAME` reads a Line's enablement, Triggers, pending work and runs.
     """
 
@@ -9069,6 +9070,235 @@ def disable_line(line: str, dry_run: bool | None, at: str | None, output_json: b
         _emit_json(result.model_dump(mode="json"))
     else:
         _echo_line_enablement(result)
+
+
+#: A settle grant's validity when ``--expires`` is not given.
+LINE_GRANT_DEFAULT_EXPIRES = "90d"
+_RELATIVE_EXPIRY_UNITS = {"h": 3600, "d": 86400, "w": 7 * 86400, "y": 365 * 86400}
+
+
+def _grant_expiry(value: str, *, now: datetime) -> datetime:
+    """``--expires``: a span (``30d``, ``12w``, ``1y``, ``36h``, ``P90D``) or an instant."""
+
+    from datetime import timedelta
+
+    from cruxible_client.contracts.temporal import ensure_utc, parse_iso_duration_microseconds
+
+    text = value.strip()
+    unit = _RELATIVE_EXPIRY_UNITS.get(text[-1:].lower())
+    if unit is not None and text[:-1].isdigit():
+        expires = now + timedelta(seconds=int(text[:-1]) * unit)
+    elif text.startswith("P"):
+        try:
+            expires = now + timedelta(microseconds=parse_iso_duration_microseconds(text))
+        except ValueError as exc:
+            raise click.BadParameter(str(exc), param_hint="--expires") from exc
+    else:
+        try:
+            expires = ensure_utc(datetime.fromisoformat(text.replace("Z", "+00:00")))
+        except ValueError as exc:
+            raise click.BadParameter(
+                "give a span (30d, 12w, 1y, 36h, P90D) or an ISO-8601 instant",
+                param_hint="--expires",
+            ) from exc
+    if expires <= now:
+        raise click.BadParameter("the grant must expire after now", param_hint="--expires")
+    return expires
+
+
+def _observation_grant_scope(
+    client: CruxibleClient, instance_id: str, line: str, mandate: Any
+) -> Any:
+    """What ``scope: observations`` lowers to for LINE at the head, read as lowering reads it."""
+
+    from cruxible_client.contracts.claim_types import ClaimType
+    from cruxible_client.contracts.get_reads import GetRequest
+    from cruxible_client.contracts.observation_settle import observation_settle_scope
+    from cruxible_client.contracts.procedures.line_specs import LineSpec
+
+    def proof(ref: str) -> Any:
+        found = client.get(instance_id, request=GetRequest(ref=ref, detail="proof")).proof
+        return None if found is None else found.get("envelope")
+
+    spec = LineSpec.model_validate(proof(f"Line:{line}"))
+    readiness = client.procedure_readiness(instance_id, spec.procedure.target.name)
+    if readiness.artifact_digest != spec.procedure.artifact_digest:
+        raise click.ClickException(
+            f"cruxible.authoring.procedure_mandate_observations_procedure_moved: Line {line!r} "
+            f"pins another version of Procedure {spec.procedure.target.name!r} than the "
+            "accepted one; revise the Line to pin it, then grant it."
+        )
+
+    def claim_type(predicate: str) -> ClaimType | None:
+        try:
+            envelope = proof(f"ClaimType:{predicate}")
+        except CoreError:
+            return None
+        return None if envelope is None else ClaimType.model_validate(envelope)
+
+    return observation_settle_scope(
+        readiness.artifact.definition.nodes,
+        claim_type,
+        include_derived=mandate.include_derived,
+        subject_creation=mandate.subject_creation,
+    )
+
+
+def _echo_observation_grant(mandate: Any, scope: Any) -> None:
+    from cruxible_client.contracts.mandate_scope import MANDATE_CHANGE_KIND_ORDER
+
+    click.echo(f"grant  Mandate:{mandate.name}  settle  Line:{mandate.line_name}")
+    click.echo(f"valid  {_instant_text(mandate.valid_from)} .. {_instant_text(mandate.expires_at)}")
+    click.echo(f"namespace  {', '.join(mandate.namespace)}")
+    for item in scope.claim_types:
+        changes = "  ".join(
+            f"{kind}={','.join(item.changes.of(kind).basis)}"
+            for kind in MANDATE_CHANGE_KIND_ORDER
+            if item.changes.of(kind) is not None
+        )
+        click.echo(f"ClaimType:{item.claim_type}  {changes}")
+    if mandate.subject_creation:
+        click.echo(f"may create  {', '.join(mandate.subject_creation)}")
+    unscoped = sorted(set(scope.creatable_subject_kinds) - set(mandate.subject_creation))
+    if unscoped:
+        click.echo(f"creates, proposes  {', '.join(unscoped)}  (--create-subjects to settle)")
+
+
+def _instant_text(value: datetime) -> str:
+    from cruxible_client.contracts.temporal import format_datetime
+
+    return str(format_datetime(value))
+
+
+@line_group.command("grant")
+@click.argument("line")
+@click.option(
+    "--settle-observations",
+    is_flag=True,
+    help="Grant settle over every observation-only ClaimType LINE's Procedure writes.",
+)
+@click.option(
+    "--include-derived",
+    is_flag=True,
+    help="Also settle values computed by Procedure logic (basis derived).",
+)
+@click.option(
+    "--create-subjects",
+    "create_subjects",
+    multiple=True,
+    metavar="KIND",
+    help="A Subject kind the run may create by key and settle; repeatable.",
+)
+@click.option(
+    "--expires",
+    default=LINE_GRANT_DEFAULT_EXPIRES,
+    show_default=True,
+    help="Span (30d, 12w, 1y, 36h, P90D) or ISO-8601 instant the grant ends at.",
+)
+@click.option("--name", "mandate_name", default=None, help="Mandate name [default: LINE-settle].")
+@click.option("--dry-run", is_flag=True, help="Preflight the grant; save nothing.")
+@click.option("--no-accept", is_flag=True, help="Propose only; do not land the grant.")
+@json_option
+@handle_errors
+def grant_line(
+    line: str,
+    settle_observations: bool,
+    include_derived: bool,
+    create_subjects: tuple[str, ...],
+    expires: str,
+    mandate_name: str | None,
+    dry_run: bool,
+    no_accept: bool,
+    output_json: bool,
+) -> None:
+    """Grant LINE settle authority over the observations it writes, as one Mandate.
+
+    --settle-observations pins every ClaimType LINE's Procedure writes (each
+    must permit only the observation role) with the changes its templates
+    make: creates and revises on extracted and measured values, retirements and
+    inverses on a complete source's absence. Subject creation settles only for
+    the kinds --create-subjects names. The grant is an ordinary Mandate pinned to
+    LINE's exact version; it lands when policy and your tier allow.
+    """
+
+    from cruxible_client.authoring.inputs import ChangeSetInput
+    from cruxible_client.contracts.authoring.inputs import ProcedureMandateInput
+    from cruxible_client.contracts.observation_settle import (
+        OBSERVATION_SETTLE_NAMESPACE,
+        ObservationSettleRefusal,
+    )
+    from cruxible_client.contracts.procedure_mandates import (
+        ProcedureMandateError,
+        procedure_mandate_path,
+    )
+
+    if not settle_observations:
+        raise click.UsageError("name the grant: --settle-observations")
+    now = datetime.now(UTC).replace(microsecond=0)
+    try:
+        mandate = ProcedureMandateInput(
+            kind="procedure_mandate",
+            name=mandate_name or f"{line}-settle",
+            line_name=line,
+            grants="settle",
+            namespace=OBSERVATION_SETTLE_NAMESPACE,
+            valid_from=now,
+            expires_at=_grant_expiry(expires, now=now),
+            scope="observations",
+            include_derived=include_derived,
+            subject_creation=tuple(sorted(set(create_subjects), key=str.encode)),
+        )
+        procedure_mandate_path(mandate.name)
+    except (ValidationError, ProcedureMandateError) as exc:
+        raise click.UsageError(
+            f"cannot name the Mandate {mandate_name or line + '-settle'!r}: "
+            "give --name in lowercase letters, digits, . _ -"
+        ) from exc
+
+    def call(client: CruxibleClient, instance_id: str) -> tuple[Any, Any]:
+        scope = _observation_grant_scope(client, instance_id, line, mandate)
+        if isinstance(scope, ObservationSettleRefusal):
+            return scope, None
+        payload = ChangeSetInput(
+            kind="change_set",
+            members=(mandate,),
+            rationale=f"Settle the observations Line {line} writes.",
+        ).model_dump(mode="json")
+        if dry_run:
+            return scope, client.preview_authoring_input(instance_id, input=payload)
+        return scope, client.submit_authoring_input(
+            instance_id, input=payload, accept="never" if no_accept else "if_allowed"
+        )
+
+    scope, result = _server_call(call, command_name="cruxible line grant")
+    if isinstance(scope, ObservationSettleRefusal):
+        if output_json:
+            _emit_json({"refusal": scope.model_dump(mode="json")})
+        else:
+            click.echo(f"refused: {scope.code}: {printable(scope.message)}", err=True)
+            click.echo(f"repair: {printable(scope.repair_description)}", err=True)
+        raise click.exceptions.Exit(1)
+    if output_json:
+        _emit_json(
+            {
+                "mandate": mandate.model_dump(mode="json"),
+                "scope": scope.model_dump(mode="json"),
+                "result": result.model_dump(mode="json"),
+            }
+        )
+        if isinstance(result, contracts.AuthoringPreflightResult) and result.verdict != "passed":
+            raise click.exceptions.Exit(1)
+        return
+    _echo_observation_grant(mandate, scope)
+    if isinstance(result, contracts.AuthoringPreflightResult):
+        click.echo(f"would {'pass' if result.verdict == 'passed' else 'refuse'}")
+        _exit_if_preflight_refused(result)
+        return
+    reason_line = _submit_refusal_reason(result)
+    if reason_line is not None:
+        click.echo(f"refused: {reason_line}", err=True)
+        raise click.exceptions.Exit(1)
+    _echo_landing(result.outcome, result.warnings)
 
 
 @line_group.command("evaluate")

@@ -5115,10 +5115,11 @@ Import: `cruxible_client.contracts.authoring.inputs.ProcedureMandateInput`. [Sou
 | `name` | `str` | `Required` |
 | `line_name` | `str` | `Required` |
 | `grants` | `Literal['propose', 'settle']` | `Required` |
-| `namespace` | `tuple[str, ...]` | `Required` |
+| `namespace` | `tuple[str, ...]` | `()`; required except with `scope: observations`, which defaults it to `claims` |
 | `valid_from` | `datetime` | `Required` |
 | `expires_at` | `datetime` | `Required` |
-| `scope` | `tuple[MandateScopeAuthoring, ...]` | `()`; for a settle grant, the ClaimTypes it may settle and, per change kind, the evidence bases (`extracted`, `measured`, `derived`, `absence`) that settle; `value: {from, to}` for enum and bool types |
+| `scope` | `tuple[MandateScopeAuthoring, ...] \| Literal['observations']` | `()`; for a settle grant, the ClaimTypes it may settle and, per change kind, the evidence bases (`extracted`, `measured`, `derived`, `absence`) that settle; `value: {from, to}` for enum and bool types. `observations`: every observation-only ClaimType the Line's Procedure writes, lowered to that exact per-ClaimType scope |
+| `include_derived` | `bool` | `False`; `scope: observations` only: also settle values on basis `derived` |
 | `subject_scope` | `tuple[SemanticAddress, ...] \| None` | `None` |
 | `subjects` | `Optional[Literal['expected']]` | `None` |
 | `condition` | `MandateConditionAuthoring \| None` | `None`; a settle grant's condition query, with its fallback (`refuse` or `propose`) |

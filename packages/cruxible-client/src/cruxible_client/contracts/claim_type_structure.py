@@ -96,6 +96,20 @@ class ClaimTypeStructuralCheck(_StrictClaimTypeStructureModel):
         return self
 
 
+def is_observation_only_claim_type(claim_type: object) -> bool:
+    """Whether a ClaimType permits the observation role and nothing else.
+
+    ``claim_type`` is anything carrying ``permitted_roles`` (a ClaimType, its
+    structure, or a card). A ClaimType that also permits ``normative`` (or any
+    other role) is never observation-only: the settle verifier does not filter
+    a changed Claim by its role, so a grant scoped to a mixed ClaimType would
+    reach judgments too. Shared by every surface that grants or carries
+    authority over observations only.
+    """
+
+    return tuple(getattr(claim_type, "permitted_roles", ())) == ("observation",)
+
+
 def claim_type_structural_signature(structure: ClaimTypeStructure) -> str:
     """Return the shape-only signature two ClaimTypes share when they mean the same.
 
@@ -144,4 +158,5 @@ __all__ = [
     "ReferentSensitivity",
     "check_claim_type_structure",
     "claim_type_structural_signature",
+    "is_observation_only_claim_type",
 ]

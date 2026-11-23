@@ -10367,7 +10367,7 @@
           },
           "ProcedureMandateInput": {
             "additionalProperties": false,
-            "description": "A propose grant, or a settle grant with its Claim scope and condition query.\n\n``line_name`` names the Line the grant authorizes (accepted, or defined in\nthe same set); lowering pins its exact digest, so changing the Line's\nProcedure version, parameters or bindings renews the grant. ``grants`` is\nthe verb the mandate delegates. A settle grant names the ClaimTypes (by\npredicate), per change kind the evidence bases that settle, an optional\n``value: {from, to}`` for enum and bool ClaimTypes, and an optional accepted\ncondition query (which may bind ``$target.value`` and ``$target.before``);\nlowering pins every exact digest. ``subjects: expected`` limits the grant\nto Subjects the Line's claims templates fence with ``within``.",
+            "description": "A propose grant, or a settle grant with its Claim scope and condition query.\n\n``line_name`` names the Line the grant authorizes (accepted, or defined in\nthe same set); lowering pins its exact digest, so changing the Line's\nProcedure version, parameters or bindings renews the grant. ``grants`` is\nthe verb the mandate delegates. A settle grant names the ClaimTypes (by\npredicate), per change kind the evidence bases that settle, an optional\n``value: {from, to}`` for enum and bool ClaimTypes, and an optional accepted\ncondition query (which may bind ``$target.value`` and ``$target.before``);\nlowering pins every exact digest. ``subjects: expected`` limits the grant\nto Subjects the Line's claims templates fence with ``within``.\n\n``scope: observations`` is one settle grant over the observations the Line\nwrites: lowering pins every ClaimType of the Procedure's claims templates\n(each must permit only the observation role), with creates and revises on\n``extracted`` and ``measured`` (plus ``derived`` with ``include_derived``)\nand the absence changes its ``when_absent`` templates make; the namespace\ndefaults to ``claims``.",
             "properties": {
               "condition": {
                 "anyOf": [
@@ -10393,6 +10393,12 @@
                 "title": "Grants",
                 "type": "string"
               },
+              "include_derived": {
+                "default": false,
+                "description": "scope: observations only: also settle values on basis derived.",
+                "title": "Include Derived",
+                "type": "boolean"
+              },
               "kind": {
                 "const": "procedure_mandate",
                 "title": "Kind",
@@ -10407,6 +10413,7 @@
                 "type": "string"
               },
               "namespace": {
+                "default": [],
                 "items": {
                   "type": "string"
                 },
@@ -10419,12 +10426,20 @@
                 "type": "boolean"
               },
               "scope": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "$ref": "#/$defs/MandateScopeAuthoring"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "const": "observations",
+                    "type": "string"
+                  }
+                ],
                 "default": [],
-                "items": {
-                  "$ref": "#/$defs/MandateScopeAuthoring"
-                },
-                "title": "Scope",
-                "type": "array"
+                "title": "Scope"
               },
               "subject_creation": {
                 "default": [],
@@ -10485,7 +10500,6 @@
               "name",
               "line_name",
               "grants",
-              "namespace",
               "valid_from",
               "expires_at"
             ],

@@ -164,6 +164,11 @@ from cruxible_client.contracts.notes import (
     parse_note,
     render_note,
 )
+from cruxible_client.contracts.observation_settle import (
+    OBSERVATION_SETTLE_NAMESPACE,
+    ObservationSettleRefusal,
+    observation_settle_scope,
+)
 from cruxible_client.contracts.procedure_mandates import (
     MandateClaimScope,
     MandateCondition,
@@ -3678,6 +3683,7 @@ def _render_procedure_mandate_member(
                 ("subject_scope", payload.subject_scope is not None),
                 ("subjects", payload.subjects is not None),
                 ("subject_creation", bool(payload.subject_creation)),
+                ("include_derived", payload.include_derived),
             )
             if present
         ]
@@ -3711,8 +3717,21 @@ def _render_procedure_mandate_member(
     if previous_content is not None:
         previous = parse_procedure_mandate_any(previous_content, path=path)
         predecessor_digest = procedure_mandate_digest(previous).tagged
+    namespace = payload.namespace
     scope: list[MandateClaimScope] = []
-    for index, item in enumerate(payload.scope):
+    if payload.scope == "observations":
+        scope = _observation_settle_scope(payload, granted_line, tree=tree)
+        namespace = namespace or OBSERVATION_SETTLE_NAMESPACE
+    elif payload.include_derived:
+        _refuse(
+            "cruxible.authoring.procedure_mandate_include_derived_unscoped",
+            "include_derived",
+            "include_derived widens scope: observations only; a per-ClaimType scope names "
+            "its bases itself.",
+            repair_kind="remove_include_derived",
+            repair_description="Remove include_derived, or add derived to the scope's bases.",
+        )
+    for index, item in enumerate(() if payload.scope == "observations" else payload.scope):
         type_path = claim_type_path(item.claim_type)
         type_content = tree.get(type_path)
         if type_content is None:
@@ -3780,7 +3799,7 @@ def _render_procedure_mandate_member(
                 artifact_digest=line_spec_digest(granted_line).tagged,
             ),
             grants=payload.grants,
-            namespace=payload.namespace,
+            namespace=namespace,
             valid_from=payload.valid_from,
             expires_at=payload.expires_at,
             scope=tuple(sorted(scope, key=lambda item: item.claim_type.target.qualified.encode())),
@@ -3828,6 +3847,74 @@ def _render_procedure_mandate_member(
     ):
         return path, previous_content, procedure_mandate_digest(previous).tagged
     return path, render_procedure_mandate(mandate), procedure_mandate_digest(mandate).tagged
+
+
+def _observation_settle_scope(
+    payload: ProcedureMandateAuthoringPayload,
+    line: LineSpec,
+    *,
+    tree: Mapping[str, bytes],
+) -> list[MandateClaimScope]:
+    """Lower ``scope: observations`` to the exact per-ClaimType scope (D-R50).
+
+    Reads the Procedure the Line pins (which must be the one at the authoring
+    coordinate, as the Mandate law requires) and every ClaimType its claims
+    templates write; the shared ``observation_settle_scope`` decides.
+    """
+
+    name = line.procedure.target.name
+    path = procedure_path(name)
+    content = tree.get(path)
+    procedure = None if content is None else parse_procedure(content, path=path)
+    if procedure is None or procedure_artifact_digest(procedure).tagged != (
+        line.procedure.artifact_digest
+    ):
+        _refuse(
+            "cruxible.authoring.procedure_mandate_observations_procedure_moved",
+            "scope",
+            f"scope: observations reads the Procedure Line {line.identity.name!r} pins, and "
+            f"Procedure {name!r} at the authoring coordinate is another version.",
+            repair_kind="renew_line",
+            repair_description=(
+                "Revise the Line to pin the current Procedure in the same change, then grant it."
+            ),
+        )
+
+    def claim_type(predicate: str) -> ClaimType | None:
+        type_path = claim_type_path(predicate)
+        found = tree.get(type_path)
+        return None if found is None else parse_claim_type(found, path=type_path)
+
+    lowered = observation_settle_scope(
+        procedure.definition.nodes,
+        claim_type,
+        include_derived=payload.include_derived,
+        subject_creation=payload.subject_creation,
+    )
+    if isinstance(lowered, ObservationSettleRefusal):
+        _refuse(
+            lowered.code,
+            "subject_creation" if lowered.code.endswith("creation_unavailable") else "scope",
+            lowered.message,
+            repair_kind=lowered.repair_kind,
+            repair_description=lowered.repair_description,
+            replacement={"names": list(lowered.names)} if lowered.names else None,
+        )
+    scope = []
+    for item in lowered.claim_types:
+        found = claim_type(item.claim_type)
+        assert found is not None
+        scope.append(
+            MandateClaimScope(
+                claim_type=ArtifactPin(
+                    role="claim-type",
+                    target=found.identity,
+                    artifact_digest=claim_type_digest(found).tagged,
+                ),
+                changes=item.changes,
+            )
+        )
+    return scope
 
 
 def _authored_query_paths(
