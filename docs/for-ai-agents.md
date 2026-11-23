@@ -49,9 +49,12 @@ adding principals) is operator work on the CLI. On MCP, `cruxible_init` is the
 only setup tool: it takes `principal_id` and creates the owner only under
 `self_approval_allowed`.
 
-- **New instance with cosign**: run `cruxible init --reviewer-key-dir DIR
-  --require-independent-approval` (on an already-initialized instance, `init`
-  answers "already initialized" and adds nothing).
+- **New instance with cosign**: run `cruxible init
+  --require-independent-approval`. It creates the reviewer's key and settings
+  beside the owner's (`$XDG_CONFIG_HOME/cruxible/keys/INSTANCE/reviewer`, by
+  default `~/.config/cruxible/keys/INSTANCE/reviewer`; `--reviewer-key-dir DIR`
+  puts them elsewhere). On an already-initialized instance, `init` answers
+  "already initialized" and adds nothing.
 - **Adding cosign to an existing instance**: run these two CLI steps in order—add
   the reviewer first, because once `independent_approval_required` lands, the
   owner can no longer land a change alone (`graph_write` is the tier that may
@@ -72,8 +75,10 @@ file in the file catalog (`cruxible files add PATH`), and stopping the daemon
 First setup on one machine, in order:
 
 1. In the project folder, run `cruxible init --principal-id owner
-   --reviewer-key-dir DIR --require-independent-approval`. This is the
-   recommended setup, cosign: an owner who writes and a reviewer who approves.
+   --require-independent-approval`. This is the recommended setup, cosign: an
+   owner who writes and a reviewer who approves. Init prints how to act as the
+   reviewer (`cruxible context use --principal reviewer`, or
+   `CRUXIBLE_ENV_FILE` naming its settings for another process).
    With no daemon running, the CLI starts one on
    `~/.cruxible/run/daemon.sock` and says so (`cruxible server stop` stops
    it). The folder may be a Git repository or not; init writes
