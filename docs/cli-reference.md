@@ -895,11 +895,17 @@ whose caller is not one of the owner principals it names is refused with
 
 Generates a client-held ordinary key outside the workspace and bootstraps the
 ledger with its public principal record. A missing `--key-dir` is created with
-mode 0700; an existing one must already exclude group and other access. An optional `--reviewer-key-dir` adds a
-second ordinary principal, `reviewer`, and writes its settings (`cruxible.env`)
-beside its key, printing the `cruxible context use --principal reviewer` that
-switches to it; pair it with `--require-independent-approval` to make
-one non-creator approval mandatory. Local key directories provide attribution
+mode 0700; an existing one must already exclude group and other access.
+`--require-independent-approval` makes one non-creator approval mandatory and
+adds a second ordinary principal, `reviewer`, to give it; `--reviewer-key-dir`
+alone adds the reviewer without the policy. The reviewer's key directory
+defaults to `$XDG_CONFIG_HOME/cruxible/keys/INSTANCE/reviewer`, beside the
+owner's, and passes the same custody checks. Init writes the reviewer's
+settings (`cruxible.env`) beside its key and prints how to act as it:
+`cruxible context use --principal reviewer`, or `CRUXIBLE_ENV_FILE=PATH` for
+another process (`--json` adds `reviewer_principal_id`,
+`reviewer_private_key_path` and `reviewer_settings_path`). An owner principal
+ID `reviewer` is refused when init makes the reviewer. Local key directories provide attribution
 and repository hygiene, not a security boundary. Organization review normally
 rides branch protection/CODEOWNERS on the state repository. The optional
 recovery key remains lifecycle-only.
@@ -5543,7 +5549,7 @@ registration is only proposed and the command prints each remaining step:
 `proposal approve` (which activates it), and, with auth,
 `credential mint --principal-id ID --key-dir DIR`, which writes the token into
 the same settings file. `cruxible init` writes the owner's settings file the
-same way, and with `--reviewer-key-dir` the reviewer's too. `proposal approve` defaults `--signer-id` to the configured principal.
+same way, and with `--require-independent-approval` or `--reviewer-key-dir` the reviewer's too. `proposal approve` defaults `--signer-id` to the configured principal.
 Which key signs as a principal is one lookup, the same on the CLI, the SDK
 (`cx.signer(ID)`) and the MCP server (`cruxible_proposal_approve`): `--key`;
 `CRUXIBLE_PRINCIPAL_KEY`, unless `CRUXIBLE_PRINCIPAL_ID` names another

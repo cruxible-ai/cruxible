@@ -1077,12 +1077,19 @@ def create_host(
 @click.option(
     "--reviewer-key-dir",
     default=None,
-    help="Optional second ordinary-principal custody directory outside the workspace.",
+    help=(
+        "Custody directory for a second ordinary principal, `reviewer`, outside the "
+        "workspace and the daemon state root (default with --require-independent-approval: "
+        "$XDG_CONFIG_HOME/cruxible/keys/INSTANCE/reviewer, else under ~/.config)."
+    ),
 )
 @click.option(
     "--require-independent-approval",
     is_flag=True,
-    help="Require one non-creator ordinary approval for governed changes.",
+    help=(
+        "Require one non-creator ordinary approval for governed changes; also creates "
+        "the `reviewer` principal that gives it."
+    ),
 )
 @click.option("--recovery-key-dir", default=None, help="Optional offline recovery custody dir.")
 @click.option("--recovery-principal-id", default="recovery", show_default=True)
@@ -1143,7 +1150,10 @@ def init_playbill(
     The owner principal ID defaults to your OS username and the key directory to
     a per-user config path outside the workspace and the daemon state root. The
     CLI remembers the owner's settings and acts as the owner from then on
-    (`cruxible context use --principal ID` switches).
+    (`cruxible context use --principal ID` switches). With
+    --require-independent-approval (or --reviewer-key-dir) init also creates a
+    second ordinary principal, `reviewer`, whose key defaults to the sibling
+    per-user config path; `cruxible context use --principal reviewer` acts as it.
 
     With daemon auth off, the owner principal ID is the identity this process
     claims for the init request; no bootstrap secret is needed.
@@ -1156,8 +1166,14 @@ def init_playbill(
     another folder, so it is never initialized here and never replaced.
     """
 
-    if require_independent_approval and reviewer_key_dir is None:
-        raise click.UsageError("--require-independent-approval requires --reviewer-key-dir")
+    # Independent approval needs a non-creator approver: init creates `reviewer`,
+    # in its own custody directory (the default one sits beside the owner's).
+    with_reviewer = require_independent_approval or reviewer_key_dir is not None
+    if with_reviewer:
+        # A named owner is checked before anything is resolved; a defaulted one below.
+        _refuse_owner_named_reviewer(
+            principal_id if principal_id is not None else _root_ctx_obj().get("principal_id")
+        )
     if not ensure_cli_daemon():
         raise click.UsageError(no_daemon_message("cruxible init"))
     git_workspace = _creation_workspace(workspace_path, fallback_to_start=True).workspace_root
@@ -1200,6 +1216,8 @@ def init_playbill(
             f"{configured} (CRUXIBLE_PRINCIPAL_ID or the global --principal-id); repair: "
             "pass one principal ID"
         )
+    if with_reviewer:
+        _refuse_owner_named_reviewer(principal_id)
     if get_runtime_bearer_token() is None:
         # Auth off: the init request claims the owner it creates. With a bearer
         # credential the credential decides who acts, so no claim is sent.
@@ -1274,11 +1292,23 @@ def init_playbill(
             flag="--key-dir",
         )
     )
+    reviewer_dir = (
+        None
+        if not with_reviewer
+        else Path(reviewer_key_dir).expanduser()
+        if reviewer_key_dir is not None
+        else _refuse_custody_inside(
+            "reviewer",
+            default_key_dir(selected, _INIT_REVIEWER_ID),
+            custody_roots,
+            flag="--reviewer-key-dir",
+        )
+    )
     specifications: list[tuple[Path, str, PrincipalKind]] = [
         (owner_key_dir, principal_id, "ordinary")
     ]
-    if reviewer_key_dir is not None:
-        specifications.append((Path(reviewer_key_dir).expanduser(), "reviewer", "ordinary"))
+    if reviewer_dir is not None:
+        specifications.append((reviewer_dir, _INIT_REVIEWER_ID, "ordinary"))
     if recovery_key_dir is not None:
         specifications.append(
             (Path(recovery_key_dir).expanduser(), recovery_principal_id, "recovery")
@@ -1294,7 +1324,7 @@ def init_playbill(
         forbidden_roots=custody_roots,
     )
     owner = materials[0]
-    reviewer = materials[1] if reviewer_key_dir is not None else None
+    reviewer = materials[1] if reviewer_dir is not None else None
     result = _server_call(
         lambda client, active: client.init(
             active,
@@ -1329,7 +1359,7 @@ def init_playbill(
     reviewer_token = (
         None
         if reviewer is None
-        else _mint_owner_credential(reviewer, principal_id="reviewer", mode="graph_write")
+        else _mint_owner_credential(reviewer, principal_id=_INIT_REVIEWER_ID, mode="graph_write")
     )
     settings = write_principal_settings(
         owner_key_dir,
@@ -1342,18 +1372,18 @@ def init_playbill(
     )
     _remember_principal_settings(result.instance_id, principal_id, settings, activate=True)
     reviewer_settings = None
-    if reviewer is not None and reviewer_key_dir is not None:
+    if reviewer is not None and reviewer_dir is not None:
         reviewer_settings = write_principal_settings(
-            Path(reviewer_key_dir).expanduser(),
+            reviewer_dir,
             ctx_obj=_root_ctx_obj(),
             instance_id=result.instance_id,
-            principal_id="reviewer",
+            principal_id=_INIT_REVIEWER_ID,
             private_key_path=reviewer.private_key_path,
             token=reviewer_token,
             written_by="cruxible init",
         )
         _remember_principal_settings(
-            result.instance_id, "reviewer", reviewer_settings, activate=False
+            result.instance_id, _INIT_REVIEWER_ID, reviewer_settings, activate=False
         )
     if git_workspace is not None:
         _write_world_stub(git_workspace, result.instance_id)
@@ -1372,8 +1402,12 @@ def init_playbill(
                 "owner_settings_path": str(settings),
                 **(
                     {}
-                    if reviewer_settings is None
-                    else {"reviewer_settings_path": str(reviewer_settings)}
+                    if reviewer is None or reviewer_settings is None
+                    else {
+                        "reviewer_principal_id": _INIT_REVIEWER_ID,
+                        "reviewer_private_key_path": str(reviewer.private_key_path),
+                        "reviewer_settings_path": str(reviewer_settings),
+                    }
                 ),
                 **({} if identity_path is None else {"folder_identity_path": str(identity_path)}),
             }
@@ -1399,7 +1433,7 @@ def init_playbill(
         if kit.status == "accepted":
             click.echo(f"Base kit: {kit.kit_id} {kit.version} installed")
         else:
-            approver = "reviewer" if reviewer is not None else _SIGNER_PLACEHOLDER
+            approver = _INIT_REVIEWER_ID if reviewer is not None else _SIGNER_PLACEHOLDER
             click.echo(
                 f"Base kit: {kit.kit_id} {kit.version} awaits approval, proposal "
                 f"{kit.proposal_id} (cruxible proposal approve {kit.proposal_id} "
@@ -1409,8 +1443,9 @@ def init_playbill(
         click.echo(f"Workspace ref failure: {result.workspace_advertisement.failure_code}")
     if reviewer is not None:
         click.echo(
-            f"Reviewer: reviewer, private key {reviewer.private_key_path} "
-            "(cruxible context use --principal reviewer)"
+            f"Reviewer: {_INIT_REVIEWER_ID}, private key {reviewer.private_key_path} "
+            f"(cruxible context use --principal {_INIT_REVIEWER_ID}; another process: "
+            f"CRUXIBLE_ENV_FILE={shlex.quote(str(reviewer_settings))})"
         )
     if not verbose:
         click.echo("More: cruxible context show")
@@ -1439,6 +1474,21 @@ def init_playbill(
     if reviewer is not None:
         click.echo(f"Reviewer public key: {reviewer.principal.public_key}")
         click.echo(f"Reviewer settings: {reviewer_settings}")
+
+
+#: The principal ID `cruxible init` gives the second (reviewer) principal.
+_INIT_REVIEWER_ID = "reviewer"
+
+
+def _refuse_owner_named_reviewer(owner: object) -> None:
+    """Refuse an owner whose ID is the one init gives the reviewer it creates."""
+
+    if owner == _INIT_REVIEWER_ID:
+        raise click.UsageError(
+            f"the owner principal ID {_INIT_REVIEWER_ID!r} is the ID init gives the second "
+            "principal (--require-independent-approval or --reviewer-key-dir); nothing was "
+            "written. Repair: pass another --principal-id"
+        )
 
 
 def _record_folder_identity(

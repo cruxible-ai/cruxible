@@ -696,3 +696,138 @@ def test_cosign_setup_on_an_existing_owner_only_instance(
     assert load_cli_context().principals[principal_binding(URL, instance_id)].settings[
         "reviewer"
     ] == str((daemon / "rev" / "cruxible.env").resolve())
+
+
+# -- one-command bootstrap: --require-independent-approval alone makes the reviewer --
+
+
+def test_independent_approval_alone_puts_the_reviewer_beside_the_owner(daemon: Path) -> None:
+    """`init --require-independent-approval` needs no --reviewer-key-dir: the reviewer's
+    custody defaults to the owner's sibling per-user config path, and init prints how to
+    act as it."""
+
+    result = _run("init", "--principal-id", "owner", "--require-independent-approval")
+
+    assert result.exit_code == 0, result.output
+    instance_id = load_cli_context().instance_id
+    assert instance_id is not None
+    keys = daemon / "config" / "cruxible" / "keys" / instance_id
+    reviewer_dir = keys / "reviewer"
+    settings = reviewer_dir / "cruxible.env"
+    assert (keys / "owner" / "owner.ed25519").is_file()
+    assert (reviewer_dir / "reviewer.ed25519").is_file()
+    assert "export CRUXIBLE_PRINCIPAL_ID=reviewer" in settings.read_text()
+    assert "Approval policy: independent_approval_required" in result.stdout
+    assert (
+        f"Reviewer: reviewer, private key {reviewer_dir / 'reviewer.ed25519'} "
+        f"(cruxible context use --principal reviewer; another process: "
+        f"CRUXIBLE_ENV_FILE={settings})"
+    ) in result.stdout
+    (kit_line,) = [line for line in result.stdout.splitlines() if line.startswith("Base kit: ")]
+    assert "--signer-id reviewer" in kit_line
+    remembered = load_cli_context().principals[principal_binding(URL, instance_id)]
+    assert remembered.active == "owner"
+    assert remembered.settings["reviewer"] == str(settings.resolve())
+
+    # The printed forms act as the reviewer, and the reviewer can land the base kit.
+    proposal = kit_line.split("proposal ", 1)[1].split(" ", 1)[0]
+    by_env_file = CliRunner().invoke(
+        cli, ["--server-url", URL, "whoami", "--json"], env={"CRUXIBLE_ENV_FILE": str(settings)}
+    )
+    assert by_env_file.exit_code == 0, by_env_file.output
+    assert json.loads(by_env_file.stdout)["actor_id"] == "reviewer"
+    assert _run("context", "use", "--principal", "reviewer").exit_code == 0
+    assert _whoami()["actor_id"] == "reviewer"
+    approved = _run("proposal", "approve", proposal, "--yes")
+    assert approved.exit_code == 0, approved.output
+
+
+def test_independent_approval_alone_reports_the_reviewer_in_json(daemon: Path) -> None:
+    result = _run("init", "--principal-id", "owner", "--require-independent-approval", "--json")
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout[result.stdout.index("{") :])
+    instance_id = payload["instance_id"]
+    reviewer_dir = daemon / "config" / "cruxible" / "keys" / instance_id / "reviewer"
+    assert payload["approval_policy_mode"] == "independent_approval_required"
+    assert payload["reviewer_principal_id"] == "reviewer"
+    assert payload["reviewer_private_key_path"] == str(reviewer_dir / "reviewer.ed25519")
+    assert payload["reviewer_settings_path"] == str(reviewer_dir / "cruxible.env")
+    assert payload["owner_settings_path"] == str(reviewer_dir.parent / "owner" / "cruxible.env")
+
+
+def test_an_owner_only_init_reports_no_reviewer(daemon: Path) -> None:
+    result = _run("init", "--principal-id", "owner", "--json")
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout[result.stdout.index("{") :])
+    assert "reviewer_principal_id" not in payload
+    assert not (
+        daemon / "config" / "cruxible" / "keys" / payload["instance_id"] / "reviewer"
+    ).exists()
+
+
+def test_an_explicit_reviewer_key_dir_still_wins_over_the_default(daemon: Path) -> None:
+    proposal, stdout = _init_awaiting_reviewer(daemon)
+
+    instance_id = load_cli_context().instance_id
+    assert instance_id is not None
+    assert (daemon / "rev" / "reviewer.ed25519").is_file()
+    assert not (daemon / "config" / "cruxible" / "keys" / instance_id / "reviewer").exists()
+    assert f"CRUXIBLE_ENV_FILE={daemon / 'rev' / 'cruxible.env'}" in stdout
+    assert proposal
+
+
+def test_the_default_reviewer_key_dir_is_refused_inside_the_state_root(
+    daemon: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The default reviewer directory passes the custody check every explicit one does."""
+
+    state_root = daemon / "server-state"
+    state_root.mkdir(exist_ok=True)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(state_root / "config"))
+
+    result = _run(
+        "init",
+        "--principal-id",
+        "owner",
+        "--key-dir",
+        str(daemon / "owner-keys"),
+        "--require-independent-approval",
+    )
+
+    assert result.exit_code == 2, result.output
+    assert "the reviewer key directory lies inside" in result.output
+    assert "cruxible init --reviewer-key-dir DIR" in result.output
+    assert not list(state_root.rglob("*.ed25519"))
+    assert not list((daemon / "owner-keys").rglob("*.ed25519"))
+
+
+@pytest.mark.parametrize(
+    "flags", [("--require-independent-approval",), ("--reviewer-key-dir", "rev")]
+)
+def test_an_owner_named_reviewer_is_refused_when_init_makes_the_reviewer(
+    daemon: Path, flags: tuple[str, ...]
+) -> None:
+    result = _run("init", "--principal-id", "reviewer", *flags)
+
+    assert result.exit_code == 2, result.output
+    assert "the owner principal ID 'reviewer' is the ID init gives" in result.output
+    assert "Repair: pass another --principal-id" in result.output
+    assert load_cli_context().instance_id is None
+    assert not list(daemon.rglob("*.ed25519"))
+
+
+def test_an_os_username_reviewer_is_refused_when_init_makes_the_reviewer(
+    daemon: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The defaulted owner ID is checked too, once init resolves it."""
+
+    monkeypatch.setattr(playbill.getpass, "getuser", lambda: "Reviewer")
+
+    result = _run("init", "--require-independent-approval")
+
+    assert result.exit_code == 2, result.output
+    assert "the owner principal ID 'reviewer' is the ID init gives" in result.output
+    assert load_cli_context().instance_id is None
+    assert not list(daemon.rglob("*.ed25519"))

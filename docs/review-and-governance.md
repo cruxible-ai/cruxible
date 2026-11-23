@@ -118,8 +118,10 @@ Approved sha256:fc586140… (sha256:9afd6283…) as reviewer
 Activated at 9b659ad32d3f…
 ~~~
 
-A reviewer created at `cruxible init --reviewer-key-dir DIR` has its settings
-in `DIR`, so `context use` switches to it. One command can also name the
+A reviewer created by `cruxible init --require-independent-approval` has its
+settings beside its key (`$XDG_CONFIG_HOME/cruxible/keys/INSTANCE/reviewer`
+by default, or the `--reviewer-key-dir DIR` given), so `context use` switches
+to it. One command can also name the
 reviewer without switching: `CRUXIBLE_PRINCIPAL_ID=reviewer cruxible proposal
 approve ID` acts as the reviewer, and `--signer-id reviewer` signs as it; both
 find the reviewer's key the same way. The key that signs as a principal is
@@ -256,7 +258,7 @@ repair  proposal_awaiting_activation  sha256:86bd8301…  (catalog.part/bp-2210 
 ~~~
 
 The reviewing agent works in its own session, as its own principal (a
-reviewer from `init --reviewer-key-dir`, or one `principal add` registers). It
+reviewer from `init --require-independent-approval`, or one `principal add` registers). It
 runs `proposal review ID`, then either `proposal approve ID`, which signs the
 exact candidate and, since nothing else is required, activates it, or
 `proposal activate ID`, which activates without a signature. It turns the
@@ -310,14 +312,17 @@ The recommended setup is cosign: an owner who writes and a reviewer who
 approves. A new instance gets both at creation:
 
 ~~~text
-$ cruxible init --principal-id owner --reviewer-key-dir ~/keys/reviewer --require-independent-approval
+$ cruxible init --principal-id owner --require-independent-approval
 ...
 Approval policy: independent_approval_required
 Base kit: base 1.0.0 awaits approval, proposal sha256:4acb1302… (cruxible proposal approve sha256:4acb1302… --signer-id reviewer, as a second principal)
-Reviewer: reviewer, private key ~/keys/reviewer/reviewer.ed25519 (cruxible context use --principal reviewer)
+Reviewer: reviewer, private key ~/.config/cruxible/keys/inst_…/reviewer/reviewer.ed25519 (cruxible context use --principal reviewer; another process: CRUXIBLE_ENV_FILE=~/.config/cruxible/keys/inst_…/reviewer/cruxible.env)
 ~~~
 
-The reviewer acts through `CRUXIBLE_PRINCIPAL_ID=reviewer` for one command, or
+The reviewer's key defaults to a directory beside the owner's, outside the
+workspace and the daemon state root; `--reviewer-key-dir DIR` puts it
+elsewhere. The reviewer acts through `CRUXIBLE_PRINCIPAL_ID=reviewer` for one
+command, `CRUXIBLE_ENV_FILE` naming its settings for another process, or
 `cruxible context use --principal reviewer` for the session. Its first act is
 approving the base kit, which waits like any other change.
 

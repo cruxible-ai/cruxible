@@ -164,10 +164,13 @@ CRUXIBLE_PRINCIPAL_ID=reviewer cruxible proposal review PROPOSAL_ID          # i
 CRUXIBLE_PRINCIPAL_ID=reviewer cruxible proposal approve PROPOSAL_ID --yes   # sign and activate it
 ~~~
 
-On a new project, `cruxible init --principal-id owner --reviewer-key-dir
-../reviewer-keys --require-independent-approval` sets up both principals and
-the policy from the start (every setup step then waits for the reviewer, as in
-the [Security walkthrough](security-walkthrough.md)). Cosign between agents on
+On a new project, `cruxible init --principal-id owner
+--require-independent-approval` sets up both principals and the policy from
+the start: every setup step then waits for the reviewer, as in the
+[Security walkthrough](security-walkthrough.md). The reviewer's key goes
+beside the owner's in your per-user config directory (`--reviewer-key-dir DIR`
+puts it elsewhere), and init prints the `cruxible context use --principal
+reviewer` that switches to it. Cosign between agents on
 one machine is a convention, not a security boundary: both keys are files your
 OS user can read. See [Review and governance](review-and-governance.md).
 
