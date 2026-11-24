@@ -836,8 +836,10 @@ RATIONALE_INVALID = "cruxible.claim.rationale_invalid"
 #: Its repair: where reasoning longer than a rationale goes.
 RATIONALE_REPAIR = (
     f"Shorten because to one line of at most {CLAIM_RATIONALE_MAX} characters, and put the "
-    "longer reasoning in a Document section the Claim cites as its evidence (in a write "
-    "file: a docs op with an id, then evidence {kind: section, ref: ID})."
+    "longer reasoning in a Document section the Claim cites as its evidence, written in the "
+    "same write: SDK evidence=w.section(FILE, heading=..., body=...); CLI --section "
+    "FILE#Heading --section-body TEXT; write file or MCP a docs op with an id, then "
+    "evidence {kind: section, ref: ID}."
 )
 #: The refusal of a change set's rationale (``because`` and its retire notes) over its limit.
 RATIONALE_TOO_LONG = "cruxible.write.rationale_too_long"
