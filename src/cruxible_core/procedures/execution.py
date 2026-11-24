@@ -9219,7 +9219,8 @@ def _inbox_items(
                 resolved["value"] if tag == "present" and isinstance(resolved, dict) else resolved
             )
             declared = contract.fields.get(name)
-            complete = state.completeness.at_sink(_referenced_reads([node.for_each, template]))
+            field_reads = _referenced_reads([node.for_each, template])
+            complete = state.completeness.at_sink(field_reads)
             if (
                 declared is not None
                 and requires_complete_input(value, declared.requires_complete_input)
@@ -9230,12 +9231,9 @@ def _inbox_items(
                         kind="incomplete_source",
                         target=f"{node.contract.spelling}.{name}",
                         field=name,
-                        input=",".join(
-                            state.completeness.incomplete_inputs(
-                                _referenced_reads([node.for_each, template])
-                            )
-                        )
+                        input=",".join(state.completeness.incomplete_inputs(field_reads))
                         or "control lineage",
+                        incomplete_reasons=state.completeness.reasons_for(field_reads),
                     )
                 )
                 if declared.incomplete_fallback is None:

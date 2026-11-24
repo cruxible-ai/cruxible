@@ -155,6 +155,60 @@ class Completeness:
 
         return sorted({alias for alias, path in reads if not self.reads_complete(((alias, path),))})
 
+    def reasons_for(
+        self,
+        reads: Iterable[Read],
+        *,
+        producers: Mapping[str, str] | None = None,
+        upstream: Mapping[str, tuple[str, ...]] | None = None,
+        extra: Iterable[CompletenessReason] = (),
+        records_kept: bool = False,
+    ) -> tuple[CompletenessReason, ...]:
+        """The recorded reasons behind one value's incompleteness, for its finding.
+
+        For each incomplete alias read, in read order: the reason its producing
+        node recorded (``producers`` maps an alias to that node), else the
+        alias's own. Each reason's ``inputs`` (or, where it names none, the
+        alias's ``upstream`` aliases) lead on to the incomplete values it read,
+        so the root cause is named too. Then the control lineage's reason, when
+        it is incomplete, and ``extra``, the conditions only the sink judges.
+        Each incomplete alias is visited once and at most 20 reasons are kept:
+        bounded by the value's own lineage, never a pass over the run.
+        ``records_kept`` judges the reads as :meth:`reads_complete` does.
+        """
+
+        found: dict[tuple[str, str], CompletenessReason] = {}
+
+        def keep(reason: CompletenessReason | None) -> None:
+            if reason is not None and len(found) < 20:
+                found.setdefault((reason.node, reason.kind), reason)
+
+        pending: list[str] = []
+        visited: set[str] = set()
+        for alias, path in reads:  # in read order: the value's own source first
+            if alias not in visited and not self.reads_complete(
+                ((alias, path),), records_kept=records_kept
+            ):
+                visited.add(alias)
+                pending.append(alias)
+        while pending and len(found) < 20:
+            alias = pending.pop(0)
+            node = None if producers is None else producers.get(alias)
+            reason = (None if node is None else self.reasons.get(node)) or self.reasons.get(alias)
+            keep(reason)
+            following = (reason.inputs if reason is not None else ()) or (
+                () if upstream is None else upstream.get(alias, ())
+            )
+            for name in following:
+                if name in self.incomplete and name not in visited:
+                    visited.add(name)
+                    pending.append(name)
+        if not self.control_complete:
+            keep(self.reasons.get("control"))
+        for reason in extra:
+            keep(reason)
+        return tuple(found.values())
+
     def guard(self, reads: Iterable[Read]) -> None:
         """A guard over an incomplete operand taints the branch it selects."""
 

@@ -349,8 +349,9 @@ def install(
     line: str,
     namespace: tuple[str, ...] = (),
     parameters: dict[str, Any] | None = None,
+    findings: tuple[str, ...] = (),
 ) -> None:
-    """The Line with a propose grant over Claims and Subjects."""
+    """The Line with a propose grant over Claims and Subjects, routing ``findings`` to its inbox."""
 
     author_procedure(instance, spec, name=line + "-procedure")
     author_line(
@@ -359,7 +360,7 @@ def install(
         procedure=spec.procedure,
         parameters=parameters or {},
         max_authority="propose",
-        findings={"inbox": []},
+        findings={"inbox": list(findings)},
     )
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     path = line_spec_path(line)

@@ -242,7 +242,17 @@ def test_incomplete_boolean_false_is_skipped_and_reported(tmp_path: Path) -> Non
     assert finding.kind == "incomplete_source" and finding.input == "entries"
     from tests.test_procedures.test_claims_fix import _inbox
 
-    assert any(item.payload["kind"] == "incomplete_source" for item in _inbox(instance))
+    # The inbox item names why, down to the truncating call, and carries no nulls.
+    (item,) = [i for i in _inbox(instance) if i.payload["kind"] == "incomplete_source"]
+    assert item.payload == {
+        "kind": "incomplete_source",
+        "target": finding.target,
+        "input": "entries",
+        "incomplete_reasons": [
+            {"node": "entries", "kind": "incomplete_input", "inputs": []},
+            {"node": "doc", "kind": "may_truncate", "inputs": []},
+        ],
+    }
 
 
 def test_line_authoring_refuses_retired_precedence_finding(tmp_path: Path) -> None:

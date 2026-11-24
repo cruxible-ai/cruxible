@@ -370,6 +370,10 @@ def test_diagnostics_are_typed_bounded_and_not_reposted(tmp_path: Path) -> None:
     before = _inbox(instance)
     assert len(before) == 5
     diagnostics = [ClaimsDiagnostic.model_validate(item.payload) for item in before]
+    # A posted finding carries only the fields it has: no null, empty or zero field.
+    for item in before:
+        assert all(value not in (None, [], 0) for value in item.payload.values()), item.payload
+        assert item.payload == diagnostics[before.index(item)].model_dump(mode="json")
     assert {d.target for d in diagnostics} == {
         KIND + ':{"cve_id":"CVE-2026-' + f"{i:04d}" + '"}:' + PREDICATE for i in range(1, 6)
     }
@@ -451,6 +455,75 @@ def test_many_value_canonical_refresh_respects_protected_holder(tmp_path: Path) 
     assert not _inbox(instance)
 
 
+def test_a_diagnostic_serializes_only_the_fields_it_has() -> None:
+    from cruxible_client.contracts.claim_evidence import ClaimsDiagnostic, CompletenessReason
+
+    bare = ClaimsDiagnostic(kind="slot_contested", target="subjects/x.json:x.status")
+    assert bare.model_dump(mode="json") == {
+        "kind": "slot_contested",
+        "target": "subjects/x.json:x.status",
+    }
+    incomplete = ClaimsDiagnostic(
+        kind="incomplete_source",
+        target="write",
+        problem="source_incomplete",
+        source_incomplete=True,
+        incomplete_reasons=(CompletenessReason(node="entries", kind="count_mismatch"),),
+    )
+    assert incomplete.model_dump(mode="json") == {
+        "kind": "incomplete_source",
+        "target": "write",
+        "problem": "source_incomplete",
+        "source_incomplete": True,
+        "incomplete_reasons": [{"node": "entries", "kind": "count_mismatch", "inputs": []}],
+    }
+    # A payload posted before nulls were left out still reads as the same finding.
+    legacy = {
+        "kind": "incomplete_source",
+        "target": "write",
+        "field": None,
+        "problem": "source_incomplete",
+        "lexeme": None,
+        "input": None,
+        "claim": None,
+        "role": None,
+        "source_incomplete": True,
+        "key": None,
+        "record_locators": [],
+        "record_count": 0,
+        "held_value": None,
+        "incoming_value": None,
+    }
+    assert ClaimsDiagnostic.model_validate(legacy).model_dump(mode="json") == {
+        "kind": "incomplete_source",
+        "target": "write",
+        "problem": "source_incomplete",
+        "source_incomplete": True,
+    }
+
+
+def test_incomplete_reasons_follow_the_lineage_to_its_root() -> None:
+    from cruxible_client.contracts.claim_evidence import CompletenessReason
+    from cruxible_core.procedures.completeness import Completeness
+
+    completeness = Completeness()
+    completeness.mark("doc", False)
+    completeness.note("fetch_doc", "may_truncate")
+    completeness.mark("entries", False)
+    completeness.mark("unrelated", False)
+    completeness.note("unrelated_node", "count_mismatch")
+    reasons = completeness.reasons_for(
+        (("entries", ()), ("fine", ())),
+        producers={"doc": "fetch_doc"},
+        upstream={"entries": ("doc",)},
+    )
+    assert reasons == (
+        CompletenessReason(node="entries", kind="incomplete_input"),
+        CompletenessReason(node="fetch_doc", kind="may_truncate"),
+    )
+    assert completeness.reasons_for((("fine", ()),)) == ()
+
+
 def test_incomplete_source_names_only_own_aliases() -> None:
     from cruxible_core.procedures.completeness import Completeness
 
@@ -478,6 +551,8 @@ def test_inbox_reasons_stay_with_their_own_node() -> None:
     )
     state = _RunState(outputs={"own": {"status": "closed"}}, input_payload={}, parameters={})
     state.completeness.incomplete.update({"own", "unrelated"})
+    state.completeness.note("own", "invalid_record")
+    state.completeness.note("unrelated", "count_mismatch")
     for node_id in ("first", "second"):
         node = InboxEgressNode(
             node_id=node_id, contract=contract.ref, fields={"status": "$steps.own.status"}
@@ -490,6 +565,9 @@ def test_inbox_reasons_stay_with_their_own_node() -> None:
     for reasons in state.claims_diagnostics.values():
         assert reasons.count == 1
         assert reasons.reasons[0].input == "own"
+        assert [(r.node, r.kind) for r in reasons.reasons[0].incomplete_reasons] == [
+            ("own", "invalid_record")
+        ]
         assert reasons.findings == reasons.reasons
 
 

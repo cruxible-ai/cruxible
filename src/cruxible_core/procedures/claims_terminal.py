@@ -279,6 +279,14 @@ def expand_claims(
         if executor.plan is None
         else {getattr(n, "as_", None): n for n in executor.plan.definition.nodes}
     )
+    #: Each alias's producing node, so a finding names the node's recorded reason,
+    #: and each extract's Capture alias, so it names the reason upstream of it too.
+    producer_ids = {alias: n.node_id for alias, n in nodes.items() if alias is not None}
+    extract_upstream = {
+        alias: (n.capture_alias,)
+        for alias, n in nodes.items()
+        if alias is not None and isinstance(n, LayoutExtractNode)
+    }
     # Runtime execution plans carry their accepted artifact separately on some paths.
     source_cache: dict[str, tuple[tuple[Any, ...], tuple[str, ...], bool]] = {}
     # Each extract's receipt digests its one resolved spec (its kind's layout applied).
@@ -558,7 +566,14 @@ def expand_claims(
             held = () if subject is None else context.slot(subject, ct.predicate, qualifier)
             if requires_complete_input(value, ct.requires_complete_input) and not complete:
                 incomplete = state.completeness.incomplete_inputs(value_reads)
-                report("incomplete_source", target, input=",".join(incomplete) or "control lineage")
+                report(
+                    "incomplete_source",
+                    target,
+                    input=",".join(incomplete) or "control lineage",
+                    incomplete_reasons=state.completeness.reasons_for(
+                        value_reads, producers=producer_ids, upstream=extract_upstream
+                    ),
+                )
                 # No destructive replacement over incomplete input, including a downgrade.
                 if ct.incomplete_fallback is None or held:
                     state.completeness.skipped += 1

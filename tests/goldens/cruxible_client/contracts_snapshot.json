@@ -25832,6 +25832,23 @@
             "default": null
           }
         },
+        "incomplete_reasons": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "incomplete_reasons",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/CompletenessReason"
+            },
+            "maxItems": 20,
+            "title": "Incomplete Reasons",
+            "type": "array"
+          }
+        },
         "input": {
           "default": null,
           "default_json_serializable": true,
@@ -26087,6 +26104,47 @@
       },
       "json_schema": {
         "$defs": {
+          "CompletenessReason": {
+            "additionalProperties": false,
+            "properties": {
+              "inputs": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 20,
+                "title": "Inputs",
+                "type": "array"
+              },
+              "kind": {
+                "enum": [
+                  "incomplete_input",
+                  "count_mismatch",
+                  "invalid_record",
+                  "duplicate_key",
+                  "invalid_field",
+                  "unknown_predicate",
+                  "may_truncate",
+                  "control_incomplete",
+                  "upstream_incomplete",
+                  "glob_enumeration",
+                  "expect_unknown"
+                ],
+                "title": "Kind",
+                "type": "string"
+              },
+              "node": {
+                "title": "Node",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node",
+              "kind"
+            ],
+            "title": "CompletenessReason",
+            "type": "object"
+          },
           "JsonValue": {}
         },
         "additionalProperties": false,
@@ -26158,6 +26216,15 @@
           "incoming_value": {
             "$ref": "#/$defs/JsonValue",
             "default": null
+          },
+          "incomplete_reasons": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/CompletenessReason"
+            },
+            "maxItems": 20,
+            "title": "Incomplete Reasons",
+            "type": "array"
           },
           "input": {
             "anyOf": [
@@ -45592,7 +45659,9 @@
                   "unknown_predicate",
                   "may_truncate",
                   "control_incomplete",
-                  "upstream_incomplete"
+                  "upstream_incomplete",
+                  "glob_enumeration",
+                  "expect_unknown"
                 ],
                 "title": "Kind",
                 "type": "string"
@@ -66488,6 +66557,15 @@
                 "$ref": "#/$defs/JsonValue",
                 "default": null
               },
+              "incomplete_reasons": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/CompletenessReason"
+                },
+                "maxItems": 20,
+                "title": "Incomplete Reasons",
+                "type": "array"
+              },
               "input": {
                 "anyOf": [
                   {
@@ -66795,7 +66873,9 @@
                   "unknown_predicate",
                   "may_truncate",
                   "control_incomplete",
-                  "upstream_incomplete"
+                  "upstream_incomplete",
+                  "glob_enumeration",
+                  "expect_unknown"
                 ],
                 "title": "Kind",
                 "type": "string"
@@ -72062,6 +72142,15 @@
                 "$ref": "#/$defs/JsonValue",
                 "default": null
               },
+              "incomplete_reasons": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/CompletenessReason"
+                },
+                "maxItems": 20,
+                "title": "Incomplete Reasons",
+                "type": "array"
+              },
               "input": {
                 "anyOf": [
                   {
@@ -72212,6 +72301,47 @@
               "target"
             ],
             "title": "ClaimsDiagnostic",
+            "type": "object"
+          },
+          "CompletenessReason": {
+            "additionalProperties": false,
+            "properties": {
+              "inputs": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 20,
+                "title": "Inputs",
+                "type": "array"
+              },
+              "kind": {
+                "enum": [
+                  "incomplete_input",
+                  "count_mismatch",
+                  "invalid_record",
+                  "duplicate_key",
+                  "invalid_field",
+                  "unknown_predicate",
+                  "may_truncate",
+                  "control_incomplete",
+                  "upstream_incomplete",
+                  "glob_enumeration",
+                  "expect_unknown"
+                ],
+                "title": "Kind",
+                "type": "string"
+              },
+              "node": {
+                "title": "Node",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node",
+              "kind"
+            ],
+            "title": "CompletenessReason",
             "type": "object"
           },
           "InboxPostTruncation": {
@@ -104531,7 +104661,9 @@
                   "unknown_predicate",
                   "may_truncate",
                   "control_incomplete",
-                  "upstream_incomplete"
+                  "upstream_incomplete",
+                  "glob_enumeration",
+                  "expect_unknown"
                 ],
                 "title": "Kind",
                 "type": "string"
@@ -104860,7 +104992,9 @@
                   "unknown_predicate",
                   "may_truncate",
                   "control_incomplete",
-                  "upstream_incomplete"
+                  "upstream_incomplete",
+                  "glob_enumeration",
+                  "expect_unknown"
                 ],
                 "title": "Kind",
                 "type": "string"

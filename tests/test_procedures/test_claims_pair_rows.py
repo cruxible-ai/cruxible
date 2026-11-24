@@ -569,3 +569,48 @@ def test_a_pair_end_named_by_text_is_refused_at_authoring(tmp_path: Path) -> Non
     )
     assert refused.code == "cruxible.authoring.claims_type_invalid", refused
     assert "nested Subject template" in refused.message
+
+
+@pytest.mark.parametrize(
+    ("problem", "reason"),
+    [
+        ("count", {"node": "entries", "kind": "count_mismatch", "inputs": []}),
+        ("refused_record", {"node": "entries", "kind": "invalid_record", "inputs": []}),
+        ("absent_header", {"node": "write", "kind": "expect_unknown", "inputs": ["entries"]}),
+    ],
+)
+def test_incomplete_source_inbox_item_names_why_and_omits_nulls(
+    tmp_path: Path, problem: str, reason: dict[str, Any]
+) -> None:
+    """The inbox item says why the source was incomplete, with no null or empty fields."""
+
+    from tests.test_procedures.test_claims_fix import _inbox
+
+    instance, root = pair_procedure_world(tmp_path)
+    install(
+        instance,
+        pair_spec("test.sbom-import", doc="sbom", source="test.sbom"),
+        line=LINE,
+        findings=("incomplete_source",),
+    )
+    write_doc(root, "sbom", rows("web", [A, B]), inventory="web")
+    activate(instance, run(instance, root, line=LINE))
+    entries: list[Any] = rows("web", [A])
+    if problem == "count":
+        write_doc(root, "sbom", entries, inventory="web", count=5)
+    elif problem == "refused_record":
+        write_doc(root, "sbom", [*entries, "not a record"], inventory="web")
+    else:
+        write_doc(root, "sbom", entries)
+    state = run(instance, root, line=LINE, minute=1)
+    assert state.status == "succeeded", state.terminal
+    (finding,) = [d for d in _diagnostics(state) if d.kind == "incomplete_source"]
+    assert [r.model_dump(mode="json") for r in finding.incomplete_reasons] == [reason]
+    (item,) = _inbox(instance)
+    assert item.payload == {
+        "kind": "incomplete_source",
+        "target": "write",
+        "problem": "source_incomplete",
+        "source_incomplete": True,
+        "incomplete_reasons": [reason],
+    }
