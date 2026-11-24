@@ -117,6 +117,28 @@ made from.
   `w.write(...)` (typed in `world.pyi`); `subject.edit(field=...)` sets fields
   and still chains `.add`/`.retire`; a many-valued field takes a list or tuple
   in `define(...)` and `add(...)` (one added value per item, in order).
+- **Composable kit recipes (`cruxible kit adopt`):** kits may ship parameterized
+  automation recipes (validated with linear-time regex checks and verified by
+  bundle digest). `cruxible kit adopt KIT[:RECIPE] [--param K=V ...] [--dry-run]
+  [--yes]` renders the recipe, previews its authority footprint (Lines,
+  Triggers, ProcedureMandates, and per-output origins), submits one proposal,
+  and prints the exact approval and enable commands.
+- **Verified read-only kit scripts (`cruxible kit run`):** kits may ship
+  digest-pinned helper scripts (`cruxible kit run KIT:SCRIPT [-- ARGS...]`).
+  Before execution, the CLI checks the cached bundle digest against the
+  instance receipt, discloses the script path and mode (`readonly_client` or
+  `local_inspect`), and runs it without write authority.
+- **Atomic `cruxible kit add`:** installing a kit now submits its providers and
+  definitions together in one batched proposal, and stages and promotes cached
+  kit files atomically with `dir_fd`-anchored symlink protection.
+- **Multi-ID `proposal approve` and bare-hex selectors:** `cruxible proposal
+  approve ID [ID ...]` approves several proposals in one command (disclosing
+  every paged Provider definition before prompting), accepts bare-hex prefixes
+  without `PROP-`, and prints compact 12-character proposal IDs in CLI output.
+- **Runbook `procedure` fan-out:** a Runbook step may declare
+  `{"procedure": "NAME"}` instead of a single Line; preview and execution fan
+  out across every enabled Line bound to that Procedure in deterministic order,
+  so newly adopted source Lines join the Runbook without editing it.
 
 ### Changed
 
