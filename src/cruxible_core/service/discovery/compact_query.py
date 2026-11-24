@@ -784,7 +784,7 @@ def _require_refs(
 def _comparable(info: PredicateInfo | Literal["subject_id"], value: object) -> object:
     if isinstance(info, str):
         return value
-    ranked = info.ranked
+    ranked = info.ranked if info.value_type == "enum" else None
     if ranked is not None:
         # An ordered enum compares by declared rank; a non-member has none.
         return ranked.rank(value)

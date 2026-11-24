@@ -161,6 +161,8 @@ class PredicateInfo:
     def ranked(self) -> EnumType | None:
         """Its ordered enum (members in ascending rank), when it declares one."""
 
+        if self.value_type != "enum" or self.claim_type is None:
+            return None
         return ordered_enum(self.claim_type.value)
 
     def operators(self) -> frozenset[str]:
