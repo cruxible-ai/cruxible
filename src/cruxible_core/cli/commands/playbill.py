@@ -195,6 +195,7 @@ from cruxible_client.contracts.validation_messages import validation_summary
 from cruxible_client.contracts.workspace_layout import WorkspaceDirectoryConflict
 from cruxible_client.contracts.write import (
     AddChange,
+    AppendSection,
     Change,
     ContractEvidence,
     DocOp,
@@ -6358,6 +6359,83 @@ _NONE_HELP = (
 )
 
 
+_SECTION_HELP = (
+    "FILE#Heading/Path: cite that section of a workspace file (FILE# for the preamble); "
+    "with --section-body, the section this write appends and cites."
+)
+_SECTION_BODY_HELP = (
+    "With --section: append that heading with this body (- reads stdin) and cite it, "
+    "in the same write; FILE is created and catalogued if new."
+)
+_OWN_WORDS_HELP = "With --section: the section's text is your own words, not observed evidence."
+#: The doc op id a --section-body append is cited by.
+_SECTION_BODY_ID = "section"
+_SECTION_BODY_EXAMPLE = (
+    "cruxible set dev.item/tidy-cli status done --section notes.md#Decisions/tidy-cli "
+    '--section-body "Shipped in 0.6." --because "Shipped."'
+)
+
+
+def _section_option_value(
+    section_ref: str | None,
+    section_body: str | None,
+    own_words: bool,
+    *,
+    others: Sequence[tuple[str, object]],
+    workspace_root: str,
+) -> tuple[Any, list[AppendSection]]:
+    """--section (and --section-body, --own-words): the evidence, and the append it cites.
+
+    --section alone cites an existing section, as rebind and claim attest do.
+    With --section-body the write appends that heading (under its parents)
+    with the body and cites the new section by the append's id: prose and
+    the Claim it backs land in one write. Returns (None, []) without --section.
+    """
+
+    from cruxible_client.authoring.write_evidence import rebind_evidence
+    from cruxible_client.contracts.write import SectionEvidence
+    from cruxible_core.cli.payloads import STDIN, _claim_stdin, read_payload_text
+
+    if section_ref is None:
+        if section_body is not None:
+            raise click.UsageError(
+                "--section-body needs --section FILE#Heading/Path: the heading it appends"
+            )
+        if own_words:
+            raise click.UsageError("--own-words applies to --section")
+        return None, []
+    given = [flag for flag, value in others if value is not None]
+    if given:
+        raise click.UsageError(f"pass --section or {', '.join(given)}, not both")
+    if section_body is None:
+        try:
+            evidence = rebind_evidence(section=section_ref, workspace=Path(workspace_root))
+        except ValueError as exc:
+            raise click.UsageError(f"--section: {exc}") from None
+        return (evidence.model_copy(update={"own_words": True}) if own_words else evidence), []
+    file, mark, rest = section_ref.partition("#")
+    heading = tuple(item.strip() for item in rest.split("/") if item.strip())
+    if not file or not mark or not heading:
+        raise click.UsageError(
+            "--section with --section-body takes FILE#Heading/Path: the heading to append"
+        )
+    if section_body == STDIN:
+        _claim_stdin(click.get_current_context(silent=True))
+        section_body = read_payload_text(STDIN)
+    try:
+        append = AppendSection(
+            id=_SECTION_BODY_ID,
+            file=file,
+            under=heading[:-1],
+            heading=heading[-1],
+            text=section_body,
+        )
+    except ValidationError as exc:
+        raise click.UsageError("--section: " + "; ".join(_model_field_errors(exc))) from None
+    evidence = SectionEvidence(ref=_SECTION_BODY_ID, own_words=True if own_words else None)
+    return evidence, [append]
+
+
 @playbill_group.command("set")
 @click.argument("subject")
 @click.argument("field")
@@ -6382,6 +6460,9 @@ _NONE_HELP = (
     default=None,
     help="Cite the newest verified Capture of this CaptureContract about SUBJECT.",
 )
+@click.option("--section", "section_ref", default=None, help=_SECTION_HELP)
+@click.option("--section-body", default=None, help=_SECTION_BODY_HELP)
+@click.option("--own-words", is_flag=True, help=_OWN_WORDS_HELP)
 @click.option("--role", default=None, help="Only when the field permits several roles.")
 @click.option("--contend", is_flag=True, help="Contest the live value instead of replacing it.")
 @click.option("--expect", "expect", multiple=True, help=_EXPECT_HELP)
@@ -6407,7 +6488,7 @@ _NONE_HELP = (
     default=".",
     show_default=True,
     type=click.Path(file_okay=False),
-    help="Workspace whose file catalog --evidence-file reads.",
+    help="Workspace whose file catalog --evidence-file and --section read.",
 )
 @_write_options
 @handle_errors
@@ -6420,6 +6501,9 @@ def set_value(
     evidence_file: str | None,
     capture: str | None,
     evidence_contract: str | None,
+    section_ref: str | None,
+    section_body: str | None,
+    own_words: bool,
     role: str | None,
     contend: bool,
     expect: tuple[str, ...],
@@ -6441,12 +6525,26 @@ def set_value(
     instead states that FIELD holds nothing (a none), replacing the live value.
     --based-on CLM-... pins a Claim the value was judged from: a later revision
     or retirement of it flags this value in next (claim_dependency_stale).
+    --section FILE#Heading/Path cites that section; with --section-body the
+    write appends it and cites it in one step (reasoning past a 280-character
+    --because goes there).
     """
 
     if expect_absent and expect:
         raise click.UsageError("pass --expect or --expect-absent, not both")
     if none_ == (value is not None):
         raise click.UsageError("pass VALUE, or --none for a field that holds nothing; not both")
+    section_evidence, docs = _section_option_value(
+        section_ref,
+        section_body,
+        own_words,
+        others=(
+            ("--evidence-file", evidence_file),
+            ("--capture", capture),
+            ("--evidence-contract", evidence_contract),
+        ),
+        workspace_root=workspace_root,
+    )
     request = _write_request(
         SetRequest,
         {
@@ -6454,9 +6552,8 @@ def set_value(
             "field": field,
             "value": {"none": None} if none_ else value,
             "because": because,
-            "evidence": _evidence_option_value(
-                evidence_file, capture, workspace_root, evidence_contract
-            ),
+            "evidence": section_evidence
+            or _evidence_option_value(evidence_file, capture, workspace_root, evidence_contract),
             "role": role,
             "contend": contend,
             "expect": () if expect_absent else _expect_option_value(expect),
@@ -6467,9 +6564,17 @@ def set_value(
         },
         example='cruxible set dev.item/tidy-cli status done --because "Shipped."',
     )
-    if evidence_file is not None:
+    if evidence_file is not None or section_evidence is not None:
+        written = as_write_request(request)
+        if docs:
+            # The append the section evidence cites, in the same change set.
+            written = _write_request(
+                WriteRequest,
+                {**dict(written), "docs": docs},
+                example=_SECTION_BODY_EXAMPLE,
+            )
         _workspace_write(
-            as_write_request(request),
+            written,
             workspace_root=workspace_root,
             send=lambda observed: _server_call(
                 lambda client, instance_id: client.write(instance_id, request=observed),
@@ -6515,6 +6620,9 @@ def set_value(
     default=None,
     help="Cite the newest verified Capture of this CaptureContract about SUBJECT.",
 )
+@click.option("--section", "section_ref", default=None, help=_SECTION_HELP)
+@click.option("--section-body", default=None, help=_SECTION_BODY_HELP)
+@click.option("--own-words", is_flag=True, help=_OWN_WORDS_HELP)
 @click.option("--role", default=None, help="Only when the field permits several roles.")
 @click.option(
     "--expect-absent",
@@ -6538,7 +6646,7 @@ def set_value(
     default=".",
     show_default=True,
     type=click.Path(file_okay=False),
-    help="Workspace whose file catalog --evidence-file reads.",
+    help="Workspace whose file catalog --evidence-file and --section read.",
 )
 @_write_options
 @handle_errors
@@ -6551,6 +6659,9 @@ def add_value(
     evidence_file: str | None,
     capture: str | None,
     evidence_contract: str | None,
+    section_ref: str | None,
+    section_body: str | None,
+    own_words: bool,
     role: str | None,
     expect_absent: bool,
     based_on: tuple[str, ...],
@@ -6567,18 +6678,32 @@ def add_value(
     A Subject of a known kind that does not exist yet is added. VALUE is text, as
     for set: a Subject as kind/id for a Subject-valued field. --none adds a none:
     FIELD does not hold VALUE (retire a value it holds in the same write file).
+    --section-body appends the --section heading and cites it in the same write.
     """
 
+    section_evidence, docs = _section_option_value(
+        section_ref,
+        section_body,
+        own_words,
+        others=(
+            ("--evidence-file", evidence_file),
+            ("--capture", capture),
+            ("--evidence-contract", evidence_contract),
+        ),
+        workspace_root=workspace_root,
+    )
     request = _write_request(
         WriteRequest,
         {
+            "docs": docs,
             "changes": [
                 {
                     "op": "add",
                     "subject": subject,
                     "field": field,
                     "value": {"none": value} if none_ else value,
-                    "evidence": _evidence_option_value(
+                    "evidence": section_evidence
+                    or _evidence_option_value(
                         evidence_file, capture, workspace_root, evidence_contract
                     ),
                     "role": role,
@@ -7275,6 +7400,56 @@ def backlinks(
         click.echo("  " + _backlink_line(link, file_paths=file_paths))
     if result.next_cursor is not None:
         click.echo(f"next: cruxible backlinks ... --cursor {result.next_cursor}")
+
+
+@playbill_group.command("section")
+@click.argument("locator")
+@click.option(
+    "--workspace-root",
+    default=".",
+    show_default=True,
+    type=click.Path(file_okay=False),
+    help="Workspace whose file catalog LOCATOR's file is read through.",
+)
+@json_option
+@handle_errors
+def section_read(locator: str, workspace_root: str, output_json: bool) -> None:
+    """Read one section of a catalogued Markdown file: LOCATOR is FILE#Heading/Path.
+
+    FILE is the file's path or its files.yaml name; FILE# reads the preamble.
+    Prints the section's own body (its heading and prose, up to its first
+    subsection) and the subsections to read next. The locators get, backlinks
+    and floor cards print read here; --json adds the digest a citation records.
+    Reads the workspace only; the daemon is not asked.
+    """
+
+    from cruxible_client.authoring.section_read import SectionReadError, read_section
+    from cruxible_core.cli.commands._common import _echo_refusal
+
+    try:
+        result = read_section(Path(workspace_root), locator)
+    except SectionReadError as exc:
+        _echo_refusal(
+            "not read",
+            code=exc.code,
+            message=exc.message,
+            candidates=exc.candidates,
+            repair=exc.repair,
+        )
+        raise SystemExit(1) from None
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    click.echo(result.text, nl=not result.text.endswith("\n"))
+    if result.subsections:
+        prefix = "/".join(result.section)
+        click.echo(
+            "subsections: "
+            + ", ".join(
+                shlex.quote(f"{result.path}#{prefix + '/' if prefix else ''}{name}")
+                for name in result.subsections
+            )
+        )
 
 
 @playbill_group.command("get")

@@ -1041,6 +1041,9 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
         "backlinks",
         "What points into a Subject, ClaimType, Procedure or workspace section.",
     ),
+    "section": _command(
+        "playbill", "section_read", "Read one section of a catalogued file: FILE#Heading/Path."
+    ),
     "note": _command(
         "playbill", "note", "Append a workspace section linked about Subjects (no Claim)."
     ),
