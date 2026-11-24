@@ -72,6 +72,11 @@ def run_fired_runbook(
     crash and its replay changes nothing the fire runs. A step whose target no
     longer exists stops the run (``target_unavailable``).
 
+    A Procedure step expands at the accepted head when the run reaches it
+    (its live Lines, in name order); each expanded Line is a Line step of its
+    own, recorded under the step and that Line, so a replay finds a Line that
+    ran even if the Procedure's Lines changed since.
+
     Every step has a stable identity (the Runbook, the fire, the step and its
     target). A Line
     step's is its Line occurrence, so a step the run journal already admitted
@@ -103,6 +108,7 @@ def run_fired_runbook(
     )
     from cruxible_core.service.runbooks import (
         LineStepNotRun,
+        accepted_procedure_expander,
         execute_runbook,
         fired_run_id,
         record_runbook_run,
@@ -128,14 +134,17 @@ def run_fired_runbook(
             f"Step target {target!r} of the claimed plan no longer exists; the fire stops here.",
         )
 
-    def run_line(line: str, step: int) -> Any:
+    def run_line(line: str, step: int, procedure: str | None = None) -> Any:
         with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
             current = projection.typed.source(f"Line:{line}")
         if not isinstance(current, LineSpec) or current.lifecycle.state != "live":
             return unavailable(f"Line:{line}")
         occurrence = procedure_runs.RunbookStepOccurrence(runbook=name, fire=fire, step=step)
         target = f"Line:{line}"
-        recorded = runbook_step_record(instance, fire_key, fire, step)
+        # A Procedure step's Lines share its step number: each is recorded under
+        # its own key (the Line's occurrence id already names the Line).
+        record_key = fire_key if procedure is None else f"{fire_key}#Procedure:{procedure}#{target}"
+        recorded = runbook_step_record(instance, record_key, fire, step)
         if recorded is not None:
             if recorded[0] != target:
                 raise ValueError(f"step {step} of fire {fire} was recorded for {recorded[0]!r}")
@@ -169,7 +178,7 @@ def run_fired_runbook(
         # Recorded before any effect: nothing was admitted under an earlier record
         # (checked above), so this occurrence is the only one that may run.
         record_runbook_step(
-            instance, fire_key, fire, step, target=target, occurrence_id=occurrence_id
+            instance, record_key, fire, step, target=target, occurrence_id=occurrence_id
         )
         gate = LINE_ARM_ADMISSION_GATE.set(
             partial(arm_admission_gate, instance, line_id, arm["session_id"])
@@ -217,6 +226,7 @@ def run_fired_runbook(
         fire_action=fire_action,
         clock=lambda: now,
         run_id=fired_run_id(name, fire),
+        expand_procedure=accepted_procedure_expander(instance),
     )
     record_runbook_run(instance, result)
     return result

@@ -549,7 +549,10 @@ class RunbookInput(_StrictInputModel):
     description: str | None = None
     steps: tuple[RunbookStepAuthoring, ...] = Field(
         default=(),
-        description="In run order: {line: <Line name>} or {action: <internal action>}.",
+        description=(
+            "In run order: {line: <Line name>}, {procedure: <Procedure name>} "
+            "or {action: <internal action>}."
+        ),
     )
     retire: bool = False
 

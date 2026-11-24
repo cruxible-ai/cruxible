@@ -67,7 +67,15 @@ _ACTION: dict[str, Literal["created", "revised", "retired"]] = {
     "delete": "retired",
 }
 #: Definitions with a text block come first, in this order; the rest by kind.
-_DETAIL_ORDER = {"line": 0, "procedure-mandate": 1, "runbook": 2, "trigger": 3}
+#: Providers come first so combined kit/provider proposals never hide added
+#: provider operations or external egress behind paginated kit definitions.
+_DETAIL_ORDER = {
+    "provider": 0,
+    "line": 1,
+    "procedure-mandate": 2,
+    "runbook": 3,
+    "trigger": 4,
+}
 _SERVICE_ACCESS = BodyAccessContext(principal_id="playbill-review-view", can_read_body=True)
 _PROVIDER: TypeAdapter[ProviderAny] = TypeAdapter(ProviderAny)
 
@@ -458,10 +466,11 @@ def _mandate_detail(mandate: ProcedureMandate) -> ReviewMandateDefinition:
 
 
 def _step(step: object) -> str:
-    if isinstance(step, LineTarget):
-        return step.line.target.qualified
-    if isinstance(step, ActionTarget):
-        return f"action:{step.action}"
+    from cruxible_client.contracts.runbooks import ProcedureTarget
+    from cruxible_client.contracts.text_display import runbook_target_text
+
+    if isinstance(step, (LineTarget, ProcedureTarget, ActionTarget)):
+        return runbook_target_text(step)
     return str(step)
 
 

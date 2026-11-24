@@ -141,7 +141,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.6.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:4d44094a49b4f4db4f91122034d3bc9f1cce36ffbb6c8fde9381a4926145ba58"
+    "sha256:60001d1128b526617e18ddbebe92f893a12d86aec95868a0999c65e42bba0cb5"
 )
 
 MAX_DIAGNOSTICS = 128
@@ -1219,10 +1219,11 @@ class TriggerAuthoringPayload(_StrictAuthoringModel):
 
 
 class RunbookStepAuthoring(_StrictAuthoringModel):
-    """One Runbook step: exactly one of an accepted Line (by name) or a registered action."""
+    """One Runbook step: exactly one of an accepted Line, a registered action, or a Procedure."""
 
     line: str | None = Field(default=None, exclude_if=lambda value: value is None)
     action: InternalActionName | None = Field(default=None, exclude_if=lambda value: value is None)
+    procedure: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @field_validator("line")
     @classmethod
@@ -1231,19 +1232,27 @@ class RunbookStepAuthoring(_StrictAuthoringModel):
             ArtifactIdentity(kind="Line", name=value)
         return value
 
+    @field_validator("procedure")
+    @classmethod
+    def _procedure(cls, value: str | None) -> str | None:
+        if value is not None:
+            ArtifactIdentity(kind="Procedure", name=value)
+        return value
+
     @model_validator(mode="after")
     def _one(self) -> "RunbookStepAuthoring":
-        if (self.line is None) == (self.action is None):
-            raise ValueError("a Runbook step names exactly one of line or action")
+        if sum(item is not None for item in (self.line, self.action, self.procedure)) != 1:
+            raise ValueError("a Runbook step names exactly one of line, action or procedure")
         return self
 
 
 class RunbookAuthoringPayload(_StrictAuthoringModel):
-    """One Runbook decision (D-R36): an ordered list of Lines and internal actions.
+    """One Runbook decision (D-R36): an ordered list of Lines, Procedures and internal actions.
 
     No branching, no parameters of its own and no new action kinds: each Line
     step runs as that Line's manual occurrence, on its own parameters and
-    authority. ``retire`` retires the accepted Runbook (``steps`` then unused).
+    authority; a Procedure step runs every live Line of that Procedure, in
+    Line-name order. ``retire`` retires the accepted Runbook (``steps`` then unused).
     """
 
     tag: Literal["cruxible-runbook-authoring-payload-v1"] = "cruxible-runbook-authoring-payload-v1"

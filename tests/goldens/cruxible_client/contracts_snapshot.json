@@ -13786,7 +13786,7 @@
               },
               "steps": {
                 "default": [],
-                "description": "In run order: {line: <Line name>} or {action: <internal action>}.",
+                "description": "In run order: {line: <Line name>}, {procedure: <Procedure name>} or {action: <internal action>}.",
                 "items": {
                   "$ref": "#/$defs/RunbookStepAuthoring"
                 },
@@ -13803,7 +13803,7 @@
           },
           "RunbookStepAuthoring": {
             "additionalProperties": false,
-            "description": "One Runbook step: exactly one of an accepted Line (by name) or a registered action.",
+            "description": "One Runbook step: exactly one of an accepted Line, a registered action, or a Procedure.",
             "properties": {
               "action": {
                 "anyOf": [
@@ -13836,6 +13836,18 @@
                 ],
                 "default": null,
                 "title": "Line"
+              },
+              "procedure": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Procedure"
               }
             },
             "title": "RunbookStepAuthoring",

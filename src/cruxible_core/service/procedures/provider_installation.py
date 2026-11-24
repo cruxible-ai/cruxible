@@ -9,7 +9,9 @@ import os
 import subprocess
 import tempfile
 import tomllib
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, cast
@@ -960,6 +962,93 @@ def _register_deployment(
 
 
 @dataclass(frozen=True)
+class PreparedProviderRegistration:
+    """One provider prepared during an atomic kit add, ready to register and
+    merge into the kit's single combined candidate tree."""
+
+    provider_id: str
+    build: ProviderBuild
+    path: str
+    rendered: bytes
+    operator: ProviderRuntimeOperator
+    configured: ProviderDeploymentConfigV1
+    prepared_path: Path
+    document: PackageRegistrationDocumentV1
+    provider: Provider
+    rewrite_prepared: bool
+    operations: tuple[ProviderOperationReadiness, ...]
+    already_registered: bool
+
+
+class BatchedProviderPreparations:
+    """The providers one ``kit add`` prepares for its single combined proposal.
+
+    While collecting, ``service_install_provider`` prepares and verifies each
+    package (fetch, build, wheel and lock hashes) and derives its ProviderBuild
+    against ``base_oid``, but registers no deployment and proposes nothing. The
+    kit adds every build to its own candidate tree (``writes``) and calls
+    ``register_all`` only once every provider prepared and every kit-level check
+    passed, just before it submits: a refusal anywhere leaves only retained
+    preparations (exhaust), never a registered deployment or an admitted proposal.
+    """
+
+    def __init__(self, *, base_oid: str) -> None:
+        self.base_oid = base_oid
+        self.items: list[PreparedProviderRegistration] = []
+        self._registered = False
+
+    def register_all(self) -> None:
+        """Publish every prepared deployment, each under its installation's lock."""
+
+        if self._registered:
+            return
+        for item in self.items:
+            with (item.prepared_path.parent / "installation.lock").open("a+b") as lock:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+                try:
+                    _register_deployment(item.operator, item.configured)
+                    if item.rewrite_prepared:
+                        _write(
+                            item.prepared_path,
+                            canonical_bytes(
+                                {
+                                    "document": item.document.model_dump(mode="json"),
+                                    "provider": item.provider.model_dump(mode="json"),
+                                    "deployment": item.configured.model_dump(mode="json"),
+                                }
+                            ),
+                        )
+                finally:
+                    fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+        self._registered = True
+
+    def writes(self) -> dict[str, bytes]:
+        """Each prepared build's ProviderBuild bytes at its path, for the kit's candidate."""
+
+        return {item.path: item.rendered for item in self.items if not item.already_registered}
+
+
+_BATCHED_PREPARATIONS: ContextVar[BatchedProviderPreparations | None] = ContextVar(
+    "cruxible_batched_provider_preparations", default=None
+)
+
+
+@contextmanager
+def collect_provider_preparations(*, base_oid: str) -> Iterator[BatchedProviderPreparations]:
+    """Within this block, a provider install prepares into the batch and proposes nothing.
+
+    A move install (``request.move``) is never batched: a kit moves Lines itself.
+    """
+
+    batch = BatchedProviderPreparations(base_oid=base_oid)
+    token = _BATCHED_PREPARATIONS.set(batch)
+    try:
+        yield batch
+    finally:
+        _BATCHED_PREPARATIONS.reset(token)
+
+
+@dataclass(frozen=True)
 class _PreparedInstallation:
     """A package prepared here: its registration document, Provider and deployment."""
 
@@ -1110,6 +1199,48 @@ def _install_locked(
     deployment, rewrite_prepared = prepared.deployment, prepared.rewrite_prepared
     # Before the deployment is registered: the Provider law holds against the
     # Contracts its operations pin.
+    batch = _BATCHED_PREPARATIONS.get()
+    if batch is not None and not request.move:
+        # A kit add: the build joins the kit's own candidate, derived at the base
+        # the kit plans on; registration waits for the kit (register_all).
+        candidate_tree, changed, build = _definition_changes(
+            instance, document, provider, batch.base_oid
+        )
+        registered = not changed
+        path = provider_path(build.identity.name)
+        rendered = candidate_tree[path] if changed else render_provider(build)
+        operations = _operation_readiness(document, provider, deployment, operator, request)
+        batch.items.append(
+            PreparedProviderRegistration(
+                provider_id=build.provider_name,
+                build=build,
+                path=path,
+                rendered=rendered,
+                operator=operator,
+                configured=configured,
+                prepared_path=prepared_path,
+                document=document,
+                provider=provider,
+                rewrite_prepared=rewrite_prepared,
+                operations=operations,
+                already_registered=registered,
+            )
+        )
+        return ProviderInstallResult(
+            installation_id=identifier,
+            provider_id=build.provider_name,
+            build=build.identity.name,
+            status="ready",
+            installed=True,
+            registered=registered,
+            operations=operations,
+            detail=(
+                "Installation and registration grant no execution permissions. "
+                "Runtime resources require verification."
+            )
+            if any(item.missing_requirements for item in operations)
+            else None,
+        )
     base = instance.accepted_coordinate()
     candidate_tree, changed, build = _definition_changes(instance, document, provider, base.git_oid)
     registered = not changed
@@ -1192,6 +1323,42 @@ def _install_locked(
             landed = activation.status == "accepted"
             registered = registered or landed
             activation_blocked = not landed
+    operations = _operation_readiness(document, provider, deployment, operator, request)
+    return ProviderInstallResult(
+        installation_id=identifier,
+        provider_id=build.provider_name,
+        build=build.identity.name,
+        status="blocked"
+        if activation_blocked
+        else "awaiting_approval"
+        if not landed
+        else "blocked"
+        if any(item.missing_requirements for item in operations)
+        else "ready",
+        installed=True,
+        registered=registered,
+        operations=tuple(operations),
+        proposal_id=proposal_id,
+        candidate_digest=candidate_digest,
+        **move.fields(),
+        detail=(
+            "Installation and registration grant no execution permissions. "
+            "Runtime resources require verification."
+        )
+        if any(item.missing_requirements for item in operations)
+        else None,
+    )
+
+
+def _operation_readiness(
+    document: PackageRegistrationDocumentV1,
+    provider: Provider,
+    deployment: Any,
+    operator: ProviderRuntimeOperator,
+    request: ProviderInstallRequest,
+) -> tuple[ProviderOperationReadiness, ...]:
+    """Operation readiness probes for one prepared provider deployment."""
+
     operations: list[ProviderOperationReadiness] = []
     prepared_entrypoints = {
         item.entrypoint: item.implementation_digest for item in provider.implementations
@@ -1239,27 +1406,4 @@ def _install_locked(
             )
             for name in served[implementation.entrypoint]
         )
-    return ProviderInstallResult(
-        installation_id=identifier,
-        provider_id=build.provider_name,
-        build=build.identity.name,
-        status="blocked"
-        if activation_blocked
-        else "awaiting_approval"
-        if not landed
-        else "blocked"
-        if any(item.missing_requirements for item in operations)
-        else "ready",
-        installed=True,
-        registered=registered,
-        operations=tuple(operations),
-        proposal_id=proposal_id,
-        candidate_digest=candidate_digest,
-        **move.fields(),
-        detail=(
-            "Installation and registration grant no execution permissions. "
-            "Runtime resources require verification."
-        )
-        if any(item.missing_requirements for item in operations)
-        else None,
-    )
+    return tuple(operations)

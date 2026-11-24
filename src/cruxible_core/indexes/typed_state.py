@@ -548,8 +548,10 @@ def schema_sql() -> str:
             PRIMARY KEY(source_identity,operation,capability)
         ) STRICT""",
             "CREATE INDEX provider_operations_by_capability ON provider_operations(capability,effect,source_identity,operation)",
-            # The Lines each live Runbook runs (one row per Runbook and Line):
-            # a Line card finds the Runbooks that run it by one index seek,
+            # The Lines each live Runbook runs (one row per Runbook and Line),
+            # and the Procedures its Procedure steps fan out over (``line``
+            # then holds ``Procedure:<name>``): a Line card finds the Runbooks
+            # that run it by index seeks on its Line and its Procedure,
             # never a walk of the Runbooks. Written at accept, removed with the
             # Runbook version it came from.
             """CREATE TABLE runbook_lines (
@@ -1238,10 +1240,9 @@ def insert_owners(
     for row in parsed.envelopes:
         runbook = sources[row.identity] if row.kind == "runbook" else None
         if runbook is not None and runbook.lifecycle.state == "live":
-            runbook_lines.extend(
-                (row.identity, line)
-                for line in dict.fromkeys(item.qualified for item in runbook.lines)
-            )
+            targets = [item.qualified for item in runbook.lines]
+            targets.extend(item.qualified for item in runbook.procedures)
+            runbook_lines.extend((row.identity, target) for target in dict.fromkeys(targets))
     insert_rows(connection, "runbook_lines", runbook_lines)
     consumed: list[tuple[SQLValue, ...]] = []
     for row in parsed.envelopes:

@@ -14,6 +14,7 @@ from __future__ import annotations
 import dataclasses
 import functools
 import json
+from collections import ChainMap
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from typing import Any, Final, Literal, Protocol, cast
 
@@ -74,6 +75,7 @@ from cruxible_client.contracts.kits import (
     KitPathPlan,
     KitProvenance,
     KitProvider,
+    KitProviderAction,
     KitProviderFileBytes,
     KitProviderStatus,
     KitProviderStep,
@@ -163,7 +165,11 @@ from cruxible_core.service.change_preview import (
     change_scope,
     preview_guards,
 )
-from cruxible_core.service.procedures.provider_installation import ExpectedProviderBuild
+from cruxible_core.service.procedures.provider_installation import (
+    BatchedProviderPreparations,
+    ExpectedProviderBuild,
+    collect_provider_preparations,
+)
 from cruxible_core.service.proposals.proposals import open_proposal_at_target
 
 # Definition families an owned artifact may pin. A pin into any other family is
@@ -1566,6 +1572,7 @@ def _settle_dependents(
     moves: Mapping[str, ProviderBuildMove] | None = None,
     keep_build: frozenset[str] = frozenset(),
     by_name: bool = False,
+    extra_writes: Mapping[str, bytes] | None = None,
 ) -> SettledMoves:
     """Every write, plus one successor for each accepted dependent they change.
 
@@ -1582,7 +1589,7 @@ def _settle_dependents(
 
     settled = settle_changes(
         tree,
-        writes=diff.writes,
+        writes={**extra_writes, **diff.writes} if extra_writes else diff.writes,
         connection=connection,
         movers=movers,
         moves=moves,
@@ -2426,11 +2433,11 @@ def _provider_steps(
     return steps, missing
 
 
-#: What a commit of a kit whose bundled providers are missing does: each provider
-#: carries its own shapes, so nothing is accepted before the installs.
+#: What a commit of a kit whose bundled providers are missing does: it prepares
+#: each one, then proposes their builds and the definitions as one change.
 KIT_PREVIEW_AWAITING_INSTALL = (
-    "a commit installs the bundled providers first, then proposes these definitions, "
-    "which are checked against the installed providers"
+    "a commit prepares the missing providers and proposes them together with these "
+    "definitions in a single combined proposal, checked against the prepared providers"
 )
 
 
@@ -2716,8 +2723,14 @@ def _install_providers(
     steps: list[KitProviderStep],
     install: ProviderInstaller | None,
 ) -> list[KitProviderStep]:
-    """Install each missing provider: a bundled one through the transfer install
-    path, an index default by name at its exact version."""
+    """Prepare each missing provider: a bundled one through the transfer install
+    path, an index default by name at its exact version.
+
+    Called inside ``collect_provider_preparations``: each install prepares and
+    verifies its package and proposes nothing, so the kit adds every build to its
+    own single proposal. The first provider that cannot be prepared stops the
+    rest (a refusal raises; a blocked result is recorded on its step).
+    """
 
     if install is None:
         raise ConfigError("this daemon cannot install the kit's providers")
@@ -2752,6 +2765,10 @@ def _install_providers(
         index = by_id[provider.provider_id]
         if result.registered:
             update: dict[str, object] = {"action": "install", "detail": result.detail}
+        elif result.installed and result.status == "ready" and result.proposal_id is None:
+            # Prepared into the kit's batch: its build is proposed with the
+            # definitions, and the step settles with that proposal.
+            update = {"action": "would_install", "detail": result.detail}
         elif result.status == "awaiting_approval":
             update = {"action": "awaiting_approval", "proposal_id": result.proposal_id}
         else:
@@ -2761,7 +2778,40 @@ def _install_providers(
                 "detail": result.detail or f"install {result.status}",
             }
         steps[index] = steps[index].model_copy(update=update)
+        if update["action"] == "blocked":
+            break
     return steps
+
+
+def _finalize_provider_steps(result: KitChangeResult, prepared: frozenset[str]) -> KitChangeResult:
+    """Each prepared provider's step, as the kit's one proposal left it: installed
+    when it landed, awaiting approval while it is open, blocked when it refused.
+    Every one names that proposal."""
+
+    action: dict[str, KitProviderAction] = {
+        "accepted": "install",
+        "proposed": "awaiting_approval",
+        "blocked": "blocked",
+    }
+    settled = action.get(result.status)
+    if settled is None:
+        return result
+    return result.model_copy(
+        update={
+            "providers": tuple(
+                step.model_copy(
+                    update={
+                        "action": settled,
+                        "proposal_id": result.proposal_id,
+                        "detail": step.detail or (result.detail if settled == "blocked" else None),
+                    }
+                )
+                if step.provider_id in prepared
+                else step
+                for step in result.providers
+            )
+        }
+    )
 
 
 def _provider_remap(
@@ -2809,14 +2859,20 @@ def service_add_kit(
     """Propose the diff that brings this instance to one kit release.
 
     Derived across many artifacts, so it previews unless ``dry_run`` is false.
-    A kit first installs its missing bundled provider packages through
-    ``install_provider`` (each carries its own shapes, so nothing is accepted
-    before them); the definitions follow once they land. An index default is
+    A commit first prepares the kit's missing provider packages through
+    ``install_provider`` (fetch, build, wheel and lock verification; nothing
+    registered or proposed), then proposes every missing ProviderBuild, the
+    definitions, the Lines moved to the kit's builds and the kit receipt as ONE
+    change: one review, one approval, one activation. Any provider that cannot
+    be prepared refuses the add before anything is proposed. An index default is
     not installed when live operations of providers here already serve every
-    slot's capability. A commit that
-    stops at ``awaiting_providers`` is recorded, and the activation that lands
-    the last awaited install proposes the definitions as this caller
-    (``kit_resume``); any other commit of the kit replaces that record.
+    slot's capability.
+
+    A fresh add records no ``kit_resume`` wait. A commit that still stops at
+    ``awaiting_providers`` (an ``install_provider`` that proposes each install
+    itself) is recorded as before, and the activation that lands the last awaited
+    install proposes the definitions as this caller; any other commit of the kit
+    replaces that record, so a resume left by an earlier version still completes.
     """
 
     from cruxible_core.service import kit_resume
@@ -3008,10 +3064,13 @@ def _add_kit(
             for item in manifest.requires
         ),
     }
-    # The definitions pin what the bundled providers register, so they are
-    # proposed only once those are live. A preview cannot install, so it plans
-    # the definitions without evaluating them.
+    # The definitions pin what the bundled providers register, so a commit
+    # prepares those first and proposes their builds beside the definitions. A
+    # preview cannot prepare, so it plans the definitions without evaluating them.
     awaiting_install = bool(missing) and not any(step.action == "blocked" for step in steps)
+    prepared_batch: BatchedProviderPreparations | None = None
+    provider_writes: dict[str, bytes] = {}
+    prepared_provider_ids: frozenset[str] = frozenset()
     if awaiting_install and not mode.previewing:
         # Every refusal the current state already decides comes before any
         # provider is prepared or installed.
@@ -3049,7 +3108,8 @@ def _add_kit(
                 coordinate=mode.coordinate,
                 **described,  # type: ignore[arg-type]
             )
-        steps = _install_providers(instance, missing, steps, install_provider)
+        with collect_provider_preparations(base_oid=mode.head.git_oid) as prepared_batch:
+            steps = _install_providers(instance, missing, steps, install_provider)
         described["providers"] = tuple(steps)
         pending = [step for step in steps if step.action in {"awaiting_approval", "blocked"}]
         if pending:
@@ -3071,20 +3131,28 @@ def _add_kit(
                 coordinate=mode.coordinate,
                 **described,  # type: ignore[arg-type]
             )
-        # The installs moved the head; the definitions are pinned to the head
-        # they produced.
-        mode = ChangeMode(
-            instance,
-            previewing=False,
-            at=None if mode.at is None else instance.accepted_coordinate().git_oid,
-            kind="derived",
-            operation="cruxible.kit.add",
-            describe=f"installing kit {manifest.kit_id}",
-        )
-        assert mode.head is not None
-        tree = instance.immutable_tree_at(mode.head.git_oid)
+        if prepared_batch.items:
+            # Every missing build joins the kit's own candidate tree; the
+            # definitions are diffed, remapped and settled against it below.
+            provider_writes = prepared_batch.writes()
+            prepared_provider_ids = frozenset(item.provider_id for item in prepared_batch.items)
+        elif instance.accepted_coordinate().git_oid != mode.head.git_oid:
+            # A custom install_provider callback committed directly; follow the head it produced.
+            mode = ChangeMode(
+                instance,
+                previewing=False,
+                at=None if mode.at is None else instance.accepted_coordinate().git_oid,
+                kind="derived",
+                operation="cruxible.kit.add",
+                describe=f"installing kit {manifest.kit_id}",
+            )
+            assert mode.head is not None
+            tree = instance.immutable_tree_at(mode.head.git_oid)
         awaiting_install = False
         assert inspected is not None
+        effective_tree: Mapping[str, bytes] = (
+            ChainMap(provider_writes, cast(Any, tree)) if provider_writes else tree
+        )
         satisfied = {
             step.provider_id for step in steps if step.action in {"satisfied", "kept_retired"}
         }
@@ -3092,7 +3160,7 @@ def _add_kit(
             provider.provider_id
             for provider in manifest.providers
             if provider.provider_id not in satisfied
-            and _provider_here(tree, provider, inspected.get(provider.provider_id))[0]
+            and _provider_here(effective_tree, provider, inspected.get(provider.provider_id))[0]
             != "installed"
         ]
         if absent:
@@ -3102,6 +3170,8 @@ def _add_kit(
                 "the definitions that pin it are not proposed",
                 repair=RepairOperation(operation="cruxible.kit.status"),
             )
+    else:
+        effective_tree = tree
     assert mode.head is not None
     blocked = _builtin_refusals(tree, contents, by_name=True)
     blocked.extend(
@@ -3123,7 +3193,7 @@ def _add_kit(
         kept=kept,
         keep=keep,
         keep_local_edits=request.keep_local_edits,
-        preset={**left_out_moves, **_provider_remap(tree, contents, manifest, inspected)},
+        preset={**left_out_moves, **_provider_remap(effective_tree, contents, manifest, inspected)},
         held=held,
     )
     _refuse_retired_provider_dependents(contents, diff, steps)
@@ -3197,7 +3267,7 @@ def _add_kit(
                 stops = ()
             writes: dict[str, bytes] = dict(diff.writes)
         else:
-            moves = _kit_moves(tree, movers)
+            moves = _kit_moves(effective_tree, movers)
             settled = _settle_dependents(
                 tree,
                 diff,
@@ -3207,6 +3277,7 @@ def _add_kit(
                 moves=moves,
                 keep_build=frozenset(request.keep_build),
                 by_name=True,
+                extra_writes=provider_writes,
             )
             blocked.extend(settled.refused)
             blocked.extend(
@@ -3214,7 +3285,7 @@ def _add_kit(
                 for item in settled.repins
                 if item.action == "refused"
             )
-            writes = settled.writes if not settled.refused else dict(diff.writes)
+            writes = settled.writes if not settled.refused else {**provider_writes, **diff.writes}
             repins = tuple(settled.repins)
             stops = tuple(settled.stops)
             automation_carries = tuple(settled.automation_carries)
@@ -3296,7 +3367,11 @@ def _add_kit(
             coordinate=mode.coordinate,
             **described,  # type: ignore[arg-type]
         )
-    return _submit(
+    if prepared_batch is not None and prepared_batch.items:
+        # All providers verified and all kit-level checks passed: register every
+        # prepared deployment before proposing the single combined candidate tree.
+        prepared_batch.register_all()
+    result = _submit(
         instance,
         mode,
         kit_id=manifest.kit_id,
@@ -3310,6 +3385,9 @@ def _add_kit(
         may_activate=may_activate,
         **described,  # type: ignore[arg-type]
     )
+    if prepared_provider_ids:
+        result = _finalize_provider_steps(result, prepared_provider_ids)
+    return result
 
 
 def service_remove_kit(

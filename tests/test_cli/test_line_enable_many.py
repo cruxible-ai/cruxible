@@ -15,7 +15,6 @@ from click.testing import CliRunner
 from cruxible_client import contracts
 from cruxible_client.contracts.get_reads import GetRequest
 from cruxible_client.contracts.line_dispatch import LineEnablement
-from cruxible_client.contracts.runbooks import Runbook
 from cruxible_client.errors import CoreError
 from cruxible_core.cli.main import cli
 
@@ -52,18 +51,50 @@ def _enablement(line: str, outcome: str | None) -> LineEnablement:
     )
 
 
-def _runbook(*steps: dict[str, Any], state: str = "live") -> dict[str, Any]:
-    return Runbook.model_validate(
-        {
-            "identity": {"kind": "Runbook", "name": "kev-daily"},
-            "steps": list(steps),
-            "lifecycle": {"state": state},
-        }
-    ).model_dump(mode="json")
+def _runbook(*steps: dict[str, Any], state: str = "live") -> Any:
+    from cruxible_client.contracts.operational_reads import GetRunbookCard, GetRunbookStep
+
+    card_steps = []
+    for idx, step in enumerate(steps, 1):
+        if step["kind"] == "line":
+            card_steps.append(
+                GetRunbookStep(
+                    step=idx,
+                    target=f"Line:{step['line']['target']['name']}",
+                    availability="available",
+                )
+            )
+        elif step["kind"] == "procedure":
+            bound = tuple(f"Line:{line}" for line in step.get("lines", ()))
+            card_steps.append(
+                GetRunbookStep(
+                    step=idx,
+                    target=f"Procedure:{step['procedure']}",
+                    availability="available" if bound else "no_lines_bound",
+                    lines=bound,
+                )
+            )
+        else:
+            card_steps.append(
+                GetRunbookStep(
+                    step=idx,
+                    target=f"action:{step['action']}",
+                    availability="available",
+                )
+            )
+    return GetRunbookCard(
+        runbook="Runbook:kev-daily",
+        lifecycle=state,
+        steps=tuple(card_steps),
+    )
 
 
 def _line_step(name: str) -> dict[str, Any]:
     return {"kind": "line", "line": {"target": {"kind": "Line", "name": name}}}
+
+
+def _procedure_step(name: str, *lines: str) -> dict[str, Any]:
+    return {"kind": "procedure", "procedure": name, "lines": lines}
 
 
 ACTION_STEP = {"kind": "action", "action": "evidence.sweep"}
@@ -98,7 +129,7 @@ class _LinesClient:
         self.reads.append(request.ref)
         if self.runbook is None:
             raise CoreError(f"cruxible.get.not_found: {request.ref} names nothing accepted")
-        return type("Found", (), {"proof": {"envelope": self.runbook}})()
+        return type("Found", (), {"card": self.runbook})()
 
 
 def _run(monkeypatch: pytest.MonkeyPatch, client: _LinesClient, *args: str) -> Any:
@@ -234,4 +265,29 @@ def test_no_line_and_no_runbook_is_a_usage_error(monkeypatch: pytest.MonkeyPatch
     result = _run(monkeypatch, client)
     assert result.exit_code == 2
     assert "name a LINE, or --runbook RUNBOOK" in result.output
+    assert client.enabled == []
+
+
+def test_runbook_procedure_step_expands_bound_lines_in_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _LinesClient(
+        runbook=_runbook(
+            _procedure_step("security.sbom-import", "sbom.app", "sbom.image"),
+            _line_step("osv-sync"),
+        )
+    )
+    result = _run(monkeypatch, client, "--runbook", "kev-daily")
+    assert result.exit_code == 0, result.output
+    assert [line for line, _ in client.enabled] == ["sbom.app", "sbom.image", "osv-sync"]
+    assert result.stdout.splitlines()[-1] == "Lines: 3 enabled"
+
+
+def test_runbook_procedure_step_with_zero_lines_refuses_cleanly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _LinesClient(runbook=_runbook(_procedure_step("security.sbom-import")))
+    result = _run(monkeypatch, client, "--runbook", "kev-daily")
+    assert result.exit_code != 0
+    assert "Runbook:kev-daily runs no Lines yet; nothing to enable" in result.output
     assert client.enabled == []

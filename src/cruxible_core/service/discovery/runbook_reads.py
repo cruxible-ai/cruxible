@@ -3,11 +3,13 @@ the ``orient(section="runbooks")`` rows.
 
 The card's definition parts are read at the requested coordinate: one typed
 source read for the Runbook, one per step for the Line it names (whether that
-Line can run now), and one Trigger-index seek for the Triggers aimed at it
-(``triggers_by_target``). Its recent runs are the Runbook's retained run
-records, read live with one ``runs_by_runbook`` seek bounded by the card's
-limit. Nothing scans the Runbooks, the Lines or the runs: the card's work is
-its own steps plus constants, whatever else the instance holds.
+Line can run now) or for the Procedure it fans out over (with one
+``lines_by_procedure`` seek for that Procedure's live Lines), and one
+Trigger-index seek for the Triggers aimed at it (``triggers_by_target``). Its
+recent runs are the Runbook's retained run records, read live with one
+``runs_by_runbook`` seek bounded by the card's limit. Nothing scans the
+Runbooks, the Lines or the runs: the card's work is its own steps plus
+constants, whatever else the instance holds.
 
 The orient rows page the ``runbooks`` index by name (a keyset page: one seek
 per page), one Trigger-index count for the page's Runbooks and one run-record
@@ -29,8 +31,9 @@ from cruxible_client.contracts.operational_reads import (
     OrientRunbook,
     RunbookStepAvailability,
 )
+from cruxible_client.contracts.procedures.artifacts import ProcedureArtifact
 from cruxible_client.contracts.procedures.line_specs import LineSpec
-from cruxible_client.contracts.runbooks import Runbook, RunbookRunResult
+from cruxible_client.contracts.runbooks import ProcedureTarget, Runbook, RunbookRunResult
 from cruxible_client.contracts.triggers import (
     INTERNAL_ACTIONS,
     UNSERVED_INTERNAL_ACTIONS,
@@ -61,6 +64,24 @@ def _step(projection: Any, index: int, target: Any) -> GetRunbookStep:
         return GetRunbookStep(
             step=index, target=f"action:{target.action}", availability=availability
         )
+    if isinstance(target, ProcedureTarget):
+        procedure_identity = target.procedure.target.qualified
+        procedure = projection.typed.source(procedure_identity)
+        if not isinstance(procedure, ProcedureArtifact):
+            availability = "procedure_missing"
+        elif procedure.lifecycle.state != "live":
+            availability = "procedure_retired"
+        else:
+            from cruxible_core.service.runbooks import procedure_lines
+
+            names = procedure_lines(projection.typed, target.procedure.target.name) or ()
+            return GetRunbookStep(
+                step=index,
+                target=procedure_identity,
+                availability="available" if names else "no_lines_bound",
+                lines=tuple(f"Line:{name}" for name in names),
+            )
+        return GetRunbookStep(step=index, target=procedure_identity, availability=availability)
     identity = target.line.target.qualified
     line = projection.typed.source(identity)
     availability = (
@@ -124,7 +145,11 @@ def runbook_card(
             for name in aimed.identities
         )
     runs, more = recent_runbook_runs(instance, runbook.identity.name, limit=RUNBOOK_CARD_RUNS)
-    next_steps = [render(step.target, None) for step in steps if step.target.startswith("Line:")]
+    next_steps = [
+        render(line, None)
+        for step in steps
+        for line in ((step.target,) if step.target.startswith("Line:") else step.lines)
+    ]
     next_steps.extend(render(item.trigger, None) for item in triggers)
     if runs:
         # The latest run's first Line run: where its outcome came from.

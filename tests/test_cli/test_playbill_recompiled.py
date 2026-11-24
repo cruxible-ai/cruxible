@@ -54,5 +54,5 @@ def test_activate_recompiled_next_step(monkeypatch, status, output_json):
         assert "Changed member paths truncated" in result.stdout
         operation = "review" if status == "pending_review" else "activate"
         assert result.stdout.splitlines()[-1] == (
-            f"Next: cruxible proposal {operation} {receipt.proposal_id}"
+            f"Next: cruxible proposal {operation} {receipt.proposal_id[7:19]}"
         )

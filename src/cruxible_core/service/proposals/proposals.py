@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from collections import defaultdict
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -34,7 +35,11 @@ from cruxible_client.contracts.procedures.node_summary import (
 )
 from cruxible_client.contracts.proposal_models import ProposalReadmissionLink
 from cruxible_client.contracts.repairs import RepairOperation
-from cruxible_core.authoring.id_prefixes import AmbiguousIdPrefix, resolve_id_prefix
+from cruxible_core.authoring.id_prefixes import (
+    MINIMUM_PREFIX_HEX,
+    AmbiguousIdPrefix,
+    resolve_id_prefix,
+)
 from cruxible_core.errors import CoreError
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.indexes.proposals.proposal_index import timestamp
@@ -1238,6 +1243,9 @@ def open_proposals_about(
     )
 
 
+_BARE_PROPOSAL_HEX_RE = re.compile(rf"^[0-9a-f]{{{MINIMUM_PREFIX_HEX},64}}$")
+
+
 def service_resolve_playbill_proposal_selector(
     instance: PlaybillInstance,
     *,
@@ -1247,12 +1255,13 @@ def service_resolve_playbill_proposal_selector(
 
     evidence = instance.proposal_evidence()
     assert evidence.index is not None
+    lookup = f"sha256:{selector}" if _BARE_PROPOSAL_HEX_RE.fullmatch(selector) else selector
     rows = evidence.index.rows(
-        evidence, "proposal_id>=? AND proposal_id<?", (selector, selector + "\uffff")
+        evidence, "proposal_id>=? AND proposal_id<?", (lookup, lookup + "\uffff")
     )
     proposal_ids = tuple(row["proposal_id"] for row in rows)
     try:
-        resolved = resolve_id_prefix(selector, proposal_ids, marker="sha256:", label="proposal")
+        resolved = resolve_id_prefix(lookup, proposal_ids, marker="sha256:", label="proposal")
     except AmbiguousIdPrefix as exc:
         raise ProposalSelectorAmbiguousError(selector, proposal_ids) from exc
     if resolved in proposal_ids:

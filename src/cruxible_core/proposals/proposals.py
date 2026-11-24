@@ -2106,6 +2106,20 @@ def _procedure_member(context: _MemberContext) -> _MemberVerdict:
         return _MemberVerdict(diagnostics=tuple(law.diagnostics))
     if law.artifact_digest is None or law.required_tier is None:
         raise ProposalIntegrityError("accepted Procedure law result is incomplete")
+    if procedure.lifecycle.state == "retired":
+        stranded_runbooks = _procedure_runbook_dependents(context, procedure)
+        if stranded_runbooks:
+            return _MemberVerdict(
+                diagnostics=(
+                    _diagnostic(
+                        "cruxible.procedure.runbooks_not_settled",
+                        "Retiring this Procedure would strand live Runbooks that fan out over it; "
+                        "retire or update them in the same ChangeSet: "
+                        + ", ".join(stranded_runbooks),
+                        context.path,
+                    ),
+                )
+            )
     return _accepted(
         context,
         installed,
@@ -2382,16 +2396,79 @@ def _trigger_member(context: _MemberContext) -> _MemberVerdict:
     )
 
 
-def _runbook_member(context: _MemberContext) -> _MemberVerdict:
-    """Judge one Runbook: its succession, and the Lines and actions it names (O(steps))."""
+def _procedure_runbook_dependents(context: _MemberContext, procedure: Any) -> tuple[str, ...]:
+    """Live Runbooks in the candidate that fan out over ``procedure``, sorted.
 
+    On the Procedure-retirement path only. With an indexed candidate it is one
+    ``runbook_lines_by_line`` seek of the accepted rows (minus the sources this
+    change touches) and one of the change's own: the work is that Procedure's
+    Runbook memberships, never the Runbooks. An unindexed candidate (an
+    in-memory tree) walks its Runbook paths.
+    """
+
+    from cruxible_client.contracts.runbooks import RUNBOOK_PATH_RE, parse_runbook
+    from cruxible_core.indexes.evaluated_state import EvaluationRows, SelectedRows
+
+    identity = procedure.identity
+    states = context.candidate_states
+    if isinstance(states, SelectedRows) and states.owner is not None:
+        owner = states.owner
+
+        def _members(rows: EvaluationRows) -> tuple[str, ...]:
+            if rows.prefix == "selected_":
+                sql = (
+                    "SELECT source_identity FROM main.runbook_lines INDEXED BY "
+                    "runbook_lines_by_line WHERE line=? AND source_identity NOT IN "
+                    "(SELECT identity FROM changed_sources) "
+                    "UNION SELECT source_identity FROM temp.runbook_lines WHERE line=?"
+                )
+                parameters: tuple[str, ...] = (identity.qualified, identity.qualified)
+            else:
+                sql = f"SELECT source_identity FROM {rows.table('runbook_lines')} WHERE line=?"
+                parameters = (identity.qualified,)
+            return tuple(str(row[0]) for row in rows.connection.execute(sql, parameters))
+
+        found = _members(owner) if isinstance(owner, EvaluationRows) else owner.call(_members)
+        return tuple(sorted(set(found), key=lambda item: item.encode("utf-8")))
+    stranded: set[str] = set()
+    for path, content in context.candidate_tree.items():
+        if not (path.startswith("runbooks/") and RUNBOOK_PATH_RE.fullmatch(path)):
+            continue
+        runbook = parse_runbook(content, path=path)
+        if runbook.lifecycle.state == "live" and identity in runbook.procedures:
+            stranded.add(runbook.identity.qualified)
+    return tuple(sorted(stranded, key=lambda item: item.encode("utf-8")))
+
+
+def _runbook_member(context: _MemberContext) -> _MemberVerdict:
+    """Judge one Runbook: its succession, and the Lines, Procedures and actions it names."""
+
+    from cruxible_client.contracts.runbooks import parse_runbook
+    from cruxible_core.compiler.compiler import admits_revision_74
     from cruxible_core.runbooks.law import judge_runbook_member
 
+    parsed = parse_runbook(context.content, path=context.path)
+    if (
+        parsed.lifecycle.state == "live"
+        and parsed.procedures
+        and not admits_revision_74(context.current.compiler)
+    ):
+        return _MemberVerdict(
+            diagnostics=(
+                _diagnostic(
+                    "cruxible.runbook.procedure_target_requires_compiler_upgrade",
+                    "A Procedure fan-out Runbook step needs compiler revision 74; "
+                    "run `cruxible compiler upgrade` first.",
+                    context.path,
+                ),
+            )
+        )
     verdict = judge_runbook_member(
         context.content,
         path=context.path,
         parent_content=context.parent_content,
         lines=context.resolved.lines,
+        procedures=context.resolved.procedures,
     )
     if verdict.verdict == "refused":
         return _MemberVerdict(diagnostics=tuple(verdict.diagnostics))

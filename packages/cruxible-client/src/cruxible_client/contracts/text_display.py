@@ -1652,9 +1652,13 @@ def inbox_item_lines(result: Any) -> list[str]:
 
 
 def runbook_target_text(target: Any) -> str:
-    """A Runbook step's target: ``Line:NAME`` or ``action:NAME``."""
+    """A Runbook step's target: ``Line:NAME``, ``Procedure:NAME`` or ``action:NAME``."""
 
-    return f"Line:{target.line.target.name}" if target.kind == "line" else f"action:{target.action}"
+    if target.kind == "line":
+        return f"Line:{target.line.target.name}"
+    if target.kind == "procedure":
+        return f"Procedure:{target.procedure.target.name}"
+    return f"action:{target.action}"
 
 
 def inbox_counts_text(counts: Any) -> str:
@@ -1705,7 +1709,9 @@ def runbook_run_lines(result: Any) -> list[str]:
         )
     lines = [f"Runbook {result.runbook}: {stopped}  [{result.run_id}]"]
     for step in result.steps:
+        from_proc = getattr(step, "from_procedure", None)
         extra = [
+            *([f"via Procedure:{from_proc}"] if from_proc else []),
             *([step.run_id] if step.run_id else []),
             *(f"proposal {item}" for item in step.proposal_ids),
             *([f"event {step.event_id}"] if step.event_id is not None else []),
@@ -1715,6 +1721,8 @@ def runbook_run_lines(result: Any) -> list[str]:
             f"  {step.step:>2}  {step.status:<11} {runbook_target_text(step.target)}"
             + (f"  ({', '.join(extra)})" if extra else "")
         )
+        if step.status == "skipped" and step.message:
+            lines.append(f"      {step.message}")
         if step.counts is not None:
             mark = "!" if step.counts.needs_attention else " "
             lines.append(f"    {mark} {run_counts_text(step.counts)}")
@@ -1787,7 +1795,18 @@ def runbook_preview_lines(preview: Any) -> list[str]:
         if step.action_effect is not None:
             lines.append(head + f"  effect {step.action_effect}")
             continue
-        lines.append(head + (f"  {step.procedure}" if step.procedure else ""))
+        if step.target.kind == "procedure":
+            lines.append(head + "  (0 lines configured)")
+            for write in step.writes:
+                lines.append(
+                    f"      would write {write.subject_kind}: {', '.join(write.claim_types)}"
+                )
+            continue
+        from_proc = getattr(step, "from_procedure", None)
+        proc_note = f"  {step.procedure}" if step.procedure else ""
+        if from_proc:
+            proc_note += f"  (from Procedure:{from_proc})"
+        lines.append(head + proc_note)
         for read in step.reads:
             source = f"query {read.query}" if read.query else "claims"
             late = " (late)" if read.late else ""
@@ -1818,9 +1837,12 @@ def runbook_preview_lines(preview: Any) -> list[str]:
                 f"      fires  {cascade.trigger} ({cascade.schedule}) -> {cascade.target} [{where}]"
             )
     for problem in preview.order_problems:
+        steps_text = ", ".join(map(str, problem.written_by_steps))
         detail = (
-            f"written only by later step(s) {', '.join(map(str, problem.written_by_steps))}"
+            f"written only by later step(s) {steps_text}"
             if problem.kind == "reads_later_write"
+            else f"written only by step(s) {steps_text}, which run no Line"
+            if problem.kind == "reads_unbound_write"
             else "written by no Line (direct entry only)"
         )
         lines.append(f"  order: step {problem.step} reads {problem.claim_type}: {detail}")

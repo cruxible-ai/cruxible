@@ -190,9 +190,18 @@ class GetLineCard(_StrictOperationalModel):
 
 
 #: Whether a Runbook step can run now: its Line is live and runs without an
-#: event, or its action is registered (D-R36). Read from definitions only.
+#: event, its Procedure is live and has a live Line (``no_lines_bound``: the
+#: run skips the step), or its action is registered (D-R36). Read from
+#: definitions only.
 RunbookStepAvailability: TypeAlias = Literal[
-    "available", "line_missing", "line_retired", "line_takes_event", "action_unregistered"
+    "available",
+    "line_missing",
+    "line_retired",
+    "line_takes_event",
+    "procedure_missing",
+    "procedure_retired",
+    "no_lines_bound",
+    "action_unregistered",
 ]
 
 
@@ -200,9 +209,13 @@ class GetRunbookStep(_StrictOperationalModel):
     """One step of a Runbook: its target and whether it can run now."""
 
     step: int = Field(ge=1)
-    #: ``Line:<name>``, or ``action:<name>`` for a registered internal action.
+    #: ``Line:<name>``, ``Procedure:<name>`` for a fan-out step, or
+    #: ``action:<name>`` for a registered internal action.
     target: str
     availability: RunbookStepAvailability
+    #: A Procedure step's live Lines at the read coordinate (``Line:<name>``, in
+    #: name order): the Lines the step runs.
+    lines: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
 
 
 class GetRunbookCard(_StrictOperationalModel):

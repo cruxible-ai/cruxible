@@ -8,7 +8,7 @@ import os
 import shlex
 import subprocess
 from collections import Counter
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -2592,7 +2592,7 @@ def _echo_kit_change(
         line = f"  provider {step.provider_id} ({step.package} {step.version}): "
         line += step.action.replace("_", " ")
         if step.proposal_id is not None:
-            line += f", proposal {step.proposal_id}"
+            line += f", proposal {_short_proposal_id(step.proposal_id)}"
         if step.detail is not None:
             line += f" ({printable(step.detail)})"
         click.echo(line)
@@ -2658,25 +2658,26 @@ def _echo_kit_change(
             and item.consequence == "takes_over_outside_definition"
         ):
             click.echo(f"Next: rerun cruxible kit add with --keep {item.identity} to keep yours.")
+    short_id = None if result.proposal_id is None else _short_proposal_id(result.proposal_id)
     if result.proposal_id and result.status == "blocked" and result.proposal_open:
         # Admitted, then accepted state moved before it could land: it stays open.
         click.echo(
-            f"Proposal: {result.proposal_id} (open; withdraw it: cruxible proposal withdraw "
-            f"{result.proposal_id} --reason '<TEXT>')"
+            f"Proposal: {short_id} (open; withdraw it: cruxible proposal withdraw "
+            f"{short_id} --reason '<TEXT>')"
         )
     elif result.proposal_id and result.status != "blocked":
         # A refused change leaves nothing to act on (--json keeps the refused record's id).
-        click.echo(f"Proposal: {result.proposal_id}")
+        click.echo(f"Proposal: {short_id}")
         if result.status == "proposed":
             if result.approval_required:
                 click.echo(
-                    f"Next: cruxible proposal approve {result.proposal_id} "
+                    f"Next: cruxible proposal approve {short_id} "
                     f"--signer-id {_SIGNER_PLACEHOLDER} (the approval that completes it "
                     "activates it)"
                 )
             elif result.detail is None:
                 # Otherwise the detail already names who activates it.
-                click.echo(f"Next: cruxible proposal activate {result.proposal_id}")
+                click.echo(f"Next: cruxible proposal activate {short_id}")
     echo_preview_next(result.status, result.coordinate)
 
 
@@ -3304,9 +3305,16 @@ def proposal_group() -> None:
     help="Proposals per page.",
 )
 @click.option("--cursor", default=None, help="Continue a previous page of the same listing.")
+@click.option(
+    "--full-ids",
+    is_flag=True,
+    help="Print each proposal id whole (sha256:<64 hex>), not its 12-character handle.",
+)
 @json_option
 @handle_errors
-def list_proposals(status: str | None, limit: int, cursor: str | None, output_json: bool) -> None:
+def list_proposals(
+    status: str | None, limit: int, cursor: str | None, full_ids: bool, output_json: bool
+) -> None:
     result = _server_call(
         lambda client, instance_id: client.list_proposals(
             instance_id,
@@ -3321,7 +3329,27 @@ def list_proposals(status: str | None, limit: int, cursor: str | None, output_js
         return
     from cruxible_client.contracts.text_display import proposal_list_lines
 
-    for line in proposal_list_lines(result):
+    shown = result
+    if not full_ids:
+        # 12-character handles, which every proposal command resolves back.
+        shown = result.model_copy(
+            update={
+                "entries": [
+                    entry.model_copy(
+                        update={
+                            "proposal_id": _short_proposal_id(entry.proposal_id),
+                            "superseded_by": (
+                                None
+                                if entry.superseded_by is None
+                                else _short_proposal_id(entry.superseded_by)
+                            ),
+                        }
+                    )
+                    for entry in result.entries
+                ]
+            }
+        )
+    for line in proposal_list_lines(shown):
         click.echo(line)
     _echo_list_continuation(result.next_cursor)
 
@@ -3558,7 +3586,7 @@ def review_proposal(
 
 
 @proposal_group.command("approve")
-@click.argument("proposal_id")
+@click.argument("proposal_ids", nargs=-1, required=True, metavar="PROPOSAL_ID...")
 @click.option(
     "--signer-id",
     default=None,
@@ -3589,7 +3617,8 @@ def review_proposal(
     help="The candidate digest you reviewed (`proposal review` prints it): sign that "
     "candidate or refuse. If accepted state moved and the proposal was proposed again "
     "at the head, the refusal names the new proposal and says whether its members are "
-    "identical. Without it, one proposed again with identical members is signed.",
+    "identical. Without it, one proposed again with identical members is signed. "
+    "One PROPOSAL_ID only.",
 )
 @click.option(
     "--hold",
@@ -3604,7 +3633,7 @@ def review_proposal(
 @json_option
 @handle_errors
 def approve_proposal(
-    proposal_id: str,
+    proposal_ids: tuple[str, ...],
     signer_id: str | None,
     private_key_path: str | None,
     yes: bool,
@@ -3626,17 +3655,71 @@ def approve_proposal(
     proposal, and that one is signed. `--candidate-digest` binds the approval
     to the candidate you reviewed instead: it then refuses, naming the new
     proposal to review.
+
+    Several PROPOSAL_IDs are approved, and activated, one after another in the
+    order given, after one prompt over all of them. Each later one lands at the
+    head the earlier ones moved, as above. The first that refuses or does not
+    activate stops the rest; the ones before it stay accepted.
     """
 
-    if not yes and not _can_confirm():
+    if len(proposal_ids) > 1 and candidate_digest is not None:
         raise click.UsageError(
-            "proposal approve asks before signing and no one is at this terminal; review it "
-            f"with `cruxible proposal review {proposal_id}`, then rerun with --yes"
+            "--candidate-digest pins the one candidate you reviewed; pass a single "
+            "PROPOSAL_ID with it, or approve several proposals without it"
+        )
+    if not yes and not _can_confirm():
+        target = proposal_ids[0] if len(proposal_ids) == 1 else "ID"
+        what = "it" if len(proposal_ids) == 1 else "each"
+        raise click.UsageError(
+            f"proposal approve asks before signing and no one is at this terminal; review {what} "
+            f"with `cruxible proposal review {target}`, then rerun with --yes"
         )
     configured = _root_ctx_obj().get("principal_id")
     if signer_id is None:
         signer_id = str(configured) if configured is not None else _signer_from_daemon()
     resolved_signer: str = signer_id
+
+    if len(proposal_ids) == 1:
+        _approve_one(
+            proposal_ids[0],
+            resolved_signer=resolved_signer,
+            private_key_path=private_key_path,
+            yes=yes,
+            candidate_digest=candidate_digest,
+            hold=hold,
+            full=full,
+            output_json=output_json,
+        )
+        return
+    _approve_in_order(
+        proposal_ids,
+        resolved_signer=resolved_signer,
+        private_key_path=private_key_path,
+        yes=yes,
+        hold=hold,
+        full=full,
+        output_json=output_json,
+    )
+
+
+def _approve_one(
+    proposal_id: str,
+    *,
+    resolved_signer: str,
+    private_key_path: str | None,
+    yes: bool,
+    candidate_digest: str | None,
+    hold: bool,
+    full: bool,
+    output_json: bool,
+    emit_json: bool = True,
+    announce_key: bool = True,
+) -> Any:
+    """Sign one candidate and return the receipt; `proposal approve PROPOSAL_ID` is this.
+
+    `emit_json=False` leaves the receipt to the caller (an ordered batch prints
+    one document over every proposal); text output is printed either way.
+    """
 
     # The prompt shows the reviewer's view `proposal review` prints (its first page).
     shows_summary = not (output_json or full or yes)
@@ -3695,7 +3778,7 @@ def approve_proposal(
                 render_playbill_approval_summary(review, summary, file_paths=_display_file_paths()),
                 nl=False,
             )
-    if key.source != "option":
+    if announce_key and key.source != "option":
         click.echo(_signing_key_line(key), err=True)
     if not yes and not click.confirm("Sign this exact candidate?", err=True):
         # Declining is an answer, not an error: say so and sign nothing.
@@ -3756,14 +3839,15 @@ def approve_proposal(
         result = _server_call(_approve_landed, command_name="cruxible proposal approve")
     result = _with_git_workspace_note(result)
     if output_json:
-        _emit_json(_json_receipt(result))
-        return
+        if emit_json:
+            _emit_json(_json_receipt(result))
+        return result
     if isinstance(result, contracts.ProposalRecompiled):
         _echo_recompiled_proposal(result)
-        return
+        return result
     if isinstance(result, contracts.ActivationReceipt):
         _echo_activation(result)
-        return
+        return result
     # Candidate, then the proposal it settles, as the Signing line names them.
     click.echo(f"Approved {result.candidate_digest} ({result.proposal_id}) as {result.signer_id}")
     if result.readmits is not None and not said_landed:
@@ -3772,6 +3856,210 @@ def approve_proposal(
         click.echo(_replaces_line(result.proposal_id, result.readmits))
     for line in _approval_outcome_lines(result):
         click.echo(line)
+    return result
+
+
+def _approve_in_order(
+    proposal_ids: Sequence[str],
+    *,
+    resolved_signer: str,
+    private_key_path: str | None,
+    yes: bool,
+    hold: bool,
+    full: bool,
+    output_json: bool,
+) -> None:
+    """`proposal approve P1 P2 ...`: one prompt, then each approved as `approve Pi --yes`.
+
+    Every selector resolves (and the signer's key is found) before anything is
+    signed, so a typo refuses the whole batch. Each proposal then goes through
+    the one-proposal path in order: when an earlier one's activation moved the
+    head, a later one with nothing it touches changed lands at the new head
+    and is signed there. The first refusal, or the first approval that does not
+    activate (without --hold), stops the batch; earlier ones stay accepted.
+    `--full` renders every proposal's full review before the prompt (with --yes,
+    before each is signed).
+    """
+
+    def _resolve_and_review(
+        client: CruxibleClient, instance_id: str
+    ) -> tuple[list[str], list[ProposalReview], CompilerUpgradeSigningKey]:
+        key = _signing_key(private_key_path, instance_id=instance_id, signer_id=resolved_signer)
+        if key is None:
+            raise click.UsageError(_missing_signing_key_help(instance_id, resolved_signer))
+        resolved: list[str] = []
+        for selector in proposal_ids:
+            proposal_id = client.resolve_proposal_selector(instance_id, selector).proposal_id
+            if proposal_id not in resolved:
+                resolved.append(proposal_id)
+        reviews: list[ProposalReview] = []
+        if not yes:
+            for proposal_id in resolved:
+                page = client.review_proposal(
+                    instance_id, proposal_id, detail=True, include_body=full, groups=False
+                )
+                reviews.append(ProposalReview.model_validate(page.model_dump(mode="json")))
+        return resolved, reviews, key
+
+    resolved, reviews, key = _server_call(
+        _resolve_and_review, command_name="cruxible proposal approve"
+    )
+    count = len(resolved)
+    if key.source != "option":
+        click.echo(_signing_key_line(key), err=True)
+    if not yes:
+        # The summary goes where the prompt goes when stdout carries the JSON.
+        if full and not output_json:
+            for review in reviews:
+                click.echo(render_playbill_proposal_review(review), nl=False)
+        for line in _batch_summary_lines(reviews, signer=resolved_signer):
+            click.echo(line, err=output_json)
+        verb = "Approve" if hold else "Approve and activate"
+        noun = "proposal" if count == 1 else "proposals"
+        if not click.confirm(f"{verb} {count} {noun} in order?", err=True):
+            click.echo("Not approved.", err=True)
+            raise SystemExit(1)
+    approved: list[dict[str, Any]] = []
+    failed: dict[str, Any] | None = None
+    not_attempted: list[str] = []
+    for index, proposal_id in enumerate(resolved):
+        if not output_json:
+            click.echo(f"[{index + 1}/{count}] {_short_proposal_id(proposal_id)}")
+        try:
+            result = _approve_one(
+                proposal_id,
+                resolved_signer=resolved_signer,
+                private_key_path=private_key_path,
+                yes=True,
+                candidate_digest=None,
+                hold=hold,
+                # Reviewed in full before the prompt; with --yes, before each signature.
+                full=full and yes,
+                output_json=output_json,
+                emit_json=False,
+                announce_key=False,
+            )
+        except (CoreError, click.ClickException) as exc:
+            code = getattr(exc, "error_code", None)
+            message = exc.format_message() if isinstance(exc, click.ClickException) else str(exc)
+            failed = {"proposal_id": proposal_id, "code": code, "message": message}
+        else:
+            stop = _batch_stop_reason(result, hold=hold)
+            receipt = _json_receipt(result)
+            if stop is None:
+                approved.append({"proposal_id": proposal_id, "receipt": receipt})
+            else:
+                failed = {
+                    "proposal_id": proposal_id,
+                    "code": None,
+                    "message": stop,
+                    "receipt": receipt,
+                }
+        if failed is not None:
+            not_attempted = resolved[index + 1 :]
+            break
+    if output_json:
+        _emit_json({"approved": approved, "failed": failed, "not_attempted": not_attempted})
+    else:
+        for line in _batch_outcome_lines(approved, failed, not_attempted):
+            click.echo(line)
+    if failed is not None:
+        raise SystemExit(1)
+
+
+def _batch_summary_lines(reviews: Sequence[ProposalReview], *, signer: str) -> list[str]:
+    """One numbered row per proposal: short id, proposer, change counts, candidate digest."""
+
+    lines = [f"Approving {len(reviews)} proposals in order as {signer}:"]
+    for index, review in enumerate(reviews, start=1):
+        proposer = review.provenance.get("actor_id")
+        dispositions = Counter(member.disposition for member in review.members)
+        counts = ", ".join(f"{count} {name}" for name, count in sorted(dispositions.items()))
+        total = len(review.members)
+        changes = f"{total} change{'s' if total != 1 else ''}" + (f" ({counts})" if counts else "")
+        lines.append(
+            f"  {index}. {_short_proposal_id(review.proposal_id)}  "
+            f"by {proposer or 'unknown'}  {changes}  candidate {review.candidate_digest}"
+        )
+        if review.rationale:
+            lines.append(f"     {printable(review.rationale)}")
+    lines.append("Review any in full: cruxible proposal review ID")
+    return lines
+
+
+def _batch_stop_reason(result: Any, *, hold: bool) -> str | None:
+    """Why an ordered batch stops after this receipt, or None when it may go on.
+
+    The batch promises each lands before the next is signed; with --hold it
+    promises only the signatures.
+    """
+
+    if isinstance(result, contracts.ProposalRecompiled):
+        if result.status == "already_live":
+            return None
+        target = "-" if result.proposal_id is None else _short_proposal_id(result.proposal_id)
+        return (
+            f"recompiled as {target} ({result.status}, members identical: "
+            f"{result.members_identical}); review it"
+        )
+    if isinstance(result, contracts.ActivationReceipt):
+        return None if result.status == "accepted" else f"not accepted ({result.status})"
+    activation = result.activation
+    if activation is not None:
+        if activation.status == "accepted":
+            return None
+        return "not activated: another change was accepted first"
+    if result.not_activated is None:
+        return None
+    if hold and result.not_activated != "stale":
+        return None
+    lines = _approval_outcome_lines(result)
+    return lines[0] if lines else f"not activated ({result.not_activated})"
+
+
+def _batch_outcome_lines(
+    approved: Sequence[Mapping[str, Any]],
+    failed: Mapping[str, Any] | None,
+    not_attempted: Sequence[str],
+) -> list[str]:
+    total = len(approved) + (failed is not None) + len(not_attempted)
+    shown = " ".join(_short_proposal_id(str(item["proposal_id"])) for item in approved)
+    lines = [f"Approved {len(approved)} of {total}" + (f": {shown}" if shown else "")]
+    if failed is not None:
+        code = failed.get("code")
+        lines.append(
+            f"Failed: {_short_proposal_id(str(failed['proposal_id']))} "
+            + (f"{code}: " if code else "")
+            + printable(str(failed["message"]))
+        )
+    if not_attempted:
+        lines.append(
+            "Not attempted: " + " ".join(_short_proposal_id(item) for item in not_attempted)
+        )
+    return lines
+
+
+#: Hex characters of a proposal id that human CLI text shows. Every proposal
+#: command takes them back as a bare-hex selector (or refuses an ambiguous one);
+#: --json, receipts and `proposal review` keep the full ``sha256:<64 hex>``.
+_SHORT_PROPOSAL_HEX = 12
+
+
+def _short_proposal_id(proposal_id: str) -> str:
+    """A proposal id as human CLI text shows it: its first 12 hex characters."""
+
+    if proposal_id.startswith("sha256:"):
+        return proposal_id[7 : 7 + _SHORT_PROPOSAL_HEX]
+    return proposal_id
+
+
+def _shorten_proposal_ids(text: str, proposal_ids: Iterable[str]) -> str:
+    """``text`` with each full proposal id named in ``proposal_ids`` shown short."""
+
+    for proposal_id in proposal_ids:
+        if proposal_id.startswith("sha256:"):
+            text = text.replace(proposal_id, _short_proposal_id(proposal_id))
+    return text
 
 
 def _replaces_line(proposal_id: str, source_id: str) -> str:
@@ -3896,7 +4184,7 @@ def _echo_recompiled_proposal(result: contracts.ProposalRecompiled) -> None:
     if result.changed_members_truncated:
         click.echo("  Changed member paths truncated; review the new proposal for all members.")
     operation = "review" if result.status == "pending_review" else "activate"
-    click.echo(f"Next: cruxible proposal {operation} {result.proposal_id}")
+    click.echo(f"Next: cruxible proposal {operation} {_short_proposal_id(result.proposal_id)}")
 
 
 def _approval_outcome_lines(receipt: contracts.ApprovalReceipt) -> list[str]:
@@ -3908,9 +4196,9 @@ def _approval_outcome_lines(receipt: contracts.ApprovalReceipt) -> list[str]:
             return [f"Activated at {activation.accepted_coordinate.git_oid}"]
         return [
             "Not activated: another change was accepted first; "
-            f"Next: cruxible proposal readmit {receipt.proposal_id}"
+            f"Next: cruxible proposal readmit {_short_proposal_id(receipt.proposal_id)}"
         ]
-    proposal = receipt.proposal_id
+    proposal = _short_proposal_id(receipt.proposal_id)
     if receipt.not_activated == "approvals_remaining":
         count = receipt.approvals_remaining
         return [
@@ -3950,7 +4238,7 @@ def _awaiting_approve_steps(receipt: contracts.ApprovalReceipt) -> list[str]:
     lookup (its remembered settings here), or the refusal names the repair.
     """
 
-    proposal = receipt.proposal_id
+    proposal = _short_proposal_id(receipt.proposal_id)
     steps = [
         f"cruxible proposal approve {proposal} --signer-id {signer}"
         for signer in receipt.required_signers
@@ -4027,7 +4315,7 @@ def _echo_activation(result: contracts.ActivationReceipt) -> None:
         click.echo(
             f"not accepted ({result.status}): accepted state moved after this proposal was checked"
         )
-        click.echo(f"next: cruxible proposal readmit {result.proposal_id}")
+        click.echo(f"next: cruxible proposal readmit {_short_proposal_id(result.proposal_id)}")
 
 
 @playbill_group.command("whoami")
@@ -6116,11 +6404,16 @@ def submit_authoring_intent(
             coordinate = None
             reason = outcome.message
             next_command = outcome.next
+        proposal_id = getattr(outcome, "proposal_id", None)
+        if isinstance(proposal_id, str) and next_command is not None:
+            next_command = _shorten_proposal_ids(next_command, (proposal_id,))
         _emit_brief(
             outcome=headline,
             ids={
                 "intent": str(submitted.intent.get("intent_id")),
-                "proposal": getattr(outcome, "proposal_id", None),
+                "proposal": _short_proposal_id(proposal_id)
+                if isinstance(proposal_id, str)
+                else None,
                 "coordinate": coordinate,
             },
             reason=_submit_refusal_reason(submitted) or reason,
@@ -9419,26 +9712,32 @@ def _echo_line_enablement(result: Any) -> None:
 
 
 def _runbook_lines(client: CruxibleClient, instance_id: str, runbook: str) -> tuple[str, ...]:
-    """The Lines RUNBOOK's steps name, in first-step order, once each (bare names)."""
+    """The Lines RUNBOOK's steps name or fan out to, in first-step order, once each."""
 
     from cruxible_client.contracts.get_reads import GetRequest
-    from cruxible_client.contracts.runbooks import Runbook
+    from cruxible_client.contracts.operational_reads import GetRunbookCard
 
     name = runbook.removeprefix("Runbook:")
-    found = client.get(instance_id, request=GetRequest(ref=f"Runbook:{name}", detail="proof"))
-    envelope = None if found.proof is None else found.proof.get("envelope")
-    if envelope is None:
+    found = client.get(instance_id, request=GetRequest(ref=f"Runbook:{name}"))
+    card = found.card
+    if not isinstance(card, GetRunbookCard):
         raise click.ClickException(f"Runbook:{name} has no accepted definition to read Lines from")
-    accepted = Runbook.model_validate(envelope)
-    if accepted.lifecycle.state != "live":
-        raise click.ClickException(
-            f"Runbook:{name} is {accepted.lifecycle.state}; name its Lines instead"
+    if card.lifecycle != "live":
+        raise click.ClickException(f"Runbook:{name} is {card.lifecycle}; name its Lines instead")
+    lines = tuple(
+        dict.fromkeys(
+            line.removeprefix("Line:")
+            for step in card.steps
+            for line in ((step.target,) if step.target.startswith("Line:") else step.lines)
         )
-    if not accepted.lines:
+    )
+    if not lines:
+        if any(step.target.startswith("Procedure:") for step in card.steps):
+            raise click.ClickException(f"Runbook:{name} runs no Lines yet; nothing to enable")
         raise click.ClickException(
             f"Runbook:{name} lists no Lines (only actions); nothing to enable"
         )
-    return tuple(identity.name for identity in accepted.lines)
+    return lines
 
 
 def _enable_lines(
@@ -10298,20 +10597,34 @@ def next_work(
     if output_json:
         _emit_json(result.model_dump(mode="json"))
         return
-    click.echo(
-        "\n".join(
-            next_lines(
-                status=result.status,
-                items=result.items,
-                delta_since=result.delta_since,
-                removed_item_ids=result.removed_item_ids,
-                unobserved=next_unobserved_reasons(result.unobserved_domains, Path(workspace_root)),
-                brief=output_brief,
-                total_items=result.total_items,
-                next_cursor=result.next_cursor,
-            )
+    rendered = "\n".join(
+        next_lines(
+            status=result.status,
+            items=result.items,
+            delta_since=result.delta_since,
+            removed_item_ids=result.removed_item_ids,
+            unobserved=next_unobserved_reasons(result.unobserved_domains, Path(workspace_root)),
+            brief=output_brief,
+            total_items=result.total_items,
+            next_cursor=result.next_cursor,
         )
     )
+    # A proposal row names its proposal, and its repair command, by the 12-character
+    # handle; --json keeps the full ids.
+    click.echo(_shorten_proposal_ids(rendered, _next_proposal_ids(result.items)))
+
+
+def _next_proposal_ids(items: Sequence[contracts.NextItem]) -> set[str]:
+    """The proposals a ``next`` page's rows (and their findings) are about. O(rows)."""
+
+    found: set[str] = set()
+    for item in items:
+        if item.reason.startswith("proposal_"):
+            found.add(item.subject_identity)
+        for finding in item.findings:
+            if finding.reason.startswith("proposal_"):
+                found.add(finding.subject_identity)
+    return found
 
 
 @playbill_group.command("duplicates")

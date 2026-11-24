@@ -1076,8 +1076,9 @@ def test_a_blocked_kit_change_names_a_proposal_it_left_open(
     result = CliRunner().invoke(cli, [*BASE, "remove", "acme", "--commit", "--at", "abcdef123456"])
 
     assert result.exit_code == 1, result.output
+    handle = proposal.removeprefix("sha256:")[:12]
     assert (
-        f"Proposal: {proposal} (open; withdraw it: cruxible proposal withdraw {proposal} "
+        f"Proposal: {handle} (open; withdraw it: cruxible proposal withdraw {handle} "
         "--reason '<TEXT>')" in result.output
     )
 
