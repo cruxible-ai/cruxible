@@ -39,7 +39,12 @@ from cruxible_client.authoring.world import (
     vocabulary_world,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
-from cruxible_client.contracts.shapes import claim_value_kind, subject_value_kinds, value_type_name
+from cruxible_client.contracts.shapes import (
+    claim_value_kind,
+    ordered_enum,
+    subject_value_kinds,
+    value_type_name,
+)
 from cruxible_client.contracts.workspace_layout import (
     WORLD_STUB_PATH,
     ensure_workspace_directory,
@@ -567,6 +572,16 @@ def _value_annotation(claim_type: WorldClaimType) -> tuple[str, tuple[str, ...]]
     members = claim_type.members
     if members:
         spelled = ", ".join(repr(member) for member in members)
+        if ordered_enum(claim_type.value_type) is not None:
+            # An ordered enum also compares by declared rank.
+            return f"Literal[{spelled}]", (
+                "eq",
+                "ne",
+                *_ORDERED_OPERATORS,
+                "in",
+                "exists",
+                "contains",
+            )
         return f"Literal[{spelled}]", ("eq", "ne", "in", "exists", "contains")
     declared = value_type_name(claim_type.value_type)
     if declared == "string":
@@ -667,6 +682,8 @@ def _predicate_block(world: World, node: _Node) -> list[str]:
         "    # permitted_roles=" + ",".join(role.value for role in claim_type.permitted_roles)
     )
     lines.append("    # allowed_subject_kinds=" + ",".join(claim_type.allowed_subject_kinds))
+    if ordered_enum(claim_type.value_type) is not None:
+        lines.append("    # ordered=true (members in ascending rank)")
     if subject_value_kinds(claim_type.value_type):
         lines.append(
             "    # subject_value_kinds=" + ",".join(subject_value_kinds(claim_type.value_type))

@@ -229,16 +229,20 @@ from cruxible_client.contracts.query.definitions import (
     parse_query_definition,
     query_definition_digest,
     query_definition_path,
+    query_enum_comparison_problem,
     render_query_definition,
 )
 from cruxible_client.contracts.runbooks import runbook_path
 from cruxible_client.contracts.semantic import ContentSpan, SemanticAddress, SourceMapping
 from cruxible_client.contracts.shapes import (
     ContractRef,
+    EnumType,
+    FieldType,
     claim_has_line_break,
     claim_value_kind,
     contract_digest,
     contract_path,
+    declares_ordered_enum,
     map_type_refs,
     parse_contract,
     subject_value_kinds,
@@ -1567,6 +1571,23 @@ def _claim_pin(
     )
 
 
+def _refuse_ordered_enum_before_revision_74(
+    field_types: Iterable[FieldType], *, base: AcceptedProjectionCoordinate, element: str
+) -> None:
+    """An ordered enum is new in compiler revision 74; an earlier head refuses it."""
+
+    if admits_revision_74(base.compiler):
+        return
+    if any(declares_ordered_enum(item) for item in field_types):
+        _refuse(
+            "cruxible.authoring.ordered_enum_requires_compiler_upgrade",
+            element,
+            "An ordered enum needs compiler revision 74; this instance is on an earlier revision.",
+            repair_kind="upgrade_compiler",
+            repair_description="Back up the instance, then run `cruxible compiler upgrade`.",
+        )
+
+
 def _based_on_of(claim: ClaimArtifact) -> tuple[ArtifactPin, ...]:
     return tuple(pin for pin in claim.pins if pin.role == BASED_ON_CLAIM_PIN_ROLE)
 
@@ -1712,6 +1733,12 @@ def _lower_claim(
     elif key_paths:
         payload = _with_keys_landed(payload, key_paths)
     payload = _with_aliases_resolved(instance, base, base_tree, payload)
+    if payload.dependency_drafts.claim_type is not None:
+        _refuse_ordered_enum_before_revision_74(
+            (payload.dependency_drafts.claim_type.value,),
+            base=base,
+            element="dependency_drafts.claim_type.value",
+        )
     candidate_base_tree, dependency_paths = _install_claim_dependencies(
         payload,
         base_tree=base_tree,
@@ -3099,6 +3126,7 @@ def _render_non_procedure_member(
                     }
                 )
         if tree is not None:
+            enums: dict[str, EnumType] = {}
             for predicate in query.referenced_predicates:
                 target_path = claim_type_path(predicate)
                 content = tree.get(target_path)
@@ -3119,6 +3147,20 @@ def _render_non_procedure_member(
                         repair_kind="replace_input",
                         repair_description="Choose a live ClaimType.",
                     )
+                if isinstance(target.value, EnumType):
+                    enums[predicate] = target.value
+            enum_problem = query_enum_comparison_problem(query, enums.get)
+            if enum_problem is not None:
+                _refuse(
+                    "cruxible.query_definition.enum_comparison_invalid",
+                    "query_definition",
+                    enum_problem,
+                    repair_kind="replace_input",
+                    repair_description=(
+                        "Compare an enum with eq, ne or in; lt, lte, gt and gte need an "
+                        "ordered enum compared with its own members."
+                    ),
+                )
             for attr, label in (("parameter_contract", "parameter"), ("row_contract", "row")):
                 ref = getattr(query, attr)
                 if ref is not None:
@@ -6041,6 +6083,14 @@ def _stage_change_set_member(
 ) -> StagedMember:
     """Write one member into the staged tree and report what it resolved to."""
 
+    if isinstance(member, ClaimTypeAuthoringPayload):
+        _refuse_ordered_enum_before_revision_74(
+            (member.claim_type.value,), base=base, element="claim_type.value"
+        )
+    elif isinstance(member, ContractAuthoringPayload):
+        _refuse_ordered_enum_before_revision_74(
+            (field.type for field in member.fields.values()), base=base, element="fields"
+        )
     if isinstance(member, SubjectCreationAuthoringPayload):
         assert creations is not None
         return _stage_subject_creation(
@@ -6548,6 +6598,9 @@ def _stage_claim_type_succession(
                 "Name the ClaimType this set succeeds and pin its exact current digest."
             ),
         )
+    _refuse_ordered_enum_before_revision_74(
+        (successor.value,), base=base, element="successor.value"
+    )
     try:
         inventory = claim_type_migration_inventory(
             staged_tree, root=successor.identity, by_name=True
@@ -7202,6 +7255,12 @@ def _lower_authoring(
             captures=captures,
         )
     if isinstance(intent.payload, CapabilityAuthoringPayload | ContractAuthoringPayload):
+        if isinstance(intent.payload, ContractAuthoringPayload):
+            _refuse_ordered_enum_before_revision_74(
+                (field.type for field in intent.payload.fields.values()),
+                base=base,
+                element="fields",
+            )
         path, content, digest = (
             _render_capability_member(intent.payload, tree=base_tree)
             if isinstance(intent.payload, CapabilityAuthoringPayload)

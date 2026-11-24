@@ -231,6 +231,7 @@ from cruxible_client.contracts.resolution_contracts import (
 )
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.shapes import (
+    FieldType,
     claim_value_kind,
     subject_value_kinds,
     tree_contract_resolver,
@@ -2544,6 +2545,25 @@ def _subject_kind_member(context: _MemberContext) -> _MemberVerdict:
     )
 
 
+def _ordered_enum_diagnostic(
+    context: _MemberContext, field_types: tuple[FieldType, ...], *, family: str
+) -> CompilerDiagnostic | None:
+    """An ordered enum is new in compiler revision 74: an earlier head refuses it."""
+
+    from cruxible_client.contracts.shapes import declares_ordered_enum
+    from cruxible_core.compiler.compiler import admits_revision_74
+
+    if admits_revision_74(context.current.compiler):
+        return None
+    if not any(declares_ordered_enum(item) for item in field_types):
+        return None
+    return _diagnostic(
+        f"cruxible.{family}.ordered_enum_requires_compiler_upgrade",
+        "An ordered enum needs compiler revision 74; run `cruxible compiler upgrade` first.",
+        context.path,
+    )
+
+
 def _contract_member(context: _MemberContext) -> _MemberVerdict:
     """Judge one Contract version: immutable, succeeding exactly, every pin exact.
 
@@ -2578,6 +2598,11 @@ def _contract_member(context: _MemberContext) -> _MemberVerdict:
                 _diagnostic(problem.code, problem.message, context.path) for problem in problems
             )
         )
+    ordered = _ordered_enum_diagnostic(
+        context, tuple(field.type for field in contract.fields.values()), family="contract"
+    )
+    if ordered is not None:
+        return _MemberVerdict(diagnostics=(ordered,))
     digest = contract_digest(contract).tagged
     return _accepted(
         context,
@@ -3908,6 +3933,9 @@ def _claim_type_member(context: _MemberContext) -> _MemberVerdict:
         return _MemberVerdict(diagnostics=tuple(law.diagnostics))
     if law.artifact_digest is None or law.required_tier is None:
         raise ProposalIntegrityError("accepted ClaimType law result is incomplete")
+    ordered = _ordered_enum_diagnostic(context, (claim_type.value,), family="claim_type")
+    if ordered is not None:
+        return _MemberVerdict(diagnostics=(ordered,))
     if claim_type.lifecycle.state == "live":
         from cruxible_client.contracts.shapes import Contract, ContractField, evaluate_contract_law
 

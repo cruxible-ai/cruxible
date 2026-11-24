@@ -65,6 +65,7 @@ from cruxible_client.contracts.shapes import (
     ContractRef,
     CountOperand,
     EnumOfType,
+    EnumType,
     FieldInvalid,
     FieldResultType,
     IntType,
@@ -1991,6 +1992,16 @@ def _check_predicate(predicate: Predicate, path: str, lookup: Any) -> None:
             "procedure_operand_type_mismatch", path, "Ordering requires scalar ordered operands"
         )
     a, b = left.type, right.type
+    if predicate.op not in {"eq", "ne"} and any(
+        isinstance(item, EnumType) and item.ordered for item in (a, b)
+    ):
+        # A Procedure predicate compares the member strings as text; an ordered
+        # enum ranks by declaration only in queries, so ordering it here would lie.
+        raise ProcedureSpecError(
+            "procedure_operand_type_mismatch",
+            path,
+            "An ordered enum compares by rank only in a query; use eq, ne or in here",
+        )
     for operand, target in ((predicate.left, b), (predicate.right, a)):
         if isinstance(operand, LiteralOperand):
             result = check_value(operand.literal, target, at=path)

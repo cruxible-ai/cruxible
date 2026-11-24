@@ -37,7 +37,7 @@ from cruxible_client.contracts.compact_query import (
 )
 from cruxible_client.contracts.public_names import public_name
 from cruxible_client.contracts.read_values import ShownObject, TruncatedText
-from cruxible_client.contracts.shapes import claim_value_kind, value_type_name
+from cruxible_client.contracts.shapes import claim_value_kind, ordered_enum, value_type_name
 from cruxible_client.contracts.temporal import temporal_value_text
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -486,10 +486,16 @@ class CompactQuery:
             if not isinstance(value, bool):
                 raise QueryNameError(f"{name}__exists takes true or false")
             return value
-        if operator in {"lt", "lte", "gt", "gte"} and (members or declared not in _ORDERED):
+        ranked = ordered_enum(claim_type.value_type)
+        if (
+            operator in {"lt", "lte", "gt", "gte"}
+            and ranked is None
+            and (members or declared not in _ORDERED)
+        ):
             raise QueryNameError(
                 f"{operator!r} does not apply to {name}; use eq, ne, in, exists"
                 + (", contains" if members or declared == "string" else "")
+                + (" (its enum is unordered)" if members else "")
             )
         if operator == "contains" and declared not in {"string", "subject"}:
             raise QueryNameError(f"'contains' does not apply to {name}, which is not text")
