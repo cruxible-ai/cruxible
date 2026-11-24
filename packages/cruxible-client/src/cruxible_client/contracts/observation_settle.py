@@ -20,7 +20,7 @@ Pure and shared: authoring lowering pins the result, and the CLI shows it.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from typing import Final, Literal
 
 from pydantic import BaseModel, ConfigDict
@@ -36,6 +36,8 @@ from cruxible_client.contracts.mandate_scope import (
 
 #: The value bases an observation grant settles without opting in to ``derived``.
 OBSERVATION_VALUE_BASES: Final[tuple[MandateBasis, ...]] = ("extracted", "measured")
+#: How deep a Subject spec's ends nest before lowering stops reading them.
+_MAX_SPEC_DEPTH: Final = 16
 #: Where an observation grant reaches when the author names no namespace.
 OBSERVATION_SETTLE_NAMESPACE: Final[tuple[str, ...]] = ("claims",)
 
@@ -86,17 +88,40 @@ def _sorted(values: Iterable[str]) -> tuple[str, ...]:
     return tuple(sorted(set(values), key=lambda item: item.encode("utf-8")))
 
 
-def _created_kinds(node: object) -> set[str]:
-    kinds: set[str] = set()
-    subject = getattr(node, "subject", None)
-    if getattr(subject, "create", None) == "if_absent":
-        kinds.add(str(getattr(subject, "kind")))
+def _spec_part(spec: object, name: str) -> object:
+    return spec.get(name) if isinstance(spec, Mapping) else getattr(spec, name, None)
+
+
+def spec_created_kinds(spec: object, *, _depth: int = 0) -> set[str]:
+    """The Subject kinds one ``{kind, key, create}`` spec can create.
+
+    A spec with ``create: if_absent`` creates its own kind, and, as the runtime
+    resolves a pair kind's ends, every end its ``key`` names the same way with
+    ``create: if_absent``, recursively. An end inside a spec that does not
+    create is never created (the pair can be neither found nor made), so
+    nothing below it counts. Takes a model (``ClaimsSubject``) or a mapping.
+    """
+
+    if _depth > _MAX_SPEC_DEPTH or _spec_part(spec, "create") != "if_absent":
+        return set()
+    kind = _spec_part(spec, "kind")
+    if not isinstance(kind, str):
+        return set()
+    kinds = {kind}
+    key = _spec_part(spec, "key")
+    if isinstance(key, Mapping):
+        for part in key.values():
+            if isinstance(part, Mapping):
+                kinds |= spec_created_kinds(part, _depth=_depth + 1)
+    return kinds
+
+
+def created_subject_kinds(node: object) -> set[str]:
+    """Every Subject kind a claims node can create: its row Subject and its value templates."""
+
+    kinds = spec_created_kinds(getattr(node, "subject", None))
     for template in getattr(node, "claims", ()):
-        value = template.value
-        if isinstance(value, dict) and value.get("create") == "if_absent":
-            kind = value.get("kind")
-            if isinstance(kind, str):
-                kinds.add(kind)
+        kinds |= spec_created_kinds(template.value)
     return kinds
 
 
@@ -137,7 +162,7 @@ def observation_settle_scope(
             )
         if not isinstance(node, ClaimsNode):
             continue
-        creatable |= _created_kinds(node)
+        creatable |= created_subject_kinds(node)
         for template in node.claims:
             changes = needed.setdefault(template.claim_type.target.name, {})
             for kind in ("create", "revise"):
@@ -231,5 +256,7 @@ __all__ = [
     "ObservationSettleRefusal",
     "ObservationSettleRefusalCode",
     "ObservationSettleScope",
+    "created_subject_kinds",
     "observation_settle_scope",
+    "spec_created_kinds",
 ]

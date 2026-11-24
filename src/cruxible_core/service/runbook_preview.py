@@ -36,6 +36,7 @@ from typing import TYPE_CHECKING, Any
 
 from cruxible_client.contracts.capabilities import Capability, CapabilityRef
 from cruxible_client.contracts.claim_types import ClaimType
+from cruxible_client.contracts.observation_settle import created_subject_kinds, spec_created_kinds
 from cruxible_client.contracts.procedure_mandates import ProcedureMandate
 from cruxible_client.contracts.procedures.artifacts import ProcedureArtifact
 from cruxible_client.contracts.procedures.claims import ClaimsNode
@@ -157,13 +158,11 @@ def _target(trigger: Trigger) -> tuple[str, str]:
 
 
 def _created_object_kinds(node: ClaimsNode) -> tuple[str, ...]:
-    kinds = []
+    """The kinds a node's value templates create, with the pair ends they create."""
+
+    kinds: set[str] = set()
     for template in node.claims:
-        value = template.value
-        if isinstance(value, dict) and value.get("create") == "if_absent":
-            kind = value.get("kind")
-            if isinstance(kind, str):
-                kinds.append(kind)
+        kinds |= spec_created_kinds(template.value)
     return _sorted(kinds)
 
 
@@ -405,9 +404,7 @@ def _authority(
     for node in nodes:
         for claim_type, changes in _needed_changes(node).items():
             needed.setdefault(claim_type, set()).update(changes)
-        if node.subject.create == "if_absent":
-            created.add(node.subject.kind)
-        created.update(_created_object_kinds(node))
+        created |= created_subject_kinds(node)
     scope = {} if grant is None else {item.claim_type.target.name: item for item in grant.scope}
     gaps: dict[bytes, SettleScopeGap] = {}
     proposes: set[str] = set()
