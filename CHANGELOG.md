@@ -103,6 +103,16 @@ made from.
   appends that heading and cites it, so reasoning past a 280-character
   `--because` lands in one step. The `rationale_invalid` refusal names this,
   `w.section(...)`, and the write file's `docs` op.
+- **Ordered enums (compiler revision 74):** an enum value may declare
+  `ordered: true` (`vocabulary.yaml` beside `enum:`, `ordered_enum[low, high]`,
+  `EnumType(members=..., ordered=True)`, `{"kind": "enum", ..., "ordered":
+  true}`); its members ascend in rank, lowest first. Values stay stored as
+  member strings; `lt`/`lte`/`gt`/`gte` (query, `--where`, `where(severity__gte=
+  ...)`, QueryDefinitions) compare by declared rank and `order_by` sorts by it.
+  Ordering an unordered enum, comparing two different enums, or naming a
+  non-member refuses. An unordered enum keeps its canonical bytes, so no
+  existing digest moves; a revision 73 instance refuses `ordered: true`
+  (`ordered_enum_requires_compiler_upgrade`) until `cruxible compiler upgrade`.
 - **World ergonomics:** `w.section(...)` and `w.note(...)` sit beside
   `w.write(...)` (typed in `world.pyi`); `subject.edit(field=...)` sets fields
   and still chains `.add`/`.retire`; a many-valued field takes a list or tuple
@@ -126,6 +136,12 @@ made from.
 
 ### Fixed
 
+- **An observation grant may create a composite key's ends:** `scope:
+  "observations"` now reads the pair ends a Subject spec creates (an
+  occurrence's `inventory` and `component` with `create: if_absent`, nested to
+  any depth) when the enclosing spec creates too, so `subject_creation` may
+  name them; an end under a spec that does not create is still refused. The
+  Runbook preview counts creations by the same rule.
 - **Coverage scans no longer truncate on citation-dense workspaces.** The
   working-occurrence scan searches each source once for all cited passages
   (a shared multi-needle pass) and charges the scan budget the source's length

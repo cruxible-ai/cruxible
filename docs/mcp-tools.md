@@ -569,7 +569,9 @@ them that require a Capture), `ProcedureMandate` (`name`, `procedure`,
 Triggers, Lines, SubjectKinds, mandates and QueryDefinitions. Their columns filter by type (integers
 and `expires_at` also compare with `lt` .. `gte`) and order typed, nulls last. Each `where` filter is `{field, <operator>: value}` with one of `eq`,
 `ne`, `lt`, `lte`, `gt`, `gte`, `in` (a list), `exists` (a boolean) or
-`contains` (case-insensitive text); filters combine as all-of. `exists: true`
+`contains` (case-insensitive text); filters combine as all-of. An ordered enum
+(`ordered_enum[...]`) compares and orders by declared rank; `lt` .. `gte` refuse
+on an unordered one. `exists: true`
 matches a field holding any live Claim, an explicit none included; `exists:
 false` only a field with no Claim. Filter on a value (`eq`) to match real
 values. A field is a

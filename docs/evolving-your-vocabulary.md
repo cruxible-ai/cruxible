@@ -312,6 +312,7 @@ these shorthands:
 | Shorthand | Means |
 |---|---|
 | `enum: [a, b]` | A closed list of members. As a map, `{member: meaning}` gives each member's meaning (`null` for none). |
+| `ordered: true` | With `enum`: the members are written lowest first, and queries compare and order the field by that rank. Left out on an edit: what is accepted. Needs compiler revision 74. |
 | `link: KIND` | The value is a Subject of that kind; `link: [KIND, KIND]` for several kinds. |
 | `many: true` | Several values at once. Left out: one value (on an edit, what is accepted). |
 | `key: true` | A key of the kind, in file order. A key holds one value. |
@@ -365,6 +366,7 @@ that holds `{` and `:` so YAML reads it as one string (`'string{max_len:
 | `datetime` | An instant with its offset. | `datetime` |
 | `duration` | An ISO 8601 duration, `P30D`. | `duration` |
 | `enum[...]` | One of a closed list of members (the `enum:` shorthand writes it). | `'enum[open, done]'` |
+| `ordered_enum[...]` | An enum whose members ascend in rank, lowest first (`enum:` with `ordered: true` writes it). | `'ordered_enum[low, medium, high]'` |
 | `enum_of PREDICATE` | One of another field's enum members. | `enum_of catalog.part.category` |
 | `subject<KIND>` | A Subject of that kind, or `subject<A \| B>` (the `link:` shorthand writes it). | `'subject<catalog.vehicle>'` |
 | `list<T>{max_items: N}` | A list of up to N values of type T, as one value. | `'list<string{max_len: 20}>{max_items: 5}'` |
@@ -374,6 +376,24 @@ There is no `json`, `object` or `map` type: a field holds a declared shape.
 Prose belongs in a document section the field cites, not in a long string. A
 number with a unit is clearest as an integer in the smallest unit
 (`price_cents`).
+
+### Ranked enums
+
+`ordered: true` says an enum's members are a scale. Values are still stored as
+the member strings; a query compares them by position in the list:
+
+~~~yaml
+    fields:
+      severity:
+        enum: [low, medium, high, critical]
+        ordered: true
+~~~
+
+`cruxible query sec.finding --where 'severity>=high'` then matches `high` and
+`critical`, and `--order-by -severity` puts `critical` first (a Subject without
+a value last). `lt`, `lte`, `gt` and `gte` refuse on an unordered enum, between
+two different enums (one enum's `high` is not another's), and with a value
+that is not a member. Export writes `ordered: true` only on an ordered enum.
 
 ### Moving Claims when an enum narrows
 

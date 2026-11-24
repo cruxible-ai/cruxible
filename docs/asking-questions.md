@@ -24,7 +24,9 @@ catalog.part/bp-1142  Front brake pads          brakes    42     stale
 ~~~
 
 `--where` takes `=`, `!=`, `<`, `<=`, `>`, `>=`, `in a,b`, `exists`, and `~`
-for text containing a value, and several filters all have to hold. `exists`
+for text containing a value, and several filters all have to hold. On an enum,
+`<` .. `>=` apply only when it is ordered, and they and `--order-by` follow its
+declared rank ([Ranked enums](evolving-your-vocabulary.md#ranked-enums)). `exists`
 means the field holds a live Claim, and an explicit none (a value recorded as
 "none of" something, such as a catalog read in full that does not list an
 item) counts; `!exists` means nobody has answered it. To find Subjects with a

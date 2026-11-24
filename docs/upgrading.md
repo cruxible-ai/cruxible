@@ -211,13 +211,15 @@ This release writes compiler revision 74 (`based-on-observation-carry`) at
 genesis. Revision 74 admits a `based-on` Claim pin (a judgment pinning the
 exact version of the observation it rests on; a later revision or retirement of
 that observation leaves the judgment live and lists it in `next` as
-`claim_dependency_stale`), and keeps an observation-only settle grant, with an
-enabled Line's enablement, across a pure, non-widening `provider move` (below).
+`claim_dependency_stale`), keeps an observation-only settle grant, with an
+enabled Line's enablement, across a pure, non-widening `provider move` (below),
+and admits an ordered enum (`ordered: true`, members ranked lowest first).
 
 It also serves revision 73 (`retiring-query-traversal`, the compiler 0.5.0 and
 0.5.1 record), as the source of one upgrade edge: an instance created by 0.5.x
 opens, keeps working under revision 73's laws (what revision 74 adds refuses,
-for example `cruxible.authoring.based_on_requires_compiler_upgrade`), and
+for example `cruxible.authoring.based_on_requires_compiler_upgrade` and
+`cruxible.authoring.ordered_enum_requires_compiler_upgrade`), and
 reports the compiler facet `upgrade_available` until `cruxible compiler
 upgrade` moves it to revision 74. No edge leads back, and any other target
 refuses `cruxible.compiler_upgrade.unsupported_transition`. An instance created
