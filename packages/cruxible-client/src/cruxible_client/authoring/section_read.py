@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import difflib
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -81,8 +82,15 @@ def parse_section_locator(locator: str) -> tuple[str, SectionPath]:
     return file, tuple(item.strip() for item in rest.split("/") if item.strip())
 
 
-def read_section(workspace: Path, locator: str) -> SectionRead:
-    """The section a locator names, read from the catalogued file as it is now."""
+def read_section(
+    workspace: Path, locator: str, *, surface: Literal["cli", "mcp", "sdk"] = "cli"
+) -> SectionRead:
+    """The section a locator names, read from the catalogued file as it is now.
+
+    ``surface`` words a refusal's catalog repair for the caller's own client.
+    """
+
+    from cruxible_client.authoring.files import catalog_step
 
     file, heading = parse_section_locator(locator)
     try:
@@ -93,8 +101,8 @@ def read_section(workspace: Path, locator: str) -> SectionRead:
         raise SectionReadError(
             "cruxible.doc.file_not_catalogued",
             str(exc).removeprefix(f"{exc.code}: "),
-            repair="Name a file files.yaml catalogues, by its path or name; "
-            "`cruxible files add PATH` catalogues one.",
+            repair="Name a file files.yaml catalogues, by its path or name, or catalogue it: "
+            + catalog_step(surface, "add", file),
         ) from None
     except ValueError as exc:
         raise SectionReadError(

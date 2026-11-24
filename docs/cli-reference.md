@@ -4442,7 +4442,7 @@ up front, a proposal, then review and activation. ClaimTypes keep their own
 `claim-type` group, because changing vocabulary disposes the Claims that
 depend on it.
 
-## note, link and backlinks
+## note, link, backlinks and section
 
 ~~~text
 cruxible note FILE --text TEXT [--under Heading/Path] --about KIND/ID [--about ...] --because WHY
