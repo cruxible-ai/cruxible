@@ -261,7 +261,11 @@ def test_the_world_stub_types_set_with_enum_literals(pb: Cruxible) -> None:
     add = stub[stub.index("def add(") :]
     assert "expect_absent: bool = ...," in add[: add.index(") -> WriteOutcome")]
     assert "status: Literal['blocked', 'done', 'ready'] = ...," in stub
-    assert "governs: str | SubjectRef | WorldNewSubject = ...," in stub
+    # A many-valued field takes one value or a sequence of them.
+    assert (
+        "governs: str | SubjectRef | WorldNewSubject | "
+        "Sequence[str | SubjectRef | WorldNewSubject] = ...,"
+    ) in stub
     assert "ruling: str = ...," in stub
 
 

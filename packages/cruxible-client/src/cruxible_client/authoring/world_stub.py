@@ -60,8 +60,10 @@ _WORLD_MEMBERS = frozenset(
         "describe",
         "kind",
         "kinds",
+        "note",
         "predicates",
         "prefetch",
+        "section",
         "stub",
         "unstructured_predicates",
         "write",
@@ -70,6 +72,8 @@ _WORLD_MEMBERS = frozenset(
 #: ``define()`` keywords that are not fields: a field leaf spelled like one is
 #: set with ``draft.set(...)`` instead.
 _DEFINE_OPTIONS = frozenset({"create_new", "expect_new", "evidence", "role"})
+#: ``edit()`` keywords that are not fields, as for ``define()``.
+_EDIT_OPTIONS = frozenset({"contend", "evidence", "role"})
 
 _STUB_IMPORTS = (
     "from collections.abc import Sequence",
@@ -288,7 +292,24 @@ def _subject_block(world: World, node: _Node) -> list[str]:
         if doc:
             body.declare_lines(doc)
     _write_members(world, node.path, body)
-    body.declare(f"def edit(self) -> {_edit_class_name(node.path)}: ...")
+    # edit() alone starts an empty edit; field keywords are set on it at once.
+    body.declare_lines(
+        [
+            "def edit(",
+            "    self,",
+            "    /,",
+            "    *,",
+            "    evidence: Evidence | AuthoredSection | None = ...,",
+            "    role: WriteRole | None = ...,",
+            "    contend: bool = ...,",
+            *(
+                line
+                for line in _field_parameters(world, node.path)["one"]
+                if line.strip().split(":", 1)[0] not in _EDIT_OPTIONS
+            ),
+            f") -> {_edit_class_name(node.path)}: ...",
+        ]
+    )
     for leaf, predicates in sorted(world._leaf_map(node.path).items()):
         if leaf in reachable or len(predicates) != 1:
             continue
@@ -324,7 +345,11 @@ def _write_annotation(claim_type: WorldClaimType) -> str:
 def _field_parameters(
     world: World, kind: str, *, skip: frozenset[str] = frozenset()
 ) -> dict[str, list[str]]:
-    """Each write keyword of a kind, as a parameter line, by the cardinality it holds."""
+    """Each write keyword of a kind, as a parameter line, by the cardinality it holds.
+
+    A many-valued field takes one value or a sequence of them (``define()`` and
+    ``add()`` add each item, in order), so its annotation admits both.
+    """
 
     by_cardinality: dict[str, list[str]] = {"one": [], "many": []}
     for leaf, predicates in sorted(world._leaf_map(kind).items()):
@@ -332,8 +357,11 @@ def _field_parameters(
         if len(predicates) != 1 or spelled is None or predicates[0] in skip:
             continue
         claim_type = world.claim_type(predicates[0])
+        annotation = _write_annotation(claim_type)
+        if claim_type.cardinality.value == "many":
+            annotation = f"{annotation} | Sequence[{annotation}]"
         by_cardinality[claim_type.cardinality.value].append(
-            f"    {spelled}: {_write_annotation(claim_type)} = ...,"
+            f"    {spelled}: {annotation} = ...,"
         )
     return by_cardinality
 
@@ -740,6 +768,38 @@ def render_world_stub(world: World) -> str:
             "    self,",
             "    *items: WorldWritable,",
             "    because: str,",
+            "    dry_run: bool = ...,",
+            "    accept: WriteAccept = ...,",
+            ") -> WriteOutcome: ...",
+        ]
+    )
+    body.declare_lines(
+        [
+            "def section(",
+            "    self,",
+            "    file: str,",
+            "    heading_path: tuple[str, ...] | None = ...,",
+            "    *,",
+            "    text: str | None = ...,",
+            "    heading: str | None = ...,",
+            "    body: str = ...,",
+            "    under: tuple[str, ...] = ...,",
+            "    replace: bool = ...,",
+            "    expect: str | None = ...,",
+            ") -> AuthoredSection: ...",
+        ]
+    )
+    body.declare_lines(
+        [
+            "def note(",
+            "    self,",
+            "    file: str,",
+            "    *,",
+            "    text: str,",
+            "    about: Sequence[str | SubjectRef],",
+            "    because: str,",
+            "    under: tuple[str, ...] = ...,",
+            "    heading: str | None = ...,",
             "    dry_run: bool = ...,",
             "    accept: WriteAccept = ...,",
             ") -> WriteOutcome: ...",

@@ -562,7 +562,17 @@ def test_define_reads_each_kind_s_identity_rule_and_the_stub_types_it(
         "        expect_new: bool = ...,\n"
     ) in stub
     assert "class _N_sec__vulnerability(WorldNewSubject):" in stub
-    assert "    def edit(self) -> _E_sec__vulnerability: ..." in stub
+    # edit() starts an empty edit, or sets the single-value fields it is given.
+    assert (
+        "    def edit(\n"
+        "        self,\n"
+        "        /,\n"
+        "        *,\n"
+        "        evidence: Evidence | AuthoredSection | None = ...,\n"
+        "        role: WriteRole | None = ...,\n"
+        "        contend: bool = ...,\n"
+    ) in stub
+    assert "    ) -> _E_sec__vulnerability: ...\n" in stub
     assert "    *items: WorldWritable," in stub
 
 
@@ -1882,3 +1892,119 @@ def test_world_subjects_and_predicates_repr_short(
         f"WorldSubject('sec.package/cryptography' @ {'a' * 12})"
     )
     assert repr(world.sec.vuln.severity) == f"WorldClaimType('sec.vuln.severity' @ {'a' * 12})"
+
+
+def test_world_section_and_note_sit_beside_write_and_send_one_change_set(
+    connection: tuple[Cruxible, _WorldClient],
+) -> None:
+    """``w.section`` is ``cx.section``; ``w.note`` writes from the World's basis."""
+
+    from cruxible_client.authoring.section_evidence import AuthoredSection
+    from cruxible_client.contracts.write import AboutChange, SectionEvidence, SetChange
+
+    playbill, client = connection
+    world = playbill.world()
+    section = world.section("corpus/runbook.md", heading="Why", body="The advisory says so.")
+    assert isinstance(section, AuthoredSection)
+    assert section.operation == playbill.section(
+        "corpus/runbook.md", heading="Why", body="The advisory says so."
+    ).operation
+    assert section.citation == SectionEvidence(file="corpus/runbook.md", section=("Why",))
+
+    world.sec.vulnerability["cve-2026-69247"].set(
+        severity="high", evidence=section, because="Rated high."
+    )
+    (request,) = client.write_requests
+    # The client observed the append; the daemon gets its bytes, never the path.
+    ((edited,),) = (request.docs,)
+    assert (edited.op, edited.source_id, edited.section) == ("append", "corpus.runbook", ("Why",))
+    (change,) = request.changes
+    assert isinstance(change, SetChange) and change.evidence.kind == "section"
+    assert "# Why" in (playbill._workspace_root / "corpus" / "runbook.md").read_text()
+
+    world.note(
+        "corpus/runbook.md",
+        heading="Triage",
+        text="Patched in review.",
+        about=[world.sec.vulnerability["cve-2026-69247"], "sec.package/cryptography"],
+        because="Triage notes.",
+    )
+    note = client.write_requests[-1]
+    # Checked from the World's basis, advanced past its own accepted write.
+    assert note.at == "c" * 12
+    ((appended,),) = (note.docs,)
+    assert (appended.op, appended.section) == ("append", ("Triage",))
+    ((about,),) = (note.changes,)
+    assert isinstance(about, AboutChange) and about.section == ("Triage",)
+    assert about.subjects == ("sec.vulnerability/cve-2026-69247", "sec.package/cryptography")
+
+    stub = world.stub()
+    ast.parse(stub)
+    world_body = stub.split("\nclass World:\n", 1)[1]
+    assert "    def section(\n        self,\n        file: str,\n" in world_body
+    assert "    ) -> AuthoredSection: ...\n" in world_body
+    assert "    def note(\n        self,\n        file: str,\n" in world_body
+    assert "        about: Sequence[str | SubjectRef],\n" in world_body
+
+
+def test_subject_edit_takes_fields_as_a_set_and_still_chains(
+    connection: tuple[Cruxible, _WorldClient],
+) -> None:
+    from cruxible_client.contracts.write import RetireChange, SetChange
+
+    playbill, client = connection
+    world = playbill.world()
+    subject = world.sec.vulnerability["cve-2026-69247"]
+    click = world.sec.package.define("click")
+
+    empty = subject.edit()
+    assert empty._changes == ()
+    edit = subject.edit(severity="high", role="observation").set(affects_package=click)
+    assert [(change.op, change.field, change.role) for change in edit._changes] == [
+        ("set", SEVERITY, "observation"),
+        ("set", AFFECTS, None),
+    ]
+    retiring = subject.edit(severity="low").retire("affects_package")
+    assert isinstance(retiring._changes[-1], RetireChange)
+
+    world.write(edit, because="Rated and linked.")
+    (request,) = client.write_requests
+    sets = [change for change in request.changes if isinstance(change, SetChange)]
+    assert [change.field for change in sets] == [SEVERITY, AFFECTS]
+
+    with pytest.raises(TypeError, match="only beside the fields"):
+        subject.edit(role="observation")
+    from cruxible_client.authoring.world import WorldFieldValueRefused
+
+    with pytest.raises(WorldFieldValueRefused, match="keyword"):
+        subject.edit("severity", "high")  # type: ignore[misc]
+
+
+def test_define_and_add_take_a_list_on_a_many_valued_field_and_the_stub_types_it(
+    tmp_path: Path,
+) -> None:
+    """A many-valued field takes one value or a sequence; the stub admits both."""
+
+    from tests.test_client.test_world_field_messages import SKILLS, _FieldsClient
+
+    _workspace(tmp_path)
+    client = _FieldsClient()
+    playbill = Cruxible._from_client(  # type: ignore[arg-type]
+        client,
+        instance_id="inst_world",
+        workspace=tmp_path,
+        clock=lambda: datetime(2026, 9, 7, 12, tzinfo=UTC),
+    )
+    world = playbill.world()
+    world.write(world.sec.package.define("click", skills=["b", "a"]), because="Seeded.")
+    (request,) = client.write_requests
+    assert [(change.op, getattr(change, "value", None)) for change in request.changes] == [
+        ("create", None),
+        ("add", "b"),
+        ("add", "a"),
+    ]
+    assert {getattr(change, "field", SKILLS) for change in request.changes[1:]} == {SKILLS}
+
+    stub = world.stub()
+    ast.parse(stub)
+    assert "        skills: str | Sequence[str] = ...,\n" in stub

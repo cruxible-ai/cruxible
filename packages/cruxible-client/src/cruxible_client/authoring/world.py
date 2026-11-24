@@ -156,21 +156,29 @@ def _refuse_positional_fields(method: str, positional: tuple[object, ...]) -> No
         spelled = f".{method}(<field>=<value>)"
     raise WorldFieldValueRefused(
         f"{method}() takes each field as a keyword, not positionally: write {spelled}. "
-        "A many-valued field takes one value per .add(<field>=<value>); call .add "
-        "again for each further value"
+        "A many-valued field's .add takes one value or a list of them: "
+        ".add(<field>=[<a>, <b>])"
     )
 
 
 def _refuse_collection_value(field_name: str, value: object, *, many: bool) -> None:
-    """One keyword is one value; a list is not a value of any field."""
+    """One keyword is one value; a list is not a value of any field.
+
+    Only ``define()`` and ``add()`` on a many-valued field expand a list or a
+    tuple (``_many_values``); everywhere else a collection refuses here.
+    """
 
     if not isinstance(value, _COLLECTIONS):
         return
-    if many:
+    if many and isinstance(value, (set, frozenset)):
         repair = (
-            f"it is many-valued, so add each value with its own .add({field_name}=...), "
-            f"e.g. draft.add({field_name}=a).add({field_name}=b), or "
-            f"subject.add({field_name}=a, because=...) once per value"
+            "a set has no order, so pass a list or a tuple: define() and add() add "
+            "each item, in order"
+        )
+    elif many:
+        repair = (
+            f"it is many-valued, so add the values with .add({field_name}=[a, b]) "
+            f"or define(..., {field_name}=[a, b]): each item is one added value"
         )
     else:
         repair = "it holds one value; pass that value"
@@ -178,6 +186,27 @@ def _refuse_collection_value(field_name: str, value: object, *, many: bool) -> N
         f"{field_name} was given a {type(value).__name__}; each field keyword takes one "
         f"value, and {repair}"
     )
+
+
+def _many_values(field_name: str, value: object) -> tuple[object, ...]:
+    """The values one keyword adds to a many-valued field, in the order given.
+
+    A list or a tuple is one value per item; a string (or bytes) is one value,
+    never its characters. A set refuses: its order would decide the changes'.
+    An empty list adds nothing, so it refuses rather than write nothing.
+    """
+
+    if isinstance(value, (list, tuple)):
+        if not value:
+            raise WorldFieldValueRefused(
+                f"{field_name} was given an empty {type(value).__name__}; pass at least one "
+                "value, or leave the keyword out"
+            )
+        for item in value:
+            _refuse_collection_value(field_name, item, many=False)
+        return tuple(value)
+    _refuse_collection_value(field_name, value, many=True)
+    return (value,)
 
 
 class Names(tuple[str, ...]):
@@ -591,17 +620,37 @@ class WorldSubject(SubjectRef):
         edit = self.edit().retire(field, reason=reason)
         return edit.write(because=because, dry_run=dry_run, accept=accept)
 
-    def edit(self) -> WorldSubjectEdit:
+    def edit(
+        self,
+        /,
+        *positional: object,
+        evidence: Evidence | AuthoredSection | None = None,
+        role: WriteRole | None = None,
+        contend: bool = False,
+        **fields: object,
+    ) -> WorldSubjectEdit:
         """Start changes to this Subject that are written later, in one change set.
 
         ``edit().set(...)``, ``.add(...)`` and ``.retire(...)`` take exactly what
         ``set``, ``add`` and ``retire`` take, but return the edit instead of
-        writing, so it can be sent beside new Subjects' drafts.
+        writing, so it can be sent beside new Subjects' drafts. Fields given
+        here are set at once: ``edit(status="done")`` is ``edit().set(status="done")``
+        (with ``evidence=``, ``role=`` and ``contend=`` as ``set`` takes them),
+        and the edit still chains ``.add(...)`` and ``.retire(...)``.
 
         Next: ``w.write(edit, *drafts, because=...)`` or ``edit.write(because=...)``.
         """
 
-        return WorldSubjectEdit(address=self.address, _world=self._world)
+        _refuse_positional_fields("edit", positional)
+        edit = WorldSubjectEdit(address=self.address, _world=self._world)
+        if not fields:
+            if evidence is not None or role is not None or contend:
+                raise TypeError(
+                    "edit() takes evidence=, role= and contend= only beside the fields they "
+                    "set: edit(<field>=<value>, evidence=...)"
+                )
+            return edit
+        return edit.set(evidence=evidence, role=role, contend=contend, **fields)
 
     def __getitem__(self, predicate: str | ClaimTypeRef) -> tuple[ClaimView, ...]:
         """Read the live Claims under one predicate, named in full or by leaf."""
@@ -1040,6 +1089,8 @@ _DESCRIBED_VERBS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
             ('w.<kind>["<id>"].retire("<field>")', "end the live value"),
             ("w.<kind>.define(<key>, <field>=...)", "draft a new Subject by its key"),
             ('w.write(*drafts, *edits, because="...")', "drafts and edit()s as one change set"),
+            ("w.section(FILE, heading=..., body=...)", "prose a write cites (evidence=)"),
+            ("w.note(FILE, text=..., about=[...])", "a section linked about Subjects"),
         ),
     ),
     ("Then:", (("cx.next(expiring_within=...)", "what needs attention"),)),
@@ -1402,6 +1453,71 @@ class World:
                 landing.accepted.update((id(change), change) for change in sent.get(key, ()))
         return outcome
 
+    def section(
+        self,
+        file: str,
+        heading_path: tuple[str, ...] | None = None,
+        *,
+        text: str | None = None,
+        heading: str | None = None,
+        body: str = "",
+        under: tuple[str, ...] = (),
+        replace: bool = False,
+        expect: str | None = None,
+    ) -> AuthoredSection:
+        """A new section's text, carried as the evidence of one write: ``cx.section``.
+
+        ``w.section(file, heading="slug", body="...", under=("Notes",))`` appends
+        the section when the write is admitted and cites it; pass it as
+        ``evidence=`` to ``set``/``add``/``define``/``edit``. Nothing is sent here.
+
+        Next: ``subject.set(<field>=..., evidence=section, because=...)``.
+        """
+
+        return self._playbill.section(
+            file,
+            heading_path,
+            text=text,
+            heading=heading,
+            body=body,
+            under=under,
+            replace=replace,
+            expect=expect,
+        )
+
+    def note(
+        self,
+        file: str,
+        *,
+        text: str,
+        about: Sequence[str | SubjectRef],
+        because: str,
+        under: tuple[str, ...] = (),
+        heading: str | None = None,
+        dry_run: bool = False,
+        accept: WriteAccept = "if_allowed",
+    ) -> WriteOutcome:
+        """Append a section to ``file`` linked ``about`` Subjects: a note, never a Claim.
+
+        As ``cx.note``, checked from this World's write basis like its other
+        writes. ``text`` starts with the heading, or ``heading=`` names it once.
+
+        Next: ``cx.get(subject)`` lists the note; ``cruxible section FILE#Heading`` reads it.
+        """
+
+        from cruxible_client.contracts.write import AboutChange, AppendSection
+
+        subjects = tuple(
+            item.address if isinstance(item, SubjectRef) else item for item in about
+        )
+        return self._write(
+            [AboutChange(ref="note", subjects=subjects)],
+            docs=[AppendSection(id="note", file=file, under=under, text=text, heading=heading)],
+            because=because,
+            dry_run=dry_run,
+            accept=accept,
+        )
+
     def _define(
         self,
         kind: str,
@@ -1469,15 +1585,20 @@ class World:
             predicate = self._write_field(kind, name)
             node = self._node_at(predicate)
             assert node is not None and node.structure is not None
-            _refuse_collection_value(name, raw, many=node.structure.cardinality == "many")
-            changes.append(
+            many = node.structure.cardinality == "many"
+            # A many-valued field takes one value or a list of them: one add each.
+            items = _many_values(name, raw) if many else (raw,)
+            if not many:
+                _refuse_collection_value(name, raw, many=False)
+            changes.extend(
                 _FieldChange(
-                    op="add" if node.structure.cardinality == "many" else "set",
+                    op="add" if many else "set",
                     field=predicate,
-                    value=raw,
+                    value=item,
                     evidence=evidence,
                     role=role,
                 )
+                for item in items
             )
         return WorldNewSubject(
             subject_kind=kind,
@@ -1510,21 +1631,27 @@ class World:
         changes: list[_FieldChange] = []
         for name, value in fields.items():
             predicate = self._write_field(kind, name)
+            items: tuple[object, ...] = (value,)
             if isinstance(value, _COLLECTIONS):
                 node = self._node_at(predicate)
                 structure = None if node is None else node.structure
                 many = structure is not None and structure.cardinality == "many"
-                _refuse_collection_value(name, value, many=many)
-            changes.append(
+                if many and op == "add":
+                    # add(<many field>=[a, b]): one added value per item, in order.
+                    items = _many_values(name, value)
+                else:
+                    _refuse_collection_value(name, value, many=many)
+            changes.extend(
                 _FieldChange(
                     op=op,
                     field=predicate,
-                    value=value,
+                    value=item,
                     evidence=evidence,
                     role=role,
                     contend=contend,
                     expect_absent=expect_absent,
                 )
+                for item in items
             )
         return tuple(changes)
 
