@@ -1369,6 +1369,7 @@ def register_tools(
             "pairs",
             "runs",
             "backlinks",
+            "notes",
             "proof",
             "proof_full",
             "body",

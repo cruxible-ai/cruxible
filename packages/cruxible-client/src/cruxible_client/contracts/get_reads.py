@@ -56,6 +56,7 @@ GetDetail = Literal[
     "pairs",
     "runs",
     "backlinks",
+    "notes",
     "proof",
     "body",
 ]
@@ -90,6 +91,9 @@ GetRefKind = Literal[
 ReadFlag = Literal["stale", "contested", "contradicted", "uncovered", "unsure_hold"]
 # Which surface ``next`` suggestions are rendered for.
 ReadSurface = Literal["mcp", "cli", "sdk"]
+# Has a cited workspace section moved since it was cited? ``unchanged`` and a
+# workspace ``changed_since_cited`` come only from an adapter beside the files.
+SectionDrift = Literal["changed_since_cited", "unchanged", "unknown"]
 
 #: A Document body larger than this is never returned whole; pass a byte range.
 GET_BODY_DEFAULT_MAX_BYTES = 64 * 1024
@@ -101,13 +105,20 @@ GET_BODY_RANGE_MAX_BYTES = 256 * 1024
 GET_HISTORY_DEFAULT_LIMIT = 20
 GET_HISTORY_MAX_LIMIT = 200
 #: The ``get`` details that page with ``limit`` and ``cursor``.
-GET_PAGED_DETAILS: tuple[str, ...] = ("history", "incoming", "pairs", "runs", "backlinks")
+GET_PAGED_DETAILS: tuple[str, ...] = (
+    "history",
+    "incoming",
+    "pairs",
+    "runs",
+    "backlinks",
+    "notes",
+)
 #: The pairs a Subject card lists per pair kind and key part; ``detail="pairs"``
 #: pages them all.
 GET_CARD_PAIRS = 5
-#: The guidance Documents a ClaimType or Procedure card lists, and the links a
-#: Document card lists; a cut list says how many there are and names the read
-#: that shows them all.
+#: The guidance Documents a ClaimType or Procedure card lists, the links a
+#: Document card lists, and the notes a Subject card points to; a cut list says
+#: how many there are and names the read that shows them all.
 GET_CARD_LINKS = 5
 
 # A git oid or a prefix of one; the read resolves it (at least 12 hex, unique).
@@ -117,7 +128,7 @@ _GIT_OID = r"^[0-9a-f]{1,64}$"
 GET_DETAILS_BY_KIND: dict[str, tuple[str, ...]] = {
     "file": ("history", "body"),
     "claim": ("summary", "evidence", "why", "history", "proof"),
-    "subject": ("summary", "why", "history", "incoming", "pairs", "backlinks", "proof"),
+    "subject": ("summary", "why", "history", "incoming", "pairs", "backlinks", "notes", "proof"),
     "claim_type": ("summary", "history", "backlinks", "proof"),
     "document": ("summary", "why", "history", "proof", "body"),
     "procedure": ("summary", "history", "backlinks", "proof"),
@@ -221,7 +232,7 @@ class GetRequest(_StrictGetModel):
             self.limit is not None or self.cursor is not None
         ) and self.detail not in GET_PAGED_DETAILS:
             raise ValueError(
-                'limit and cursor page detail="history", "incoming", "pairs", "runs" or '
+                'limit and cursor page detail="history", "incoming", "pairs", "runs", "notes" or '
                 '"backlinks" only'
             )
         if self.field is not None and self.detail != "history":
@@ -389,6 +400,39 @@ class GetPendingProposal(_StrictGetModel):
     by: str = Field(description="The principal who proposed it.")
 
 
+class GetNoteLink(_StrictGetModel):
+    """A note about a Subject, as a pointer to its section: never the section's prose.
+
+    ``cruxible section FILE#Heading/Path`` (FILE the path the catalog maps
+    ``file`` to) reads the section itself.
+    """
+
+    note: str = Field(description="NOTE-<32 hex>; get reads its card.")
+    #: The catalogued workspace source (files.yaml name); absent when withheld (C14).
+    file: str | None = Field(default=None, exclude_if=_omit_none)
+    section: SectionPath | None = Field(default=None, exclude_if=_omit_none)
+    cited_digest: str | None = Field(
+        default=None, exclude_if=_omit_none, description="The section's bytes when linked."
+    )
+    drift: SectionDrift | None = Field(
+        default=None,
+        exclude_if=_omit_none,
+        description="Has the section moved since it was linked?",
+    )
+
+
+class GetNotes(_StrictGetModel):
+    """``detail="notes"``: one page of the notes about a Subject, as section pointers."""
+
+    target: str = Field(description="The Subject (kind/id).")
+    notes: tuple[GetNoteLink, ...]
+    #: C14: notes whose section Capture is withheld from this reader keep their
+    #: handle, without the section (file, heading path, cited digest).
+    withheld: BodyRestricted | None = Field(default=None, exclude_if=_omit_none)
+    #: The read of each section shown, spelled for the caller's surface.
+    next: tuple[str, ...] = ()
+
+
 class GetSubjectCard(_StrictGetModel):
     subject: str
     kind: str
@@ -403,6 +447,11 @@ class GetSubjectCard(_StrictGetModel):
     #: Open proposals that would write its fields (a card read at the head only):
     #: the values above stay the accepted ones until one is accepted.
     pending: tuple[GetPendingProposal, ...] = Field(default=(), exclude_if=lambda value: not value)
+    #: The live notes about it, as section pointers, at most ``GET_CARD_LINKS``;
+    #: ``detail="notes"`` pages them all and names each section's read.
+    notes: tuple[GetNoteLink, ...] = Field(default=(), exclude_if=lambda value: not value)
+    #: How many notes are about it, only when the card lists fewer.
+    notes_total: int | None = Field(default=None, ge=0, exclude_if=_omit_none)
     next: tuple[str, ...] = ()
 
 
@@ -1088,7 +1137,6 @@ class GetBody(_StrictGetModel):
 
 BacklinkRelation = Literal["cites", "about", "guides"]
 BacklinkSourceKind = Literal["Claim", "Note", "Document"]
-SectionDrift = Literal["changed_since_cited", "unchanged", "unknown"]
 
 
 class Backlink(_StrictGetModel):
@@ -1136,6 +1184,7 @@ class GetResult(_StrictGetModel):
     pairs: GetPairs | None = Field(default=None, exclude_if=_omit_none)
     runs: GetLineRuns | None = Field(default=None, exclude_if=_omit_none)
     backlinks: GetBacklinks | None = Field(default=None, exclude_if=_omit_none)
+    notes: GetNotes | None = Field(default=None, exclude_if=_omit_none)
     body: GetBody | None = Field(default=None, exclude_if=_omit_none)
     # Today's explain output, unchanged.
     why: dict[str, Any] | None = Field(default=None, exclude_if=_omit_none)
@@ -1144,7 +1193,8 @@ class GetResult(_StrictGetModel):
     reason: GetProposedReason | None = Field(default=None, exclude_if=_omit_none)
     # Today's full accepted envelope, unchanged.
     proof: dict[str, Any] | None = Field(default=None, exclude_if=_omit_none)
-    # Paging of ``detail="history"``, ``"incoming"``, ``"pairs"``, ``"runs"`` and ``"backlinks"``;
+    # Paging of ``detail="history"``, ``"incoming"``, ``"pairs"``, ``"runs"``, ``"backlinks"``
+    # and ``"notes"``;
     # absent on every other detail.
     truncated: bool | None = Field(default=None, exclude_if=_omit_none)
     next_cursor: str | None = Field(default=None, exclude_if=_omit_none)
@@ -1206,6 +1256,8 @@ __all__ = [
     "GetCapabilityCard",
     "GetContractCard",
     "GetNoteCard",
+    "GetNoteLink",
+    "GetNotes",
     "GetContractField",
     "GET_HISTORY_DEFAULT_LIMIT",
     "GET_HISTORY_MAX_LIMIT",

@@ -8,6 +8,7 @@ the result it is given: no request, no read.
 from __future__ import annotations
 
 import json
+import shlex
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from datetime import datetime
@@ -293,6 +294,24 @@ def backlink_line(link: Any, *, file_paths: Mapping[str, str] | None = None) -> 
     return f"{link.relation} {link.source_kind} {link.source}{where}" + (
         f"  [{'; '.join(extra)}]" if extra else ""
     )
+
+
+def note_link_text(link: Any, *, file_paths: Mapping[str, str] | None = None) -> str:
+    """One note pointer: its section locator (the file by workspace path) and drift."""
+
+    if link.file is None:
+        return f"{link.note}  (section withheld)"
+    where = f"{file_shown(link.file, file_paths)}#{'/'.join(link.section or ())}"
+    return where + (f"  [{link.drift}]" if link.drift else "")
+
+
+def section_read_line(link: Any, *, file_paths: Mapping[str, str] | None = None) -> str | None:
+    """``cruxible section`` for one note's section, the file named by its path."""
+
+    if link.file is None:
+        return None
+    locator = f"{file_shown(link.file, file_paths)}#{'/'.join(link.section or ())}"
+    return f"cruxible section {shlex.quote(locator)}"
 
 
 def get_value_text(
@@ -634,6 +653,11 @@ def render_get(
                 lines.append(
                     f"pending {item['proposal']}: {', '.join(item['fields'])} (by {item['by']})"
                 )
+            # Notes about it, as pointers: the sections stay in the workspace.
+            for link in result.card.notes:
+                lines.append("note " + note_link_text(link, file_paths=file_paths))
+            if result.card.notes_total is not None:
+                lines.append(f"({result.card.notes_total} notes in all)")
         else:
             for key, value in card.items():
                 if key == "nodes" and result.kind == "procedure_run" and value:
@@ -769,6 +793,17 @@ def render_get(
             lines.append(f"(no backlinks into {target})")
         for link in result.backlinks.links:
             lines.append(backlink_line(link, file_paths=file_paths))
+        return "\n".join(lines)
+    if result.notes is not None:
+        if not result.notes.notes:
+            lines.append(f"(no notes about {result.notes.target})")
+        reads: list[str] = []
+        for link in result.notes.notes:
+            lines.append(f"{link.note}  {note_link_text(link, file_paths=file_paths)}")
+            read = section_read_line(link, file_paths=file_paths)
+            if read is not None:
+                reads.append(read)
+        lines.extend(f"next: {read}" for read in reads)
         return "\n".join(lines)
     if result.pairs is not None:
         if not result.pairs.groups:

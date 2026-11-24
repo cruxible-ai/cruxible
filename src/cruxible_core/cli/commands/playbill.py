@@ -7466,6 +7466,7 @@ def section_read(locator: str, workspace_root: str, output_json: bool) -> None:
             "pairs",
             "runs",
             "backlinks",
+            "notes",
             "proof",
             "proof-full",
             "body",
@@ -7498,7 +7499,7 @@ def section_read(locator: str, workspace_root: str, output_json: bool) -> None:
     "--limit",
     type=int,
     default=None,
-    help="Rows per --detail history, incoming, pairs, runs or backlinks page (default 20).",
+    help="Rows per --detail history, incoming, pairs, runs, backlinks or notes page (default 20).",
 )
 @click.option(
     "--cursor",
@@ -7575,10 +7576,11 @@ def get_by_ref(
         lambda client, instance_id: client.get(instance_id, request=request),
         command_name="cruxible get",
     )
-    if result.backlinks is not None:
+    if result.backlinks is not None or result.notes is not None or result.kind == "subject":
         from cruxible_client.authoring.backlink_sections import observe_get_drift
 
-        # Section rows checked against the workspace here, as `backlinks` does.
+        # Section rows and note pointers checked against the workspace here,
+        # as `backlinks` does.
         result = observe_get_drift(result, Path("."))
     proof = result.proof
     claim_summary = result.kind == "claim" and result.detail == "proof" and not proof_full
@@ -7678,7 +7680,12 @@ def _emit_get_text(result: Any, *, evidence_erased: bool = False) -> None:
     ``evidence_erased`` marks a stale Claim's verdict as read from erased evidence.
     """
 
-    names_files = result.evidence is not None or result.backlinks is not None
+    names_files = (
+        result.evidence is not None
+        or result.backlinks is not None
+        or result.notes is not None
+        or bool(getattr(result.card, "notes", ()))
+    )
     text = render_get(
         result,
         evidence_erased=evidence_erased,

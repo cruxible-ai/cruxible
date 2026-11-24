@@ -100,6 +100,7 @@ from cruxible_client.contracts.get_reads import (
     GetLineRuns,
     GetNone,
     GetNoteCard,
+    GetNotes,
     GetPairEnd,
     GetPairs,
     GetPendingProposal,
@@ -1582,6 +1583,7 @@ def _subject_card(
     evaluation_time: datetime,
     surface: ReadSurface,
     at_head: bool = False,
+    access: BodyAccessContext | None = None,
 ) -> GetSubjectCard:
     """One Subject's fields, ends and pairs, and the reads that go further.
 
@@ -1589,7 +1591,7 @@ def _subject_card(
     write its fields: proposals are operational state, read only unpinned.
     """
 
-    from cruxible_core.service.discovery.backlinks import subject_has_backlinks
+    from cruxible_core.service.discovery.backlinks import card_notes, subject_has_backlinks
 
     subject = _name(resolved.identity)
     kind = subject.split("/", 1)[0]
@@ -1624,6 +1626,15 @@ def _subject_card(
         fact_paths = fact_claim_paths(projection.typed.connection, examined)
         # Whether `backlinks` has anything for it: two point seeks on the index.
         linked = subject_has_backlinks(projection.typed.connection, subject)
+        # The notes about it, as section pointers (never prose): one bounded range.
+        notes, notes_total = card_notes(
+            instance,
+            coordinate,
+            projection.typed.connection,
+            subject,
+            limit=GET_CARD_LINKS,
+            access=access,
+        )
     pending = _pending_proposals(instance, coordinate, path) if at_head else ()
     # Candidates only propose: each is listed when one of its facts is visible.
     visible = visible_pairs(
@@ -1780,6 +1791,13 @@ def _subject_card(
         incoming_count=incoming,
         pairs=tuple(end_groups),
         pending=pending,
+        # The daemon only knows a later observation moved a section; "unknown"
+        # stays off the card, and an adapter beside the files says the rest.
+        notes=tuple(
+            link.model_copy(update={"drift": None}) if link.drift == "unknown" else link
+            for link in notes
+        ),
+        notes_total=notes_total,
         next=(
             *dict.fromkeys(evidence_steps),
             # See the matching note in _claim_card: suggest ``why`` only when
@@ -1788,6 +1806,8 @@ def _subject_card(
             _render_get(surface, subject, "history"),
             # What points at it: the edges stored on other Subjects.
             *((_render_get(surface, subject, "incoming"),) if incoming else ()),
+            # Each note's section, and the read that names them all.
+            *((_render_get(surface, subject, "notes"),) if notes else ()),
             # The notes about it and the sections its Claims cite.
             *((_render_backlinks(surface, subject, at=None),) if linked else ()),
             # What a pending proposal would change, before anyone accepts it.
@@ -3860,6 +3880,8 @@ def service_playbill_get(
         return read_doc_edits(instance, request=request, access=access)
     if request.detail == "backlinks":
         return _get_backlinks(instance, request, access=access)
+    if request.detail == "notes":
+        return _get_notes(instance, request, access=access)
     continuation, at = _history_continuation(instance, request)
     coordinate = resolve_read_coordinate(instance, at)
     evaluation_time = (
@@ -3931,6 +3953,7 @@ def service_playbill_get(
                 # Only an unpinned read is a head read: a pin, even to the head's
                 # own OID, names accepted state, and proposals are not part of it.
                 at_head=request.at is None,
+                access=access,
             )
         elif resolved.kind == "claim_type":
             card = _claim_type_card(instance, coordinate, resolved, surface=surface, pinned=pinned)
@@ -4160,6 +4183,79 @@ def _get_backlinks(
         kind=resolved.kind,
         detail="backlinks",
         backlinks=GetBacklinks(target=page.target, links=page.links, withheld=page.withheld),
+        truncated=page.truncated,
+        next_cursor=page.next_cursor,
+        coordinate=page.coordinate,
+        evaluation_time=request.evaluation_time or utc_now(),
+        **fields,
+    )
+
+
+def _render_section(file: str, section: tuple[str, ...]) -> str:
+    """The read of one workspace section: ``cruxible section FILE#Heading/Path``.
+
+    The section lives in the workspace, never in accepted state, so its read
+    runs beside the files whatever surface asked: FILE is the catalog name,
+    which that command resolves as readily as a path.
+    """
+
+    return f"cruxible section {shlex.quote(f'{file}#' + '/'.join(section))}"
+
+
+def _get_notes(
+    instance: PlaybillInstance,
+    request: GetRequest,
+    *,
+    access: BodyAccessContext,
+) -> GetResult:
+    """``detail="notes"``: one page of the notes about a Subject, as section pointers.
+
+    A page of the note rows of the backlink index for this one Subject, and one
+    section read per note shown: the prose stays in the workspace.
+    """
+
+    from cruxible_client.contracts.backlinks import BACKLINKS_MAX_LIMIT, BacklinksRequest
+    from cruxible_core.service.discovery.backlinks import (
+        resolve_backlink_target,
+        service_subject_notes,
+    )
+
+    notes_request = BacklinksRequest(
+        ref=request.ref,
+        limit=min(request.limit or GET_HISTORY_DEFAULT_LIMIT, BACKLINKS_MAX_LIMIT),
+        cursor=request.cursor,
+        at=request.at,
+        surface=request.surface,
+    )
+    resolved, coordinate = resolve_backlink_target(instance, notes_request, access=access)
+    allowed = GET_DETAILS_BY_KIND[resolved.kind]
+    if request.detail not in allowed:
+        raise _detail_unsupported(request.detail, request.surface, resolved, allowed)
+    page = service_subject_notes(
+        instance,
+        subject=resolved.identity.removeprefix("Subject:"),
+        request=notes_request,
+        access=access,
+    )
+    fields: dict[str, Any] = {}
+    if request.full_coordinate:
+        fields["accepted_coordinate"] = ClientCoordinate.model_validate(
+            AcceptedCoordinate.from_internal(coordinate).model_dump(mode="json")
+        )
+    return GetResult(
+        ref=resolved.display,
+        kind=resolved.kind,
+        detail="notes",
+        notes=GetNotes(
+            target=page.target,
+            notes=page.notes,
+            withheld=page.withheld,
+            next=tuple(
+                _render_section(link.file, link.section)
+                for link in page.notes
+                if link.file is not None and link.section is not None
+            ),
+        ),
         truncated=page.truncated,
         next_cursor=page.next_cursor,
         coordinate=page.coordinate,

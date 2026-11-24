@@ -209,6 +209,7 @@ from cruxible_client.contracts.get_reads import (
     GetProcedureTrackRecord,
     GetRequest,
     GetResult,
+    GetSubjectCard,
     GetSubjectHistory,
 )
 from cruxible_client.contracts.identity_normalizers import KeyNormalizer
@@ -5178,6 +5179,10 @@ class Cruxible:
         what points into it (``GetBacklinks``), every page read: notes and
         Documents ``about`` a Subject and the sections its live Claims cite,
         or the Documents that ``guides`` a definition.
+        ``detail="notes"`` on a Subject answers the notes about it as section
+        pointers (``GetNotes``), every page read, with each section's read
+        (``cruxible section FILE#Heading/Path``); a Subject card lists the
+        first few.
 
         Next: ``detail="evidence"`` for what backs a Claim, ``detail="history"`` for its
         revisions, ``detail="proof"`` for the full envelope; ``card.ref`` passes the thing
@@ -5544,6 +5549,38 @@ class Cruxible:
                 # None (a connection without a workspace) leaves the daemon's answer.
                 self._workspace,
             )
+        if result.notes is not None:
+            # Every page of the notes, pinned by the cursor, each checked for drift.
+            notes = list(result.notes.notes)
+            nexts = list(result.notes.next)
+            page = result
+            while page.truncated and page.next_cursor is not None:
+                page = self._client.get(
+                    self._instance_id,
+                    request=request.model_copy(update={"at": None, "cursor": page.next_cursor}),
+                )
+                assert page.notes is not None
+                notes.extend(page.notes.notes)
+                nexts.extend(page.notes.next)
+            from cruxible_client.authoring.backlink_sections import observe_get_drift
+
+            result = observe_get_drift(
+                result.model_copy(
+                    update={
+                        "notes": result.notes.model_copy(
+                            update={"notes": tuple(notes), "next": tuple(nexts)}
+                        ),
+                        "truncated": False,
+                        "next_cursor": None,
+                    }
+                ),
+                self._workspace,
+            )
+        elif isinstance(result.card, GetSubjectCard) and result.card.notes:
+            from cruxible_client.authoring.backlink_sections import observe_get_drift
+
+            # A card's note pointers say whether each section moved, as backlinks do.
+            result = observe_get_drift(result, self._workspace)
         return result
 
     def _source_card(self, ref: SourceRef) -> KnowledgeCard:

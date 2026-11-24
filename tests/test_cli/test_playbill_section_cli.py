@@ -199,3 +199,93 @@ def test_the_because_refusal_names_every_one_step_section_path(reads: _Reads) ->
     assert "w.section(FILE, heading=..., body=...)" in flat
     assert "--section FILE#Heading --section-body TEXT" in flat
     assert "evidence {kind: section, ref: ID}" in flat
+
+
+def _note(heading: str, body: str, *subjects: str) -> None:
+    args: list[str] = ["note", "notes.md", "--heading", heading, "--text", body]
+    for subject in subjects:
+        args += ["--about", subject]
+    noted = _run(*args, "--because", "Triage context")
+    assert noted.exit_code == 0, noted.output
+
+
+def test_get_card_points_to_notes_and_detail_notes_names_each_read(
+    reads: _Reads, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    secret = "Prose that stays in the workspace."
+    _note("Triage", secret, WI1)
+    shown = _run("get", WI1, "--json")
+    assert shown.exit_code == 0, shown.output
+    card = json.loads(shown.stdout)["card"]
+    (pointer,) = card["notes"]
+    assert pointer["file"] == "doc-notes.md" and pointer["section"] == ["Triage"]
+    assert pointer["note"].startswith("NOTE-")
+    # Checked against the workspace beside it; the card never carries the prose.
+    assert pointer["drift"] == "unchanged"
+    assert "notes_total" not in card
+    assert secret not in shown.stdout
+    assert f"cruxible get {WI1} --detail notes" in card["next"]
+
+    text = _run("get", WI1)
+    assert text.exit_code == 0, text.output
+    assert "note notes.md#Triage  [unchanged]" in text.output
+    assert secret not in text.output
+
+    detail = _run("get", WI1, "--detail", "notes", "--json")
+    assert detail.exit_code == 0, detail.output
+    payload = json.loads(detail.stdout)
+    assert payload["detail"] == "notes"
+    (row,) = payload["notes"]["notes"]
+    assert row["note"] == pointer["note"] and row["cited_digest"].startswith("sha256:")
+    assert payload["notes"]["next"] == ["cruxible section 'doc-notes.md#Triage'"]
+    assert secret not in detail.stdout
+    detail_text = _run("get", WI1, "--detail", "notes")
+    assert detail_text.exit_code == 0, detail_text.output
+    assert f"{pointer['note']}  notes.md#Triage  [unchanged]" in detail_text.output
+    assert "next: cruxible section 'notes.md#Triage'" in detail_text.output
+
+    # The hint reads the section; an edit since the link reads as drift.
+    read = _run("section", "notes.md#Triage")
+    assert read.exit_code == 0 and secret in read.output
+    (tmp_path / "notes.md").write_text("# Triage\nRewritten.\n", encoding="utf-8")
+    moved = json.loads(_run("get", WI1, "--json").stdout)["card"]["notes"][0]
+    assert moved["drift"] == "changed_since_cited"
+
+
+def test_a_card_lists_a_few_notes_and_detail_notes_pages_them_all(
+    reads: _Reads, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_client.contracts.get_reads import GET_CARD_LINKS
+
+    monkeypatch.chdir(tmp_path)
+    count = GET_CARD_LINKS + 2
+    for index in range(count):
+        _note(f"N{index}", f"Body {index}.", WI1)
+    card = json.loads(_run("get", WI1, "--json").stdout)["card"]
+    assert len(card["notes"]) == GET_CARD_LINKS and card["notes_total"] == count
+    assert f"({count} notes in all)" in _run("get", WI1).output
+
+    first = json.loads(_run("get", WI1, "--detail", "notes", "--limit", "3", "--json").stdout)
+    assert len(first["notes"]["notes"]) == 3 and first["truncated"] is True
+    seen = [row["note"] for row in first["notes"]["notes"]]
+    cursor = first["next_cursor"]
+    while cursor:
+        page = json.loads(
+            _run("get", WI1, "--detail", "notes", "--limit", "3", "--cursor", cursor, "--json")
+            .stdout
+        )
+        seen += [row["note"] for row in page["notes"]["notes"]]
+        cursor = page.get("next_cursor")
+    assert len(seen) == len(set(seen)) == count
+    # A Subject with no notes keeps the card it had: no notes field at all.
+    other = json.loads(_run("get", f"{KIND}/wi-2", "--json").stdout)
+    assert "notes" not in other.get("card", {})
+    empty = _run("get", f"{KIND}/wi-2", "--detail", "notes")
+    assert empty.exit_code == 0 and f"(no notes about {KIND}/wi-2)" in empty.output
+
+
+def test_detail_notes_is_a_subject_detail(reads: _Reads) -> None:
+    refused = _run("get", "ClaimType:project.work_item.status", "--detail", "notes")
+    assert refused.exit_code != 0
+    assert "notes" in refused.output
