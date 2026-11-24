@@ -109,3 +109,75 @@ def test_an_edit_that_leaves_ordered_out_keeps_the_accepted_ordering() -> None:
     assert kept.value == EnumType(members=("low", "medium", "high"), ordered=True)
     dropped = entry_input("t.item.priority", _field(enum=["low", "high"], ordered=False), accepted)
     assert dropped.value == EnumType(members=("low", "high"))
+
+
+def test_orient_human_text_spells_ordered_enum_distinct_from_unordered_enum() -> None:
+    from cruxible_client.contracts.text_display import render_orient
+
+    base = {
+        "instance": "inst_world",
+        "generation": 1,
+        "coordinate": {"git_oid": "a" * 40},
+        "proposed_at": "2026-09-07T12:00:00Z",
+    }
+    kind_text = render_orient(
+        {
+            **base,
+            "kind_detail": {
+                "kind": "it.asset",
+                "subjects": 2,
+                "predicates": [
+                    {
+                        "name": "criticality",
+                        "cardinality": "one",
+                        "type": 'ordered_enum["low", "medium", "high", "critical"]',
+                        "members": ["low", "medium", "high", "critical"],
+                        "live_claims": 2,
+                        "subjects_with_value": 2,
+                    },
+                    {
+                        "name": "environment",
+                        "cardinality": "one",
+                        "type": 'enum["prod", "staging", "dev"]',
+                        "members": ["prod", "staging", "dev"],
+                        "live_claims": 2,
+                        "subjects_with_value": 2,
+                    },
+                ],
+                "incoming": [],
+                "sample_subject_ids": [],
+            },
+        }
+    )
+    assert "criticality  one  ordered_enum[low|medium|high|critical]" in kind_text
+    assert "environment  one  enum[prod|staging|dev]" in kind_text
+
+    catalog_text = render_orient(
+        {
+            **base,
+            "section": "claim_types",
+            "claim_types": [
+                {
+                    "name": "criticality",
+                    "predicate": "it.asset.criticality",
+                    "subject_kinds": ["it.asset"],
+                    "cardinality": "one",
+                    "type": 'ordered_enum["low", "medium", "high", "critical"]',
+                    "members": ["low", "medium", "high", "critical"],
+                },
+                {
+                    "name": "environment",
+                    "predicate": "it.asset.environment",
+                    "subject_kinds": ["it.asset"],
+                    "cardinality": "one",
+                    "type": 'enum["prod", "staging", "dev"]',
+                    "members": ["prod", "staging", "dev"],
+                },
+            ],
+        }
+    )
+    assert (
+        "it.asset.criticality  kinds=it.asset  one  ordered_enum[low|medium|high|critical]"
+        in catalog_text
+    )
+    assert "it.asset.environment  kinds=it.asset  one  enum[prod|staging|dev]" in catalog_text

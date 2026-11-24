@@ -82,7 +82,8 @@ def short_provider_build(name: str) -> str:
 def _orient_predicate_line(item: Mapping[str, Any]) -> str:
     kind = item["type"]
     if item.get("members"):
-        kind = "enum[" + "|".join(str(member) for member in item["members"]) + "]"
+        prefix = "ordered_enum[" if str(kind).startswith("ordered_enum") else "enum["
+        kind = prefix + "|".join(str(member) for member in item["members"]) + "]"
     parts = [str(item["name"]), str(item["cardinality"]), kind]
     if item.get("live_claims") is not None:
         parts.append(f"claims={item['live_claims']}")

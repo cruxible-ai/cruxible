@@ -84,6 +84,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from cruxible_client.contracts.subject_kinds import SubjectKeyValue
     from cruxible_client.contracts.write import (
         Change,
+        CreateKey,
         CreateKeyPart,
         DocOp,
         Evidence,
@@ -742,6 +743,7 @@ class WorldNewSubject(WorldWritable):
     subject_kind: str
     _world: World = field(repr=False)
     _key: SubjectKeyValue | tuple[CreateKeyPart, ...] | None = None
+    _key_drafts: tuple[tuple[str, SubjectKeyValue | WorldNewSubject], ...] = ()
     _create_new: bool = False
     _expect_new: bool = False
     #: What the key Claims cite and their role, from ``define(evidence=, role=)``.
@@ -935,7 +937,7 @@ class KindNamespace:
     def define(
         self,
         /,
-        *key: SubjectKeyValue,
+        *key: SubjectKeyValue | SubjectRef | WorldNewSubject,
         create_new: bool = False,
         expect_new: bool = False,
         evidence: Evidence | AuthoredSection | None = None,
@@ -1319,6 +1321,7 @@ class World:
             AddChange,
             CreateChange,
             CreatedSubject,
+            CreateKeyPart,
             SetChange,
         )
 
@@ -1399,11 +1402,30 @@ class World:
                 return evidence.citation
             return evidence
 
+        def key_of(draft: WorldNewSubject) -> CreateKey:
+            if not draft._key_drafts:
+                return draft._key
+            parts: list[CreateKeyPart] = []
+            for predicate, part in draft._key_drafts:
+                if isinstance(part, WorldNewSubject):
+                    resolved: SubjectKeyValue | CreatedSubject = (
+                        landed(part)
+                        if part._landing.ref is not None
+                        else CreatedSubject(created=label(part))
+                    )
+                    parts.append(CreateKeyPart(predicate=predicate, value=resolved))
+                else:
+                    parts.append(CreateKeyPart(predicate=predicate, value=part))
+            if len(parts) == 1 and not isinstance(parts[0].value, CreatedSubject):
+                return parts[0].value
+            return tuple(parts)
+
         def label(draft: WorldNewSubject) -> str:
             mine(draft)
             key = id(draft._landing)
             name = labels.get(key)
             if name is None:
+                resolved_key = key_of(draft)
                 landings[key] = draft._landing
                 name = labels[key] = f"new-{len(labels) + 1}"
                 creates.append(
@@ -1412,7 +1434,7 @@ class World:
                         CreateChange(
                             label=name,
                             subject_kind=draft.subject_kind,
-                            key=draft._key,
+                            key=resolved_key,
                             create_new=draft._create_new,
                             expect_new=draft._expect_new,
                             role=draft._role,
@@ -1520,7 +1542,7 @@ class World:
         self,
         kind: str,
         identity: _Identity,
-        key: tuple[SubjectKeyValue, ...],
+        key: tuple[SubjectKeyValue | SubjectRef | WorldNewSubject, ...],
         fields: dict[str, object],
         *,
         create_new: bool,
@@ -1535,6 +1557,7 @@ class World:
         self._refuse_reserved_keywords(kind, "define", role=role, evidence=evidence)
 
         sent: SubjectKeyValue | tuple[CreateKeyPart, ...] | None = None
+        key_drafts: tuple[tuple[str, SubjectKeyValue | WorldNewSubject], ...] = ()
         if identity.rule == "minted":
             if key or create_new:
                 raise TypeError(
@@ -1557,27 +1580,48 @@ class World:
             missing = [predicate for predicate in identity.keys if predicate not in given]
             if missing:
                 raise TypeError(f"define() needs the key of {kind}: {', '.join(missing)}")
-            values: dict[str, SubjectKeyValue] = {}
+            values: dict[str, SubjectKeyValue | WorldNewSubject] = {}
             for predicate, raw in given.items():
-                part = raw.value if isinstance(raw, LiteralValue) else raw
-                if not isinstance(part, (str, int, bool)) or part == "":
-                    raise TypeError(
-                        f"{predicate}: a key part is a non-empty string, an integer or a "
-                        f"boolean, not {part!r}"
+                key_node = self._node_at(predicate)
+                subject_key = (
+                    key_node is not None
+                    and key_node.structure is not None
+                    and claim_value_kind(key_node.structure.value) == "subject"
+                )
+                if subject_key and isinstance(raw, SubjectRef):
+                    part: object = raw.address
+                elif subject_key and isinstance(raw, WorldNewSubject):
+                    part = raw
+                elif isinstance(raw, LiteralValue):
+                    part = raw.value
+                else:
+                    part = raw
+                if not (subject_key and isinstance(part, WorldNewSubject)) and (
+                    not isinstance(part, (str, int, bool)) or part == ""
+                ):
+                    expected = (
+                        "a Subject or kind/id string"
+                        if subject_key
+                        else "a non-empty string, an integer or a boolean"
                     )
+                    raise TypeError(f"{predicate}: a key part is {expected}, not {part!r}")
                 values[predicate] = part
             if create_new and identity.unique:
                 raise TypeError(
                     f"{kind} keys are unique: a key names one Subject, so create_new does not apply"
                 )
-            sent = (
-                values[identity.keys[0]]
-                if len(identity.keys) == 1
-                else tuple(
-                    CreateKeyPart(predicate=predicate, value=values[predicate])
-                    for predicate in identity.keys
+            if any(isinstance(v, WorldNewSubject) for v in values.values()):
+                key_drafts = tuple((predicate, values[predicate]) for predicate in identity.keys)
+            else:
+                plain = {predicate: values[predicate] for predicate in identity.keys}
+                sent = (
+                    plain[identity.keys[0]]  # type: ignore[assignment]
+                    if len(identity.keys) == 1
+                    else tuple(
+                        CreateKeyPart(predicate=predicate, value=plain[predicate])  # type: ignore[arg-type]
+                        for predicate in identity.keys
+                    )
                 )
-            )
         changes: list[_FieldChange] = []
         for name, raw in fields.items():
             predicate = self._write_field(kind, name)
@@ -1602,6 +1646,7 @@ class World:
             subject_kind=kind,
             _world=self,
             _key=sent,
+            _key_drafts=key_drafts,
             _create_new=create_new,
             _expect_new=expect_new,
             _evidence=evidence,

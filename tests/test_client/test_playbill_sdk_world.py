@@ -2011,3 +2011,122 @@ def test_define_and_add_take_a_list_on_a_many_valued_field_and_the_stub_types_it
     stub = world.stub()
     ast.parse(stub)
     assert "        skills: str | Sequence[str] = ...,\n" in stub
+
+
+def test_define_accepts_world_subject_and_new_subject_drafts_for_subject_key_parts(
+    tmp_path: Path,
+) -> None:
+    """Subject-typed key parts accept WorldSubject/SubjectRef and WorldNewSubject drafts."""
+
+    from cruxible_client.contracts.write import CreateChange, CreatedSubject, CreateKeyPart
+
+    class _PairClient(_WorldClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.subjects["sec.package/click"] = "live"
+            self.subject_kinds.append(
+                {
+                    "kind": "sec.exposure",
+                    "rule": "keys",
+                    "keys": ("sec.exposure.package", "sec.exposure.vulnerability"),
+                    "uniqueness": "unique",
+                }
+            )
+
+        def _claim_type_list(self, instance_id: str, *, at: Any = None) -> ClaimTypeListing:
+            listing = super()._claim_type_list(instance_id, at=at)
+            listing.claim_types.extend(
+                [
+                    _claim_type(
+                        "sec.exposure.package",
+                        value_type=("sec.package",),
+                        allowed_subject_kinds=("sec.exposure",),
+                    ),
+                    _claim_type(
+                        "sec.exposure.vulnerability",
+                        value_type=("sec.vulnerability",),
+                        allowed_subject_kinds=("sec.exposure",),
+                    ),
+                    _claim_type(
+                        "sec.exposure.verdict",
+                        value_type={"kind": "enum", "members": ["affected", "not_affected"]},
+                        allowed_subject_kinds=("sec.exposure",),
+                    ),
+                ]
+            )
+            return listing
+
+    _workspace(tmp_path)
+    client = _PairClient()
+    playbill = Cruxible._from_client(  # type: ignore[arg-type]
+        client,
+        instance_id="inst_world",
+        workspace=tmp_path,
+        clock=lambda: datetime(2026, 9, 7, 12, tzinfo=UTC),
+    )
+    world = playbill.world()
+
+    # 1. Existing WorldSubject objects unwrap to their kind/id addresses.
+    pkg = world.sec.package["click"]
+    vuln = world.sec.vulnerability["cve-2026-69247"]
+    existing_pair = world.sec.exposure.define(
+        package=pkg,
+        vulnerability=vuln,
+        verdict="affected",
+    )
+    assert existing_pair._key == (
+        CreateKeyPart(predicate="sec.exposure.package", value="sec.package/click"),
+        CreateKeyPart(
+            predicate="sec.exposure.vulnerability",
+            value="sec.vulnerability/cve-2026-69247",
+        ),
+    )
+
+    # 2. Unlanded WorldNewSubject drafts in a composite key emit dependency creates FIRST
+    #    and wire CreatedSubject labels into CreateKeyPart.
+    new_pkg = world.sec.package.define("httpx")
+    new_pair = world.sec.exposure.define(
+        package=new_pkg,
+        vulnerability=vuln,
+        verdict="not_affected",
+    )
+    outcome = world.write(new_pair, because="Create package and exposure together.")
+    assert outcome.status == "accepted"
+    (request,) = client.write_requests
+    creates = [c for c in request.changes if isinstance(c, CreateChange)]
+    assert [c.subject_kind for c in creates] == ["sec.package", "sec.exposure"]
+    assert creates[0].key == "httpx"
+    assert creates[1].key == (
+        CreateKeyPart(
+            predicate="sec.exposure.package",
+            value=CreatedSubject(created=creates[0].label),
+        ),
+        CreateKeyPart(
+            predicate="sec.exposure.vulnerability",
+            value="sec.vulnerability/cve-2026-69247",
+        ),
+    )
+    assert new_pkg.address is not None and new_pair.address is not None
+
+    # 3. An already-landed draft in a later define() uses its accepted address without re-creating.
+    later_pair = world.sec.exposure.define(
+        package=new_pkg,
+        vulnerability=vuln,
+        verdict="affected",
+    )
+    world.write(later_pair, because="Second write using landed draft.")
+    second_creates = [c for c in client.write_requests[-1].changes if isinstance(c, CreateChange)]
+    assert [c.subject_kind for c in second_creates] == ["sec.exposure"]
+    assert second_creates[0].key == (
+        CreateKeyPart(predicate="sec.exposure.package", value=new_pkg.address),
+        CreateKeyPart(
+            predicate="sec.exposure.vulnerability",
+            value="sec.vulnerability/cve-2026-69247",
+        ),
+    )
+
+    # 4. A literal-typed key still refuses a WorldSubject or WorldNewSubject.
+    with pytest.raises(TypeError, match="a non-empty string, an integer or a boolean"):
+        world.sec.package.define(pkg)
+    with pytest.raises(TypeError, match="a non-empty string, an integer or a boolean"):
+        world.sec.package.define(new_pkg)
