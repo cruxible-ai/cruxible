@@ -341,6 +341,24 @@ the two kinds, and a mismatched argument refuses with which is which:
     about Note NOTE-7fe0ae4f8df1e64027a67ea6017bcbe8 docs/fitment.md#Fitment notes/wb-500 squeak  [unchanged]
   ~~~
 
+  The Subject's own `get` card points to its notes, never their prose (up to
+  five; `get --detail notes` pages them all, each with its read), and
+  `cruxible section` reads one section on demand. Floor Subject files list the
+  same locators under `notes:`.
+
+  ~~~text
+  $ cruxible get catalog.part/wb-500
+  catalog.part/wb-500  (live, 0 incoming)
+    ...
+  note docs/fitment.md#Fitment notes/Wiper blades  [unchanged]
+  note docs/fitment.md#Fitment notes/wb-500 squeak  [unchanged]
+  next: cruxible get catalog.part/wb-500 --detail notes
+  $ cruxible section 'docs/fitment.md#Fitment notes/wb-500 squeak'
+  ## wb-500 squeak
+
+  Squeaks on dry glass.
+  ~~~
+
 - **Guidance** links a *whole registered page* to a ClaimType or Procedure as
   its review guidance. The link is recorded on the page's catalog entry and the
   page's Document revision is proposed with it; `proposal review` of a change

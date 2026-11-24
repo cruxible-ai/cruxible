@@ -87,6 +87,26 @@ made from.
   proposal (`--only Line:NAME` narrows them): under independent approval,
   iterating on a pure provider is one command and one approval, and an
   observation-only settle grant keeps settle with its Line's enablement.
+- **Notes show where you read:** a Subject's `get` card lists the live notes
+  about it as section pointers (`file#Heading/Path`, the note's handle and,
+  beside the workspace, whether the section moved since it was linked), never
+  the prose; `get --detail notes` pages them all with each section's read.
+  Floor Subject files list them under `notes:` (renderer v7.2: a client holding
+  an older floor is sent the whole floor once). Default `orient` names the
+  workspace's catalogued files on a `Files:` line.
+- **`cruxible section FILE#Heading/Path`** reads one section of a catalogued
+  Markdown file (`FILE#` for the preamble): its own body and the subsections to
+  read next; `--json` adds the digest a citation records. A miss names the
+  nearest headings.
+- **`set`/`add --section FILE#Heading/Path`** cites a section (with
+  `--own-words`); with `--section-body TEXT` (`-` reads stdin) the same write
+  appends that heading and cites it, so reasoning past a 280-character
+  `--because` lands in one step. The `rationale_invalid` refusal names this,
+  `w.section(...)`, and the write file's `docs` op.
+- **World ergonomics:** `w.section(...)` and `w.note(...)` sit beside
+  `w.write(...)` (typed in `world.pyi`); `subject.edit(field=...)` sets fields
+  and still chains `.add`/`.retire`; a many-valued field takes a list or tuple
+  in `define(...)` and `add(...)` (one added value per item, in order).
 
 ### Changed
 

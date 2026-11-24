@@ -4176,12 +4176,14 @@ scope, and operational input head remain unchanged.
 
 ~~~text
 cruxible set SUBJECT FIELD (VALUE | --none) --because TEXT
-  [--evidence-file PATH#ANCHOR | --capture CAP-HANDLE|DIGEST | --evidence-contract NAME]
+  [--evidence-file PATH#ANCHOR | --capture CAP-HANDLE|DIGEST | --evidence-contract NAME
+   | --section FILE#Heading/Path [--section-body TEXT|-] [--own-words]]
   [--role ROLE] [--contend] [--expect VALUE... | --expect-absent]
   [--based-on CLAIM_ID... | --clear-based-on]
   [--workspace-root DIR] [--dry-run] [--no-accept] [--at GIT_OID] [--json]
 cruxible add SUBJECT FIELD VALUE [--none] --because TEXT
-  [--evidence-file PATH#ANCHOR | --capture CAP-HANDLE|DIGEST | --evidence-contract NAME]
+  [--evidence-file PATH#ANCHOR | --capture CAP-HANDLE|DIGEST | --evidence-contract NAME
+   | --section FILE#Heading/Path [--section-body TEXT|-] [--own-words]]
   [--role ROLE] [--expect-absent] [--based-on CLAIM_ID... | --clear-based-on]
   [--workspace-root DIR] [--dry-run] [--no-accept] [--at GIT_OID] [--json]
 cruxible retire TARGET [FIELD [VALUE]] --because TEXT
@@ -4193,6 +4195,14 @@ cruxible write FILE [--because TEXT] [--based-on CLAIM_ID]... [--workspace-root 
   [--dry-run] [--no-accept] [--at GIT_OID] [--json]
 cruxible write --schema
 ~~~
+
+`set` and `add` take `--section FILE#Heading/Path` to cite a section (with
+`--own-words` when its text is yours), as `rebind` and `claim attest` do. With
+`--section-body TEXT` (`-` reads stdin) the same write appends that heading
+with the body, under its parent headings, and cites the new section: the
+one-step form of the `docs` op below, for reasoning longer than a 280-character
+`--because`. The parents must exist (a new file takes a root heading), and the
+outcome reports the file write (`docs`) as `write` does.
 
 `write` accepts `docs` with heading paths as lists. Append adds a child subtree
 (`under: []` appends at EOF); replace replaces a subtree (`section: []` selects
@@ -4441,6 +4451,7 @@ cruxible link FILE#Heading/Path --about KIND/ID [--about ...] --because WHY [--u
 cruxible link FILE --guides ClaimType:NAME|Procedure:NAME [--guides ...] [--unlink]
   [--name NAME] [--workspace-root DIR] [--dry-run] [--no-accept] [--at GIT_OID] [--json]
 cruxible backlinks [REF | --section FILE#Heading/Path] [--limit N] [--cursor C] [--at OID] [--json]
+cruxible section FILE#Heading/Path [--workspace-root DIR] [--json]
 ~~~
 
 `cruxible note` appends TEXT (which starts with its heading) to a workspace
@@ -4497,10 +4508,20 @@ section changed since it was cited, checked against the file in the workspace
 (`changed_since_cited`, `unchanged`, or `unknown` when the file is not
 catalogued here). Pages are bounded by `--limit`; `--cursor` continues one.
 
+`cruxible section FILE#Heading/Path` reads one section of a catalogued
+Markdown file, the locator `get`, `backlinks` and floor files print (FILE a
+path or a catalog name; `FILE#` reads the preamble). It prints the section's
+own body (its heading and prose, up to its first subsection) and the
+subsections' locators; `--json` gives `file` (catalog name), `path`,
+`section`, `digest` (sha256 of those bytes, as a citation or note records
+them), `text` and `subsections`. It reads the workspace only. A miss refuses
+`cruxible.doc.section_not_found` with the nearest heading paths and the
+top-level headings; an uncatalogued file `cruxible.doc.file_not_catalogued`.
+
 ## get
 
 ~~~text
-cruxible get REF [--detail summary|evidence|why|history|incoming|pairs|runs|proof|proof-full|body]
+cruxible get REF [--detail summary|evidence|why|history|incoming|pairs|runs|backlinks|notes|proof|proof-full|body]
   [--range START:END] [--output FILE] [--limit N] [--cursor C] [--field FIELD]
   [--at GIT_OID] [--evaluation-time TS] [--json]
 ~~~
@@ -4606,6 +4627,11 @@ target); past five, `links_total` says how many and `next` names `--detail
 proof`, whose envelope carries every link. A card read with `--at` names
 either read with the same `--at`, so it answers the generation the card cut.
 A card with none has no such field.
+A Subject card lists up to five live notes about it (`notes`: each note's
+handle, `file` and `section`, the cited digest and, beside the workspace,
+`drift`), pointers only, never the section's prose; past five, `notes_total`
+says how many. `--detail notes` pages every note with `next: cruxible section
+FILE#Heading/Path` for each.
 A wrong or ambiguous REF
 refuses with a code and the nearest names. `--json` prints the whole structured
 result. A dotted tail is

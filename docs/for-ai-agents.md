@@ -291,7 +291,10 @@ in the SDK).
   knowledge](building-team-knowledge.md), [Evidence and
   admission](evidence-and-admission.md)).
 - **Notes**: write the reasoning into a document section in the same `write`
-  as the Claims that cite it ([Documents and notes](documents-and-notes.md)).
+  as the Claims that cite it (`w.section(FILE, heading=..., body=...)` as
+  `evidence=`, or `set --section FILE#Heading --section-body ...`); a Subject's
+  `get` card points to the notes about it, and `cruxible section
+  FILE#Heading/Path` reads one ([Documents and notes](documents-and-notes.md)).
 - **Definitions**: kinds and fields go through the vocabulary file
   (`.cruxible/vocabulary.yaml`: `vocabulary export`, edit, `plan`, `apply`);
   saved queries, CaptureKinds and automation go through authoring ([Evolving
@@ -413,7 +416,9 @@ w.write(rotor, part.edit().add(replaces=rotor), because="New rotor line from Acm
 ~~~
 
 Passing `part.set(...)` itself to `w.write` fails (it has already tried to
-write, and lacks `because`); pass `part.edit().set(...)`.
+write, and lacks `because`); pass `part.edit().set(...)`, or `part.edit(title=...)`,
+which sets the fields it is given and still chains `.add(...)`. A many-valued
+field takes a list in `define(...)` and `add(...)`: one added value per item.
 `.cruxible/world.pyi` holds the vocabulary as Python types, so an editor or a
 model completes real names; floor delivery keeps it current, and `cruxible
 stub` writes one. `cruxible python script.py` runs an SDK script with the CLI's
