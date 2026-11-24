@@ -55,6 +55,7 @@ from cruxible_client.authoring.workspace import (
     floor_export_parts,
     inspect_workspace_floor,
     observe_next_workspace_with_coverage,
+    workspace_catalog_files,
     workspace_floor_freshness,
     workspace_vocabulary_at,
     workspace_vocabulary_freshness,
@@ -895,7 +896,10 @@ def handle_playbill_orient(
     )
     if workspace is None:
         return result
-    return workspace_vocabulary_freshness(workspace, workspace_floor_freshness(workspace, result))
+    return workspace_catalog_files(
+        workspace,
+        workspace_vocabulary_freshness(workspace, workspace_floor_freshness(workspace, result)),
+    )
 
 
 def handle_playbill_list_proposals(

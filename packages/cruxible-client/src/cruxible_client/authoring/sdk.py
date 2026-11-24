@@ -94,6 +94,7 @@ from cruxible_client.authoring.workspace import (
     observe_next_workspace,
     observe_next_workspace_with_coverage,
     refresh_workspace_floor,
+    workspace_catalog_files,
     workspace_floor_freshness,
     workspace_vocabulary_at,
     workspace_vocabulary_freshness,
@@ -5668,8 +5669,11 @@ class Cruxible:
         if self._workspace is None:
             # No workspace, no floor to compare: the floor is unknown, not stale.
             return result
-        return workspace_vocabulary_freshness(
-            self._workspace, workspace_floor_freshness(self._workspace, result)
+        return workspace_catalog_files(
+            self._workspace,
+            workspace_vocabulary_freshness(
+                self._workspace, workspace_floor_freshness(self._workspace, result)
+            ),
         )
 
     def attest(

@@ -159,6 +159,15 @@ def render_orient(result: Mapping[str, Any]) -> str:
             )
             + ("" if behind == 0 else "; refresh: cruxible floor export --force")
         )
+    files = result.get("workspace_files")
+    if files is not None:
+        more = files["total"] - len(files["paths"])
+        lines.append(
+            f"Files ({files['total']}): "
+            + ", ".join(files["paths"])
+            + (f", +{more} more" if more > 0 else "")
+            + "; read one: cruxible section FILE#Heading"
+        )
     vocabulary = result.get("vocabulary_file")
     if vocabulary is not None:
         at = vocabulary.get("at")

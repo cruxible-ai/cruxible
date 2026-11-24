@@ -76,6 +76,7 @@ from cruxible_client.authoring.workspace import (
     observe_next_workspace_with_coverage,
     observe_projection_coverage,
     validate_workspace_config_write,
+    workspace_catalog_files,
     workspace_floor_freshness,
     workspace_vocabulary_at,
     workspace_vocabulary_freshness,
@@ -10642,8 +10643,11 @@ def orient(
         command_name="cruxible orient",
     )
     if workspace_root is not None:
-        result = workspace_vocabulary_freshness(
-            workspace_root, workspace_floor_freshness(workspace_root, result)
+        result = workspace_catalog_files(
+            workspace_root,
+            workspace_vocabulary_freshness(
+                workspace_root, workspace_floor_freshness(workspace_root, result)
+            ),
         )
     rendered = result.model_dump(mode="json")
     if output_json:

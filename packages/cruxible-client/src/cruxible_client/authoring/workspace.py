@@ -1378,6 +1378,36 @@ def workspace_floor_freshness(
     )
 
 
+def workspace_catalog_files(
+    workspace: str | Path,
+    orientation: contracts.OrientResult,
+) -> contracts.OrientResult:
+    """``orientation`` with ``workspace_files`` set on the default map: the catalog's files.
+
+    One catalog parse (cached by its revision); no file is opened. Leaves
+    ``orientation`` as it is for a kind or section read, and when the
+    workspace has no readable catalog or catalogues nothing.
+    """
+
+    from cruxible_client.authoring.selectors import catalog_file_paths
+    from cruxible_client.contracts.orient import ORIENT_WORKSPACE_FILES
+
+    if orientation.kinds is None or orientation.section is not None:
+        return orientation
+    if workspace_directory_conflict(Path(workspace).expanduser().resolve()) is not None:
+        return orientation
+    paths = sorted(set(catalog_file_paths(_workspace_root(workspace)).values()), key=str.encode)
+    if not paths:
+        return orientation
+    return orientation.model_copy(
+        update={
+            "workspace_files": contracts.OrientWorkspaceFiles(
+                total=len(paths), paths=tuple(paths[:ORIENT_WORKSPACE_FILES])
+            )
+        }
+    )
+
+
 def workspace_vocabulary_at(workspace: str | Path) -> str | None:
     """The Git OID to send as orient's ``vocabulary_at``: the vocabulary file's baseline.
 

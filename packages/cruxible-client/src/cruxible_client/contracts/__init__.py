@@ -185,6 +185,7 @@ from cruxible_client.contracts.orient import (
 )
 from cruxible_client.contracts.orient import (
     OrientFloor as OrientFloor,
+    OrientWorkspaceFiles as OrientWorkspaceFiles,
 )
 from cruxible_client.contracts.orient import (
     OrientResult as OrientResult,
