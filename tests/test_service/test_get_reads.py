@@ -1023,7 +1023,8 @@ def test_history_pages_newest_first_with_a_bound_cursor(tmp_path: Path) -> None:
     with pytest.raises(ListCursorMismatch):
         _get(instance, "project.work_item/wi-42", detail="history", cursor=first_page.next_cursor)
     with pytest.raises(
-        ValueError, match="page detail=.history., .incoming., .pairs., .runs., .notes. or .backlinks"
+        ValueError,
+        match="page detail=.history., .incoming., .pairs., .runs., .notes. or .backlinks",
     ):
         GetRequest(ref=first, limit=5)
 
