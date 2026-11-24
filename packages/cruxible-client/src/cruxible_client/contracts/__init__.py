@@ -185,7 +185,6 @@ from cruxible_client.contracts.orient import (
 )
 from cruxible_client.contracts.orient import (
     OrientFloor as OrientFloor,
-    OrientWorkspaceFiles as OrientWorkspaceFiles,
 )
 from cruxible_client.contracts.orient import (
     OrientResult as OrientResult,
@@ -198,6 +197,9 @@ from cruxible_client.contracts.orient import (
 )
 from cruxible_client.contracts.orient import (
     OrientVocabularyFile as OrientVocabularyFile,
+)
+from cruxible_client.contracts.orient import (
+    OrientWorkspaceFiles as OrientWorkspaceFiles,
 )
 from cruxible_client.contracts.policy_rows import PolicyInForce as PolicyInForce
 from cruxible_client.contracts.policy_rows import PolicyKind as PolicyKind

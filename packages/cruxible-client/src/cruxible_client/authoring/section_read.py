@@ -74,7 +74,9 @@ def parse_section_locator(locator: str) -> tuple[str, SectionPath]:
         raise SectionReadError(
             "cruxible.doc.locator_invalid",
             f"{locator!r} is not a section locator",
-            repair="Pass FILE#Heading/Path (FILE# for the preamble), as get and backlinks print it.",
+            repair=(
+                "Pass FILE#Heading/Path (FILE# for the preamble), as get and backlinks print it."
+            ),
         )
     return file, tuple(item.strip() for item in rest.split("/") if item.strip())
 

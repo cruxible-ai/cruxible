@@ -1507,9 +1507,7 @@ class World:
 
         from cruxible_client.contracts.write import AboutChange, AppendSection
 
-        subjects = tuple(
-            item.address if isinstance(item, SubjectRef) else item for item in about
-        )
+        subjects = tuple(item.address if isinstance(item, SubjectRef) else item for item in about)
         return self._write(
             [AboutChange(ref="note", subjects=subjects)],
             docs=[AppendSection(id="note", file=file, under=under, text=text, heading=heading)],

@@ -360,9 +360,7 @@ def _field_parameters(
         annotation = _write_annotation(claim_type)
         if claim_type.cardinality.value == "many":
             annotation = f"{annotation} | Sequence[{annotation}]"
-        by_cardinality[claim_type.cardinality.value].append(
-            f"    {spelled}: {annotation} = ...,"
-        )
+        by_cardinality[claim_type.cardinality.value].append(f"    {spelled}: {annotation} = ...,")
     return by_cardinality
 
 

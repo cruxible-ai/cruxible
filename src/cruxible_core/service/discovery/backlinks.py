@@ -28,9 +28,9 @@ from cruxible_client.contracts.backlinks import (
     BacklinksRequest,
     BacklinksResult,
 )
+from cruxible_client.contracts.capture_reads import BodyRestricted
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.errors import ReadRefusalError
-from cruxible_client.contracts.capture_reads import BodyRestricted
 from cruxible_client.contracts.get_reads import GetCoordinate, GetNoteLink
 from cruxible_client.contracts.proposal_summary import ReviewGuidance
 from cruxible_client.contracts.repairs import RepairOperation

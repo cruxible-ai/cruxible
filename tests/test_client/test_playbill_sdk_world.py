@@ -1906,9 +1906,12 @@ def test_world_section_and_note_sit_beside_write_and_send_one_change_set(
     world = playbill.world()
     section = world.section("corpus/runbook.md", heading="Why", body="The advisory says so.")
     assert isinstance(section, AuthoredSection)
-    assert section.operation == playbill.section(
-        "corpus/runbook.md", heading="Why", body="The advisory says so."
-    ).operation
+    assert (
+        section.operation
+        == playbill.section(
+            "corpus/runbook.md", heading="Why", body="The advisory says so."
+        ).operation
+    )
     assert section.citation == SectionEvidence(file="corpus/runbook.md", section=("Why",))
 
     world.sec.vulnerability["cve-2026-69247"].set(

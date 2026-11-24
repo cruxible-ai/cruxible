@@ -12,7 +12,8 @@ from click.testing import CliRunner
 from cruxible_client.contracts.doc_sections import section_digest
 from cruxible_client.contracts.write import WriteRequest
 from cruxible_core.cli.main import cli
-from tests.test_cli.test_playbill_notes import _Reads, reads  # noqa: F401  (fixture)
+from tests.core_support._write_support import seed_write_surface
+from tests.test_cli.test_playbill_notes import _Reads
 from tests.test_cli.test_playbill_write import (  # noqa: F401  (autouse fixture)
     KIND,
     PREFIX,
@@ -20,6 +21,16 @@ from tests.test_cli.test_playbill_write import (  # noqa: F401  (autouse fixture
     _isolated_context,
     _run,
 )
+
+
+@pytest.fixture
+def reads(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _Reads:
+    (tmp_path / "instance").mkdir()
+    instance, _owner = seed_write_surface(tmp_path / "instance")
+    client = _Reads(instance)
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: client)
+    return client
+
 
 NOTES = "# Notes\nPreamble of the notes.\n\n## Triage\nNot reachable.\n\n### Detail\nDeep.\n\n"
 
@@ -272,8 +283,9 @@ def test_a_card_lists_a_few_notes_and_detail_notes_pages_them_all(
     cursor = first["next_cursor"]
     while cursor:
         page = json.loads(
-            _run("get", WI1, "--detail", "notes", "--limit", "3", "--cursor", cursor, "--json")
-            .stdout
+            _run(
+                "get", WI1, "--detail", "notes", "--limit", "3", "--cursor", cursor, "--json"
+            ).stdout
         )
         seen += [row["note"] for row in page["notes"]["notes"]]
         cursor = page.get("next_cursor")

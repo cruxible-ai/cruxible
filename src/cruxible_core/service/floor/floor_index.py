@@ -60,12 +60,12 @@ from cruxible_client.contracts.floor import (
     content_digest,
     floor_notes_digest,
 )
-from cruxible_client.contracts.notes import NOTE_PATH_RE, Note, parse_note
 from cruxible_client.contracts.floor_inventory import (
     FloorInventory,
     FloorManifestState,
     floor_manifest_state,
 )
+from cruxible_client.contracts.notes import NOTE_PATH_RE, Note, parse_note
 from cruxible_client.contracts.subjects import SubjectShell, parse_subject
 from cruxible_core.derived.memo import memo_get, memo_put
 from cruxible_core.derived.persistent import EMPTY_PCOUNTS, EMPTY_PSET, PCounts, PMap, PSet
@@ -372,7 +372,9 @@ def _claim_targets(claim: ClaimArtifact | None) -> tuple[str, ...]:
 def _note_targets(note: Note | None) -> tuple[str, ...]:
     """The Subject paths a note is about (any lifecycle: a retired note keeps them)."""
 
-    return () if note is None else tuple(f"{SUBJECTS_PREFIX}{item.name}.json" for item in note.about)
+    return (
+        () if note is None else tuple(f"{SUBJECTS_PREFIX}{item.name}.json" for item in note.about)
+    )
 
 
 def _note_live_targets(note: Note | None) -> tuple[str, ...]:
@@ -1485,7 +1487,9 @@ def render_floor(
                     locator=f"{note.source_id}#{'/'.join(note.section)}",
                     note=note.identity.name,
                 )
-                for note in (inputs.notes[note_path] for note_path in inputs.notes_about.get(path, ()))
+                for note in (
+                    inputs.notes[note_path] for note_path in inputs.notes_about.get(path, ())
+                )
             ],
         )
         render = _SubjectRender(changed_at, own, part, stamped(part, changed_at))

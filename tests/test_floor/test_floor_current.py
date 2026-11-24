@@ -644,7 +644,10 @@ def test_orient_names_the_workspace_catalog_files_on_the_default_map(tmp_path: A
     workspace = tmp_path / "files-workspace"
     (workspace / ".cruxible").mkdir(parents=True)
     # No catalog: nothing to name.
-    assert workspace_catalog_files(workspace, service_playbill_orient(instance)).workspace_files is None
+    assert (
+        workspace_catalog_files(workspace, service_playbill_orient(instance)).workspace_files
+        is None
+    )
 
     count = ORIENT_WORKSPACE_FILES + 2
     entries = "".join(
