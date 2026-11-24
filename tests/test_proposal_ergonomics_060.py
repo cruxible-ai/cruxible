@@ -466,6 +466,75 @@ def test_single_approve_json_shape_is_unchanged(daemon: Path) -> None:
     assert contracts.ApprovalReceipt.model_validate(receipt).proposal_id == base_kit
 
 
+def test_single_approve_json_prompt_discloses_provider_egress_on_stderr(
+    daemon: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Interactive `proposal approve ID --json` shows the approval summary (Provider
+    operations and reach) on stderr before its prompt; stdout stays the receipt."""
+
+    from cruxible_client.contracts.proposal_summary import (
+        ReviewDefinition,
+        ReviewProviderDefinition,
+        ReviewProviderOperation,
+    )
+    from cruxible_client.transport.http import CruxibleClient as HttpClient
+
+    base_kit = _proposal_id_from_list(_init(daemon))
+    monkeypatch.setattr(playbill, "_can_confirm", lambda: True)
+    provider = ReviewDefinition(
+        kind="Provider",
+        name="acme.fetch",
+        action="created",
+        detail=ReviewProviderDefinition(
+            provider="acme.fetch",
+            control_domain="acme",
+            package="acme-fetch",
+            version="1.0.0",
+            materialization="registry",
+            operations=(
+                ReviewProviderOperation(
+                    name="fetch",
+                    effect="external_read",
+                    serves=("acme.fetch",),
+                    in_="acme.request@1",
+                    out="acme.response@1",
+                    entrypoint="acme_fetch:run",
+                    declared_endpoints=("https://feeds.example.org",),
+                ),
+            ),
+        ),
+    )
+    real_review = HttpClient.review_proposal
+
+    def review(self: Any, instance_id: str, proposal_id: str, **kwargs: Any) -> Any:
+        page = real_review(self, instance_id, proposal_id, **kwargs)
+        if isinstance(page, contracts.ProposalReviewSummary):
+            return page.model_copy(update={"definitions": (*page.definitions, provider)})
+        return page
+
+    monkeypatch.setattr(HttpClient, "review_proposal", review)
+
+    declined = _run("proposal", "approve", base_kit, "--json", principal="reviewer", input="n\n")
+
+    assert declined.exit_code == 1, declined.output
+    # CliRunner echoes the typed answer onto stdout; nothing else lands there.
+    assert declined.stdout.strip() == "n"
+    before = declined.stderr.split("Sign this exact candidate?")[0]
+    assert "Required approvals: " in before
+    assert "Provider acme.fetch: created" in before
+    assert "op fetch: external_read" in before
+    assert "https://feeds.example.org" in before
+
+    approved = _run("proposal", "approve", base_kit, "--json", principal="reviewer", input="y\n")
+
+    assert approved.exit_code == 0, approved.output
+    echoed, document = approved.stdout.split("\n", 1)
+    assert echoed.strip() == "y"
+    receipt = json.loads(document)
+    assert contracts.ApprovalReceipt.model_validate(receipt).proposal_id == base_kit
+    assert "https://feeds.example.org" in approved.stderr.split("Sign this exact candidate?")[0]
+
+
 def test_approve_several_full_renders_each_review_before_the_one_prompt(
     daemon: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

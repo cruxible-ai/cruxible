@@ -122,21 +122,21 @@ def recipe_usage(kit_id: str, recipe: KitRecipeSpec) -> str:
 def _fitting_sample(spec: KitRecipeParamSpec) -> KitRecipeParamValue | None:
     """A deterministic value that fits ``spec``, or ``None`` when no candidate does.
 
-    ``enum`` takes its first value, ``integer`` 1, ``boolean`` false, and a string
-    the first of the synthetic candidates its pattern accepts. Shared by
-    ``kit build``'s preflight (:func:`preflight_values`) and usage lines.
+    ``enum`` takes its first value that fits (an over-long value never does),
+    ``integer`` 1, ``boolean`` false, and a string the first of the synthetic
+    candidates its pattern accepts. Shared by ``kit build``'s preflight
+    (:func:`preflight_values`) and usage lines.
     """
 
-    if spec.type == "enum":
-        return spec.values[0]
     if spec.type == "integer":
         return 1
     if spec.type == "boolean":
         return False
+    candidates = spec.values if spec.type == "enum" else _SYNTHETIC_STRINGS
     return next(
         (
             candidate
-            for candidate in _SYNTHETIC_STRINGS
+            for candidate in candidates
             if kit_recipe_value_problem(spec, candidate) is None
         ),
         None,

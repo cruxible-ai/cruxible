@@ -210,6 +210,13 @@ class _Builder:
         unbounded = high == maxrepeat
         if low > MAX_STATES or (not unbounded and int(high) > MAX_STATES):
             raise LinearPatternError(f"more than {MAX_STATES} matcher states (a large repeat)")
+        if low == 0 and not unbounded and int(high) == 0:
+            # ``x{0}`` matches only the empty string, but ``x`` must still be a
+            # pattern this matcher runs: ``(?i:a){0}`` refuses like ``(?i:a)``.
+            # Compiled into a scratch builder so the unreachable states cost nothing.
+            _Builder().sequence(sub_pattern)
+            empty = self.add(_State(_EMPTY))
+            return empty, [(empty, "out")]
         parts: list[tuple[int, list[_Hole]]] = [self.sequence(sub_pattern) for _ in range(low)]
         if unbounded:
             parts.append(self.star(sub_pattern))
@@ -307,6 +314,9 @@ def _at_test(name: str) -> Callable[[str, int], bool]:
         want = name == "AT_BOUNDARY"
 
         def boundary(text: str, position: int) -> bool:
+            if not text:
+                # ``re`` (3.13) holds neither ``\b`` nor ``\B`` on an empty string.
+                return False
             before = position > 0 and _is_word(text[position - 1])
             after = position < len(text) and _is_word(text[position])
             return (before != after) == want

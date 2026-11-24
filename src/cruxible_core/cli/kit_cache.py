@@ -19,7 +19,10 @@ and verified the same way; ``--from`` and ``kit pull`` replace a damaged entry.
 Entries are published and replaced under a per-entry lock: a writer stages the
 new copy beside the entry and swaps it in while holding the lock exclusively,
 and a reader holds it shared while it reads and verifies, so no reader sees a
-missing or half-replaced entry. ``kit run`` hands its script a private,
+missing or half-replaced entry. The lock, the staging copy, the swap, a crash's
+backup and every removal are made relative to directory descriptors held from
+the cache root down (opened ``O_NOFOLLOW``), so no parent pathname is resolved
+again once it is checked. ``kit run`` hands its script a private,
 verified snapshot of the files (``CRUXIBLE_KIT_FILES``), removed on exit.
 
 These checks catch a stale or damaged copy (another release under the same
@@ -32,10 +35,10 @@ from __future__ import annotations
 import fcntl
 import hashlib
 import os
-import shutil
-import tempfile
+import secrets
+import stat
 from collections.abc import Iterator, Mapping
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager, suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -57,6 +60,8 @@ from cruxible_client.errors import ConfigError
 KIT_CACHE_ENV = "CRUXIBLE_KIT_CACHE_DIR"
 _CACHE_DIRECTORY = "kit-files"
 _LOCK_DIRECTORY = ".locks"
+_CLOEXEC = getattr(os, "O_CLOEXEC", 0)
+_DIRECTORY_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | _CLOEXEC
 
 
 class KitCacheError(ConfigError):
@@ -147,10 +152,7 @@ def _refuse_links(directory: Path) -> None:
         root / _LOCK_DIRECTORY / directory.parent.name,
     ):
         if path.is_symlink():
-            raise KitCacheError(
-                f"the kit cache path {path} is a symbolic link (refused, never followed)",
-                f"remove {path} and rerun with --from KIT",
-            )
+            raise _link_refused(path)
 
 
 def _backup_path(directory: Path) -> Path:
@@ -159,44 +161,132 @@ def _backup_path(directory: Path) -> Path:
     return directory.with_name(f".prev-{directory.name}")
 
 
-def _recover_backup(directory: Path) -> None:
+def _link_refused(path: Path) -> KitCacheError:
+    return KitCacheError(
+        f"the kit cache path {path} is a symbolic link (refused, never followed)",
+        f"remove {path} and rerun with --from KIT",
+    )
+
+
+def _lstat_at(dir_fd: int, name: str) -> os.stat_result | None:
+    """``name`` under the held ``dir_fd``, not followed; ``None`` when absent."""
+
+    try:
+        return os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return None
+
+
+def _is_link_at(dir_fd: int, name: str) -> bool:
+    found = _lstat_at(dir_fd, name)
+    return found is not None and stat.S_ISLNK(found.st_mode)
+
+
+def _open_directory_at(dir_fd: int, name: str, where: Path, *, create: bool) -> int:
+    """A descriptor for the directory ``name`` under the held ``dir_fd`` (made first
+    when ``create``), opened ``O_NOFOLLOW``: a symbolic link there is refused."""
+
+    if create:
+        with suppress(FileExistsError):
+            os.mkdir(name, dir_fd=dir_fd)
+    try:
+        return os.open(name, _DIRECTORY_FLAGS, dir_fd=dir_fd)
+    except OSError as exc:
+        if _is_link_at(dir_fd, name):
+            raise _link_refused(where) from exc
+        raise
+
+
+def _remove_at(dir_fd: int, name: str) -> None:
+    """Remove ``name`` (a whole tree) under the held ``dir_fd``: each directory is
+    opened ``O_NOFOLLOW`` and emptied through its descriptor, a link is unlinked
+    as itself. O(the files below ``name``)."""
+
+    found = _lstat_at(dir_fd, name)
+    if found is None:
+        return
+    if not stat.S_ISDIR(found.st_mode):
+        os.unlink(name, dir_fd=dir_fd)
+        return
+    descriptor = os.open(name, _DIRECTORY_FLAGS, dir_fd=dir_fd)
+    try:
+        for child in os.listdir(descriptor):
+            _remove_at(descriptor, child)
+    finally:
+        os.close(descriptor)
+    os.rmdir(name, dir_fd=dir_fd)
+
+
+@dataclass(frozen=True)
+class _HeldKit:
+    """The ``<root>/<kit_id>`` directory as a descriptor held while the entry's lock
+    is: the entry, its backup and its staging copies are named relative to it."""
+
+    fd: int
+    directory: Path
+    entry: str
+
+    @property
+    def backup(self) -> str:
+        return _backup_path(self.directory).name
+
+
+def _recover_backup(kit: _HeldKit) -> None:
     """Put a backup left by an interrupted replacement back when the entry is absent.
 
     Called under the entry's lock (either mode): a writer that crashed between
     moving the old entry aside and publishing the new one leaves only the backup.
     """
 
-    backup = _backup_path(directory)
-    if os.path.lexists(directory) or not os.path.lexists(backup):
+    if _lstat_at(kit.fd, kit.entry) is not None or _lstat_at(kit.fd, kit.backup) is None:
         return
     try:
-        os.replace(backup, directory)
+        os.rename(kit.backup, kit.entry, src_dir_fd=kit.fd, dst_dir_fd=kit.fd)
     except FileNotFoundError:
         pass  # another reader holding the shared lock restored it first
 
 
 @contextmanager
-def _entry_lock(directory: Path, *, exclusive: bool) -> Iterator[None]:
+def _entry_lock(directory: Path, *, exclusive: bool) -> Iterator[_HeldKit]:
     """The entry's lock (``<root>/.locks/<kit_id>/<entry>.lock``): exclusive while a
     writer publishes or replaces the entry, shared while a reader verifies it.
-    Refuses a symbolic link anywhere below the cache root; once held, restores a
-    backup an interrupted replacement left in place of the entry."""
+
+    Yields the kit's directory as a held descriptor. The kit's directory, the lock
+    directories and the lock file are each opened ``O_NOFOLLOW`` from the one
+    before, starting at the cache root, so a symbolic link swapped in anywhere
+    below the root after the first check is refused rather than followed. Once
+    held, restores a backup an interrupted replacement left in place of the entry.
+    """
 
     _refuse_links(directory)
-    lock_dir = directory.parent.parent / _LOCK_DIRECTORY / directory.parent.name
-    lock_dir.mkdir(parents=True, exist_ok=True)
-    descriptor = os.open(
-        lock_dir / f"{directory.name}.lock",
-        os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0),
-        0o600,
-    )
-    try:
-        fcntl.flock(descriptor, fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH)
-        _refuse_links(directory)
-        _recover_backup(directory)
-        yield
-    finally:
-        os.close(descriptor)
+    root = directory.parent.parent
+    kit_id = directory.parent.name
+    root.mkdir(parents=True, exist_ok=True)
+    with ExitStack() as held:
+        root_fd = os.open(root.resolve(strict=True), _DIRECTORY_FLAGS)
+        held.callback(os.close, root_fd)
+        kit_fd = _open_directory_at(root_fd, kit_id, directory.parent, create=True)
+        held.callback(os.close, kit_fd)
+        locks_fd = _open_directory_at(root_fd, _LOCK_DIRECTORY, root / _LOCK_DIRECTORY, create=True)
+        held.callback(os.close, locks_fd)
+        kit_locks_fd = _open_directory_at(
+            locks_fd, kit_id, root / _LOCK_DIRECTORY / kit_id, create=True
+        )
+        held.callback(os.close, kit_locks_fd)
+        lock_fd = os.open(
+            f"{directory.name}.lock",
+            os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | _CLOEXEC,
+            0o600,
+            dir_fd=kit_locks_fd,
+        )
+        held.callback(os.close, lock_fd)
+        fcntl.flock(lock_fd, fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH)
+        kit = _HeldKit(fd=kit_fd, directory=directory, entry=directory.name)
+        for name in (kit.entry, kit.backup):
+            if _is_link_at(kit_fd, name):
+                raise _link_refused(directory.parent / name)
+        _recover_backup(kit)
+        yield kit
 
 
 def _verified_files(bundle: KitBundle) -> dict[str, bytes]:
@@ -286,11 +376,45 @@ def _intact(directory: Path, manifest_bytes: bytes) -> bool:
     return True
 
 
-def _remove(path: Path) -> None:
-    if path.is_symlink() or path.is_file():
-        path.unlink(missing_ok=True)
-    elif path.exists():
-        shutil.rmtree(path, ignore_errors=True)
+def _make_staging(kit: _HeldKit) -> tuple[str, int]:
+    """A new private directory beside the entry, and its held descriptor."""
+
+    for _attempt in range(100):
+        name = f".staging-{kit.entry}-{secrets.token_hex(8)}"
+        try:
+            os.mkdir(name, 0o700, dir_fd=kit.fd)
+        except FileExistsError:
+            continue
+        return name, _open_directory_at(kit.fd, name, kit.directory.parent / name, create=False)
+    raise FileExistsError(f"no free staging name beside {kit.directory}")
+
+
+def _write_files_at(dir_fd: int, where: Path, files: Mapping[str, bytes]) -> None:
+    """Each file created read-only under the held staging ``dir_fd`` (its parent
+    directories made and opened ``O_NOFOLLOW``, the file ``O_EXCL``)."""
+
+    for relative, content in files.items():
+        *parents, leaf = relative.split("/")
+        with ExitStack() as opened:
+            current = dir_fd
+            for index, part in enumerate(parents):
+                current = _open_directory_at(
+                    current, part, where.joinpath(*parents[: index + 1]), create=True
+                )
+                opened.callback(os.close, current)
+            descriptor = os.open(
+                leaf,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | _CLOEXEC,
+                0o600,
+                dir_fd=current,
+            )
+            try:
+                view = memoryview(content)
+                while view:
+                    view = view[os.write(descriptor, view) :]
+                os.fchmod(descriptor, 0o444)
+            finally:
+                os.close(descriptor)
 
 
 def write_kit_cache(bundle: KitBundle, root: Path | None = None) -> Path:
@@ -312,37 +436,40 @@ def write_kit_cache(bundle: KitBundle, root: Path | None = None) -> Path:
     files = _verified_files(bundle)
     target = kit_cache_directory(manifest.kit_id, manifest_cache_key(manifest), root)
     manifest_bytes = pretty_canonical_bytes(manifest.model_dump(mode="json"))
-    _refuse_links(target)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    with _entry_lock(target, exclusive=True):
+    with _entry_lock(target, exclusive=True) as kit:
         if _intact(target, manifest_bytes):
             return target
-        staging = Path(tempfile.mkdtemp(prefix=f".staging-{target.name}-", dir=target.parent))
-        backup = _backup_path(target)
+        staging, staging_fd = _make_staging(kit)
         try:
-            for path, content in files.items():
-                destination = staging / path
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                destination.write_bytes(content)
-                destination.chmod(0o444)
-            (staging / KIT_MANIFEST_FILE).write_bytes(manifest_bytes)
-            (staging / KIT_MANIFEST_FILE).chmod(0o444)
-            if os.path.lexists(target):
-                # The entry is present, so a leftover backup is stale.
-                _remove(backup)
-                os.replace(target, backup)
             try:
-                os.replace(staging, target)
+                _write_files_at(
+                    staging_fd,
+                    target.parent / staging,
+                    {**files, KIT_MANIFEST_FILE: manifest_bytes},
+                )
+            finally:
+                os.close(staging_fd)
+            if _lstat_at(kit.fd, kit.entry) is not None:
+                # The entry is present, so a leftover backup is stale.
+                with suppress(OSError):
+                    _remove_at(kit.fd, kit.backup)
+                os.rename(kit.entry, kit.backup, src_dir_fd=kit.fd, dst_dir_fd=kit.fd)
+            try:
+                os.rename(staging, kit.entry, src_dir_fd=kit.fd, dst_dir_fd=kit.fd)
             except BaseException:
                 # Put the old entry back before the lock is released; the backup
                 # is only ever removed once its successor is in place.
-                if os.path.lexists(backup) and not os.path.lexists(target):
-                    os.replace(backup, target)
+                if (
+                    _lstat_at(kit.fd, kit.backup) is not None
+                    and _lstat_at(kit.fd, kit.entry) is None
+                ):
+                    os.rename(kit.backup, kit.entry, src_dir_fd=kit.fd, dst_dir_fd=kit.fd)
                 raise
-            _remove(backup)
+            with suppress(OSError):
+                _remove_at(kit.fd, kit.backup)
         finally:
-            if staging.exists():
-                shutil.rmtree(staging, ignore_errors=True)
+            with suppress(OSError):
+                _remove_at(kit.fd, staging)
     return target
 
 

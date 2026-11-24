@@ -1405,6 +1405,77 @@ def test_usage_shows_a_placeholder_when_no_candidate_fits_the_pattern() -> None:
     assert "VALUE" not in usage
 
 
+@pytest.mark.parametrize("pattern", [r"\B", r"\b", r"a?\B", r"\Ba?"])
+def test_a_word_boundary_on_empty_text_agrees_with_re_fullmatch(pattern: str) -> None:
+    import re
+
+    from cruxible_client.contracts._linear_regex import linear_fullmatch
+
+    assert linear_fullmatch(pattern, "") == (re.fullmatch(pattern, "") is not None)
+    assert not linear_fullmatch(pattern, "")
+
+
+@pytest.mark.parametrize(
+    ("pattern", "message"),
+    [
+        ("^(?i:a){0}$", "flag that changes matching"),
+        (r"^(a)\1{0}$", "backreference"),
+        ("^(?=a){0}$", "lookaround"),
+        ("^(a{0,1500}){0}$", "more than 2048 matcher states"),
+    ],
+)
+def test_a_zero_repeat_still_checks_what_it_repeats(pattern: str, message: str) -> None:
+    from cruxible_client.contracts._linear_regex import LinearPatternError, compile_linear
+
+    with pytest.raises(LinearPatternError, match=message):
+        compile_linear(pattern)
+    with pytest.raises(ValidationError, match=message):
+        KitRecipeParamSpec(description="d", pattern=pattern)
+
+
+def test_a_zero_repeat_of_a_runnable_pattern_matches_only_empty() -> None:
+    from cruxible_client.contracts._linear_regex import linear_fullmatch
+
+    assert linear_fullmatch("a{0}", "")
+    assert not linear_fullmatch("a{0}", "a")
+    assert linear_fullmatch("^x(ab){0}y$", "xy")
+
+
+def test_usage_skips_an_enum_value_too_long_to_pass() -> None:
+    from cruxible_client.contracts.kit_recipes import recipe_usage
+
+    long_choice = "z" * 4097
+    spec = KitRecipeSpec(
+        name="e",
+        path="recipes/e.json",
+        description="d",
+        params={
+            "mode": KitRecipeParamSpec(
+                description="d", required=True, type="enum", values=(long_choice, "ok")
+            ),
+        },
+    )
+    assert recipe_usage("acme", spec) == "cruxible kit adopt acme:e --param mode=ok"
+
+
+def test_usage_shows_a_placeholder_when_every_enum_value_is_too_long() -> None:
+    from cruxible_client.contracts.kit_recipes import recipe_usage
+
+    spec = KitRecipeSpec(
+        name="e",
+        path="recipes/e.json",
+        description="d",
+        params={
+            "mode": KitRecipeParamSpec(
+                description="d", required=True, type="enum", values=("y" * 4097, "z" * 4097)
+            ),
+        },
+    )
+    usage = recipe_usage("acme", spec)
+    assert usage == "cruxible kit adopt acme:e --param 'mode=<mode>'"
+    assert "y" * 10 not in usage
+
+
 # -- the adopt preview -----------------------------------------------------------------
 
 
@@ -1493,17 +1564,17 @@ def test_a_failed_promotion_keeps_the_original_entry_intact(
         for path in directory.rglob("*")
         if path.is_file()
     }
-    real_replace = os.replace
+    real_rename = os.rename
 
-    def failing_replace(source: Any, destination: Any) -> None:
+    def failing_rename(source: Any, destination: Any, **dir_fds: Any) -> None:
         if Path(source).name.startswith(".staging-"):
             raise OSError("simulated failure promoting the staged entry")
-        real_replace(source, destination)
+        real_rename(source, destination, **dir_fds)
 
-    monkeypatch.setattr(os, "replace", failing_replace)
+    monkeypatch.setattr(os, "rename", failing_rename)
     with pytest.raises(OSError, match="simulated failure"):
         write_kit_cache(bundle, tmp_path)
-    monkeypatch.setattr(os, "replace", real_replace)
+    monkeypatch.setattr(os, "rename", real_rename)
 
     after = {
         path.relative_to(directory): path.read_bytes()
@@ -1551,6 +1622,42 @@ def test_the_cache_refuses_a_symbolic_link_at_the_kit_directory(tmp_path: Path) 
     assert sorted(str(path) for path in elsewhere.rglob("*")) == outside_before
     assert (cache / "acme").is_symlink()
     assert not (cache / ".locks").exists()
+
+
+def test_cache_changes_stay_in_the_held_kit_directory_when_its_path_is_swapped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Once the entry's lock is held, staging, the backup, the swap and cleanup are
+    made through the kit directory's held descriptor: ``<cache>/<kit_id>`` replaced
+    by a link out of the cache afterwards receives nothing."""
+
+    from cruxible_core.cli import kit_cache
+
+    bundle = _adoption_bundle()
+    cache = tmp_path / "cache"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    directory = write_kit_cache(bundle, cache)
+    # Damage one file so the next write replaces the entry (backup and swap).
+    damaged = directory / "scripts/report.py"
+    damaged.chmod(stat.S_IWUSR | stat.S_IRUSR)
+    damaged.write_bytes(b"print('stale')\n")
+    kit_dir = cache / "acme"
+    held = cache / "acme-held"
+
+    def swapped_after_the_checks(target: Path, manifest_bytes: bytes) -> bool:
+        os.rename(kit_dir, held)
+        kit_dir.symlink_to(outside, target_is_directory=True)
+        return False
+
+    monkeypatch.setattr(kit_cache, "_intact", swapped_after_the_checks)
+    write_kit_cache(bundle, cache)
+
+    assert list(outside.iterdir()) == []
+    assert sorted(item.name for item in held.iterdir()) == [directory.name]
+    entry = held / directory.name
+    assert (entry / "scripts/report.py").read_bytes() == SCRIPT.encode()
+    assert (entry / "cruxible-kit.json").exists()
 
 
 def test_kit_status_refuses_an_invalid_kit_id_query_cleanly(

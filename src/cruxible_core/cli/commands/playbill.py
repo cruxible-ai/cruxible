@@ -4319,8 +4319,9 @@ def _approve_one(
     one document over every proposal); text output is printed either way.
     """
 
-    # The prompt shows the reviewer's view `proposal review` prints (its first page).
-    shows_summary = not (output_json or full or yes)
+    # The prompt shows the reviewer's view `proposal review` prints (its first page),
+    # with --json too: the disclosure then goes to stderr, where the prompt goes.
+    shows_summary = not (full or yes)
 
     def _resolve_and_prepare(
         client: CruxibleClient, instance_id: str
@@ -4362,9 +4363,11 @@ def _approve_one(
             )
         resolved_id = challenge.proposal_id
     review = ProposalReview.model_validate(challenge.review.model_dump(mode="json"))
-    if not output_json:
+    if not output_json or not yes:
+        # With --json, stdout carries only the receipt: a disclosure before the
+        # prompt goes to stderr, as in an ordered batch.
         if full:
-            click.echo(render_playbill_proposal_review(review), nl=False)
+            click.echo(render_playbill_proposal_review(review), nl=False, err=output_json)
         elif yes:
             for line in _approval_counts_lines(review):
                 click.echo(line)
@@ -4373,6 +4376,7 @@ def _approve_one(
             click.echo(
                 render_playbill_approval_summary(review, summary, file_paths=_display_file_paths()),
                 nl=False,
+                err=output_json,
             )
     if announce_key and key.source != "option":
         click.echo(_signing_key_line(key), err=True)
