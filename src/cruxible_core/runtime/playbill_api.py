@@ -949,11 +949,11 @@ def playbill_kit_build(instance_id: str, request: KitBuildRequest) -> KitBuildRe
     )
 
 
-def playbill_kit_status(instance_id: str) -> KitStatus:
+def playbill_kit_status(instance_id: str, kit_id: str | None = None) -> KitStatus:
     check_permission("cruxible_kit_status", instance_id=instance_id)
     return _proposal_validation_boundary(
         "kit status",
-        lambda: service_kit_status(get_playbill_manager().get(instance_id)),
+        lambda: service_kit_status(get_playbill_manager().get(instance_id), kit_id),
     )
 
 

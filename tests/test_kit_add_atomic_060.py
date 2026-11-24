@@ -293,3 +293,85 @@ def test_a_provider_that_cannot_be_prepared_refuses_before_anything_is_proposed(
     assert added.status == "accepted", added
     assert _generation(consumer) - before_generation == 1
     assert set(_builds(_tree(consumer))) == set(PROVIDERS)
+
+
+def test_admission_refusing_the_combined_candidate_leaves_deployments_registered(
+    tmp_path: Path,
+    provider_checkout: ProviderCheckout,
+    worlds: Any,
+) -> None:
+    """``register_all`` runs just before the kit submits (as a lone install registers
+    before it proposes): a refusal at admission leaves the deployments registered,
+    with no build accepted and nothing proposed."""
+
+    from cruxible_core.service import kits
+
+    publisher, consumer = worlds
+    release = _release(tmp_path, provider_checkout, publisher)
+    before_tree = _tree(consumer)
+    before_generation = _generation(consumer)
+    before_proposals = _proposals(consumer)
+    batches = provider_installation.BatchedProviderPreparations
+    real_register_all = batches.register_all
+    registered: list[tuple[str, ...]] = []
+
+    def register_all(self: Any) -> None:
+        registered.append(tuple(sorted(item.provider_id for item in self.items)))
+        real_register_all(self)
+
+    def refuse(*_args: Any, **_kwargs: Any) -> Any:
+        assert registered, "register_all runs before the kit submits"
+        raise ConfigError("simulated admission refusal of the combined candidate")
+
+    with pytest.MonkeyPatch.context() as patched:
+        patched.setattr(batches, "register_all", register_all)
+        patched.setattr(kits, "_submit", refuse)
+        with pytest.raises(Exception, match="simulated admission refusal"):
+            _add(consumer, release, dry_run=False)
+
+    assert registered == [PROVIDERS]
+    assert _tree(consumer) == before_tree
+    assert _generation(consumer) == before_generation
+    assert _proposals(consumer) == before_proposals
+    assert len(_deployments(tmp_path)) >= len(PROVIDERS)
+    assert not _builds(_tree(consumer))
+
+    # Registration grants nothing on its own: the same add then lands atomically.
+    added = _add(consumer, release, dry_run=False)
+    assert added.status == "accepted", added
+    assert _generation(consumer) - before_generation == 1
+    assert set(_builds(_tree(consumer))) == set(PROVIDERS)
+
+
+def test_only_providers_whose_build_the_proposal_adds_name_it() -> None:
+    """A provider already accepted here keeps its own step: it adds no write, so it
+    neither waits on the kit's proposal nor names it."""
+
+    from cruxible_client.contracts.kits import KitChangeResult, KitProviderStep
+    from cruxible_core.service.kits import _finalize_provider_steps
+
+    proposal = "sha256:" + "a" * 64
+    steps = (
+        KitProviderStep(
+            provider_id="kit-call", package="kit-call", version="1.0.0", action="would_install"
+        ),
+        KitProviderStep(
+            provider_id="kit-echo", package="kit-echo", version="1.0.0", action="install"
+        ),
+    )
+    result = KitChangeResult(
+        kit_id="acme",
+        version="1.0.0",
+        status="proposed",
+        proposal_id=proposal,
+        providers=steps,
+    )
+
+    finalized = _finalize_provider_steps(result, frozenset({"kit-call"}))
+
+    by_id = {step.provider_id: step for step in finalized.providers}
+    assert (by_id["kit-call"].action, by_id["kit-call"].proposal_id) == (
+        "awaiting_approval",
+        proposal,
+    )
+    assert (by_id["kit-echo"].action, by_id["kit-echo"].proposal_id) == ("install", None)

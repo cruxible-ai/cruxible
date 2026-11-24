@@ -1255,7 +1255,13 @@ def service_resolve_playbill_proposal_selector(
 
     evidence = instance.proposal_evidence()
     assert evidence.index is not None
-    lookup = f"sha256:{selector}" if _BARE_PROPOSAL_HEX_RE.fullmatch(selector) else selector
+    # Hex is case-free: a bare (or ``sha256:``) hex selector in any case names the
+    # lower-case id; a ref is matched as written.
+    hex_part = selector.removeprefix("sha256:")
+    if _BARE_PROPOSAL_HEX_RE.fullmatch(hex_part.lower()):
+        lookup = f"sha256:{hex_part.lower()}"
+    else:
+        lookup = selector
     rows = evidence.index.rows(
         evidence, "proposal_id>=? AND proposal_id<?", (lookup, lookup + "\uffff")
     )

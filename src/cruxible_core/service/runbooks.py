@@ -17,9 +17,11 @@ The run stops at the first step that
 A Procedure step (``{"procedure": P}``) fans out at the accepted head to every
 live Line of P, in Line-name order: each expanded Line is an ordinary Line step
 (one outcome each, under the same step number, naming the Procedure it came
-from) with the same stop rules. A Procedure step with no live Line is recorded
-``skipped`` and the run continues, so a Runbook can name a Procedure before its
-first Line exists.
+from) with the same stop rules. A Line that takes an event (``trigger_input``)
+is left out, as the Runbook law refuses it as a Line step
+(``cruxible.runbook.line_takes_event``). A Procedure step with no Line left is
+recorded ``skipped`` and the run continues, so a Runbook can name a Procedure
+before its first Line exists.
 
 A manual run (``runbook run``) runs every step under the caller's authority.
 A Trigger-fired run runs each Line step under that Line's own enablement, as a
@@ -28,8 +30,8 @@ Either way a Runbook never widens anyone's authority.
 
 Overhead per step is constant: one accepted-Runbook read per run, and per step
 one Line run (whose own cost is the Line's), or one journal append. A
-Procedure step adds one Procedure read and one ``lines_by_procedure`` seek: its
-work is that Procedure's own Lines.
+Procedure step adds one Procedure read, one ``lines_by_procedure`` seek and one
+source read per Line found: its work is that Procedure's own Lines.
 """
 
 from __future__ import annotations
@@ -113,14 +115,21 @@ def _name_order(names: Any) -> tuple[str, ...]:
     return tuple(sorted(set(names), key=lambda item: item.encode("utf-8")))
 
 
-def procedure_lines(typed: Any, procedure: str) -> tuple[str, ...] | None:
-    """The live Lines running ``procedure`` (bare names, in name order), or None.
+def procedure_line_split(
+    typed: Any, procedure: str
+) -> tuple[tuple[str, ...], tuple[str, ...]] | None:
+    """The live Lines of ``procedure`` a fan-out step runs, and the ones it leaves out.
 
-    None when the Procedure is not a live accepted one. One typed source read
-    and one ``lines_by_procedure`` seek: the work is this Procedure's own Lines.
+    Both are bare names in name order. A Line that takes an event
+    (``trigger_input``) cannot run as a Runbook step
+    (``cruxible.runbook.line_takes_event``), so it is left out of the fan-out.
+    None when the Procedure is not a live accepted one. One typed source read,
+    one ``lines_by_procedure`` seek and one source read per Line found: the
+    work is this Procedure's own Lines.
     """
 
     from cruxible_client.contracts.procedures.artifacts import ProcedureArtifact
+    from cruxible_client.contracts.procedures.line_specs import LineSpec
 
     identity = f"Procedure:{procedure}"
     source = typed.source(identity)
@@ -131,7 +140,28 @@ def procedure_lines(typed: Any, procedure: str) -> tuple[str, ...] | None:
         "WHERE procedure_identity=? AND lifecycle='live' ORDER BY identity",
         (identity,),
     )
-    return _name_order(str(row[0]).removeprefix("Line:") for row in rows)
+    runs: list[str] = []
+    takes_event: list[str] = []
+    for row in rows.fetchall():
+        line_identity = str(row[0])
+        line = typed.source(line_identity)
+        name = line_identity.removeprefix("Line:")
+        if isinstance(line, LineSpec) and line.trigger_input is not None:
+            takes_event.append(name)
+        else:
+            runs.append(name)
+    return _name_order(runs), _name_order(takes_event)
+
+
+def procedure_lines(typed: Any, procedure: str) -> tuple[str, ...] | None:
+    """The live Lines a fan-out step over ``procedure`` runs (bare names, in name order).
+
+    Every live Line of the Procedure but those that take an event (see
+    ``procedure_line_split``); None when the Procedure is not a live accepted one.
+    """
+
+    split = procedure_line_split(typed, procedure)
+    return None if split is None else split[0]
 
 
 def runbook_step_lines(typed: Any, runbook: Runbook) -> tuple[str, ...]:
@@ -354,8 +384,9 @@ def execute_runbook(
                         status="skipped",
                         code=NO_LINES_BOUND,
                         message=(
-                            f"no live Lines run Procedure:{procedure}; skipped. "
-                            "Add a Line that runs it and this step runs it."
+                            f"no live Lines run Procedure:{procedure} without an event; "
+                            "skipped. Add a Line that runs it and this step runs it (a Line "
+                            "that takes an event is left out: cruxible.runbook.line_takes_event)."
                         ),
                     )
                 )
@@ -558,6 +589,7 @@ __all__ = [
     "accepted_runbook",
     "execute_runbook",
     "latest_runbook_run",
+    "procedure_line_split",
     "procedure_lines",
     "record_runbook_run",
     "resolve_runbook_lines",

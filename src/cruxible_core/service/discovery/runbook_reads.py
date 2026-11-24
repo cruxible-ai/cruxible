@@ -72,14 +72,17 @@ def _step(projection: Any, index: int, target: Any) -> GetRunbookStep:
         elif procedure.lifecycle.state != "live":
             availability = "procedure_retired"
         else:
-            from cruxible_core.service.runbooks import procedure_lines
+            from cruxible_core.service.runbooks import procedure_line_split
 
-            names = procedure_lines(projection.typed, target.procedure.target.name) or ()
+            names, takes_event = procedure_line_split(
+                projection.typed, target.procedure.target.name
+            ) or ((), ())
             return GetRunbookStep(
                 step=index,
                 target=procedure_identity,
                 availability="available" if names else "no_lines_bound",
                 lines=tuple(f"Line:{name}" for name in names),
+                excluded_lines=tuple(f"Line:{name}" for name in takes_event),
             )
         return GetRunbookStep(step=index, target=procedure_identity, availability=availability)
     identity = target.line.target.qualified

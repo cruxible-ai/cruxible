@@ -859,7 +859,11 @@ description and typed parameters (`string`, optionally with a `pattern`;
 `default`, and an optional `example`). A recipe names a parameter as
 `{{name}}` inside a JSON string value, and nothing else is evaluated: a string
 that is exactly `"{{limit}}"` takes the typed value, a longer string spells it
-as text. `default` is the recipe `kit adopt KIT` picks.
+as text. A stray `{{` or `}}` refuses, and an optional parameter the recipe
+names must declare a `default`. A `pattern` is at most 256 characters and must
+match in linear time: a quantifier inside a repeated group (`(a+)+`), an
+alternation inside one, backreferences and lookarounds refuse; a string value
+is at most 4096 characters. `default` is the recipe `kit adopt KIT` picks.
 
 ~~~bash
 cruxible kit adopt security --list
@@ -871,21 +875,41 @@ cruxible kit adopt security:sbom --param name=app --param relative_path=sbom.cdx
 
 Each adopt is your own governed change: one proposal, under your approval
 policy. Adopting the same recipe again with other values adds another instance.
+Each rendered recipe is checked on its own as one `change_set` (a recipe that
+`depends_on` another still needs its own members), at `kit build` and again at
+`kit adopt`. Before it asks, the preview names the target instance and daemon,
+each Mandate's grant, scope and expiry, each Line's providers and network
+origins, each Trigger's schedule and each Runbook's steps; the `--yes` rerun
+line it prints keeps the `--server-url`, `--instance-id`, `--principal-id` and
+`--from` you gave.
 
-**Scripts** are read-only Python files under `scripts/`, listed in `scripts`
-with `mode: read_only`. `cruxible kit run KIT:SCRIPT -- ARGS` runs one with the
-`cruxible python` environment, on your machine, never in the daemon; the
-script's exit status is the command's. `CRUXIBLE_KIT_ID`, `CRUXIBLE_KIT_VERSION`
-and `CRUXIBLE_KIT_FILES` (the verified kit files) are set.
+**Scripts** are Python files under `scripts/`, listed in `scripts` with a
+required `mode` (`read_only`, the only mode in 0.6.0). `cruxible kit run
+KIT:SCRIPT -- ARGS` runs one with the `cruxible python` environment, on your
+machine, never in the daemon; the script's exit status is the command's.
+`CRUXIBLE_KIT_ID`, `CRUXIBLE_KIT_VERSION` and `CRUXIBLE_KIT_FILES` (a private,
+verified snapshot of the kit files, removed when the script exits) are set.
+`mode: read_only` is the publisher's declaration, not a sandbox: the script is a
+local Python process with your CLI session and environment, so it can do what
+you can. Cruxible enforces governance and approval on any proposal it submits
+to the daemon. `kit run --list` and `kit status` say so wherever scripts appear.
 
 Recipes and scripts are inert files like the template: not part of the release
-identity, never installed. Before using one, `adopt` and `run` check that the
-kit is installed, that the client's cached copy is that release (by
-`content_digest`) and that the file has the manifest's sha256. `kit add
---commit` and `kit pull` write that copy under `<state-root>/kit-files/`; when
-it is missing, it is fetched again from the recorded source or `--from KIT`.
-These checks catch a stale or damaged copy; they are not a boundary against a
-process running as your user.
+identity (`content_digest`), never installed. Two builds with the same
+definitions share a `content_digest` but can carry other recipes or scripts, so
+`kit add --commit` records the release's `bundle_digest` (its content digest
+plus every recipe, script and file entry) on the kit receipt when it declares
+recipes or scripts. Before using one, `adopt` and `run` look up that kit's
+receipt, check that the client's cached copy is that release (its
+`content_digest` and the receipt's `bundle_digest`), and verify every file of
+the copy against the manifest's sha256 without following a symbolic link. `kit
+add --commit` and `kit pull` write the copy under
+`<state-root>/kit-files/<kit>/sha256-<bundle or content digest>/`, so pulling a
+rebuild never changes what the installed kit runs. A missing copy is fetched
+again from the recorded source (a recorded local directory that is gone asks
+for `--from KIT`) or `--from KIT`; `--from` and `kit pull` replace a damaged
+copy, under a per-copy lock. These checks catch a stale or damaged copy; they
+are not a boundary against a process running as your user.
 
 ## Build a kit
 
@@ -933,10 +957,11 @@ cruxible kit build --id car-parts --version 1.0.0 --owns catalog. --out ./car-pa
   `skills/<name>/...` a `skill`, anything else a `reference`). Like the
   template it is outside the content digest. A missing file or one outside the
   workspace refuses `cruxible.kit.file_refused` with its repair.
-- `--recipes FILE` and `--scripts FILE` (new in 0.6.0) each name a JSON list of
-  recipe or script declarations, as the manifest spells them; each `path` is
-  read relative to the workspace root (`recipes/NAME.json`, `scripts/NAME.py`)
-  and carried as a `recipe` or `script` file. The build renders every recipe
+- `--recipes FILE` and `--scripts FILE` (new in 0.6.0; `-` reads stdin) each
+  name a JSON list of recipe or script declarations, as the manifest spells
+  them; each `path` is the file's path in the kit, read relative to the
+  workspace root whatever the current directory (`recipes/NAME.json`,
+  `scripts/NAME.py`), and carried as a `recipe` or `script` file. The build renders every recipe
   with its defaults and examples (a synthetic value for a required parameter
   with neither), after the recipes its `depends_on` names, and refuses
   `cruxible.kit.recipe_invalid` unless each authors cleanly, on the same

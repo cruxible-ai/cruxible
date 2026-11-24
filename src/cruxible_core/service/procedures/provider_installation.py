@@ -988,8 +988,11 @@ class BatchedProviderPreparations:
     against ``base_oid``, but registers no deployment and proposes nothing. The
     kit adds every build to its own candidate tree (``writes``) and calls
     ``register_all`` only once every provider prepared and every kit-level check
-    passed, just before it submits: a refusal anywhere leaves only retained
-    preparations (exhaust), never a registered deployment or an admitted proposal.
+    passed: a refusal before then leaves only retained preparations (exhaust),
+    never a registered deployment or an admitted proposal. ``register_all`` runs
+    just before the kit submits, as a lone install registers before it proposes,
+    so admission refusing the combined candidate leaves those deployments
+    registered with no accepted build (registration grants no execution).
     """
 
     def __init__(self, *, base_oid: str) -> None:

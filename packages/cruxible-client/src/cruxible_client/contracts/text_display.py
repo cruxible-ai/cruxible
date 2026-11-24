@@ -1792,6 +1792,11 @@ def runbook_preview_lines(preview: Any) -> list[str]:
         if step.unavailable:
             lines.append(head + "  unavailable: the run would stop here")
             continue
+        excluded = getattr(step, "excluded", None)
+        if excluded is not None:
+            from_proc = getattr(step, "from_procedure", None)
+            lines.append(head + f"  (from Procedure:{from_proc})  left out: takes an event")
+            continue
         if step.action_effect is not None:
             lines.append(head + f"  effect {step.action_effect}")
             continue

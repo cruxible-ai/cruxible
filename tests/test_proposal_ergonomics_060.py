@@ -179,9 +179,12 @@ def test_bare_hex_selectors_resolve_like_their_sha256_prefix(daemon: Path) -> No
     with pytest.raises(ProposalNotFoundError):
         # Fewer than 8 hex characters is no prefix.
         service_resolve_playbill_proposal_selector(instance, selector=bare[:7])
-    with pytest.raises(ProposalNotFoundError):
-        # Upper case is not the id's spelling.
-        service_resolve_playbill_proposal_selector(instance, selector=bare[:12].upper())
+    # Hex is case-free: upper and mixed case name the same id.
+    mixed = "".join(char.upper() if index % 2 else char for index, char in enumerate(bare[:12]))
+    for selector in (bare[:12].upper(), mixed, f"sha256:{bare.upper()}"):
+        resolved = service_resolve_playbill_proposal_selector(instance, selector=selector)
+        assert resolved.selector == selector
+        assert resolved.proposal_id == proposal_id
 
 
 def test_a_target_ref_selector_still_resolves(daemon: Path) -> None:
@@ -480,3 +483,144 @@ def test_approve_several_full_renders_each_review_before_the_one_prompt(
     assert f"Proposal: {base_kit}" in before_prompt
     assert f"Proposal: {alpha}" in before_prompt
     assert f"  2. {alpha[7:19]}  by owner" in before_prompt
+
+
+def test_approve_several_prompt_discloses_each_like_one_proposal_approve(
+    daemon: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Before the one prompt each proposal shows the approval summary one-proposal
+    approve shows (required approvals, Providers with their operations and reach,
+    compiler-upgrade notice), and the prompt says the digests are not pinned."""
+
+    from cruxible_client.contracts.compiler_upgrade import CompilerUpgradeNotice
+    from cruxible_client.contracts.proposal_summary import (
+        ReviewDefinition,
+        ReviewProviderDefinition,
+        ReviewProviderOperation,
+    )
+    from cruxible_client.transport.http import CruxibleClient as HttpClient
+
+    base_kit = _proposal_id_from_list(_init(daemon))
+    alpha = _propose_subject_kind(daemon, "alpha.item")
+    monkeypatch.setattr(playbill, "_can_confirm", lambda: True)
+    provider = ReviewDefinition(
+        kind="Provider",
+        name="acme.fetch",
+        action="created",
+        detail=ReviewProviderDefinition(
+            provider="acme.fetch",
+            control_domain="acme",
+            package="acme-fetch",
+            version="1.0.0",
+            materialization="registry",
+            operations=(
+                ReviewProviderOperation(
+                    name="fetch",
+                    effect="external_read",
+                    serves=("acme.fetch",),
+                    in_="acme.request@1",
+                    out="acme.response@1",
+                    entrypoint="acme_fetch:run",
+                    declared_endpoints=("https://feeds.example.org",),
+                ),
+            ),
+        ),
+    )
+    notice = CompilerUpgradeNotice(
+        source_compiler_digest="sha256:" + "1" * 64,
+        target_compiler_digest="sha256:" + "2" * 64,
+        message="One-way: no downgrade.",
+    )
+    real_review = HttpClient.review_proposal
+
+    def review(self: Any, instance_id: str, proposal_id: str, **kwargs: Any) -> Any:
+        page = real_review(self, instance_id, proposal_id, **kwargs)
+        if proposal_id != alpha:
+            return page
+        if isinstance(page, contracts.ProposalReviewSummary):
+            return page.model_copy(update={"definitions": (*page.definitions, provider)})
+        return page.model_copy(update={"compiler_upgrade": notice})
+
+    monkeypatch.setattr(HttpClient, "review_proposal", review)
+
+    declined = _run("proposal", "approve", base_kit, alpha, principal="reviewer", input="n\n")
+
+    assert declined.exit_code == 1, declined.output
+    before = declined.output.split("Approve and activate 2 proposals in order?")[0]
+    assert before.count("Required approvals: ") == 2
+    assert f"[1/2] {base_kit[7:19]}" in before and f"[2/2] {alpha[7:19]}" in before
+    alpha_block = before.split(f"[2/2] {alpha[7:19]}")[1]
+    assert "Provider acme.fetch: created" in alpha_block
+    assert "op fetch: external_read" in alpha_block
+    assert "https://feeds.example.org" in alpha_block
+    assert "Compiler upgrade: " in alpha_block and "One-way: no downgrade." in alpha_block
+    assert "Compiler upgrade: " not in before.split(f"[2/2] {alpha[7:19]}")[0]
+    assert "readmitted at the live head" in before
+    assert "not pinned across the batch" in before
+
+
+def test_approve_several_signs_duplicate_selectors_once(daemon: Path) -> None:
+    base_kit = _proposal_id_from_list(_init(daemon))
+    bare = base_kit.removeprefix("sha256:")
+
+    approved = _run("proposal", "approve", bare[:12], base_kit, "--yes", principal="reviewer")
+
+    assert approved.exit_code == 0, approved.output
+    assert "[1/1]" in approved.stdout and "[2/" not in approved.stdout
+    assert f"Approved 1 of 1: {base_kit[7:19]}" in approved.stdout
+
+
+def test_approve_several_hold_signs_each_and_activates_none(daemon: Path) -> None:
+    base_kit = _proposal_id_from_list(_init(daemon))
+    _ok("proposal", "approve", base_kit, "--yes", principal="reviewer")
+    alpha = _propose_subject_kind(daemon, "alpha.item")
+    beta = _propose_subject_kind(daemon, "beta.item")
+    head_before = _instance().accepted_coordinate().git_oid
+
+    held = _run("proposal", "approve", alpha, beta, "--yes", "--hold", principal="reviewer")
+
+    assert held.exit_code == 0, held.output
+    assert held.stdout.count("Held: not activated.") == 2
+    assert f"Approved 2 of 2: {alpha[7:19]} {beta[7:19]}" in held.stdout
+    assert _instance().accepted_coordinate().git_oid == head_before
+    statuses = {
+        entry["proposal_id"]: entry["status"]
+        for entry in _json(_ok("proposal", "list", "--json"))["entries"]
+    }
+    assert statuses[alpha] == statuses[beta] == "open"
+
+
+def test_approve_several_stops_while_approvals_remain(
+    daemon: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An approval that leaves the quorum short does not activate: the batch stops
+    there and never signs the later ones."""
+
+    from cruxible_client.transport.http import CruxibleClient as HttpClient
+
+    base_kit = _proposal_id_from_list(_init(daemon))
+    _ok("proposal", "approve", base_kit, "--yes", principal="reviewer")
+    alpha = _propose_subject_kind(daemon, "alpha.item")
+    beta = _propose_subject_kind(daemon, "beta.item")
+    real_submit = HttpClient.submit_approval
+
+    def short_of_quorum(self: Any, *args: Any, **kwargs: Any) -> Any:
+        # Signed and recorded, but a second approver is still owed.
+        kwargs["hold"] = True
+        receipt = real_submit(self, *args, **kwargs)
+        assert isinstance(receipt, contracts.ApprovalReceipt)
+        return receipt.model_copy(
+            update={"not_activated": "approvals_remaining", "approvals_remaining": 1}
+        )
+
+    monkeypatch.setattr(HttpClient, "submit_approval", short_of_quorum)
+
+    stopped = _run("proposal", "approve", alpha, beta, "--yes", "--json", principal="reviewer")
+
+    assert stopped.exit_code == 1, stopped.output
+    payload = json.loads(stopped.stdout)
+    assert payload["approved"] == []
+    assert payload["failed"]["proposal_id"] == alpha
+    assert payload["failed"]["message"].startswith("Awaiting 1 more approval")
+    assert payload["failed"]["receipt"]["approvals_remaining"] == 1
+    assert payload["not_attempted"] == [beta]

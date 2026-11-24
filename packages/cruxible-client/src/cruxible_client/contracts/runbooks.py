@@ -73,8 +73,22 @@ class _StrictRunbookModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, json_schema_mode_override="validation")
 
 
+#: Why a Line cannot run as a Runbook step: it takes an event (``trigger_input``),
+#: which no step hands it. The law refuses such a Line step; a Procedure step
+#: leaves such a Line out of its fan-out.
+LINE_TAKES_EVENT: Final = "cruxible.runbook.line_takes_event"
+
+
 class ProcedureTarget(_StrictRunbookModel):
-    """Fan-out step: run every live (and, on trigger, enabled) Line of this Procedure."""
+    """Fan-out step: run each live Line of this Procedure, in Line-name order.
+
+    The Lines are read at the head when the step is reached. A Line that takes
+    an event is left out (``cruxible.runbook.line_takes_event``); with no Line
+    left the step is skipped (``cruxible.runbook.no_lines_bound``). Each Line
+    runs as a Line step does (``LineTarget``): in a Trigger-fired run a Line not
+    enabled stops the Runbook with ``not_enabled``, as a Line step's would; a
+    manual run runs it under the caller's authority.
+    """
 
     kind: Literal["procedure"] = "procedure"
     procedure: ArtifactNameRef
@@ -291,7 +305,7 @@ def evaluate_runbook_law(
                 )
             if state.takes_event:
                 return _refusal(
-                    "cruxible.runbook.line_takes_event",
+                    LINE_TAKES_EVENT,
                     f"Step {index}: {qualified!r} binds its triggering Capture to a Source "
                     "input, and a Runbook step runs without an event; run it from its own "
                     "capture_landing Trigger instead.",
@@ -628,6 +642,11 @@ class RunbookPreviewStep(_StrictRunbookModel):
     unavailable: bool = Field(default=False, exclude_if=lambda value: not value)
     #: For a Line step expanded from a Procedure fan-out step, that Procedure's name.
     from_procedure: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    #: A Procedure step's Line the run leaves out, and why: it takes an event.
+    #: Listed under the Procedure step's number with nothing else; it never runs.
+    excluded: Literal["cruxible.runbook.line_takes_event"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     procedure: str | None = Field(default=None, exclude_if=lambda value: value is None)
     reads: tuple[RunbookPreviewRead, ...] = ()
     writes: tuple[RunbookPreviewWrite, ...] = ()
@@ -688,6 +707,7 @@ class RunbookPreview(_StrictRunbookModel):
 
 __all__ = [
     "RUNBOOK_ARTIFACT_FORMAT",
+    "LINE_TAKES_EVENT",
     "RUNBOOK_MAX_STEPS",
     "RUNBOOK_PATH_RE",
     "AcceptedRunbook",

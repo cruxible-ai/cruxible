@@ -16,7 +16,7 @@ import binascii
 import hashlib
 import re
 from collections.abc import Mapping
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
@@ -384,7 +384,13 @@ class KitFile(_Strict):
 
     @model_validator(mode="after")
     def _role_matches_path(self) -> KitFile:
-        if self.role != kit_file_role_of(self.path):
+        implied = kit_file_role_of(self.path)
+        if implied in {"recipe", "script"} and self.role == "reference":
+            # A manifest built before recipes and scripts (0.6.0) listed a file
+            # under recipes/ or scripts/ as reference; it stays one unless a
+            # recipe or script declaration names it (checked by the manifest).
+            return self
+        if self.role != implied:
             raise ValueError(
                 f"kit file {self.path} is a {kit_file_role_of(self.path)}, not a {self.role}"
             )
@@ -478,6 +484,10 @@ _RECIPE_NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 #: what ``kit adopt --param name=VALUE`` sets.
 KIT_RECIPE_PARAM_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 _RECIPE_TEXT_MAX = 2000
+#: The longest ``pattern`` a string parameter may declare, and the longest string
+#: value (default, example or ``--param``) a recipe parameter takes.
+KIT_RECIPE_PATTERN_MAX = 256
+KIT_RECIPE_STRING_VALUE_MAX = 4096
 
 #: A recipe parameter's type: ``string`` (optionally constrained by
 #: ``pattern``), ``integer``, ``boolean``, or ``enum`` (one of ``values``).
@@ -529,10 +539,9 @@ class KitRecipeParamSpec(_Strict):
         if self.pattern is not None:
             if self.type != "string":
                 raise ValueError(f"only a string parameter takes a pattern, not a {self.type} one")
-            try:
-                re.compile(self.pattern)
-            except re.error as exc:
-                raise ValueError(f"pattern {self.pattern!r} is not a regular expression: {exc}")
+            problem = kit_recipe_pattern_problem(self.pattern)
+            if problem is not None:
+                raise ValueError(problem)
         if self.required and self.default is not None:
             raise ValueError("a required parameter takes no default; drop one of them")
         for label, value in (("default", self.default), ("example", self.example)):
@@ -541,6 +550,83 @@ class KitRecipeParamSpec(_Strict):
                 if problem is not None:
                     raise ValueError(f"the {label} {value!r} {problem}")
         return self
+
+
+def kit_recipe_pattern_problem(pattern: str) -> str | None:
+    """Why a publisher's ``pattern`` is refused, or ``None``.
+
+    A pattern runs in the daemon (``kit build``) and the CLI (``kit adopt``) over
+    values a caller supplies, so it must match in time linear in the value:
+    bounded in length, and free of the constructs that backtrack badly or that a
+    plain matcher does not need -- a quantifier inside a quantified group (the
+    ``(a+)+`` shape), an alternation inside one (``(a|aa)*``), backreferences,
+    conditionals and lookarounds.
+    """
+
+    if len(pattern) > KIT_RECIPE_PATTERN_MAX:
+        return f"a pattern is at most {KIT_RECIPE_PATTERN_MAX} characters"
+    try:
+        re.compile(pattern)
+        parsed = _regex_parser().parse(pattern)
+    except (re.error, OverflowError, RecursionError) as exc:
+        return f"pattern {pattern!r} is not a regular expression: {exc}"
+    unsupported = _regex_unsupported(parsed, quantified=False)
+    if unsupported is not None:
+        return (
+            f"pattern {pattern!r} uses {unsupported}, which a recipe pattern may not "
+            "(it could backtrack without bound); write a plain pattern"
+        )
+    return None
+
+
+def _regex_parser() -> Any:
+    """The stdlib regex parser (``re._parser``, Python 3.11+): what ``re.compile`` parses with."""
+
+    import importlib
+
+    return importlib.import_module("re._parser")
+
+
+_REPEATS = frozenset({"MAX_REPEAT", "MIN_REPEAT", "POSSESSIVE_REPEAT"})
+_REFUSED_OPS = {
+    "GROUPREF": "a backreference",
+    "GROUPREF_EXISTS": "a conditional group",
+    "ASSERT": "a lookaround",
+    "ASSERT_NOT": "a lookaround",
+}
+
+
+def _regex_unsupported(items: Any, *, quantified: bool) -> str | None:
+    """The first refused construct in a parsed pattern (``quantified``: inside a repeat)."""
+
+    for op, argument in items:
+        name = str(op)
+        if name in _REFUSED_OPS:
+            return _REFUSED_OPS[name]
+        children: list[Any] = []
+        inner_quantified = quantified
+        if name in _REPEATS:
+            _low, high, sub_pattern = argument
+            # ``x?`` and ``x{0,1}`` repeat at most once: not a quantifier that nests badly.
+            repeats = not (isinstance(high, int) and high <= 1)
+            if quantified and repeats:
+                return "a nested quantifier"
+            inner_quantified = quantified or repeats
+            children.append(sub_pattern)
+        elif name == "SUBPATTERN":
+            children.append(argument[-1])
+        elif name == "BRANCH":
+            if quantified:
+                # ``(a|aa)*``: overlapping alternatives under a repeat backtrack too.
+                return "an alternation inside a quantified group"
+            children.extend(argument[1])
+        elif name == "ATOMIC_GROUP":
+            children.append(argument)
+        for child in children:
+            found = _regex_unsupported(child, quantified=inner_quantified)
+            if found is not None:
+                return found
+    return None
 
 
 def kit_recipe_value_problem(spec: KitRecipeParamSpec, value: object) -> str | None:
@@ -553,6 +639,8 @@ def kit_recipe_value_problem(spec: KitRecipeParamSpec, value: object) -> str | N
         return None if ok else "is not an integer"
     if not isinstance(value, str):
         return "is not a string"
+    if len(value) > KIT_RECIPE_STRING_VALUE_MAX:
+        return f"is longer than {KIT_RECIPE_STRING_VALUE_MAX} characters"
     if spec.type == "enum":
         return None if value in spec.values else f"is not one of {', '.join(spec.values)}"
     if spec.pattern is not None and re.fullmatch(spec.pattern, value) is None:
@@ -624,8 +712,12 @@ class KitScriptSpec(_Strict):
     name: str
     path: str
     description: str
-    #: What the script does to accepted state: ``read_only`` (it reads, never writes).
-    mode: Literal["read_only"] = "read_only"
+    #: What the publisher declares the script does to accepted state; required.
+    #: ``read_only`` (the only mode in 0.6.0) is the publisher's declaration, not
+    #: a sandbox: the script runs client-side as a local Python process with the
+    #: caller's CLI session and environment, and Cruxible enforces governance and
+    #: approval on any proposal it submits to the daemon.
+    mode: Literal["read_only"]
 
     @field_validator("name")
     @classmethod
@@ -825,6 +917,38 @@ class KitManifest(_Strict):
                 ),
             )
         ).tagged
+
+    @property
+    def bundle_digest(self) -> str:
+        """What the release executes and renders, pinned: ``content_digest`` plus
+        the recipes, scripts, automation template and every inert file's path,
+        role and sha256.
+
+        Two builds with the same definitions share ``content_digest`` but may
+        carry other recipes or scripts; this tells them apart, so a receipt that
+        records it pins exactly the bytes ``kit adopt`` and ``kit run`` may use.
+        """
+
+        return Sha256Value(
+            canonical_digest(
+                "playbill-kit-bundle-v1",
+                {
+                    "content_digest": self.content_digest,
+                    "automation_template": self.automation_template,
+                    "recipes": [item.model_dump(mode="json") for item in self.recipes],
+                    "scripts": [item.model_dump(mode="json") for item in self.scripts],
+                    "files": [item.model_dump(mode="json") for item in self.files],
+                },
+            )
+        ).tagged
+
+    @property
+    def pinned_bundle_digest(self) -> str | None:
+        """The ``bundle_digest`` a kit receipt records: set when the release declares
+        recipes or scripts (what ``kit adopt`` and ``kit run`` execute), else
+        ``None``, so a kit without them keeps its receipt bytes."""
+
+        return self.bundle_digest if self.recipes or self.scripts else None
 
     def kit_files(self) -> dict[str, str]:
         """Every inert kit file path -> its sha256."""
@@ -1145,6 +1269,10 @@ class KitReceipt(_Strict):
     #: The kits the installed release requires, as its manifest names them;
     #: ``kit remove`` refuses to remove one of them while this kit is installed.
     requires: KitRequires = Field(default=(), exclude_if=lambda value: not value)
+    #: The installed release's ``bundle_digest`` when it declares recipes or
+    #: scripts: ``kit adopt`` and ``kit run`` use only a copy that has it.
+    #: Omitted otherwise (and on receipts written before it), keeping their bytes.
+    bundle_digest: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @field_validator("kit_id")
     @classmethod
@@ -1160,6 +1288,11 @@ class KitReceipt(_Strict):
     @classmethod
     def _content_digest(cls, value: str) -> str:
         return _digest(value)
+
+    @field_validator("bundle_digest")
+    @classmethod
+    def _bundle_digest(cls, value: str | None) -> str | None:
+        return None if value is None else _digest(value)
 
     def digests(self) -> dict[str, str]:
         """The digest this instance accepted for each owned path."""
@@ -1538,6 +1671,8 @@ class InstalledKit(_Strict):
     version: str
     content_digest: str
     source: str | None = None
+    #: The receipt's ``bundle_digest``: the recipes and scripts it pins, if any.
+    bundle_digest: str | None = Field(default=None, exclude_if=lambda value: value is None)
     #: The kits this kit requires, each with the version here and whether it is met.
     requires: tuple[KitRequirementStatus, ...] = ()
     # Kit paths whose accepted content no longer matches the receipt: local edits.

@@ -146,9 +146,10 @@ def test_every_command_defined_in_the_commands_package_is_reachable() -> None:
     # the vocabulary file adds `vocabulary export|plan|apply`; the six `curation`
     # verbs left with 0.5.0 and the duplicates audit came back as `duplicates`;
     # `link` adds one; `python` adds one; `line grant` adds one; `provider publish` adds one;
-    # `section` (read one workspace section) adds one.
-    assert len(leaf_claims) == 120, (
-        f"expected 120 Cruxible/host leaf commands, found {len(leaf_claims)}"
+    # `section` (read one workspace section) adds one; kit recipes and scripts add
+    # `kit adopt` and `kit run`.
+    assert len(leaf_claims) == 122, (
+        f"expected 122 Cruxible/host leaf commands, found {len(leaf_claims)}"
     )
 
     reachable = set(leaf_claims)

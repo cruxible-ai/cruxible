@@ -20,6 +20,15 @@ from pydantic import ValidationError
 
 from cruxible_client import CruxibleClient
 from cruxible_client.contracts.canonical import pretty_canonical_bytes
+from cruxible_client.contracts.kit_recipes import (
+    KitRecipeError,
+    KitRecipeParamError,
+    parse_param_pairs,
+    preflight_values,
+    render_recipe,
+    render_with_dependencies,
+    resolve_params,
+)
 from cruxible_client.contracts.kits import (
     KIT_MANIFEST_FILE,
     InstalledKit,
@@ -35,17 +44,9 @@ from cruxible_client.contracts.kits import (
     kit_file_entry,
     kit_file_role_of,
 )
-from cruxible_client.kit_recipes import (
-    KitRecipeError,
-    KitRecipeParamError,
-    parse_param_pairs,
-    preflight_values,
-    render_recipe,
-    render_with_dependencies,
-    resolve_params,
-)
 from cruxible_core.cli.kit_cache import (
     KitCacheError,
+    installed_cache_key,
     kit_cache_directory,
     load_installed_kit,
     write_kit_cache,
@@ -115,7 +116,9 @@ DAILY_SPEC = KitRecipeSpec(
     },
     depends_on=("default",),
 )
-REPORT_SPEC = KitScriptSpec(name="report", path="scripts/report.py", description="Report.")
+REPORT_SPEC = KitScriptSpec(
+    name="report", path="scripts/report.py", description="Report.", mode="read_only"
+)
 
 
 def _recipe_bytes(document: dict[str, Any]) -> bytes:
@@ -196,6 +199,9 @@ def test_the_bundled_base_kit_manifest_is_byte_identical_and_keeps_its_digest() 
     assert manifest.content_digest == BASE_KIT_PIN.content_digest
 
 
+RO = {"mode": "read_only"}
+
+
 def _manifest_with(**update: Any) -> dict[str, Any]:
     payload = _adoption_bundle().manifest.model_dump(mode="json")
     payload.update(update)
@@ -234,8 +240,8 @@ def _manifest_with(**update: Any) -> dict[str, Any]:
         (
             {
                 "scripts": [
-                    {"name": "r", "path": "scripts/report.py", "description": "d"},
-                    {"name": "r", "path": "scripts/report.py", "description": "d"},
+                    {"name": "r", "path": "scripts/report.py", "description": "d", **RO},
+                    {"name": "r", "path": "scripts/report.py", "description": "d", **RO},
                 ]
             },
             "declared twice",
@@ -245,7 +251,7 @@ def _manifest_with(**update: Any) -> dict[str, Any]:
             "sits under recipes/",
         ),
         (
-            {"scripts": [{"name": "a", "path": "recipes/daily.json", "description": "d"}]},
+            {"scripts": [{"name": "a", "path": "recipes/daily.json", "description": "d", **RO}]},
             "sits under scripts/",
         ),
         (
@@ -398,7 +404,12 @@ def test_rendering_interpolates_strings_and_keeps_exact_placeholders_typed() -> 
 def test_defaults_fill_unset_params_and_a_value_never_changes_the_structure() -> None:
     hostile = 'x", "kind": "trigger'
     spec = TYPED.model_copy(
-        update={"params": {**TYPED.params, "name": KitRecipeParamSpec(description="Any text.")}}
+        update={
+            "params": {
+                **TYPED.params,
+                "name": KitRecipeParamSpec(description="Any text.", default="x"),
+            }
+        }
     )
     values = resolve_params("acme", spec, {"name": hostile})
     (member,) = render_recipe(spec, TYPED_CONTENT, values)["members"]
@@ -556,6 +567,7 @@ def _installed(bundle: KitBundle, source: str | None = "test") -> InstalledKit:
         version=bundle.manifest.version,
         content_digest=bundle.manifest.content_digest,
         source=source,
+        bundle_digest=bundle.manifest.pinned_bundle_digest,
     )
 
 
@@ -564,19 +576,23 @@ def test_the_cache_keeps_verified_read_only_copies_and_refuses_altered_bytes(
 ) -> None:
     bundle = _adoption_bundle()
     directory = write_kit_cache(bundle, tmp_path)
-    assert directory == kit_cache_directory("acme", bundle.manifest.content_digest, tmp_path)
+    # Keyed by the bundle digest the receipt pins, not the shared content digest.
+    assert bundle.manifest.pinned_bundle_digest is not None
+    assert directory == kit_cache_directory("acme", bundle.manifest.pinned_bundle_digest, tmp_path)
     assert (directory / "scripts/report.py").read_bytes() == SCRIPT.encode()
     assert not os.access(directory / "scripts/report.py", os.W_OK)
     # Writing it again keeps the same copy.
     assert write_kit_cache(bundle, tmp_path) == directory
 
     cached = load_installed_kit(_installed(bundle), root=tmp_path)
-    assert cached.verified_bytes("scripts/report.py")[1] == SCRIPT.encode()
+    assert cached.verified_bytes("scripts/report.py") == SCRIPT.encode()
     target = directory / "scripts/report.py"
     target.chmod(stat.S_IWUSR | stat.S_IRUSR)
     target.write_bytes(SCRIPT.encode() + b"\nprint('tampered')\n")
+    # What was verified stays what is used; a fresh load refuses the altered file.
+    assert cached.verified_bytes("scripts/report.py") == SCRIPT.encode()
     with pytest.raises(KitCacheError, match="sha256 mismatch"):
-        cached.verified_bytes("scripts/report.py")
+        load_installed_kit(_installed(bundle), root=tmp_path)
 
 
 def test_the_cache_refuses_another_releases_copy_and_bad_bundles(tmp_path: Path) -> None:
@@ -624,8 +640,10 @@ class _StatusClient:
     def __init__(self, kits: tuple[InstalledKit, ...]) -> None:
         self.kits = kits
 
-    def kit_status(self, instance_id: str) -> KitStatus:
-        return KitStatus(kits=self.kits)
+    def kit_status(self, instance_id: str, *, kit_id: str | None = None) -> KitStatus:
+        # kit adopt and kit run name their one kit: the receipt is looked up directly.
+        assert kit_id is not None
+        return KitStatus(kits=tuple(kit for kit in self.kits if kit.kit_id == kit_id))
 
 
 def test_kit_build_reads_recipe_and_script_specs_and_their_files(
@@ -696,13 +714,16 @@ def test_kit_status_counts_recipes_and_scripts_of_a_cached_release(
     bundle = _adoption_bundle()
     monkeypatch.setenv("CRUXIBLE_KIT_CACHE_DIR", str(tmp_path))
     write_kit_cache(bundle)
-    monkeypatch.setattr(
-        "cruxible_core.cli.commands._common._get_client",
-        lambda: _StatusClient((_installed(bundle),)),
-    )
+
+    class AllKits:
+        def kit_status(self, instance_id: str) -> KitStatus:
+            return KitStatus(kits=(_installed(bundle),))
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: AllKits())
     status = CliRunner().invoke(cli, [*BASE, "status", "--offline"])
     assert status.exit_code == 0, status.output
     assert "  recipes 2 (kit adopt acme --list), scripts 1 (kit run acme --list)" in status.output
+    assert "mode read_only is the publisher's declaration, not a sandbox" in status.output
 
 
 # -- the CLI, end to end against a real daemon ----------------------------------------
@@ -771,7 +792,12 @@ def test_kit_add_caches_the_release_and_adopt_submits_parameterized_recipes(
     assert preview.exit_code == 0, preview.output
     assert "acme:default (1.0.0): would submit" in preview.output
     assert "  Runbook: acme.start" in preview.output
-    assert "Next: cruxible kit adopt acme --yes" in preview.output
+    assert (
+        f"Next: cruxible --server-url http://cruxible --instance-id {consumer.instance_id} "
+        "--principal-id operator kit adopt acme --yes"
+    ) in preview.output
+    assert f"target: instance {consumer.instance_id} at http://cruxible" in preview.output
+    assert "    steps: action:evidence.sweep" in preview.output
     assert "runbooks/acme.start.json" not in consumer.tree()
 
     adopted = runner.invoke(cli, [*base, "adopt", "acme", "--yes"])
@@ -810,7 +836,8 @@ def test_kit_adopt_refuses_a_tampered_recipe_and_refetches_a_missing_cache(
         json.loads(runner.invoke(cli, [*base, "status", "--offline", "--json"]).stdout)
     )
     (kit,) = [item for item in status.kits if item.kit_id == "acme"]
-    directory = kit_cache_directory("acme", kit.content_digest)
+    assert kit.bundle_digest is not None  # kit add pinned the recipes and scripts
+    directory = kit_cache_directory("acme", installed_cache_key(kit))
     recipe = directory / "recipes/default.json"
     recipe.chmod(stat.S_IWUSR | stat.S_IRUSR)
     recipe.write_bytes(recipe.read_bytes().replace(b"evidence.sweep", b"evidence.sweeps"))
@@ -851,12 +878,19 @@ def test_kit_run_lists_and_runs_the_verified_script_with_the_sdk_environment(
     assert report["args"] == ["--format", "x"]
     assert (report["kit"], report["version"], report["mode"]) == ("acme", "1.0.0", "read_only")
     assert report["instance"] == consumer.instance_id
-    assert Path(report["files"]).name.startswith("sha256-")
+    # A private, verified snapshot of the kit files, removed when the script exits.
+    assert Path(report["files"]).name == "kit"
+    assert not Path(report["files"]).exists()
+    assert "mode read_only is the publisher's declaration" in listed.output
 
     unknown = runner.invoke(cli, [*base, "run", "acme:nope"])
     assert unknown.exit_code != 0 and "cruxible.kit.entry_unknown" in unknown.stderr
 
-    script = Path(report["files"]) / "scripts/report.py"
+    status = KitStatus.model_validate(
+        json.loads(runner.invoke(cli, [*base, "status", "--offline", "--json"]).stdout)
+    )
+    (kit,) = [item for item in status.kits if item.kit_id == "acme"]
+    script = kit_cache_directory("acme", installed_cache_key(kit)) / "scripts/report.py"
     script.chmod(stat.S_IWUSR | stat.S_IRUSR)
     script.write_text(SCRIPT + "\nraise SystemExit(9)\n")
     out.unlink()
@@ -864,3 +898,407 @@ def test_kit_run_lists_and_runs_the_verified_script_with_the_sdk_environment(
     assert tampered.exit_code != 0
     assert "sha256 mismatch" in tampered.stderr
     assert not out.exists()
+
+
+# -- review fixes: pinning, modes, legacy manifests, recipe validation ----------------
+
+
+def _rebuilt(bundle: KitBundle, script: bytes) -> KitBundle:
+    """``bundle`` with the same definitions (same content digest) but another script."""
+
+    files = {**bundle.file_contents(), "scripts/report.py": script}
+    return bundle.model_copy(
+        update={
+            "manifest": bundle.manifest.model_copy(
+                update={
+                    "files": tuple(
+                        kit_file_entry(path, content) for path, content in sorted(files.items())
+                    )
+                }
+            ),
+            "files": tuple(
+                KitFileBytes.of(path, content) for path, content in sorted(files.items())
+            ),
+        }
+    )
+
+
+def test_the_bundle_digest_tells_builds_with_the_same_definitions_apart() -> None:
+    first = _adoption_bundle()
+    second = _rebuilt(first, SCRIPT.encode() + b"\nraise SystemExit(7)\n")
+    assert first.manifest.content_digest == second.manifest.content_digest
+    assert first.manifest.bundle_digest != second.manifest.bundle_digest
+    assert first.manifest.pinned_bundle_digest == first.manifest.bundle_digest
+    # A kit without recipes or scripts pins nothing, so its receipt keeps its bytes.
+    plain = _bundle().manifest
+    assert plain.pinned_bundle_digest is None
+    from cruxible_client.contracts.kits import KitReceipt
+
+    receipt = KitReceipt(
+        kit_id="acme", version="1.0.0", content_digest=plain.content_digest, owns=(), artifacts=()
+    )
+    assert "bundle_digest" not in receipt.model_dump(mode="json")
+
+
+def test_a_rebuilt_bundle_never_replaces_what_the_installed_kit_runs(tmp_path: Path) -> None:
+    first = _adoption_bundle()
+    second = _rebuilt(first, b"raise SystemExit(7)\n")
+    write_kit_cache(first, tmp_path)
+    # kit pull of the rebuilt bundle writes its own entry, never the installed one.
+    other = write_kit_cache(second, tmp_path)
+    installed = _installed(first)
+    cached = load_installed_kit(installed, root=tmp_path)
+    assert cached.directory != other
+    assert cached.verified_bytes("scripts/report.py") == SCRIPT.encode()
+    # Fetching the rebuilt bundle for the installed kit refuses: its bundle is not pinned.
+    from cruxible_client.kits import write_kit_directory
+
+    rebuilt_dir = tmp_path / "rebuilt"
+    write_kit_directory(second, rebuilt_dir)
+    with pytest.raises(KitCacheError, match="not the installed acme 1.0.0 bundle"):
+        load_installed_kit(installed, from_path=str(rebuilt_dir), root=tmp_path)
+    # A receipt that pins no bundle refuses a copy that declares scripts.
+    unpinned = installed.model_copy(update={"bundle_digest": None})
+    with pytest.raises(KitCacheError, match="pins none"):
+        load_installed_kit(unpinned, from_path=str(rebuilt_dir), root=tmp_path / "c2")
+
+
+def test_kit_pull_of_a_rebuilt_bundle_leaves_the_installed_script_running(
+    adopter: tuple[_World, Path, list[str]], tmp_path: Path
+) -> None:
+    from cruxible_client.kits import resolve_kit, write_kit_directory
+
+    _consumer, kit_dir, base = adopter
+    runner = CliRunner()
+    assert runner.invoke(cli, [*base, "add", str(kit_dir), "--yes"]).exit_code == 0
+    published, _origin = resolve_kit(str(kit_dir))
+    rebuilt_dir = tmp_path / "kits" / "acme-rebuilt"
+    write_kit_directory(_rebuilt(published, b"raise SystemExit(7)\n"), rebuilt_dir)
+    pulled = runner.invoke(cli, [*base, "pull", str(rebuilt_dir), "--out", str(tmp_path / "p")])
+    assert pulled.exit_code == 0, pulled.output
+
+    out = tmp_path / "report.json"
+    ran = runner.invoke(cli, [*base, "run", "acme:report", "--", str(out)])
+    assert ran.exit_code == 0, ran.output
+    assert json.loads(out.read_text())["kit"] == "acme"  # script A, not the rebuilt exit 7
+    refused = runner.invoke(cli, [*base, "run", "acme:report", "--from", str(rebuilt_dir)])
+    assert refused.exit_code != 0
+    assert "cruxible.kit.cache_invalid" in refused.stderr
+    assert "not the installed acme 1.0.0 bundle" in refused.stderr
+
+
+def test_a_script_declares_its_mode_explicitly() -> None:
+    with pytest.raises(ValidationError, match="mode"):
+        KitScriptSpec.model_validate({"name": "r", "path": "scripts/report.py", "description": "d"})
+    with pytest.raises(ValidationError, match="read_only"):
+        KitScriptSpec.model_validate(
+            {"name": "r", "path": "scripts/report.py", "description": "d", "mode": "write"}
+        )
+
+
+def test_a_manifest_from_before_recipes_keeps_a_scripts_file_as_reference() -> None:
+    legacy = _bundle().manifest.model_dump(mode="json")
+    legacy["files"] = [
+        {"path": "recipes/notes.json", "sha256": "sha256:" + "b" * 64, "role": "reference"},
+        {"path": "scripts/helper.py", "sha256": "sha256:" + "a" * 64, "role": "reference"},
+    ]
+    manifest = KitManifest.model_validate(legacy)
+    assert {item.role for item in manifest.files} == {"reference"}
+    # A declaration that names it still needs the declared role.
+    legacy["scripts"] = [
+        {"name": "helper", "path": "scripts/helper.py", "description": "d", "mode": "read_only"}
+    ]
+    with pytest.raises(ValidationError, match="a reference file, not a script file"):
+        KitManifest.model_validate(legacy)
+
+
+@pytest.mark.parametrize("members", [None, 123, []])
+def test_a_dependent_recipe_is_validated_on_its_own_before_composition(members: Any) -> None:
+    from cruxible_client.contracts.kit_recipes import validate_rendered_recipe
+
+    child = KitRecipeSpec(
+        name="child", path="recipes/child.json", description="d", depends_on=("default",)
+    )
+    contents = {
+        **ADOPTION_FILES,
+        "recipes/child.json": _recipe_bytes({"kind": "change_set", "members": members}),
+    }
+    with pytest.raises(KitRecipeError) as refused:
+        render_with_dependencies((DEFAULT_SPEC, child), "child", contents)
+    assert refused.value.error_code == "cruxible.kit.recipe_invalid"
+    assert "recipe child" in str(refused.value)
+    # kit adopt applies exactly this validation to what it submits.
+    with pytest.raises(KitRecipeError, match="renders an invalid change set"):
+        validate_rendered_recipe("child", {"kind": "change_set", "members": members})
+
+
+def test_kit_build_refuses_a_dependent_recipe_without_its_own_members(
+    worlds: tuple[_World, _World],  # noqa: F811
+) -> None:
+    publisher, _consumer = worlds
+    files = {
+        **ADOPTION_FILES,
+        "recipes/daily.json": _recipe_bytes({"kind": "change_set", "members": None}),
+    }
+    request = _adoption_request(
+        files=tuple(KitFileBytes.of(path, content) for path, content in sorted(files.items()))
+    )
+    with pytest.raises(RequestRefusedError) as refused:
+        _publish(publisher, request)
+    assert refused.value.error_code == "cruxible.kit.recipe_invalid"
+    assert "recipe daily" in str(refused.value)
+
+
+@pytest.mark.parametrize(
+    ("pattern", "message"),
+    [
+        ("(a+)+$", "nested quantifier"),
+        ("^(a*)*b$", "nested quantifier"),
+        ("^(a|aa)*$", "alternation inside a quantified group"),
+        (r"^(a)\1$", "backreference"),
+        ("^(?=a)a$", "lookaround"),
+        ("^(?!b)a$", "lookaround"),
+        ("a" * 300, "at most 256 characters"),
+    ],
+)
+def test_a_param_pattern_that_could_backtrack_refuses_fast(pattern: str, message: str) -> None:
+    import time
+
+    started = time.monotonic()
+    with pytest.raises(ValidationError, match=message):
+        KitRecipeParamSpec(description="d", pattern=pattern, example="a" * 40 + "!")
+    assert time.monotonic() - started < 1.0
+
+
+def test_a_string_param_value_is_bounded() -> None:
+    spec = KitRecipeParamSpec(description="d", pattern=r"^[a-z]+$")
+    with pytest.raises(ValueError, match="longer than 4096"):
+        from cruxible_client.contracts.kit_recipes import parse_param_value
+
+        parse_param_value(spec, "a" * 5000)
+    with pytest.raises(ValidationError, match="longer than 4096"):
+        KitRecipeParamSpec(description="d", default="a" * 5000)
+
+
+@pytest.mark.parametrize(
+    ("content", "message"),
+    [
+        ('{"kind": "change_set", "members": [{"name": "a {{ b"}]}', "unmatched"),
+        ('{"kind": "change_set", "members": [{"name": "a }} b"}]}', "unmatched"),
+        ('{"kind": "change_set", "members": [{"name": "{{name}} }}"}]}', "unmatched"),
+        ('{"kind": "change_set", "members": [{"a {{": 1}]}', "object key"),
+    ],
+)
+def test_unmatched_placeholder_delimiters_refuse(content: str, message: str) -> None:
+    with pytest.raises(KitRecipeError, match=message):
+        render_recipe(TYPED, content, preflight_values(TYPED))
+
+
+def test_an_optional_param_the_recipe_names_declares_a_default() -> None:
+    spec = KitRecipeSpec(
+        name="o",
+        path="recipes/o.json",
+        description="d",
+        params={"tag": KitRecipeParamSpec(description="d", example="x")},
+    )
+    content = '{"kind": "change_set", "members": [{"name": "{{tag}}"}]}'
+    with pytest.raises(
+        KitRecipeError, match="optional parameter\\(s\\) tag that declare no default"
+    ):
+        render_recipe(spec, content, {"tag": "x"})
+
+
+def test_usage_lines_shell_quote_every_token() -> None:
+    from cruxible_client.contracts.kit_recipes import recipe_usage
+
+    spec = KitRecipeSpec(
+        name="q",
+        path="recipes/q.json",
+        description="d",
+        params={
+            "title": KitRecipeParamSpec(description="d", required=True, example="my app; rm -rf"),
+            "slug": KitRecipeParamSpec(description="d", required=True, pattern=r"^[a-z]$"),
+        },
+    )
+    usage = recipe_usage("acme", spec)
+    assert usage == "cruxible kit adopt acme:q --param slug=a --param 'title=my app; rm -rf'"
+    import shlex
+
+    assert shlex.split(usage)[-1] == "title=my app; rm -rf"
+
+
+def test_the_adopt_preview_discloses_mandate_scope_expiry_and_egress() -> None:
+    from cruxible_core.cli.commands.playbill import _adopt_member_details
+
+    mandate = {
+        "kind": "procedure_mandate",
+        "name": "acme.grant",
+        "line_name": "acme.scan",
+        "grants": "settle",
+        "scope": [{"predicate": "acme.seen", "changes": {"create": ["measured"]}}],
+        "expires": "P30D",
+    }
+    rows = _adopt_member_details(mandate)
+    assert "grants settle on Line:acme.scan" in rows
+    assert any(row.startswith("scope: ") and "acme.seen" in row for row in rows)
+    assert "expires: P30D" in rows
+    assert "scope: observations" in _adopt_member_details(
+        {**mandate, "scope": "observations", "expires": None}
+    )
+    assert "expires: policy default" in _adopt_member_details({**mandate, "expires": None})
+    line = {
+        "kind": "line",
+        "name": "acme.scan",
+        "procedure_name": "acme.scan",
+        "bindings": {"fetch": "acme-http#get"},
+        "acquisition": {"page.body": {"origins": ["https://api.example.test"]}},
+    }
+    rows = _adopt_member_details(line)
+    assert "providers: fetch=acme-http#get" in rows
+    assert "egress: https://api.example.test" in rows
+    trigger = {
+        "kind": "trigger",
+        "name": "acme.daily",
+        "runbook_name": "acme.start",
+        "schedule": {"kind": "cron", "expression": "0 6 * * *"},
+    }
+    assert _adopt_member_details(trigger) == [
+        "schedule: cron (expression 0 6 * * *)",
+        "runs: Runbook:acme.start",
+    ]
+
+
+def test_kit_adopt_preserves_selectors_and_from_in_its_rerun_line(
+    adopter: tuple[_World, Path, list[str]],
+) -> None:
+    consumer, kit_dir, base = adopter
+    runner = CliRunner()
+    assert runner.invoke(cli, [*base, "add", str(kit_dir), "--yes"]).exit_code == 0
+    assert runner.invoke(cli, [*base, "adopt", "acme", "--yes"]).exit_code == 0
+    preview = runner.invoke(
+        cli,
+        [*base, "adopt", "acme:daily", "--param", "name=a-b", "--from", str(kit_dir), "--dry-run"],
+    )
+    assert preview.exit_code == 0, preview.output
+    import shlex
+
+    (line,) = [row for row in preview.output.splitlines() if row.startswith("Next: ")]
+    argv = shlex.split(line.removeprefix("Next: "))
+    assert argv == [
+        "cruxible",
+        "--server-url",
+        "http://cruxible",
+        "--instance-id",
+        consumer.instance_id,
+        "--principal-id",
+        "operator",
+        "kit",
+        "adopt",
+        "acme:daily",
+        "--param=name=a-b",
+        "--from",
+        str(kit_dir),
+        "--yes",
+    ]
+
+
+def test_from_and_kit_pull_repair_a_damaged_cache_entry(
+    adopter: tuple[_World, Path, list[str]], tmp_path: Path
+) -> None:
+    _consumer, kit_dir, base = adopter
+    runner = CliRunner()
+    assert runner.invoke(cli, [*base, "add", str(kit_dir), "--yes"]).exit_code == 0
+    status = KitStatus.model_validate(
+        json.loads(runner.invoke(cli, [*base, "status", "--offline", "--json"]).stdout)
+    )
+    (kit,) = [item for item in status.kits if item.kit_id == "acme"]
+    directory = kit_cache_directory("acme", installed_cache_key(kit))
+    recipe = directory / "recipes/default.json"
+    recipe.unlink()  # the manifest survives, a file does not
+    missing = runner.invoke(cli, [*base, "adopt", "acme", "--render"])
+    assert missing.exit_code != 0 and "is missing" in missing.stderr
+    repaired = runner.invoke(cli, [*base, "adopt", "acme", "--render", "--from", str(kit_dir)])
+    assert repaired.exit_code == 0, repaired.output
+    assert recipe.read_bytes() == ADOPTION_FILES["recipes/default.json"]
+
+    script = directory / "scripts/report.py"
+    script.chmod(stat.S_IWUSR | stat.S_IRUSR)
+    script.write_bytes(b"raise SystemExit(9)\n")
+    pulled = runner.invoke(cli, [*base, "pull", str(kit_dir), "--out", str(tmp_path / "p")])
+    assert pulled.exit_code == 0, pulled.output
+    assert script.read_bytes() == SCRIPT.encode()
+
+
+def test_the_cache_refuses_a_symbolic_link_in_an_entry(tmp_path: Path) -> None:
+    bundle = _adoption_bundle()
+    directory = write_kit_cache(bundle, tmp_path)
+    outside = tmp_path / "outside.py"
+    outside.write_bytes(SCRIPT.encode())  # the same bytes: only the link is wrong
+    target = directory / "scripts/report.py"
+    target.chmod(stat.S_IWUSR | stat.S_IRUSR)
+    target.unlink()
+    target.symlink_to(outside)
+    with pytest.raises(KitCacheError, match="symbolic link"):
+        load_installed_kit(_installed(bundle), root=tmp_path)
+    # Writing the release again replaces the entry with a real file.
+    write_kit_cache(bundle, tmp_path)
+    assert not target.is_symlink()
+    assert (
+        load_installed_kit(_installed(bundle), root=tmp_path).verified_bytes("scripts/report.py")
+        == SCRIPT.encode()
+    )
+
+
+def test_a_missing_local_source_asks_for_from_instead_of_a_registry(tmp_path: Path) -> None:
+    bundle = _adoption_bundle()
+    installed = _installed(bundle, source="acme-gone-1.0.0")
+    with pytest.raises(KitCacheError, match="is not on disk here") as refused:
+        load_installed_kit(installed, root=tmp_path)
+    assert "rerun with --from KIT" in str(refused.value)
+
+
+def test_kit_build_reads_spec_paths_from_the_workspace_root_and_stdin(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    workspace = tmp_path / "ws"
+    (workspace / ".cruxible").mkdir(parents=True)
+    for path, content in ADOPTION_FILES.items():
+        (workspace / path).parent.mkdir(parents=True, exist_ok=True)
+        (workspace / path).write_bytes(content)
+    nested = workspace / "deep" / "er"
+    nested.mkdir(parents=True)
+    (nested / "scripts.json").write_text(json.dumps([REPORT_SPEC.model_dump(mode="json")]))
+    sent: list[KitBuildRequest] = []
+
+    class BuildClient:
+        def build_kit(self, instance_id: str, request: KitBuildRequest) -> KitBuildResult:
+            sent.append(request)
+            return KitBuildResult(bundle=_adoption_bundle())
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: BuildClient())
+    monkeypatch.chdir(nested)  # spec paths are the kit's paths, not relative to here
+    result = CliRunner().invoke(
+        cli,
+        [
+            *BASE,
+            "build",
+            "--id",
+            "acme",
+            "--version",
+            "1.0.0",
+            "--owns",
+            "acme.",
+            "--out",
+            str(tmp_path / "kit"),
+            "--recipes",
+            "-",
+            "--scripts",
+            "scripts.json",
+        ],
+        input=json.dumps(
+            [DEFAULT_SPEC.model_dump(mode="json"), DAILY_SPEC.model_dump(mode="json")]
+        ),
+    )
+    assert result.exit_code == 0, result.output
+    (request,) = sent
+    assert {item.path: item.content for item in request.files} == ADOPTION_FILES

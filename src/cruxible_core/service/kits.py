@@ -499,7 +499,7 @@ def _rendered_recipes(
     """Each declared recipe rendered with its defaults, examples or synthetic values,
     after the recipes it depends on: what the build previews (O(recipes))."""
 
-    from cruxible_client.kit_recipes import KitRecipeError, render_with_dependencies
+    from cruxible_client.contracts.kit_recipes import KitRecipeError, render_with_dependencies
     from cruxible_core.service.kit_template import RECIPE_INVALID
 
     contents = {item.path: item.content for item in request.files}
@@ -2823,7 +2823,11 @@ def _install_providers(
 def _finalize_provider_steps(result: KitChangeResult, prepared: frozenset[str]) -> KitChangeResult:
     """Each prepared provider's step, as the kit's one proposal left it: installed
     when it landed, awaiting approval while it is open, blocked when it refused.
-    Every one names that proposal."""
+    Every one names that proposal.
+
+    ``prepared`` holds only the providers whose build the proposal adds; a step
+    for a build already accepted here keeps its own action and names no proposal.
+    """
 
     action: dict[str, KitProviderAction] = {
         "accepted": "install",
@@ -3172,7 +3176,11 @@ def _add_kit(
             # Every missing build joins the kit's own candidate tree; the
             # definitions are diffed, remapped and settled against it below.
             provider_writes = prepared_batch.writes()
-            prepared_provider_ids = frozenset(item.provider_id for item in prepared_batch.items)
+            # Only a build the candidate adds settles with the kit's proposal; one
+            # already accepted here (``already_registered``) adds no write.
+            prepared_provider_ids = frozenset(
+                item.provider_id for item in prepared_batch.items if not item.already_registered
+            )
         elif instance.accepted_coordinate().git_oid != mode.head.git_oid:
             # A custom install_provider callback committed directly; follow the head it produced.
             mode = ChangeMode(
@@ -3381,6 +3389,8 @@ def _add_kit(
         provenance=manifest.provenance,
         providers=manifest.providers,
         requires=manifest.requires,
+        # Pins the recipes and scripts kit adopt / kit run may use (None without them).
+        bundle_digest=manifest.pinned_bundle_digest,
     )
     if awaiting_install:
         return KitChangeResult(
@@ -3755,12 +3765,30 @@ def refuse_unmet_kit_requires_at(
         _refuse_unmet_requires({**after, **changed}, changed)
 
 
-def service_kit_status(instance: PlaybillInstance) -> KitStatus:
-    """Installed kits with the paths edited since install (by content, lineage apart)."""
+def service_kit_status(instance: PlaybillInstance, kit_id: str | None = None) -> KitStatus:
+    """Installed kits with the paths edited since install (by content, lineage apart).
+
+    With ``kit_id``, only that kit: its one receipt read directly by path (plus
+    the receipts of the kits it requires), no resume rows, so ``kit adopt`` and
+    ``kit run`` pay for the kit they name rather than for every installed kit.
+    """
 
     coordinate = instance.accepted_coordinate()
     tree = instance.immutable_tree_at(coordinate.git_oid)
     kits = []
+    if kit_id is not None:
+        found = _read_receipt(instance, tree, kit_id)
+        if found is None or not found[1].artifacts:
+            return KitStatus()
+        receipt = found[1]
+        versions = {receipt.kit_id: receipt.version}
+        for item in receipt.requires:
+            required = _read_receipt(instance, tree, item.kit_id)
+            if required is not None and required[1].artifacts:
+                versions[item.kit_id] = required[1].version
+        with instance.bind_accepted_projection(coordinate) as projection:
+            one = _installed_kit(projection.typed.connection, tree, receipt, versions)
+        return KitStatus(kits=(_bundled_comparison(one),))
     receipts = tuple(receipt for receipt in _receipts(instance, tree) if receipt.artifacts)
     versions = {receipt.kit_id: receipt.version for receipt in receipts}
     with instance.bind_accepted_projection(coordinate) as projection:
@@ -3885,6 +3913,7 @@ def _installed_kit(
         version=receipt.version,
         content_digest=receipt.content_digest,
         source=receipt.source,
+        bundle_digest=receipt.bundle_digest,
         requires=tuple(
             KitRequirementStatus(
                 kit_id=item.kit_id,

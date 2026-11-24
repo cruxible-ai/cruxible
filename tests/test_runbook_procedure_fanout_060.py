@@ -527,3 +527,185 @@ def test_a_line_card_names_a_triggered_fan_out_runbook(tmp_path: Path) -> None:
     with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
         names = runbook_trigger_names(projection, f"Line:{SETTLE}", limit=2)
     assert names == ("Trigger:test.rb-tick",)
+
+
+# --- Event-bound Lines are left out of a fan-out --------------------------------
+
+
+@pytest.fixture
+def fail_line_takes_event(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``test.fail-line`` reads as a Line that takes an event (``trigger_input``)."""
+
+    from cruxible_client.contracts.procedures.line_specs import LineSpec
+    from cruxible_client.contracts.triggers import CaptureEventNameSelector
+    from cruxible_core.indexes.typed_state import TypedStateReader
+
+    real = TypedStateReader.source
+
+    def source(self: Any, identity: str) -> Any:
+        found = real(self, identity)
+        if identity == f"Line:{FAIL}" and isinstance(found, LineSpec):
+            return found.model_copy(
+                update={
+                    "trigger_input": "doc",
+                    "trigger_event": CaptureEventNameSelector(
+                        capture_contract_identity=ArtifactIdentity(
+                            kind="CaptureContract", name="test.orders-v1"
+                        )
+                    ),
+                }
+            )
+        return found
+
+    monkeypatch.setattr(TypedStateReader, "source", source)
+
+
+def test_procedure_lines_leave_out_a_line_that_takes_an_event(
+    tmp_path: Path, fail_line_takes_event: None
+) -> None:
+    instance, _root = runbook_world(tmp_path)
+    with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
+        assert runbook_service.procedure_line_split(projection.typed, PROCEDURE) == (
+            (SETTLE, PROPOSE),
+            (FAIL,),
+        )
+        assert runbook_service.procedure_lines(projection.typed, PROCEDURE) == (SETTLE, PROPOSE)
+        assert runbook_service.procedure_line_split(projection.typed, "test.nope") is None
+    author_runbook(instance, "test.rb", [{"procedure": PROCEDURE}])
+    assert runbook_service.resolve_runbook_lines(instance, "test.rb") == (SETTLE, PROPOSE)
+
+
+def test_a_fan_out_never_runs_a_line_that_takes_an_event(
+    tmp_path: Path, counted_line_runs: Counter[str], fail_line_takes_event: None
+) -> None:
+    instance, root = runbook_world(tmp_path)
+    author_runbook(instance, "test.rb", [{"procedure": PROCEDURE}, {"action": "evidence.sweep"}])
+    result = run_runbook(instance, root, "test.rb")
+    # The failing Line would have run first (name order); left out, the others run.
+    assert _targets(result) == [f"Line:{SETTLE}", f"Line:{PROPOSE}", "action:evidence.sweep"]
+    assert _statuses(result) == ["succeeded", "proposed", "not_run"]
+    assert FAIL not in counted_line_runs
+
+
+def test_preview_and_card_report_a_line_that_takes_an_event_as_left_out(
+    tmp_path: Path, fail_line_takes_event: None
+) -> None:
+    from cruxible_client.contracts.runbooks import LINE_TAKES_EVENT
+    from cruxible_core.service.discovery.runbook_reads import runbook_card
+
+    instance, root = runbook_world(tmp_path)
+    author_runbook(instance, "test.rb", [{"procedure": PROCEDURE}, {"action": "evidence.sweep"}])
+    preview = _preview(instance, root)
+    assert _targets(preview) == [
+        f"Line:{SETTLE}",
+        f"Line:{PROPOSE}",
+        f"Line:{FAIL}",
+        "action:evidence.sweep",
+    ]
+    left_out = preview.steps[2]
+    assert (left_out.step, left_out.from_procedure, left_out.excluded) == (
+        1,
+        PROCEDURE,
+        LINE_TAKES_EVENT,
+    )
+    assert left_out.reads == left_out.writes == () and left_out.authority is None
+    assert [step.excluded for step in preview.steps[:2]] == [None, None]
+    assert preview.model_dump(mode="json")["steps"][2]["excluded"] == LINE_TAKES_EVENT
+    assert "excluded" not in preview.model_dump(mode="json")["steps"][0]
+    assert f"Line:{FAIL}  (from Procedure:{PROCEDURE})  left out: takes an event" in str(preview)
+
+    card = runbook_card(
+        instance,
+        instance.accepted_coordinate(),
+        "Runbook:test.rb",
+        render=lambda ref, detail: ref if detail is None else f"{ref} {detail}",
+    )
+    fan = card.steps[0]
+    assert fan.availability == "available"
+    assert fan.lines == (f"Line:{SETTLE}", f"Line:{PROPOSE}")
+    assert fan.excluded_lines == (f"Line:{FAIL}",)
+
+
+def test_a_procedure_whose_only_line_takes_an_event_is_skipped(
+    tmp_path: Path, counted_line_runs: Counter[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_client.contracts.procedures.line_specs import LineSpec
+    from cruxible_client.contracts.triggers import CaptureEventNameSelector
+    from cruxible_core.indexes.typed_state import TypedStateReader
+
+    real = TypedStateReader.source
+
+    def source(self: Any, identity: str) -> Any:
+        found = real(self, identity)
+        if identity == f"Line:{SETTLE}" and isinstance(found, LineSpec):
+            return found.model_copy(
+                update={
+                    "trigger_input": "doc",
+                    "trigger_event": CaptureEventNameSelector(
+                        capture_contract_identity=ArtifactIdentity(
+                            kind="CaptureContract", name="test.orders-v1"
+                        )
+                    ),
+                }
+            )
+        return found
+
+    instance, root = _settle_world(tmp_path)
+    author_runbook(instance, "test.rb", [{"procedure": PROCEDURE}, {"action": "evidence.sweep"}])
+    monkeypatch.setattr(TypedStateReader, "source", source)
+    result = run_runbook(instance, root, "test.rb")
+    assert _statuses(result) == ["skipped", "fired"]
+    assert result.steps[0].code == runbook_service.NO_LINES_BOUND
+    assert "cruxible.runbook.line_takes_event" in (result.steps[0].message or "")
+    assert counted_line_runs == {}
+
+
+# --- Preview: siblings of one Procedure step run in order -----------------------
+
+
+def test_preview_orders_a_procedure_steps_lines_one_after_another(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sibling Lines share their step number but run in name order: a write by a
+    later sibling does not serve an earlier sibling's read."""
+
+    from cruxible_client.contracts.runbooks import RunbookPreviewRead
+    from cruxible_core.service import runbook_preview
+
+    instance, root = runbook_world(tmp_path)
+    author_runbook(instance, "test.rb", [{"procedure": PROCEDURE}])
+    baseline = _preview(instance, root)
+    # Name order: test.fail-line, test.override-line, test.propose-line.
+    assert _targets(baseline) == [f"Line:{FAIL}", f"Line:{SETTLE}", f"Line:{PROPOSE}"]
+    written = baseline.steps[0].writes[0].claim_types[0]
+    # Only the last sibling writes; every sibling reads what it writes.
+    real_writes = runbook_preview._writes
+    calls: list[int] = []
+
+    def last_sibling_writes(definition: Any) -> Any:
+        calls.append(1)
+        return real_writes(definition) if len(calls) == 3 else ()
+
+    monkeypatch.setattr(runbook_preview, "_writes", last_sibling_writes)
+    monkeypatch.setattr(
+        runbook_preview,
+        "_reads",
+        lambda reader, definition: (RunbookPreviewRead(node_id="read", claim_types=(written,)),),
+    )
+    flagged = _preview(instance, root)
+    problems = [item for item in flagged.order_problems if item.claim_type == written]
+    # The first two siblings read before the third writes; the third serves itself.
+    assert [(item.kind, item.step, item.written_by_steps) for item in problems] == [
+        ("reads_later_write", 1, (1,)),
+        ("reads_later_write", 1, (1,)),
+    ]
+
+    # The first sibling writing serves every later sibling's read.
+    calls.clear()
+    monkeypatch.setattr(
+        runbook_preview,
+        "_writes",
+        lambda definition: (calls.append(1), real_writes(definition) if len(calls) == 1 else ())[1],
+    )
+    served = _preview(instance, root)
+    assert [item for item in served.order_problems if item.claim_type == written] == []

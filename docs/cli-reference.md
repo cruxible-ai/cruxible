@@ -1283,13 +1283,19 @@ cruxible kit run KIT[:SCRIPT] [--list] [--from KIT] [--json] [-- ARGS...]
 `adopt` renders one of an installed kit's recipes (`KIT` alone names its
 `default` recipe) with the `--param` values and submits it through the ordinary
 authoring submit, under your approval policy; `--dry-run` previews, `--render`
-prints the change set, `--list` names each recipe's parameters. `run` runs one
-of its read-only scripts with this CLI's interpreter and connection, client-side.
-Both first check that the kit is installed, that the client's cached copy
-(`<state-root>/kit-files/`, written by `kit add --commit` and `kit pull`;
-`CRUXIBLE_KIT_CACHE_DIR` overrides) is the installed release, and that the file
-has the manifest's sha256; a missing copy is fetched from the recorded source or
-`--from`. Refusals: `cruxible.kit.not_installed`, `cruxible.kit.cache_invalid`,
+prints the change set, `--list` names each recipe's parameters; the preview
+names the target, each Mandate's scope and expiry, each Line's providers and
+network origins, and its `--yes` rerun line keeps the selectors you gave. `run`
+runs one of its scripts with this CLI's interpreter and connection, client-side,
+on a private verified snapshot of the kit files. A script's `mode: read_only` is
+the publisher's declaration, not a sandbox: it runs as a local Python process
+with your CLI session and environment, and the daemon governs any proposal it
+submits. Both first look up the kit's receipt, check that the client's cached
+copy (`<state-root>/kit-files/`, written by `kit add --commit` and `kit pull`;
+`CRUXIBLE_KIT_CACHE_DIR` overrides) is the installed release (its content digest
+and the receipt's bundle digest), and verify every file against the manifest's
+sha256; a missing copy is fetched from the recorded source or `--from`, and
+`--from` or `kit pull` replaces a damaged one. Refusals: `cruxible.kit.not_installed`, `cruxible.kit.cache_invalid`,
 `cruxible.kit.entry_unknown`, `cruxible.kit.recipe_param_invalid`,
 `cruxible.kit.recipe_invalid`.
 

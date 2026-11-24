@@ -216,6 +216,10 @@ class GetRunbookStep(_StrictOperationalModel):
     #: A Procedure step's live Lines at the read coordinate (``Line:<name>``, in
     #: name order): the Lines the step runs.
     lines: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
+    #: A Procedure step's live Lines the step leaves out (``Line:<name>``, in name
+    #: order): each takes an event, which no Runbook step hands it
+    #: (``cruxible.runbook.line_takes_event``).
+    excluded_lines: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
 
 
 class GetRunbookCard(_StrictOperationalModel):

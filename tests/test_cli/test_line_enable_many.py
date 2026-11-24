@@ -72,6 +72,7 @@ def _runbook(*steps: dict[str, Any], state: str = "live") -> Any:
                     target=f"Procedure:{step['procedure']}",
                     availability="available" if bound else "no_lines_bound",
                     lines=bound,
+                    excluded_lines=tuple(f"Line:{line}" for line in step.get("excluded", ())),
                 )
             )
         else:
@@ -290,4 +291,23 @@ def test_runbook_procedure_step_with_zero_lines_refuses_cleanly(
     result = _run(monkeypatch, client, "--runbook", "kev-daily")
     assert result.exit_code != 0
     assert "Runbook:kev-daily runs no Lines yet; nothing to enable" in result.output
+    assert client.enabled == []
+
+
+def test_runbook_never_enables_a_procedure_line_that_takes_an_event(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The card leaves a Procedure's event-bound Lines out of ``lines``; enable follows it."""
+
+    step = {**_procedure_step("kev.sync", "kev-sync"), "excluded": ("kev-on-landing",)}
+    client = _LinesClient(runbook=_runbook(step))
+    result = _run(monkeypatch, client, "--runbook", "kev-daily")
+    assert result.exit_code == 0, result.output
+    assert [line for line, _ in client.enabled] == ["kev-sync"]
+
+    only_evented = {**_procedure_step("kev.sync"), "excluded": ("kev-on-landing",)}
+    client = _LinesClient(runbook=_runbook(only_evented))
+    refused = _run(monkeypatch, client, "--runbook", "kev-daily")
+    assert refused.exit_code != 0
+    assert "its Procedures' Lines take an event" in refused.output
     assert client.enabled == []

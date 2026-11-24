@@ -21,7 +21,10 @@ It reports them and never reorders anything. It never predicts an outcome.
 A Procedure step expands here, at the accepted head, to every live Line of
 its Procedure in Line-name order (one ``lines_by_procedure`` seek): each is
 previewed as a Line step under the Procedure step's number, naming the
-Procedure it came from. With no live Line the step is listed with the
+Procedure it came from, and ordered after its earlier siblings: a read is
+served only by a write an earlier Line step (or the Line itself) makes. A Line
+that takes an event is listed ``excluded`` (``cruxible.runbook.line_takes_event``)
+and never runs. With no Line left to run the step is listed with the
 Procedure's writes but runs nothing, and a later read of only those writes is
 an order problem (``reads_unbound_write``).
 
@@ -53,6 +56,7 @@ from cruxible_client.contracts.procedures.line_specs import LineSpec, line_spec_
 from cruxible_client.contracts.procedures.nodes import CallNode, CaptureEgressNode, ReadNode
 from cruxible_client.contracts.query.definitions import QueryDefinition
 from cruxible_client.contracts.runbooks import (
+    LINE_TAKES_EVENT,
     ProcedureTarget,
     Runbook,
     RunbookOrderProblem,
@@ -554,24 +558,35 @@ def compose_runbook_preview(
     workspace_reader: WorkspaceFileReader | None = None,
 ) -> RunbookPreview:
     # Each step's Line steps: a Line step's own, or a Procedure step's live
-    # Lines in name order (expanded here, at this projection).
+    # Lines in name order (expanded here, at this projection). A Procedure's
+    # Line that takes an event is left out of the fan-out, as the run leaves it.
     expanded: dict[int, tuple[str, ...] | None] = {}
+    takes_event: dict[int, tuple[str, ...]] = {}
     for index, target in enumerate(runbook.steps, start=1):
         if isinstance(target, ProcedureTarget):
             procedure_identity = target.procedure.target.qualified
             declared = reader.source(procedure_identity)
-            expanded[index] = (
-                reader.lines_running(procedure_identity)
-                if isinstance(declared, ProcedureArtifact) and declared.lifecycle.state == "live"
-                else None
-            )
+            if not (isinstance(declared, ProcedureArtifact) and declared.lifecycle.state == "live"):
+                expanded[index] = None
+                continue
+            runs: list[str] = []
+            events: list[str] = []
+            for line_identity in reader.lines_running(procedure_identity):
+                line_source = reader.source(line_identity)
+                bound = isinstance(line_source, LineSpec) and line_source.trigger_input is not None
+                (events if bound else runs).append(line_identity)
+            expanded[index] = tuple(runs)
+            takes_event[index] = tuple(events)
     runbook_lines = frozenset(
         [identity.qualified for identity in runbook.lines]
         + [line for lines in expanded.values() for line in lines or ()]
     )
     steps: list[RunbookPreviewStep] = []
-    read_types: list[tuple[int, tuple[str, ...], frozenset[str]]] = []
-    written_by: dict[str, list[int]] = {}
+    # Reads and writes carry the Line step's place in the run (its position):
+    # Lines expanded from one Procedure step share its step number but run one
+    # after another, so a later sibling's write is not there for an earlier read.
+    read_types: list[tuple[int, int, tuple[str, ...], frozenset[str]]] = []
+    written_by: dict[str, list[tuple[int, int]]] = {}
     # What a Procedure step with no live Line would write: nothing runs it.
     unbound_written_by: dict[str, list[int]] = {}
 
@@ -584,21 +599,31 @@ def compose_runbook_preview(
                 keys.extend(declared.keys)
         return keys
 
+    def line_target(line: str) -> LineTarget:
+        return LineTarget(
+            line=ArtifactNameRef(
+                target=ArtifactIdentity(kind="Line", name=line.removeprefix("Line:"))
+            )
+        )
+
     def line_steps(index: int, target: Any) -> list[tuple[LineTarget, str | None]]:
         if isinstance(target, ProcedureTarget):
             name = target.procedure.target.name
-            return [
-                (
-                    LineTarget(
-                        line=ArtifactNameRef(
-                            target=ArtifactIdentity(kind="Line", name=line.removeprefix("Line:"))
-                        )
-                    ),
-                    name,
-                )
-                for line in expanded[index] or ()
-            ]
+            return [(line_target(line), name) for line in expanded[index] or ()]
         return [(target, None)]
+
+    def left_out(index: int, target: Any) -> None:
+        # The Procedure's Lines that take an event: listed, never run.
+        if isinstance(target, ProcedureTarget):
+            for line in takes_event.get(index, ()):
+                steps.append(
+                    RunbookPreviewStep(
+                        step=index,
+                        target=line_target(line),
+                        from_procedure=target.procedure.target.name,
+                        excluded=LINE_TAKES_EVENT,
+                    )
+                )
 
     for index, target in enumerate(runbook.steps, start=1):
         if isinstance(target, ActionTarget):
@@ -632,12 +657,14 @@ def compose_runbook_preview(
             for write in unbound_writes:
                 for claim_type in (*created_keys(write), *write.claim_types):
                     unbound_written_by.setdefault(claim_type, []).append(index)
+            left_out(index, target)
             continue
-        for line_target, from_procedure in line_steps(index, target):
+        for expanded_target, from_procedure in line_steps(index, target):
             _compose_line_step(
                 reader,
                 index,
-                line_target,
+                len(steps),
+                expanded_target,
                 from_procedure,
                 steps=steps,
                 read_types=read_types,
@@ -646,13 +673,14 @@ def compose_runbook_preview(
                 runbook_lines=runbook_lines,
                 workspace_reader=workspace_reader,
             )
+        left_out(index, target)
     problems: list[RunbookOrderProblem] = []
-    for index, claim_types, keys in read_types:
+    for index, position, claim_types, keys in read_types:
         for claim_type in claim_types:
             writers = written_by.get(claim_type, [])
-            if any(step <= index for step in writers):
-                continue  # an earlier step (or the step itself) writes it
-            later = tuple(dict.fromkeys(step for step in writers if step > index))
+            if any(at <= position for at, _ in writers):
+                continue  # an earlier Line step (or the step itself) writes it
+            later = tuple(dict.fromkeys(step for at, step in writers if at > position))
             unbound = tuple(
                 dict.fromkeys(
                     step for step in unbound_written_by.get(claim_type, ()) if step < index
@@ -702,17 +730,22 @@ def compose_runbook_preview(
 def _compose_line_step(
     reader: DefinitionReader,
     index: int,
+    position: int,
     target: LineTarget,
     from_procedure: str | None,
     *,
     steps: list[RunbookPreviewStep],
-    read_types: list[tuple[int, tuple[str, ...], frozenset[str]]],
-    written_by: dict[str, list[int]],
+    read_types: list[tuple[int, int, tuple[str, ...], frozenset[str]]],
+    written_by: dict[str, list[tuple[int, int]]],
     created_keys: Any,
     runbook_lines: frozenset[str],
     workspace_reader: WorkspaceFileReader | None,
 ) -> None:
-    """One Line step's preview entry, its reads and its writes (by step number)."""
+    """One Line step's preview entry, its reads and its writes.
+
+    Reads and writes are keyed by ``position``, the Line step's place in the
+    run (step number, then a Procedure step's Lines in name order).
+    """
 
     line = reader.source(target.line.target.qualified)
     procedure = (
@@ -762,6 +795,7 @@ def _compose_line_step(
     read_types.append(
         (
             index,
+            position,
             _sorted(t for read in reads for t in read.claim_types),
             frozenset(t for read in reads for t in read.key_claim_types),
         )
@@ -770,7 +804,7 @@ def _compose_line_step(
         for write in writes:
             # Creating a Subject writes its key Claims: they are this step's writes too.
             for claim_type in (*created_keys(write), *write.claim_types):
-                written_by.setdefault(claim_type, []).append(index)
+                written_by.setdefault(claim_type, []).append((position, index))
 
 
 def service_preview_runbook(

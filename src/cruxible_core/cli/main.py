@@ -762,6 +762,14 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 "playbill", "pull_kit", "Fetch and verify a kit without installing it."
             ),
             "remove": _command("playbill", "remove_kit", "Retire what a kit installed."),
+            "adopt": _command(
+                "playbill",
+                "adopt_kit",
+                "Render an installed kit's recipe and submit it as your change.",
+            ),
+            "run": _command(
+                "playbill", "run_kit_script", "Run an installed kit's verified script locally."
+            ),
         },
         module="playbill",
         attr="kit_group",
