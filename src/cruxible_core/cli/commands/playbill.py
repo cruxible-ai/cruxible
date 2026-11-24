@@ -7,6 +7,8 @@ import json
 import os
 import shlex
 import subprocess
+import sys
+import tempfile
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
@@ -141,12 +143,19 @@ from cruxible_client.contracts.get_text import (  # noqa: F401
 from cruxible_client.contracts.get_text import run_node_line as _run_node_line
 from cruxible_client.contracts.kit_requires import KitRequirement
 from cruxible_client.contracts.kits import (
+    InstalledKit,
     KitAddRequest,
     KitAutomationTemplate,
     KitBuildRequest,
+    KitBundle,
     KitChangeResult,
+    KitFileBytes,
+    KitManifest,
+    KitRecipeSpec,
     KitRemoveRequest,
     KitRequirementStatus,
+    KitScriptSpec,
+    KitStatus,
     kit_version_key,
 )
 from cruxible_client.contracts.line_dispatch import LineDispatchItem, LineEvaluateResult
@@ -234,6 +243,7 @@ from cruxible_core.cli.commands._common import (
     _echo_creation_write_target,
     _emit_brief,
     _emit_json,
+    _interactive_terminal,
     _remember_principal_settings,
     _require_instance_id,
     _root_ctx_obj,
@@ -2744,6 +2754,29 @@ def _echo_kit_change(
         "listed in the manifest's files with its sha256; it is never a definition."
     ),
 )
+@click.option(
+    "--recipes",
+    "recipes_file",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help=(
+        "A JSON list of the kit's recipes (name, path, description, params): each path "
+        "is a change set under recipes/ in the workspace with {{param}} placeholders. The "
+        "build renders each with its defaults and examples and refuses unless it authors "
+        "cleanly against this kit's definitions; kit adopt KIT:NAME renders and submits it."
+    ),
+)
+@click.option(
+    "--scripts",
+    "scripts_file",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help=(
+        "A JSON list of the kit's read-only scripts (name, path, description, mode): each "
+        "path is a Python file under scripts/ in the workspace, which kit run KIT:NAME "
+        "verifies and runs client-side (never in the daemon)."
+    ),
+)
 @json_option
 @handle_errors
 def build_kit(
@@ -2755,6 +2788,8 @@ def build_kit(
     default_providers: tuple[Path, ...],
     automation_template: Path | None,
     kit_files: tuple[str, ...],
+    recipes_file: Path | None,
+    scripts_file: Path | None,
     output_json: bool,
 ) -> None:
     """Export this instance's owned definitions as one self-contained kit release.
@@ -2767,6 +2802,7 @@ def build_kit(
     """
     if out.exists():
         raise click.UsageError(f"{out} already exists")
+    recipes, scripts, adoption_files = _read_kit_adoption_specs(recipes_file, scripts_file)
     template = (
         None
         if automation_template is None
@@ -2790,6 +2826,9 @@ def build_kit(
                 for directory in default_providers
             ),
             automation_template=template,
+            recipes=recipes,
+            scripts=scripts,
+            files=adoption_files,
         )
         return client.build_kit(instance_id, request)
 
@@ -2813,6 +2852,68 @@ def build_kit(
         _echo_automation_template(
             template_path, on_disk=_kit_directory_file(str(out), template_path)
         )
+        _echo_kit_adoption_counts(bundle.manifest)
+
+
+def _read_kit_adoption_specs(
+    recipes_file: Path | None, scripts_file: Path | None
+) -> tuple[tuple[KitRecipeSpec, ...], tuple[KitScriptSpec, ...], tuple[KitFileBytes, ...]]:
+    """The recipes and scripts ``kit build`` declares, and their files' bytes.
+
+    Each spec file is a JSON list; each spec's path is read relative to the
+    workspace root, exactly as ``--file`` reads (refused outside it).
+    """
+
+    def specs(path: Path | None, model: Any, label: str) -> tuple[Any, ...]:
+        if path is None:
+            return ()
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise click.UsageError(f"--{label} {path}: not a JSON list ({exc})") from exc
+        if not isinstance(raw, list):
+            raise click.UsageError(f"--{label} {path}: a JSON list of {label}")
+        try:
+            return tuple(model.model_validate(item) for item in raw)
+        except ValidationError as exc:
+            raise click.UsageError(f"--{label} {path}: {validation_summary(exc)}") from exc
+
+    recipes = specs(recipes_file, KitRecipeSpec, "recipes")
+    scripts = specs(scripts_file, KitScriptSpec, "scripts")
+    paths = [item.path for item in (*recipes, *scripts)]
+    if not paths:
+        return recipes, scripts, ()
+    workspace = _existing_workspace_root() or Path.cwd()
+    carried = read_kit_build_files(paths, workspace=workspace)
+    return (
+        recipes,
+        scripts,
+        tuple(KitFileBytes.of(path, content) for path, content in carried),
+    )
+
+
+def _echo_kit_adoption_counts(manifest: KitManifest, *, indent: str = "") -> None:
+    """``recipes: N, scripts: M`` with the listing commands; nothing when neither."""
+
+    if not manifest.recipes and not manifest.scripts:
+        return
+    parts = []
+    if manifest.recipes:
+        parts.append(f"recipes {len(manifest.recipes)} (kit adopt {manifest.kit_id} --list)")
+    if manifest.scripts:
+        parts.append(f"scripts {len(manifest.scripts)} (kit run {manifest.kit_id} --list)")
+    click.echo(f"{indent}{', '.join(parts)}")
+
+
+def _cache_kit_files(bundle: KitBundle) -> None:
+    """Keep the verified copy kit adopt and kit run read; a failure only warns."""
+
+    from cruxible_core.cli.kit_cache import KitCacheError, write_kit_cache
+
+    try:
+        write_kit_cache(bundle)
+    except (OSError, KitCacheError) as exc:
+        click.echo(f"warning: kit files not cached ({exc})", err=True)
 
 
 @kit_group.command("add")
@@ -2924,6 +3025,14 @@ def add_kit(
         return client.add_kit(instance_id, request)
 
     result = with_automation_template(_server_call(add, command_name="cruxible kit add"), template)
+    if dry_run is False and result.status in {
+        "proposed",
+        "accepted",
+        "unchanged",
+        "awaiting_providers",
+    }:
+        # The recipes and scripts kit adopt / kit run read, verified, out of the workspace.
+        _cache_kit_files(bundle)
     if not show_unchanged:
         result = compact_kit_change(result)
     if output_json:
@@ -2960,6 +3069,7 @@ def pull_kit(reference: str, out: Path, layout: bool, output_json: bool) -> None
         write_layout(image, out, ref=origin)
     else:
         write_kit_directory(bundle, out)
+    _cache_kit_files(bundle)
     template = bundle.manifest.automation_template
     if output_json:
         _emit_json(
@@ -3079,6 +3189,20 @@ def kit_status(offline: bool, output_json: bool) -> None:
             click.echo(
                 f"  kept: {_public_name(kept.identity)} ({_KIT_KEEP_TEXT[kept.consequence][1]})"
             )
+        _echo_cached_adoption_counts(kit)
+
+
+def _echo_cached_adoption_counts(kit: InstalledKit) -> None:
+    """The installed release's recipe and script counts, when its verified copy is
+    cached here (never fetched for a status line)."""
+
+    from cruxible_core.cli.kit_cache import KitCacheError, load_installed_kit
+
+    try:
+        directory_manifest = load_installed_kit(kit, offline=True).manifest
+    except (KitCacheError, OSError):
+        return
+    _echo_kit_adoption_counts(directory_manifest, indent="  ")
 
 
 @kit_group.command("remove")
@@ -3115,6 +3239,300 @@ def remove_kit(
     else:
         _echo_kit_change(result, blocked_plan="list" if show_plan else "counts")
     _exit_if_kit_blocked(result)
+
+
+def _kit_target(target: str) -> tuple[str, str | None]:
+    """``KIT`` or ``KIT:NAME`` as (kit id, name or None)."""
+
+    kit_id, sep, name = target.partition(":")
+    if not kit_id or (sep and not name):
+        raise click.UsageError(f"TARGET is KIT or KIT:NAME, not {target!r}")
+    return kit_id, (name if sep else None)
+
+
+def _verified_installed_kit(status: KitStatus, kit_id: str, from_path: str | None) -> Any:
+    """The installed release ``kit_id`` (from kit status) and its verified cached copy."""
+
+    from cruxible_core.cli.kit_cache import installed_kit, load_installed_kit
+
+    kit = installed_kit(status.kits, kit_id)
+    return kit, load_installed_kit(kit, from_path=from_path)
+
+
+def _member_label(member: Mapping[str, Any]) -> str:
+    kind = str(member.get("kind", "member"))
+    heading = "".join(part.capitalize() for part in kind.split("_"))
+    name = member.get("name")
+    return f"{heading}:{name}" if name else heading
+
+
+@kit_group.command("adopt")
+@click.argument("target")
+@click.option(
+    "--list", "list_recipes", is_flag=True, help="List the kit's recipes and their parameters."
+)
+@click.option(
+    "--param",
+    "params",
+    multiple=True,
+    metavar="NAME=VALUE",
+    help="Set one recipe parameter (repeatable); kit adopt KIT --list names them.",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Render the recipe and run its authoring preflight here; submit nothing.",
+)
+@click.option(
+    "--render",
+    is_flag=True,
+    help="Print the rendered change set as JSON; contact the daemon only to verify the kit.",
+)
+@click.option("--yes", is_flag=True, help="Submit without asking.")
+@click.option("--no-accept", is_flag=True, help="Submit a proposal without activating it.")
+@click.option(
+    "--from",
+    "from_path",
+    default=None,
+    metavar="KIT",
+    help="Read the installed release from this kit directory, layout or reference "
+    "(when this machine has no cached copy).",
+)
+@json_option
+@handle_errors
+def adopt_kit(
+    target: str,
+    list_recipes: bool,
+    params: tuple[str, ...],
+    dry_run: bool,
+    render: bool,
+    yes: bool,
+    no_accept: bool,
+    from_path: str | None,
+    output_json: bool,
+) -> None:
+    """Render one of an installed kit's recipes and submit it as your own change.
+
+    \b
+    kit adopt KIT --list                      the recipes, their parameters and defaults
+    kit adopt KIT[:RECIPE] --param K=V --dry-run   render, preflight, print a summary
+    kit adopt KIT[:RECIPE] --param K=V --yes  render and submit (one governed proposal)
+    kit adopt KIT[:RECIPE] --param K=V --render    print the rendered change set JSON
+
+    KIT alone names its ``default`` recipe. A recipe is a change set of Lines,
+    Mandates, Triggers and Runbooks with {{param}} placeholders, shipped with the
+    release and verified against it before use: the kit must be installed, the
+    cached copy must be the installed release, and the recipe file must have the
+    manifest's sha256. Adopt a recipe again with other --param values to add
+    another instance (a second SBOM). The change goes through the ordinary
+    authoring submit and approval policy. At a terminal it previews and asks;
+    elsewhere it previews unless --yes or --no-accept submits.
+    """
+
+    from cruxible_client.kit_recipes import (
+        parse_param_pairs,
+        recipe_param_table,
+        recipe_usage,
+        render_recipe,
+        resolve_params,
+    )
+
+    kit_id, name = _kit_target(target)
+    modes = sum((list_recipes, render, dry_run, yes or no_accept))
+    if modes > 1:
+        raise click.UsageError("choose one of --list, --render, --dry-run, or --yes/--no-accept")
+    if list_recipes and params:
+        raise click.UsageError("--list takes no --param")
+    status = _server_call(
+        lambda client, instance_id: client.kit_status(instance_id),
+        command_name="cruxible kit adopt",
+    )
+    kit, cached = _verified_installed_kit(status, kit_id, from_path)
+    manifest = cached.manifest
+    if list_recipes:
+        chosen = manifest.recipes if name is None else (cached.recipe(name),)
+        if output_json:
+            _emit_json(
+                {
+                    "kit_id": kit.kit_id,
+                    "version": kit.version,
+                    "content_digest": kit.content_digest,
+                    "recipes": [item.model_dump(mode="json") for item in chosen],
+                }
+            )
+            return
+        click.echo(f"{kit.kit_id} {kit.version}: {len(chosen)} recipe(s)")
+        for item in chosen:
+            after = f" (after {', '.join(item.depends_on)})" if item.depends_on else ""
+            click.echo(f"{item.name}: {printable(item.description)}{after}")
+            for row in recipe_param_table(item):
+                click.echo(f"  {printable(row)}")
+            click.echo(f"  usage: {recipe_usage(kit.kit_id, item)}")
+        return
+    recipe = cached.recipe(name or "default")
+    _path, content = cached.verified_bytes(recipe.path)
+    try:
+        given = parse_param_pairs(params)
+    except ValueError as exc:
+        raise click.UsageError(str(exc)) from exc
+    rendered = render_recipe(recipe, content, resolve_params(kit.kit_id, recipe, given))
+    if rendered.setdefault("rationale", None) is None:
+        rendered["rationale"] = f"kit adopt {kit.kit_id}:{recipe.name} ({kit.kit_id} {kit.version})"
+    try:
+        parsed = _AUTHORING_INPUT_ADAPTER.validate_python(rendered)
+    except ValidationError as exc:
+        raise click.ClickException(
+            f"cruxible.kit.recipe_invalid: recipe {recipe.name} renders an invalid change set: "
+            f"{validation_summary(exc)}"
+        ) from exc
+    payload = parsed.model_dump(mode="json")
+    if render:
+        _emit_json(payload)
+        return
+    label = f"{kit.kit_id}:{recipe.name}"
+    members = [member for member in payload["members"] if isinstance(member, Mapping)]
+    submit = yes or no_accept
+    if not submit:
+        preview = _server_call(
+            lambda client, instance_id: client.preview_authoring_input(instance_id, input=payload),
+            command_name="cruxible kit adopt",
+        )
+        if output_json:
+            _emit_json(preview.model_dump(mode="json"))
+            _exit_if_preflight_refused(preview)
+            return
+        click.echo(
+            f"{label} ({kit.version}): would "
+            f"{'submit' if preview.verdict == 'passed' else 'refuse'}"
+            + (" (unchanged: matches accepted state)" if preview.unchanged else "")
+        )
+        groups: dict[str, list[str]] = {}
+        for member in members:
+            labelled = _member_label(member)
+            heading, _, member_name = labelled.partition(":")
+            groups.setdefault(heading, []).append(member_name or heading)
+        for heading in sorted(groups):
+            click.echo(f"  {heading}: {', '.join(printable(item) for item in groups[heading])}")
+        for diagnostic in preview.frontier.diagnostics:
+            click.echo(
+                f"  {diagnostic.code} at {printable(diagnostic.offending_element)}: "
+                f"{printable(diagnostic.message)}"
+            )
+        if preview.verdict != "passed" or preview.unchanged:
+            _exit_if_preflight_refused(preview)
+            return
+        rerun = " ".join(
+            shlex.quote(part)
+            for part in ("cruxible", "kit", "adopt", target, *(f"--param={p}" for p in params))
+        )
+        if dry_run or not _interactive_terminal():
+            click.echo(f"Next: {rerun} --yes")
+            return
+        if not click.confirm("Submit this change?", default=False):
+            click.echo(f"Not submitted. Submit it later: {rerun} --yes")
+            return
+
+    def call(client: CruxibleClient, instance_id: str) -> contracts.AuthoringSubmitResultRecord:
+        accept: AuthoringAccept = "never" if no_accept else "if_allowed"
+        return client.submit_authoring_input(instance_id, input=payload, accept=accept)
+
+    submitted = _server_call(call, command_name="cruxible kit adopt")
+    if output_json:
+        _emit_json(submitted.model_dump(mode="json"))
+    else:
+        click.echo(f"{label} ({kit.version}): {len(members)} member(s)")
+        _echo_submit_brief(submitted)
+    if isinstance(submitted.outcome, contracts.AuthoringRefused):
+        raise click.exceptions.Exit(1)
+
+
+@kit_group.command("run")
+@click.argument("target")
+@click.option("--list", "list_scripts", is_flag=True, help="List the kit's scripts.")
+@click.option(
+    "--from",
+    "from_path",
+    default=None,
+    metavar="KIT",
+    help="Read the installed release from this kit directory, layout or reference "
+    "(when this machine has no cached copy).",
+)
+@json_option
+@click.argument("script_args", nargs=-1, type=click.UNPROCESSED)
+@handle_errors
+def run_kit_script(
+    target: str,
+    list_scripts: bool,
+    from_path: str | None,
+    output_json: bool,
+    script_args: tuple[str, ...],
+) -> None:
+    """Run one of an installed kit's read-only scripts, here, never in the daemon.
+
+    \b
+    kit run KIT --list                     the scripts and what each does
+    kit run KIT:SCRIPT -- [ARGS]...        verify, then run with ARGS
+
+    The script must be the installed release's: the kit installed, the cached
+    copy that release, and the file's sha256 the manifest's. It runs with this
+    CLI's interpreter and connection, as cruxible python runs a script
+    (Cruxible.connect() finds this daemon, instance and principal), from the
+    current directory; CRUXIBLE_KIT_ID, CRUXIBLE_KIT_VERSION and
+    CRUXIBLE_KIT_FILES (the verified kit files) are set. The exit status is the
+    script's.
+    """
+
+    from cruxible_core.cli.commands.python_runner import _run, child_environment
+
+    kit_id, name = _kit_target(target)
+    if list_scripts and script_args:
+        raise click.UsageError("--list takes no script arguments")
+    if not list_scripts and name is None:
+        raise click.UsageError(
+            f"name the script: kit run {kit_id}:SCRIPT (kit run {kit_id} --list)"
+        )
+    status = _server_call(
+        lambda client, instance_id: client.kit_status(instance_id),
+        command_name="cruxible kit run",
+    )
+    kit, cached = _verified_installed_kit(status, kit_id, from_path)
+    if list_scripts:
+        chosen = cached.manifest.scripts if name is None else (cached.script(name),)
+        if output_json:
+            _emit_json(
+                {
+                    "kit_id": kit.kit_id,
+                    "version": kit.version,
+                    "content_digest": kit.content_digest,
+                    "scripts": [item.model_dump(mode="json") for item in chosen],
+                }
+            )
+            return
+        click.echo(f"{kit.kit_id} {kit.version}: {len(chosen)} script(s)")
+        for item in chosen:
+            click.echo(f"{item.name} ({item.mode}): {printable(item.description)}")
+        return
+    if output_json:
+        raise click.UsageError("--json applies to --list; pass the script's own flags after --")
+    assert name is not None
+    script = cached.script(name)
+    _on_disk, content = cached.verified_bytes(script.path)
+    env = child_environment(_root_ctx_obj())
+    env.update(
+        {
+            "CRUXIBLE_KIT_ID": kit.kit_id,
+            "CRUXIBLE_KIT_VERSION": kit.version,
+            "CRUXIBLE_KIT_FILES": str(cached.directory),
+            "CRUXIBLE_KIT_SCRIPT_MODE": script.mode,
+        }
+    )
+    # Run exactly the verified bytes: a private copy, so the file cannot change
+    # between the check and the run.
+    with tempfile.TemporaryDirectory(prefix="cruxible-kit-run-") as scratch:
+        runnable = Path(scratch) / Path(script.path).name
+        runnable.write_bytes(content)
+        exit_status = _run([sys.executable, str(runnable), *script_args], env)
+    sys.exit(exit_status)
 
 
 @playbill_group.group("document")
@@ -6387,43 +6805,47 @@ def submit_authoring_intent(
         )
 
     submitted = _server_call(call, command_name="cruxible authoring submit")
-    outcome = submitted.outcome
-    refused = isinstance(outcome, contracts.AuthoringRefused)
+    refused = isinstance(submitted.outcome, contracts.AuthoringRefused)
     if output_brief or (refused and not output_json):
-        if isinstance(outcome, contracts.AuthoringLanded):
-            headline = "accepted"
-            coordinate: str | None = outcome.accepted_coordinate.git_oid
-            reason = None
-            next_command = _landed_line_next(submitted.members)
-        else:
-            headline = (
-                f"refused ({outcome.reason})"
-                if isinstance(outcome, contracts.AuthoringRefused)
-                else f"submitted ({submitted.status.state})"
-            )
-            coordinate = None
-            reason = outcome.message
-            next_command = outcome.next
-        proposal_id = getattr(outcome, "proposal_id", None)
-        if isinstance(proposal_id, str) and next_command is not None:
-            next_command = _shorten_proposal_ids(next_command, (proposal_id,))
-        _emit_brief(
-            outcome=headline,
-            ids={
-                "intent": str(submitted.intent.get("intent_id")),
-                "proposal": _short_proposal_id(proposal_id)
-                if isinstance(proposal_id, str)
-                else None,
-                "coordinate": coordinate,
-            },
-            reason=_submit_refusal_reason(submitted) or reason,
-            next_command=next_command,
-        )
+        _echo_submit_brief(submitted)
     else:
         _emit_json(submitted.model_dump(mode="json"))
     if refused:
         # Nothing was proposed: a script reading the exit code must not see success.
         raise click.exceptions.Exit(1)
+
+
+def _echo_submit_brief(submitted: contracts.AuthoringSubmitResultRecord) -> None:
+    """The brief block of one authoring submit: outcome, ids, reason, next."""
+
+    outcome = submitted.outcome
+    if isinstance(outcome, contracts.AuthoringLanded):
+        headline = "accepted"
+        coordinate: str | None = outcome.accepted_coordinate.git_oid
+        reason = None
+        next_command = _landed_line_next(submitted.members)
+    else:
+        headline = (
+            f"refused ({outcome.reason})"
+            if isinstance(outcome, contracts.AuthoringRefused)
+            else f"submitted ({submitted.status.state})"
+        )
+        coordinate = None
+        reason = outcome.message
+        next_command = outcome.next
+    proposal_id = getattr(outcome, "proposal_id", None)
+    if isinstance(proposal_id, str) and next_command is not None:
+        next_command = _shorten_proposal_ids(next_command, (proposal_id,))
+    _emit_brief(
+        outcome=headline,
+        ids={
+            "intent": str(submitted.intent.get("intent_id")),
+            "proposal": _short_proposal_id(proposal_id) if isinstance(proposal_id, str) else None,
+            "coordinate": coordinate,
+        },
+        reason=_submit_refusal_reason(submitted) or reason,
+        next_command=next_command,
+    )
 
 
 def _landed_line_next(members: Sequence[Mapping[str, Any]]) -> str | None:

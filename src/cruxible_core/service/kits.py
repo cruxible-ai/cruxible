@@ -493,6 +493,31 @@ def _staged(instance: PlaybillInstance, digest: str, name: str) -> bytes:
     return instance.body_store().read(digest, access=_PROVIDER_FILE_ACCESS)
 
 
+def _rendered_recipes(
+    request: KitBuildRequest,
+) -> tuple[tuple[str, str, Mapping[str, object]], ...]:
+    """Each declared recipe rendered with its defaults, examples or synthetic values,
+    after the recipes it depends on: what the build previews (O(recipes))."""
+
+    from cruxible_client.kit_recipes import KitRecipeError, render_with_dependencies
+    from cruxible_core.service.kit_template import RECIPE_INVALID
+
+    contents = {item.path: item.content for item in request.files}
+    rendered = []
+    for recipe in request.recipes:
+        try:
+            change_set = render_with_dependencies(request.recipes, recipe.name, contents)
+        except KitRecipeError as exc:
+            raise RequestRefusedError(
+                RECIPE_INVALID,
+                f"the recipe {recipe.name} ({recipe.path}) does not render: {exc.detail}; "
+                "fix the recipe and build again",
+                repair=RepairOperation(operation="cruxible.kit.build"),
+            ) from exc
+        rendered.append((recipe.name, recipe.path, change_set))
+    return tuple(rendered)
+
+
 def service_build_kit(
     instance: PlaybillInstance,
     request: KitBuildRequest,
@@ -517,8 +542,10 @@ def service_build_kit(
     """
 
     template = request.automation_template
-    if template is not None and template_actor_id is None:
-        raise DataValidationError("checking an automation template needs an authoring principal")
+    if (template is not None or request.recipes) and template_actor_id is None:
+        raise DataValidationError(
+            "checking an automation template or recipe needs an authoring principal"
+        )
 
     coordinate = instance.accepted_coordinate()
     tree = instance.immutable_tree_at(coordinate.git_oid)
@@ -579,29 +606,39 @@ def service_build_kit(
     body_bytes = {
         digest: _staged(instance, digest, f"the Document body {digest}") for digest in bodies
     }
-    if template is not None:
-        from cruxible_core.service.kit_template import check_automation_template
+    if template is not None or request.recipes:
+        from cruxible_core.service.kit_template import check_kit_change_sets
 
-        assert template_actor_id is not None  # refused above when a template is named
-        check_automation_template(
+        assert template_actor_id is not None  # refused above when either is named
+        check_kit_change_sets(
             {
                 **_required_definitions(tree, receipts, bundle.manifest.requires),
                 **bundle.contents(),
             },
-            template,
+            templates=() if template is None else (template,),
+            recipes=_rendered_recipes(request),
             actor_id=template_actor_id,
             providers=tuple(packages),
             document_bodies=body_bytes,
         )
+    carried = {item.path: item.content for item in request.files}
+    if template is not None:
+        carried[template.path] = template.content.encode("utf-8")
+    carried = dict(sorted(carried.items()))
+    if carried:
+        manifest = bundle.manifest.model_copy(
+            update={
+                "automation_template": None if template is None else template.path,
+                "files": tuple(kit_file_entry(path, content) for path, content in carried.items()),
+                "recipes": request.recipes,
+                "scripts": request.scripts,
+            }
+        )
         bundle = bundle.model_copy(
             update={
-                "manifest": bundle.manifest.model_copy(
-                    update={
-                        "automation_template": template.path,
-                        "files": (kit_file_entry(template.path, template.content.encode("utf-8")),),
-                    }
-                ),
-                "files": (KitFileBytes.of(template.path, template.content.encode("utf-8")),),
+                # Validated again: every recipe and script names a file of its role.
+                "manifest": KitManifest.model_validate(manifest.model_dump(mode="json")),
+                "files": tuple(KitFileBytes.of(path, content) for path, content in carried.items()),
             }
         )
     if body_bytes:

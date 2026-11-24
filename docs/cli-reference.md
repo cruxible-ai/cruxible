@@ -1266,7 +1266,8 @@ and `POST /{instance}/providers/install`.
 ~~~text
 cruxible kit build --id ID --version X.Y.Z --owns PREFIX. [--owns PREFIX.]...
   --out KIT_DIR [--provider PACKAGE_DIR]... [--default-provider PACKAGE_DIR]...
-  [--automation-template FILE] [--file PATH]... [--json]
+  [--automation-template FILE] [--file PATH]... [--recipes FILE] [--scripts FILE]
+  [--json]
 cruxible kit add KIT [--source TEXT] [--keep IDENTITY]... [--keep-local-edits]
   [--keep-build Line:NAME]...
   [--retire-dependents IDENTITY]... [--allow-downgrade] [--detail]
@@ -1274,7 +1275,23 @@ cruxible kit add KIT [--source TEXT] [--keep IDENTITY]... [--keep-local-edits]
 cruxible kit pull REFERENCE --out DIR [--layout] [--json]
 cruxible kit status [--offline] [--json]
 cruxible kit remove ID [--detail] [--dry-run|--commit] [--at OID] [--json]
+cruxible kit adopt KIT[:RECIPE] [--list] [--param NAME=VALUE]... [--dry-run|--render]
+  [--yes] [--no-accept] [--from KIT] [--json]
+cruxible kit run KIT[:SCRIPT] [--list] [--from KIT] [--json] [-- ARGS...]
 ~~~
+
+`adopt` renders one of an installed kit's recipes (`KIT` alone names its
+`default` recipe) with the `--param` values and submits it through the ordinary
+authoring submit, under your approval policy; `--dry-run` previews, `--render`
+prints the change set, `--list` names each recipe's parameters. `run` runs one
+of its read-only scripts with this CLI's interpreter and connection, client-side.
+Both first check that the kit is installed, that the client's cached copy
+(`<state-root>/kit-files/`, written by `kit add --commit` and `kit pull`;
+`CRUXIBLE_KIT_CACHE_DIR` overrides) is the installed release, and that the file
+has the manifest's sha256; a missing copy is fetched from the recorded source or
+`--from`. Refusals: `cruxible.kit.not_installed`, `cruxible.kit.cache_invalid`,
+`cruxible.kit.entry_unknown`, `cruxible.kit.recipe_param_invalid`,
+`cruxible.kit.recipe_invalid`.
 
 `KIT` is a kit directory, an OCI image layout directory, or a registry
 reference. A bare name such as `project-state:1.0.0` resolves under

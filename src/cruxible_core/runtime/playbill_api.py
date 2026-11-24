@@ -932,8 +932,9 @@ def playbill_provider_move(instance_id: str, request: ProviderMoveRequest) -> Pr
 
 def playbill_kit_build(instance_id: str, request: KitBuildRequest) -> KitBuildResult:
     check_permission("cruxible_kit_build", instance_id=instance_id)
-    if request.automation_template is not None:
-        # Checking the template is its authoring preview: the preview's own gate.
+    checks_change_sets = request.automation_template is not None or bool(request.recipes)
+    if checks_change_sets:
+        # Checking the template and recipes is their authoring preview: its own gate.
         check_permission("cruxible_authoring_compile", instance_id=instance_id)
     # The manifest records the building principal, so the builder must be one.
     actor_id = _attributed_actor(instance_id, "Kit build").actor_id
@@ -943,7 +944,7 @@ def playbill_kit_build(instance_id: str, request: KitBuildRequest) -> KitBuildRe
             get_playbill_manager().get(instance_id),
             request,
             principal_id=actor_id,
-            template_actor_id=None if request.automation_template is None else actor_id,
+            template_actor_id=actor_id if checks_change_sets else None,
         ),
     )
 

@@ -286,7 +286,7 @@ def add_kit_files(bundle: KitBundle, files: Sequence[tuple[str, bytes]]) -> KitB
         if path in carried:
             raise KitFileRefused(
                 path,
-                "is already a file of this kit (its automation template)",
+                "is already a file of this kit (its automation template, a recipe or a script)",
                 "leave it out of --file; the build carries it",
             )
     entries = tuple(

@@ -850,6 +850,43 @@ Capture to read) deduped by a digest of the set, so an unchanged set is seen
 again and a changed set is a new item; one item per element only when each
 needs its own decision recorded nowhere else.
 
+### Recipes and scripts
+
+A kit can also declare **recipes**: parameterized change sets under
+`recipes/`, listed in `cruxible-kit.json`'s `recipes` with a name, a
+description and typed parameters (`string`, optionally with a `pattern`;
+`integer`; `boolean`; `enum` with its `values`; each `required` or with a
+`default`, and an optional `example`). A recipe names a parameter as
+`{{name}}` inside a JSON string value, and nothing else is evaluated: a string
+that is exactly `"{{limit}}"` takes the typed value, a longer string spells it
+as text. `default` is the recipe `kit adopt KIT` picks.
+
+~~~bash
+cruxible kit adopt security --list
+cruxible kit adopt security --dry-run
+cruxible kit adopt security:sbom --param name=app --param relative_path=sbom.cdx.json --yes
+cruxible kit adopt security:sbom --param name=image --param relative_path=sboms/debian.spdx.json --yes
+cruxible kit adopt security:sbom --param name=app --param relative_path=sbom.cdx.json --render
+~~~
+
+Each adopt is your own governed change: one proposal, under your approval
+policy. Adopting the same recipe again with other values adds another instance.
+
+**Scripts** are read-only Python files under `scripts/`, listed in `scripts`
+with `mode: read_only`. `cruxible kit run KIT:SCRIPT -- ARGS` runs one with the
+`cruxible python` environment, on your machine, never in the daemon; the
+script's exit status is the command's. `CRUXIBLE_KIT_ID`, `CRUXIBLE_KIT_VERSION`
+and `CRUXIBLE_KIT_FILES` (the verified kit files) are set.
+
+Recipes and scripts are inert files like the template: not part of the release
+identity, never installed. Before using one, `adopt` and `run` check that the
+kit is installed, that the client's cached copy is that release (by
+`content_digest`) and that the file has the manifest's sha256. `kit add
+--commit` and `kit pull` write that copy under `<state-root>/kit-files/`; when
+it is missing, it is fetched again from the recorded source or `--from KIT`.
+These checks catch a stale or damaged copy; they are not a boundary against a
+process running as your user.
+
 ## Build a kit
 
 A kit is exported from an instance where its definitions are accepted. You
@@ -896,6 +933,14 @@ cruxible kit build --id car-parts --version 1.0.0 --owns catalog. --out ./car-pa
   `skills/<name>/...` a `skill`, anything else a `reference`). Like the
   template it is outside the content digest. A missing file or one outside the
   workspace refuses `cruxible.kit.file_refused` with its repair.
+- `--recipes FILE` and `--scripts FILE` (new in 0.6.0) each name a JSON list of
+  recipe or script declarations, as the manifest spells them; each `path` is
+  read relative to the workspace root (`recipes/NAME.json`, `scripts/NAME.py`)
+  and carried as a `recipe` or `script` file. The build renders every recipe
+  with its defaults and examples (a synthetic value for a required parameter
+  with neither), after the recipes its `depends_on` names, and refuses
+  `cruxible.kit.recipe_invalid` unless each authors cleanly, on the same
+  preview the template gets ([Recipes and scripts](#recipes-and-scripts)).
 
 ~~~text
 $ cruxible kit build --id car-parts --version 1.0.0 --owns catalog. --out ../car-parts-1.0.0 \
