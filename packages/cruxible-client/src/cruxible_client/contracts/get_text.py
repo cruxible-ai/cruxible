@@ -654,9 +654,9 @@ def render_get(
                     f"pending {item['proposal']}: {', '.join(item['fields'])} (by {item['by']})"
                 )
             # Notes about it, as pointers: the sections stay in the workspace.
-            for link in result.card.notes:
+            for link in getattr(result.card, "notes", ()):
                 lines.append("note " + note_link_text(link, file_paths=file_paths))
-            if result.card.notes_total is not None:
+            if getattr(result.card, "notes_total", None) is not None:
                 lines.append(f"({result.card.notes_total} notes in all)")
         else:
             for key, value in card.items():
@@ -794,7 +794,7 @@ def render_get(
         for link in result.backlinks.links:
             lines.append(backlink_line(link, file_paths=file_paths))
         return "\n".join(lines)
-    if result.notes is not None:
+    if getattr(result, "notes", None) is not None:
         if not result.notes.notes:
             lines.append(f"(no notes about {result.notes.target})")
         reads: list[str] = []

@@ -7684,7 +7684,7 @@ def _emit_get_text(result: Any, *, evidence_erased: bool = False) -> None:
     names_files = (
         result.evidence is not None
         or result.backlinks is not None
-        or result.notes is not None
+        or getattr(result, "notes", None) is not None
         or bool(getattr(result.card, "notes", ()))
     )
     text = render_get(
