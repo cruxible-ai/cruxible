@@ -45362,6 +45362,25 @@
             "default": null
           }
         },
+        "workspace_files": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "workspace_files",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/OrientWorkspaceFiles"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
         "you": {
           "default": null,
           "default_json_serializable": true,
@@ -48486,6 +48505,30 @@
             "title": "OrientVocabularyFile",
             "type": "object"
           },
+          "OrientWorkspaceFiles": {
+            "additionalProperties": false,
+            "description": "The workspace's catalogued files (files.yaml), by path: what notes and\nsection citations point into, and what ``cruxible section FILE#Heading`` reads.\n\nOnly a client that sees the workspace (CLI, MCP, SDK) fills this in, on the\ndefault map; a daemon answer never carries it. ``paths`` are the first\n``ORIENT_WORKSPACE_FILES`` in byte order; ``total`` counts them all.",
+            "properties": {
+              "paths": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Paths",
+                "type": "array"
+              },
+              "total": {
+                "minimum": 0,
+                "title": "Total",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "total",
+              "paths"
+            ],
+            "title": "OrientWorkspaceFiles",
+            "type": "object"
+          },
           "OrientYou": {
             "additionalProperties": false,
             "description": "The caller as the daemon resolved it, and whether it can author.",
@@ -49388,6 +49431,17 @@
             ],
             "default": null
           },
+          "workspace_files": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/OrientWorkspaceFiles"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
           "you": {
             "anyOf": [
               {
@@ -49508,6 +49562,62 @@
       "required_fields": [
         "at",
         "state"
+      ]
+    },
+    "OrientWorkspaceFiles": {
+      "fields": {
+        "paths": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "paths",
+          "required": true,
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Paths",
+            "type": "array"
+          }
+        },
+        "total": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "total",
+          "required": true,
+          "schema": {
+            "minimum": 0,
+            "title": "Total",
+            "type": "integer"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "The workspace's catalogued files (files.yaml), by path: what notes and\nsection citations point into, and what ``cruxible section FILE#Heading`` reads.\n\nOnly a client that sees the workspace (CLI, MCP, SDK) fills this in, on the\ndefault map; a daemon answer never carries it. ``paths`` are the first\n``ORIENT_WORKSPACE_FILES`` in byte order; ``total`` counts them all.",
+        "properties": {
+          "paths": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Paths",
+            "type": "array"
+          },
+          "total": {
+            "minimum": 0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "paths"
+        ],
+        "title": "OrientWorkspaceFiles",
+        "type": "object"
+      },
+      "required_fields": [
+        "paths",
+        "total"
       ]
     },
     "OriginatingLine": {
