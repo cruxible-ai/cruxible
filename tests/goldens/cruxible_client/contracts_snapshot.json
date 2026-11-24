@@ -8349,6 +8349,7 @@
           },
           "EnumType": {
             "additionalProperties": false,
+            "description": "A closed set of string members.\n\n``ordered`` (compiler revision 74) declares the members in ascending rank:\nthe first is lowest, the last highest. Queries then compare and order the\nstored member strings by that rank; values are never remapped. Unordered,\nthe field is omitted from the canonical bytes, so existing digests hold.",
             "properties": {
               "kind": {
                 "const": "enum",
@@ -8364,6 +8365,11 @@
                 "minItems": 1,
                 "title": "Members",
                 "type": "array"
+              },
+              "ordered": {
+                "default": false,
+                "title": "Ordered",
+                "type": "boolean"
               }
             },
             "required": [
@@ -57215,6 +57221,7 @@
           },
           "EnumType": {
             "additionalProperties": false,
+            "description": "A closed set of string members.\n\n``ordered`` (compiler revision 74) declares the members in ascending rank:\nthe first is lowest, the last highest. Queries then compare and order the\nstored member strings by that rank; values are never remapped. Unordered,\nthe field is omitted from the canonical bytes, so existing digests hold.",
             "properties": {
               "kind": {
                 "const": "enum",
@@ -57230,6 +57237,11 @@
                 "minItems": 1,
                 "title": "Members",
                 "type": "array"
+              },
+              "ordered": {
+                "default": false,
+                "title": "Ordered",
+                "type": "boolean"
               }
             },
             "required": [
@@ -88908,6 +88920,7 @@
           },
           "EnumType": {
             "additionalProperties": false,
+            "description": "A closed set of string members.\n\n``ordered`` (compiler revision 74) declares the members in ascending rank:\nthe first is lowest, the last highest. Queries then compare and order the\nstored member strings by that rank; values are never remapped. Unordered,\nthe field is omitted from the canonical bytes, so existing digests hold.",
             "properties": {
               "kind": {
                 "const": "enum",
@@ -88923,6 +88936,11 @@
                 "minItems": 1,
                 "title": "Members",
                 "type": "array"
+              },
+              "ordered": {
+                "default": false,
+                "title": "Ordered",
+                "type": "boolean"
               }
             },
             "required": [
@@ -97615,6 +97633,7 @@
           },
           "EnumType": {
             "additionalProperties": false,
+            "description": "A closed set of string members.\n\n``ordered`` (compiler revision 74) declares the members in ascending rank:\nthe first is lowest, the last highest. Queries then compare and order the\nstored member strings by that rank; values are never remapped. Unordered,\nthe field is omitted from the canonical bytes, so existing digests hold.",
             "properties": {
               "kind": {
                 "const": "enum",
@@ -97630,6 +97649,11 @@
                 "minItems": 1,
                 "title": "Members",
                 "type": "array"
+              },
+              "ordered": {
+                "default": false,
+                "title": "Ordered",
+                "type": "boolean"
               }
             },
             "required": [
