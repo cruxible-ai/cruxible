@@ -32,14 +32,15 @@ verbs. The floor does no matching of its own: grep is the search.
 - `current/<kind>/<id>.yaml`: one file per Subject. Its first line is
   `# <ref>  kind=<kind>  changed gen <n>`: the latest accepted generation that
   changed anything the file shows (the Subject, its Claims, the Claims
-  pointing at it, or the ClaimTypes naming its fields). Then each field's
+  pointing at it, the notes about it, or the ClaimTypes naming its fields). Then each field's
   value under its short name, each followed by `# CLM-...`, the Claim that
   states it. A many-valued field, or a single-valued one with several live
   Claims, lists every live value. A Subject-valued field shows the other
   Subject's ref. `flags:` marks a single-valued field holding more than one
   distinct live value `contested`. `incoming:` lists the live edges other
   Subjects point here, one `<field> <- <ref>` line each, so either end of an
-  edge greps.
+  edge greps. `notes:` lists the notes about it, one `<file>#<Heading/Path>`
+  locator each (the file by its catalog name): `cruxible section` reads one.
 - `current/<kind>/<id>.<field>.txt`: a text value too long to inline, whole.
 - `current/<kind>/INDEX`: one tab-separated line per Subject of that kind: its
   ref, a title-like value, and its state-like fields.

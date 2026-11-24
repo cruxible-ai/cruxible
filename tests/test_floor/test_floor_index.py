@@ -675,3 +675,51 @@ def test_a_warm_advance_patches_the_manifest_instead_of_rebuilding_it(
     assert len(validated) < len(warm.files)
     assert warm.manifest() == _cold(instance).manifest()
     assert digest == _cold(instance).manifest_digest
+
+
+def _about(*subjects: str, unlink: tuple[str, ...] = (), heading: str = "Reason") -> dict[str, Any]:
+    from tests.test_service.test_notes import about, observed
+
+    text = f"# {heading}\nWords\n".encode()
+    change = about(*subjects, unlink=unlink, text=text).model_copy(
+        update={"section": (heading,), "observation": observed(text, (heading,))}
+    )
+    return change.model_dump(mode="json", exclude_none=True)
+
+
+def test_a_subject_file_points_to_its_notes_and_an_unlink_restamps_it(tmp_path: Any) -> None:
+    """``notes:`` lists live notes as locators; every Subject a note ever named restamps."""
+
+    instance, _owner = seed_write_surface(tmp_path)
+    _write(instance, _set(WI1, "status", "ready"), _set(WI2, "status", "ready"))
+    plain = advance_floor_index(instance)
+    assert "notes:" not in plain.files[f"current/{WI1}.yaml"][0].decode()
+
+    _write(instance, _about(WI1, WI2))
+    linked = advance_floor_index(instance)
+    for subject in (WI1, WI2):
+        content, changed_at = linked.files[f"current/{subject}.yaml"]
+        text = content.decode()
+        assert "notes:\n  - repo.notes#Reason  # NOTE-" in text, text
+        assert "Words" not in text
+        assert changed_at == linked.generation
+    # A Subject no note names keeps its bytes and stamp.
+    assert linked.files[f"current/{WI3}.yaml"] == plain.files[f"current/{WI3}.yaml"]
+
+    _write(instance, _about(WI2, heading="Other"))
+    _write(instance, _about(unlink=(WI1,)))
+    unlinked = advance_floor_index(instance)
+    wi1, wi1_at = unlinked.files[f"current/{WI1}.yaml"]
+    wi2, wi2_at = unlinked.files[f"current/{WI2}.yaml"]
+    assert "notes:" not in wi1.decode() and wi1_at == unlinked.generation
+    # WI2 is still named by both notes; the first note's revision restamps it too.
+    assert wi2.decode().count("  - repo.notes#") == 2 and wi2_at == unlinked.generation
+    assert _bytes(unlinked) == _bytes(_cold(instance))
+    assert dict(unlinked.inputs.notes_about) == dict(_cold(instance).inputs.notes_about)
+    assert {key: list(value) for key, value in unlinked.inputs.noted_latest.items()} == {
+        key: list(value) for key, value in _cold(instance).inputs.noted_latest.items()
+    }
+    # Any generation renders from the index in either direction, notes included.
+    for generation in range(unlinked.generation + 1):
+        back = floor_render_from(instance, unlinked, generation)
+        assert _bytes(back) == _bytes(_cold(instance, generation)), generation
