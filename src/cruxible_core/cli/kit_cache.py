@@ -132,11 +132,57 @@ def _sha256(content: bytes) -> str:
     return Sha256Value(hashlib.sha256(content).hexdigest()).tagged
 
 
+def _refuse_links(directory: Path) -> None:
+    """Refuse a symbolic link at any cache component below the root: the kit's
+    directory, the entry, its backup, or the kit's lock directory. Checked with
+    ``lstat`` before anything there is created, read or replaced, so neither a
+    read nor a repair follows a link out of the cache."""
+
+    root = directory.parent.parent
+    for path in (
+        directory.parent,
+        directory,
+        _backup_path(directory),
+        root / _LOCK_DIRECTORY,
+        root / _LOCK_DIRECTORY / directory.parent.name,
+    ):
+        if path.is_symlink():
+            raise KitCacheError(
+                f"the kit cache path {path} is a symbolic link (refused, never followed)",
+                f"remove {path} and rerun with --from KIT",
+            )
+
+
+def _backup_path(directory: Path) -> Path:
+    """Where a replaced entry waits until its successor is in place."""
+
+    return directory.with_name(f".prev-{directory.name}")
+
+
+def _recover_backup(directory: Path) -> None:
+    """Put a backup left by an interrupted replacement back when the entry is absent.
+
+    Called under the entry's lock (either mode): a writer that crashed between
+    moving the old entry aside and publishing the new one leaves only the backup.
+    """
+
+    backup = _backup_path(directory)
+    if os.path.lexists(directory) or not os.path.lexists(backup):
+        return
+    try:
+        os.replace(backup, directory)
+    except FileNotFoundError:
+        pass  # another reader holding the shared lock restored it first
+
+
 @contextmanager
 def _entry_lock(directory: Path, *, exclusive: bool) -> Iterator[None]:
     """The entry's lock (``<root>/.locks/<kit_id>/<entry>.lock``): exclusive while a
-    writer publishes or replaces the entry, shared while a reader verifies it."""
+    writer publishes or replaces the entry, shared while a reader verifies it.
+    Refuses a symbolic link anywhere below the cache root; once held, restores a
+    backup an interrupted replacement left in place of the entry."""
 
+    _refuse_links(directory)
     lock_dir = directory.parent.parent / _LOCK_DIRECTORY / directory.parent.name
     lock_dir.mkdir(parents=True, exist_ok=True)
     descriptor = os.open(
@@ -146,6 +192,8 @@ def _entry_lock(directory: Path, *, exclusive: bool) -> Iterator[None]:
     )
     try:
         fcntl.flock(descriptor, fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH)
+        _refuse_links(directory)
+        _recover_backup(directory)
         yield
     finally:
         os.close(descriptor)
@@ -179,11 +227,12 @@ class _Damaged(Exception):
 
 
 def _read_entry(directory: Path, relative: str) -> bytes:
-    """``relative`` inside the entry, read from held descriptors without following
-    a symbolic link anywhere from the kit's directory down (the entry included)."""
+    """``relative`` inside the entry, read from descriptors held from the cache
+    root down, without following a symbolic link anywhere below the root (the
+    kit's directory and the entry included)."""
 
-    with HeldRoot(directory.parent) as held:
-        return held.read(f"{directory.name}/{relative}")
+    with HeldRoot(directory.parent.parent) as held:
+        return held.read(f"{directory.parent.name}/{directory.name}/{relative}")
 
 
 def _entry_manifest_bytes(directory: Path) -> bytes | None:
@@ -252,19 +301,24 @@ def write_kit_cache(bundle: KitBundle, root: Path | None = None) -> Path:
     another build, a missing, altered or symlinked file -- is replaced whole,
     never mixed. The new copy is staged beside the entry and swapped in under
     the entry's exclusive lock, so a reader (holding it shared) never sees the
-    entry absent or half-replaced. O(the kit's inert files).
+    entry absent or half-replaced. The old entry is moved to a backup first and
+    removed only after the new one is in place; a failed swap restores it before
+    the lock is released, and a backup a crash left behind is restored by the
+    next holder of the lock. A symbolic link anywhere below the cache root is
+    refused. O(the kit's inert files).
     """
 
     manifest = bundle.manifest
     files = _verified_files(bundle)
     target = kit_cache_directory(manifest.kit_id, manifest_cache_key(manifest), root)
     manifest_bytes = pretty_canonical_bytes(manifest.model_dump(mode="json"))
+    _refuse_links(target)
     target.parent.mkdir(parents=True, exist_ok=True)
     with _entry_lock(target, exclusive=True):
         if _intact(target, manifest_bytes):
             return target
         staging = Path(tempfile.mkdtemp(prefix=f".staging-{target.name}-", dir=target.parent))
-        retired: Path | None = None
+        backup = _backup_path(target)
         try:
             for path, content in files.items():
                 destination = staging / path
@@ -274,17 +328,21 @@ def write_kit_cache(bundle: KitBundle, root: Path | None = None) -> Path:
             (staging / KIT_MANIFEST_FILE).write_bytes(manifest_bytes)
             (staging / KIT_MANIFEST_FILE).chmod(0o444)
             if os.path.lexists(target):
-                retired = Path(
-                    tempfile.mkdtemp(prefix=f".retired-{target.name}-", dir=target.parent)
-                )
-                os.replace(target, retired / "entry")
-            os.replace(staging, target)
+                # The entry is present, so a leftover backup is stale.
+                _remove(backup)
+                os.replace(target, backup)
+            try:
+                os.replace(staging, target)
+            except BaseException:
+                # Put the old entry back before the lock is released; the backup
+                # is only ever removed once its successor is in place.
+                if os.path.lexists(backup) and not os.path.lexists(target):
+                    os.replace(backup, target)
+                raise
+            _remove(backup)
         finally:
             if staging.exists():
                 shutil.rmtree(staging, ignore_errors=True)
-            if retired is not None:
-                _remove(retired / "entry")
-                shutil.rmtree(retired, ignore_errors=True)
     return target
 
 

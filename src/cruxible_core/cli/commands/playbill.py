@@ -167,6 +167,7 @@ from cruxible_client.contracts.procedures.results import (
 )
 from cruxible_client.contracts.procedures.windows import TriggerEventReference
 from cruxible_client.contracts.proposal_models import canonical_proposal_ref_name
+from cruxible_client.contracts.proposal_summary import ReviewDefinition
 from cruxible_client.contracts.provider_installation import (
     ProviderInstallRequest,
     ProviderInstallResult,
@@ -3011,14 +3012,16 @@ def add_kit(
     Triggers stay unchanged; use line enable to resume and re-grant settle explicitly.
     Replaced definitions' other dependents are carried along. The change
     lands at once when the approval policy requires no approval, otherwise it
-    stops at proposed. A kit that bundles provider packages installs the missing
-    ones first (admin permission, the transfer install; registry dependencies
-    resolve from the daemon's provider index, PyPI unless configured), installs a
-    default provider by name from that index unless live operations of installed
-    providers already serve every slot's capability (satisfied), and proposes the
-    definitions once they land (each provider carries its own shapes); an
-    install awaiting approval stops at awaiting_providers, and its activation
-    proposes the definitions on their own, as you (kit status shows the resume).
+    stops at proposed. A kit that bundles provider packages prepares each missing
+    one first (admin permission; registry dependencies resolve from the daemon's
+    provider index, PyPI unless configured; nothing is registered or proposed
+    yet), as it does a default provider named from that index unless live
+    operations of installed providers already serve every slot's capability
+    (satisfied). It then proposes every missing provider build, the definitions,
+    the Lines moved to the kit's builds and the kit receipt as ONE change: one
+    review lists each provider's operations and reach beside the definitions,
+    and one approval lands them all in one generation. A provider that cannot be
+    prepared refuses the add before anything is proposed.
     It previews by default; commit with ``--commit --at OID``.
     """
     # ``base`` is the base kit this core bundles, read before any directory or registry.
@@ -3331,9 +3334,16 @@ def _adopt_target_line() -> str:
     return f"target: instance {obj.get('instance_id') or '(default)'} at {transport}"
 
 
+def _compact_json(value: object) -> str:
+    from cruxible_client.contracts.primitives import canonical_json
+
+    return canonical_json(value, default=str)
+
+
 def _adopt_member_details(member: Mapping[str, Any]) -> list[str]:
     """The authority and egress a member carries, terse: Mandate grants (scope,
-    expiry), Line bindings and network origins, Trigger schedules, Runbook steps."""
+    subject scope, condition, expiry), Line bindings (explicit and fitted) and
+    network origins per capture output, Trigger schedules, Runbook steps."""
 
     kind = member.get("kind")
     rows: list[str] = []
@@ -3344,11 +3354,15 @@ def _adopt_member_details(member: Mapping[str, Any]) -> list[str]:
             derived = " (with derived)" if member.get("include_derived") else ""
             rows.append(f"scope: observations{derived}")
         elif scope:
-            rows.append(f"scope: {json.dumps(scope, sort_keys=True, separators=(',', ':'))}")
+            rows.append(f"scope: {_compact_json(scope)}")
         if member.get("namespace"):
             rows.append(f"namespace: {', '.join(str(item) for item in member['namespace'])}")
         if member.get("subjects"):
             rows.append(f"subjects: {member['subjects']}")
+        if member.get("subject_scope") is not None:
+            rows.append(f"subject scope: {_compact_json(member['subject_scope'])}")
+        if member.get("condition") is not None:
+            rows.append(f"condition: {_compact_json(member['condition'])}")
         if member.get("subject_creation"):
             rows.append(f"creates Subjects: {', '.join(member['subject_creation'])}")
         if member.get("valid_from"):
@@ -3365,18 +3379,21 @@ def _adopt_member_details(member: Mapping[str, Any]) -> list[str]:
                 "providers: "
                 + ", ".join(f"{slot}={target}" for slot, target in sorted(bindings.items()))
             )
+            rows.append("other slots: fitted (each slot's one live operation)")
         else:
             rows.append("providers: fitted (each slot's one live operation)")
-        origins = sorted(
-            {
-                str(origin)
-                for rule in (member.get("acquisition") or {}).values()
-                if isinstance(rule, Mapping)
-                for origin in (rule.get("origins") or ())
-            }
-        )
+        acquisition = member.get("acquisition") or {}
+        for output in sorted(acquisition):
+            rule = acquisition[output]
+            origins = rule.get("origins") if isinstance(rule, Mapping) else None
+            allowed = ", ".join(sorted(str(item) for item in origins)) if origins else "any origin"
+            rows.append(f"egress {output}: {allowed}")
+        # A capture output the Line names no rule for, or names one without
+        # ``origins``, runs under the core default: any origin.
         rows.append(
-            "egress: " + (", ".join(origins) if origins else "as the bound providers declare")
+            "egress other capture outputs: any origin (core default)"
+            if acquisition
+            else "egress: any origin (no origin rules; core default)"
         )
     elif kind == "trigger":
         schedule = member.get("schedule") or {}
@@ -4328,9 +4345,7 @@ def _approve_one(
         )
         summary = None
         if shows_summary:
-            page = client.review_proposal(instance_id, challenge.proposal_id, groups=False)
-            assert isinstance(page, contracts.ProposalReviewSummary)
-            summary = page
+            summary = _approval_summary(client, instance_id, challenge.proposal_id)
         return resolved_id, challenge, key, summary
 
     resolved_id, challenge, key, summary = _server_call(
@@ -4440,6 +4455,50 @@ def _approve_one(
     return result
 
 
+def _approval_summary(
+    client: CruxibleClient, instance_id: str, proposal_id: str
+) -> contracts.ProposalReviewSummary:
+    """The first page of the proposal's review summary, with every Provider definition.
+
+    Providers sort first among definitions, so while a page ends on a Provider
+    and another page follows, the next one is read and its Providers are added:
+    the approver sees every Provider build, its operations and what it may reach
+    before signing, even past the first page. O(the proposal's Providers).
+    """
+
+    first = client.review_proposal(instance_id, proposal_id, groups=False)
+    assert isinstance(first, contracts.ProposalReviewSummary)
+    page = first
+    extra: list[ReviewDefinition] = []
+    while (
+        page.definitions_next is not None
+        and page.definitions
+        and page.definitions[-1].kind == "Provider"
+    ):
+        following = client.review_proposal(
+            instance_id, proposal_id, groups=False, definitions_from=page.definitions_next
+        )
+        assert isinstance(following, contracts.ProposalReviewSummary)
+        page = following
+        if page.candidate_digest != first.candidate_digest:
+            raise click.ClickException(
+                "the review summary changed candidate while paging; rerun proposal approve"
+            )
+        providers = [item for item in page.definitions if item.kind == "Provider"]
+        extra.extend(providers)
+        if len(providers) < len(page.definitions):
+            break
+    if not extra:
+        return first
+    shown = len(first.definitions) + len(extra)
+    return first.model_copy(
+        update={
+            "definitions": (*first.definitions, *extra),
+            "definitions_next": shown if shown < first.definition_count else None,
+        }
+    )
+
+
 def _approve_in_order(
     proposal_ids: Sequence[str],
     *,
@@ -4488,10 +4547,9 @@ def _approve_in_order(
                 review = ProposalReview.model_validate(page.model_dump(mode="json"))
                 summary = None
                 if not full:
-                    # The first page of the reviewer's view, as one-proposal approve shows it.
-                    first = client.review_proposal(instance_id, proposal_id, groups=False)
-                    assert isinstance(first, contracts.ProposalReviewSummary)
-                    summary = first
+                    # The reviewer's view as one-proposal approve shows it: its first
+                    # page, with every Provider definition however many pages they span.
+                    summary = _approval_summary(client, instance_id, proposal_id)
                 reviews.append((review, summary))
         return resolved, reviews, key
 

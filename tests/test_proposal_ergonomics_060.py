@@ -624,3 +624,80 @@ def test_approve_several_stops_while_approvals_remain(
     assert payload["failed"]["message"].startswith("Awaiting 1 more approval")
     assert payload["failed"]["receipt"]["approvals_remaining"] == 1
     assert payload["not_attempted"] == [beta]
+
+
+def test_approve_several_discloses_providers_past_the_first_summary_page(
+    daemon: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A proposal with more Providers than one summary page holds (20) shows every
+    Provider's endpoints before the one prompt, page 2 included."""
+
+    from cruxible_client.contracts.proposal_summary import (
+        REVIEW_DEFINITIONS_PAGE,
+        ReviewDefinition,
+        ReviewProviderDefinition,
+        ReviewProviderOperation,
+    )
+    from cruxible_client.transport.http import CruxibleClient as HttpClient
+
+    base_kit = _proposal_id_from_list(_init(daemon))
+    alpha = _propose_subject_kind(daemon, "alpha.item")
+    monkeypatch.setattr(playbill, "_can_confirm", lambda: True)
+
+    def provider(index: int) -> ReviewDefinition:
+        name = f"acme.p{index:02d}"
+        return ReviewDefinition(
+            kind="Provider",
+            name=name,
+            action="created",
+            detail=ReviewProviderDefinition(
+                provider=name,
+                control_domain="acme",
+                package=f"acme-p{index:02d}",
+                version="1.0.0",
+                materialization="registry",
+                operations=(
+                    ReviewProviderOperation(
+                        name="fetch",
+                        effect="external_read",
+                        serves=("acme.fetch",),
+                        in_="acme.request@1",
+                        out="acme.response@1",
+                        entrypoint="acme_fetch:run",
+                        declared_endpoints=(f"https://p{index:02d}.example.org",),
+                    ),
+                ),
+            ),
+        )
+
+    providers = [provider(index) for index in range(REVIEW_DEFINITIONS_PAGE + 2)]
+    real_review = HttpClient.review_proposal
+    pages_read: list[int] = []
+
+    def review(self: Any, instance_id: str, proposal_id: str, **kwargs: Any) -> Any:
+        page = real_review(self, instance_id, proposal_id, **kwargs)
+        if proposal_id != alpha or not isinstance(page, contracts.ProposalReviewSummary):
+            return page
+        start = kwargs.get("definitions_from", 0)
+        pages_read.append(start)
+        everything = (*providers, *page.definitions)
+        chunk = everything[start : start + REVIEW_DEFINITIONS_PAGE]
+        following = start + REVIEW_DEFINITIONS_PAGE
+        return page.model_copy(
+            update={
+                "definitions": chunk,
+                "definition_count": len(everything),
+                "definitions_next": following if following < len(everything) else None,
+            }
+        )
+
+    monkeypatch.setattr(HttpClient, "review_proposal", review)
+
+    declined = _run("proposal", "approve", base_kit, alpha, principal="reviewer", input="n\n")
+
+    assert declined.exit_code == 1, declined.output
+    before = declined.output.split("Approve and activate 2 proposals in order?")[0]
+    alpha_block = before.split(f"[2/2] {alpha[7:19]}")[1]
+    for index in range(len(providers)):
+        assert f"https://p{index:02d}.example.org" in alpha_block, index
+    assert pages_read == [0, REVIEW_DEFINITIONS_PAGE]

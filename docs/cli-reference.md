@@ -1478,24 +1478,22 @@ gets names that command as its repair. `add`
 records a `kit_receipt` Document, `documents/kit-<id>.json`, with each path's
 release digest, installed digest and content digest, and the bundled packages.
 
-A kit that bundles provider packages installs them before its definitions. A
-commit stages each file in the daemon's body store (the CLI and MCP adapters do
-it; a preview stages and installs nothing and reports `would install`), then
-installs each package not yet installed through the ordinary transfer install,
-which needs the install permission (`ADMIN`) and lands when the approval policy
-requires no approval. Providers carry their own shapes, so nothing is accepted
-before the installs: the preview says a commit installs the bundled providers
-first, then proposes these definitions, which are checked against the
-installed providers. The definitions are proposed once every bundled provider
-is installed; while an install awaits approval the result is
-`awaiting_providers` with that install's proposal. The daemon records that
-kit add, and the activation that lands the last awaited install proposes the
-definitions on its own, as the principal who ran it, at the head it lands on:
-they land at once when the approval policy requires none, exactly as the
-original add would. `kit status` lists each recorded resume (`waiting`,
-`proposed` with its proposal, or `blocked` with why); a blocked one is also a
-`kit_resume_blocked` row in `next`. A later commit `kit add` of the same kit
-replaces the record. A commit first reads the staged files
+A kit that bundles provider packages proposes them together with its
+definitions, as one change. A commit stages each file in the daemon's body
+store (the CLI and MCP adapters do it; a preview stages and installs nothing
+and reports `would install`), then prepares each package not yet installed,
+which needs the install permission (`ADMIN`); preparing registers and proposes
+nothing. It then submits ONE proposal holding every missing provider build,
+the kit's definitions (checked against those builds), the Lines moved to the
+kit's builds and the kit receipt: one review lists every provider's operations
+and reach beside the definitions, and one approval lands them all in one
+generation, at once when the approval policy requires none. A provider that
+cannot be prepared refuses the add before anything is proposed. A resume left
+by an earlier version's two-step add (`awaiting_providers`) still completes:
+`kit status` lists each recorded resume (`waiting`, `proposed` with its
+proposal, or `blocked` with why), a blocked one is also a `kit_resume_blocked`
+row in `next`, and a later commit `kit add` of the same kit replaces the
+record. A commit first reads the staged files
 (metadata only), refuses `cruxible.kit.provider_manifest_mismatch` unless they
 reproduce the manifest, and refuses what the current state already decides
 (ownership overlap, a definition another installed kit owns or holds, a pinned

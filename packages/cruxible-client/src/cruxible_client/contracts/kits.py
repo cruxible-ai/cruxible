@@ -16,10 +16,11 @@ import binascii
 import hashlib
 import re
 from collections.abc import Mapping
-from typing import Annotated, Any, Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
+from ._linear_regex import LinearPatternError, compile_linear, linear_fullmatch
 from .canonical import Sha256Value, canonical_digest
 from .change_control import DryRun, PreviewAt
 from .get_reads import GetCoordinate
@@ -97,9 +98,18 @@ def kit_receipt_document_id(kit_id: str) -> str:
     return f"kit-{kit_id}"
 
 
-def _kit_id(value: str) -> str:
+def kit_id_problem(value: str) -> str | None:
+    """Why ``value`` is not a kit id, or ``None``."""
+
     if not _KIT_ID_RE.fullmatch(value):
-        raise ValueError("kit id must be lowercase letters, digits and hyphens")
+        return "kit id must be lowercase letters, digits and hyphens"
+    return None
+
+
+def _kit_id(value: str) -> str:
+    problem = kit_id_problem(value)
+    if problem is not None:
+        raise ValueError(problem)
     return value
 
 
@@ -556,76 +566,24 @@ def kit_recipe_pattern_problem(pattern: str) -> str | None:
     """Why a publisher's ``pattern`` is refused, or ``None``.
 
     A pattern runs in the daemon (``kit build``) and the CLI (``kit adopt``) over
-    values a caller supplies, so it must match in time linear in the value:
-    bounded in length, and free of the constructs that backtrack badly or that a
-    plain matcher does not need -- a quantifier inside a quantified group (the
-    ``(a+)+`` shape), an alternation inside one (``(a|aa)*``), backreferences,
-    conditionals and lookarounds.
+    values a caller supplies, so it is matched by a Thompson NFA
+    (:mod:`cruxible_client.contracts._linear_regex`) in time linear in the value,
+    never by a backtracking matcher. It must be bounded in length, compile within
+    the matcher's state budget, and use only what that matcher supports: no
+    backreferences, conditionals, lookarounds, atomic groups, possessive repeats
+    or matching flags.
     """
 
     if len(pattern) > KIT_RECIPE_PATTERN_MAX:
         return f"a pattern is at most {KIT_RECIPE_PATTERN_MAX} characters"
     try:
-        re.compile(pattern)
-        parsed = _regex_parser().parse(pattern)
+        compile_linear(pattern)
+    except LinearPatternError as exc:
+        return (
+            f"pattern {pattern!r} uses {exc}, which a recipe pattern may not; write a plain pattern"
+        )
     except (re.error, OverflowError, RecursionError) as exc:
         return f"pattern {pattern!r} is not a regular expression: {exc}"
-    unsupported = _regex_unsupported(parsed, quantified=False)
-    if unsupported is not None:
-        return (
-            f"pattern {pattern!r} uses {unsupported}, which a recipe pattern may not "
-            "(it could backtrack without bound); write a plain pattern"
-        )
-    return None
-
-
-def _regex_parser() -> Any:
-    """The stdlib regex parser (``re._parser``, Python 3.11+): what ``re.compile`` parses with."""
-
-    import importlib
-
-    return importlib.import_module("re._parser")
-
-
-_REPEATS = frozenset({"MAX_REPEAT", "MIN_REPEAT", "POSSESSIVE_REPEAT"})
-_REFUSED_OPS = {
-    "GROUPREF": "a backreference",
-    "GROUPREF_EXISTS": "a conditional group",
-    "ASSERT": "a lookaround",
-    "ASSERT_NOT": "a lookaround",
-}
-
-
-def _regex_unsupported(items: Any, *, quantified: bool) -> str | None:
-    """The first refused construct in a parsed pattern (``quantified``: inside a repeat)."""
-
-    for op, argument in items:
-        name = str(op)
-        if name in _REFUSED_OPS:
-            return _REFUSED_OPS[name]
-        children: list[Any] = []
-        inner_quantified = quantified
-        if name in _REPEATS:
-            _low, high, sub_pattern = argument
-            # ``x?`` and ``x{0,1}`` repeat at most once: not a quantifier that nests badly.
-            repeats = not (isinstance(high, int) and high <= 1)
-            if quantified and repeats:
-                return "a nested quantifier"
-            inner_quantified = quantified or repeats
-            children.append(sub_pattern)
-        elif name == "SUBPATTERN":
-            children.append(argument[-1])
-        elif name == "BRANCH":
-            if quantified:
-                # ``(a|aa)*``: overlapping alternatives under a repeat backtrack too.
-                return "an alternation inside a quantified group"
-            children.extend(argument[1])
-        elif name == "ATOMIC_GROUP":
-            children.append(argument)
-        for child in children:
-            found = _regex_unsupported(child, quantified=inner_quantified)
-            if found is not None:
-                return found
     return None
 
 
@@ -643,7 +601,7 @@ def kit_recipe_value_problem(spec: KitRecipeParamSpec, value: object) -> str | N
         return f"is longer than {KIT_RECIPE_STRING_VALUE_MAX} characters"
     if spec.type == "enum":
         return None if value in spec.values else f"is not one of {', '.join(spec.values)}"
-    if spec.pattern is not None and re.fullmatch(spec.pattern, value) is None:
+    if spec.pattern is not None and not linear_fullmatch(spec.pattern, value):
         return f"does not match {spec.pattern}"
     return None
 

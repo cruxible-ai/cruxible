@@ -104,7 +104,9 @@ def recipe_param_table(recipe: KitRecipeSpec) -> list[str]:
 
 def recipe_usage(kit_id: str, recipe: KitRecipeSpec) -> str:
     """``cruxible kit adopt KIT:NAME --param ...`` with each required parameter filled
-    by a value that fits it; every token shell-quoted, so the line pastes as is."""
+    by a value that fits it (its example, else the synthetic value ``kit build``
+    would use); every token shell-quoted, so the line pastes as is. A parameter no
+    candidate fits shows ``<name>`` instead of a value its pattern would refuse."""
 
     target = kit_id if recipe.name == "default" else f"{kit_id}:{recipe.name}"
     argv = ["cruxible", "kit", "adopt", target]
@@ -112,32 +114,32 @@ def recipe_usage(kit_id: str, recipe: KitRecipeSpec) -> str:
         spec = recipe.params[name]
         if spec.required:
             sample = spec.example if spec.example is not None else _fitting_sample(spec)
-            argv.extend(["--param", f"{name}={_spell(sample)}"])
+            shown = f"<{name}>" if sample is None else _spell(sample)
+            argv.extend(["--param", f"{name}={shown}"])
     return " ".join(shlex.quote(token) for token in argv)
 
 
-def _sample(spec: KitRecipeParamSpec) -> KitRecipeParamValue:
+def _fitting_sample(spec: KitRecipeParamSpec) -> KitRecipeParamValue | None:
+    """A deterministic value that fits ``spec``, or ``None`` when no candidate does.
+
+    ``enum`` takes its first value, ``integer`` 1, ``boolean`` false, and a string
+    the first of the synthetic candidates its pattern accepts. Shared by
+    ``kit build``'s preflight (:func:`preflight_values`) and usage lines.
+    """
+
     if spec.type == "enum":
         return spec.values[0]
     if spec.type == "integer":
         return 1
     if spec.type == "boolean":
         return False
-    return "VALUE"
-
-
-def _fitting_sample(spec: KitRecipeParamSpec) -> KitRecipeParamValue:
-    """A value for ``spec`` its pattern accepts, when one of the synthetic strings does."""
-
-    if spec.type != "string" or spec.pattern is None:
-        return _sample(spec)
     return next(
         (
             candidate
-            for candidate in ("VALUE", *_SYNTHETIC_STRINGS)
+            for candidate in _SYNTHETIC_STRINGS
             if kit_recipe_value_problem(spec, candidate) is None
         ),
-        "VALUE",
+        None,
     )
 
 
@@ -230,17 +232,8 @@ def preflight_values(recipe: KitRecipeSpec) -> dict[str, KitRecipeParamValue]:
             values[name] = spec.default
         elif spec.example is not None:
             values[name] = spec.example
-        elif spec.type in {"enum", "integer", "boolean"}:
-            values[name] = _sample(spec)
         else:
-            fitting = next(
-                (
-                    candidate
-                    for candidate in _SYNTHETIC_STRINGS
-                    if kit_recipe_value_problem(spec, candidate) is None
-                ),
-                None,
-            )
+            fitting = _fitting_sample(spec)
             if fitting is None:
                 raise KitRecipeError(
                     recipe.name,

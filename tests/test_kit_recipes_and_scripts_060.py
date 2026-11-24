@@ -1052,16 +1052,21 @@ def test_kit_build_refuses_a_dependent_recipe_without_its_own_members(
 @pytest.mark.parametrize(
     ("pattern", "message"),
     [
-        ("(a+)+$", "nested quantifier"),
-        ("^(a*)*b$", "nested quantifier"),
-        ("^(a|aa)*$", "alternation inside a quantified group"),
         (r"^(a)\1$", "backreference"),
         ("^(?=a)a$", "lookaround"),
         ("^(?!b)a$", "lookaround"),
+        ("^(a)?(?(1)a|b)$", "conditional"),
+        ("^(?>a+)$", "atomic group"),
+        ("^a++$", "possessive repeat"),
+        ("(?i)^a+$", "flag that changes matching"),
+        ("^a{0,1500}$", "more than 2048 matcher states"),
+        ("^(a{0,99}){0,99}$", "more than 2048 matcher states"),
         ("a" * 300, "at most 256 characters"),
     ],
 )
-def test_a_param_pattern_that_could_backtrack_refuses_fast(pattern: str, message: str) -> None:
+def test_a_param_pattern_the_linear_matcher_cannot_run_refuses_fast(
+    pattern: str, message: str
+) -> None:
     import time
 
     started = time.monotonic()
@@ -1155,7 +1160,8 @@ def test_the_adopt_preview_discloses_mandate_scope_expiry_and_egress() -> None:
     }
     rows = _adopt_member_details(line)
     assert "providers: fetch=acme-http#get" in rows
-    assert "egress: https://api.example.test" in rows
+    assert "other slots: fitted (each slot's one live operation)" in rows
+    assert "egress page.body: https://api.example.test" in rows
     trigger = {
         "kind": "trigger",
         "name": "acme.daily",
@@ -1302,3 +1308,259 @@ def test_kit_build_reads_spec_paths_from_the_workspace_root_and_stdin(
     assert result.exit_code == 0, result.output
     (request,) = sent
     assert {item.path: item.content for item in request.files} == ADOPTION_FILES
+
+
+# -- the linear pattern matcher ---------------------------------------------------------
+
+ADVERSARIAL_PATTERNS = (
+    "(a+)+$",
+    "(a|aa)*b",
+    "(a?){30}a{30}",
+    "a*a*a*a*a*a*a*a*a*a*a*a*a*a*a*b",
+)
+
+
+@pytest.mark.parametrize("pattern", ADVERSARIAL_PATTERNS)
+def test_backtracking_shapes_match_in_linear_time(pattern: str) -> None:
+    import time
+
+    from cruxible_client.contracts.kit_recipes import parse_param_value
+
+    spec = KitRecipeParamSpec(description="d", pattern=pattern)
+    for value in ("a" * 29 + "!", "a" * 2000 + "!"):
+        started = time.perf_counter()
+        with pytest.raises(ValueError, match="does not match"):
+            parse_param_value(spec, value)
+        assert time.perf_counter() - started < 0.05, (pattern, len(value))
+
+
+@pytest.mark.parametrize(
+    ("pattern", "accepted", "refused"),
+    [
+        ("(a+)+$", ["a", "aaaa"], ["", "ab", "a\n", "\n"]),
+        ("a$\n", ["a\n"], ["a"]),
+        ("(a|aa)*b", ["b", "aab", "aaaab"], ["", "aa", "ba"]),
+        ("(a?){30}a{30}", ["a" * 30, "a" * 45, "a" * 60], ["a" * 29, "a" * 61]),
+        ("a*a*a*b", ["b", "ab", "aaab"], ["", "aaa", "abb"]),
+        ("[a-c0-9_]{2,4}", ["a1", "c_9b"], ["a", "abcde", "d1", "A1"]),
+        ("[^a-c]x", ["dx", "\nx", "-x"], ["ax", "cx", "x"]),
+        (r"\d+\.\w*\s?", ["1.", "42.ab_ ", "7.x\t"], [".", "1", "a.b"]),
+        (r"[\D]{2}", ["ab", "a-"], ["a1", "12"]),
+        ("^(?:alpha|beta)-[0-9]{1,3}$", ["alpha-1", "beta-999"], ["gamma-1", "beta-1000"]),
+        (r"\Afoo\Z", ["foo"], ["foo\n", "fo"]),
+        (r"\bfoo\b", ["foo"], ["foox"]),
+        ("x*?y+?", ["y", "xxyy"], ["x", ""]),
+        (".a", ["ba", "aa"], ["\na", "a"]),
+        ("", [""], ["a"]),
+    ],
+)
+def test_the_linear_matcher_agrees_with_re_fullmatch(
+    pattern: str, accepted: list[str], refused: list[str]
+) -> None:
+    import re
+
+    from cruxible_client.contracts._linear_regex import linear_fullmatch
+
+    # ``re`` itself takes minutes on this one (the backtracking this matcher removes).
+    check_re = pattern != "(a?){30}a{30}"
+    for value in accepted:
+        assert not check_re or re.fullmatch(pattern, value) is not None, (pattern, value)
+        assert linear_fullmatch(pattern, value), (pattern, value)
+    for value in refused:
+        assert not check_re or re.fullmatch(pattern, value) is None, (pattern, value)
+        assert not linear_fullmatch(pattern, value), (pattern, value)
+
+
+def test_a_bounded_length_pattern_of_255_compiles_and_matches() -> None:
+    import time
+
+    from cruxible_client.contracts._linear_regex import compile_linear
+    from cruxible_client.contracts.kit_recipes import parse_param_value
+
+    pattern = r"^[a-z][a-z0-9-]{0,255}$"
+    spec = KitRecipeParamSpec(description="d", pattern=pattern)
+    assert len(compile_linear(pattern).states) <= 2048
+    assert parse_param_value(spec, "a" + "b" * 255) == "a" + "b" * 255
+    started = time.perf_counter()
+    for value in ("a" + "b" * 256, "a" + "b" * 254 + "!", "1abc"):
+        with pytest.raises(ValueError, match="does not match"):
+            parse_param_value(spec, value)
+    assert time.perf_counter() - started < 0.05
+
+
+def test_usage_shows_a_placeholder_when_no_candidate_fits_the_pattern() -> None:
+    from cruxible_client.contracts.kit_recipes import recipe_usage
+
+    spec = KitRecipeSpec(
+        name="y",
+        path="recipes/y.json",
+        description="d",
+        params={
+            "job": KitRecipeParamSpec(description="d", required=True, pattern="[0-9]{4}"),
+            "slug": KitRecipeParamSpec(description="d", required=True, pattern=r"^[a-z]$"),
+        },
+    )
+    usage = recipe_usage("acme", spec)
+    assert usage == "cruxible kit adopt acme:y --param 'job=<job>' --param slug=a"
+    assert "VALUE" not in usage
+
+
+# -- the adopt preview -----------------------------------------------------------------
+
+
+def test_the_adopt_preview_shows_egress_per_capture_output() -> None:
+    from cruxible_core.cli.commands.playbill import _adopt_member_details
+
+    line = {
+        "kind": "line",
+        "name": "acme.scan",
+        "procedure_name": "acme.scan",
+        "acquisition": {
+            "page.body": {"origins": ["https://api.example.test"]},
+            "feed.body": {"max_age": "P1D"},
+        },
+    }
+    rows = _adopt_member_details(line)
+    assert "egress page.body: https://api.example.test" in rows
+    # A rule without origins is unrestricted, never hidden behind the restricted one.
+    assert "egress feed.body: any origin" in rows
+    assert "egress other capture outputs: any origin (core default)" in rows
+    assert "providers: fitted (each slot's one live operation)" in rows
+    bare = _adopt_member_details({**line, "acquisition": {}})
+    assert "egress: any origin (no origin rules; core default)" in bare
+
+
+def test_the_adopt_preview_shows_explicit_and_fitted_provider_slots() -> None:
+    from cruxible_core.cli.commands.playbill import _adopt_member_details
+
+    rows = _adopt_member_details(
+        {
+            "kind": "line",
+            "name": "acme.scan",
+            "procedure_name": "acme.scan",
+            "bindings": {"fetch": "acme-http#get", "parse": "acme-parse"},
+        }
+    )
+    assert "providers: fetch=acme-http#get, parse=acme-parse" in rows
+    assert "other slots: fitted (each slot's one live operation)" in rows
+
+
+def test_the_adopt_preview_tells_mandates_apart_by_condition_and_subject_scope() -> None:
+    from cruxible_core.cli.commands.playbill import _adopt_member_details
+
+    mandate = {
+        "kind": "procedure_mandate",
+        "name": "acme.grant",
+        "line_name": "acme.scan",
+        "grants": "settle",
+        "scope": [{"predicate": "acme.seen", "changes": {"create": ["measured"]}}],
+    }
+    first = _adopt_member_details(
+        {
+            **mandate,
+            "condition": {"query": "acme.open", "params": {"min": 1}},
+            "subject_scope": ["subjects/acme.host/alpha"],
+        }
+    )
+    second = _adopt_member_details(
+        {
+            **mandate,
+            "condition": {"query": "acme.closed"},
+            "subject_scope": ["subjects/acme.host/beta"],
+        }
+    )
+    assert first != second
+    assert 'condition: {"params":{"min":1},"query":"acme.open"}' in first
+    assert 'subject scope: ["subjects/acme.host/alpha"]' in first
+    assert 'condition: {"query":"acme.closed"}' in second
+    assert 'subject scope: ["subjects/acme.host/beta"]' in second
+
+
+# -- cache replacement and links -------------------------------------------------------
+
+
+def test_a_failed_promotion_keeps_the_original_entry_intact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bundle = _adoption_bundle()
+    directory = write_kit_cache(bundle, tmp_path)
+    # Damage one file so the next write replaces the entry.
+    target = directory / "scripts/report.py"
+    target.chmod(stat.S_IWUSR | stat.S_IRUSR)
+    target.write_bytes(b"print('stale')\n")
+    before = {
+        path.relative_to(directory): path.read_bytes()
+        for path in directory.rglob("*")
+        if path.is_file()
+    }
+    real_replace = os.replace
+
+    def failing_replace(source: Any, destination: Any) -> None:
+        if Path(source).name.startswith(".staging-"):
+            raise OSError("simulated failure promoting the staged entry")
+        real_replace(source, destination)
+
+    monkeypatch.setattr(os, "replace", failing_replace)
+    with pytest.raises(OSError, match="simulated failure"):
+        write_kit_cache(bundle, tmp_path)
+    monkeypatch.setattr(os, "replace", real_replace)
+
+    after = {
+        path.relative_to(directory): path.read_bytes()
+        for path in directory.rglob("*")
+        if path.is_file()
+    }
+    assert after == before  # the original entry is back, byte for byte
+    assert sorted(item.name for item in directory.parent.iterdir()) == [directory.name]
+    # Still readable (and still refused as altered, as it was before).
+    with pytest.raises(KitCacheError, match="sha256 mismatch"):
+        load_installed_kit(_installed(bundle), root=tmp_path)
+    # A successful write then replaces it and leaves no backup behind.
+    write_kit_cache(bundle, tmp_path)
+    assert sorted(item.name for item in directory.parent.iterdir()) == [directory.name]
+    assert (
+        load_installed_kit(_installed(bundle), root=tmp_path).verified_bytes("scripts/report.py")
+        == SCRIPT.encode()
+    )
+
+
+def test_a_backup_left_by_a_crash_is_restored_under_the_lock(tmp_path: Path) -> None:
+    bundle = _adoption_bundle()
+    directory = write_kit_cache(bundle, tmp_path)
+    # A writer crashed after moving the entry aside, before publishing its successor.
+    os.replace(directory, directory.with_name(f".prev-{directory.name}"))
+    cached = load_installed_kit(_installed(bundle), root=tmp_path, offline=True)
+    assert cached.verified_bytes("scripts/report.py") == SCRIPT.encode()
+    assert sorted(item.name for item in directory.parent.iterdir()) == [directory.name]
+
+
+def test_the_cache_refuses_a_symbolic_link_at_the_kit_directory(tmp_path: Path) -> None:
+    bundle = _adoption_bundle()
+    cache = tmp_path / "cache"
+    elsewhere = tmp_path / "elsewhere"
+    written = write_kit_cache(bundle, elsewhere)
+    cache.mkdir()
+    (cache / "acme").symlink_to(written.parent, target_is_directory=True)
+    outside_before = sorted(str(path) for path in elsewhere.rglob("*"))
+
+    with pytest.raises(KitCacheError, match="symbolic link"):
+        load_installed_kit(_installed(bundle), root=cache)
+    with pytest.raises(KitCacheError, match="symbolic link"):
+        write_kit_cache(bundle, cache)
+
+    assert sorted(str(path) for path in elsewhere.rglob("*")) == outside_before
+    assert (cache / "acme").is_symlink()
+    assert not (cache / ".locks").exists()
+
+
+def test_kit_status_refuses_an_invalid_kit_id_query_cleanly(
+    worlds: tuple[_World, _World],  # noqa: F811
+) -> None:
+    _publisher, consumer = worlds
+    response = consumer.http.get(
+        f"/api/v1/{consumer.instance_id}/kits", params={"kit_id": "SECURITY"}
+    )
+    assert 400 <= response.status_code < 500, response.text
+    assert "kit id must be lowercase" in response.text
+    fine = consumer.http.get(f"/api/v1/{consumer.instance_id}/kits", params={"kit_id": "absent"})
+    assert fine.status_code == 200, fine.text
