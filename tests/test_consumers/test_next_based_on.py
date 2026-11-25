@@ -509,8 +509,18 @@ def test_the_write_contract_takes_claim_ids_and_subject_hash_field(
     assert based_on_slot("sec.finding/CVE#1#x.y") == ("sec.finding/CVE#1", "x.y")
 
 
+def test_the_write_contract_takes_a_create_label_hash_field() -> None:
+    from cruxible_client.contracts.write import SetChange, based_on_created_slot
+
+    # A label holds no '/', so label#field never reads as kind/id#field.
+    change = SetChange(field="f", value=1, based_on=("new-1#x.y", "a#f"))
+    assert change.based_on == ("a#f", "new-1#x.y")
+    assert based_on_created_slot("new-1#x.y") == ("new-1", "x.y")
+    assert based_on_created_slot("ops.item/a#f") is None
+
+
 @pytest.mark.parametrize(
-    "bad", ["CLM-123", "kev_status", "sec.finding/a#", "#kev_status", "Sec/a#f", "a#f"]
+    "bad", ["CLM-123", "kev_status", "sec.finding/a#", "#kev_status", "Sec/a#f", "A#f", "-a#f"]
 )
 def test_the_write_contract_refuses_other_based_on_names(bad: str) -> None:
     from pydantic import ValidationError

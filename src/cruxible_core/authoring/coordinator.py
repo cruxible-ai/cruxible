@@ -187,13 +187,16 @@ class AuthoringIntentCoordinator:
         base_coordinate: AcceptedCoordinate | None = None,
         reference_expectations: tuple[AuthoringExpectation, ...] | None = None,
         program_stamp: AuthoringProgramStamp | None = None,
+        intent_id: str | None = None,
     ) -> AuthoringIntentView:
         """Open one authoring draft against the accepted coordinate.
 
         A draft is a durable write to the exhaust, not a read, so it takes the
         same terminal-state gate as every other governed-write door: an instance
         that has stopped accepting writes must not accumulate new intents that
-        can never be submitted.
+        can never be submitted. ``intent_id`` is one the caller minted
+        (``store.mint_intent_id``) when the payload already names ids derived
+        from its operation; otherwise one is minted here.
         """
 
         self.instance.require_writable()
@@ -243,7 +246,7 @@ class AuthoringIntentCoordinator:
             canonical_timestamp=canonical_timestamp,
             at=at,
             reference_expectations=reference_expectations,
-            intent_id=self.store.mint_intent_id(),
+            intent_id=intent_id or self.store.mint_intent_id(),
         )
         operation_key = typed_digest(
             Sha256Value,
@@ -328,8 +331,12 @@ class AuthoringIntentCoordinator:
         payload: AuthoringPayload,
         canonical_timestamp: str,
         reference_expectations: tuple[AuthoringExpectation, ...] | None = None,
+        intent_id: str | None = None,
     ) -> tuple[AuthoringIntent, ComputedPreflight]:
         """Preflight one payload exactly as submit would, and write nothing.
+
+        ``intent_id`` previews under an operation the caller minted, when the
+        payload already names ids derived from it.
 
         This is a dry run: the draft is built in memory under a fresh intent ID
         instead of being stored, and the bodies lowering stores are held in
@@ -354,7 +361,7 @@ class AuthoringIntentCoordinator:
                 canonical_timestamp=canonical_timestamp,
                 at=AcceptedCoordinate.from_internal(self.instance.accepted_coordinate()),
                 reference_expectations=reference_expectations,
-                intent_id=f"AIT-{secrets.token_hex(16)}",
+                intent_id=intent_id or f"AIT-{secrets.token_hex(16)}",
             )
             return intent, compute_preflight(self.instance, intent=intent, actor=actor)
 

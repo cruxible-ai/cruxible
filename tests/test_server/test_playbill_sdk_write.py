@@ -313,3 +313,207 @@ def test_cx_add_adds_one_value_beside_the_others_like_set(pb: Cruxible) -> None:
     with pytest.raises(WriteRefusalError) as caught:
         pb.add(WI1, "governs", f"{KIND}/wi-2", because="x", expect_absent=True)
     assert caught.value.error_code == "cruxible.write.value_already_present"
+
+
+# -- based_on a Claim the same World write makes -------------------------------------
+
+
+def _based_on_pins(instance_id: str, claim: str | None) -> dict[str, str]:
+    from cruxible_client.contracts.claims import (
+        BASED_ON_CLAIM_PIN_ROLE,
+        claim_path,
+        parse_claim,
+    )
+
+    assert claim is not None
+    instance = get_playbill_manager().get(instance_id)
+    path = claim_path(claim.removeprefix("Claim:"))
+    content = instance.blob_at(instance.accepted_coordinate().git_oid, path)
+    assert content is not None
+    return {
+        pin.target.name: pin.artifact_digest
+        for pin in parse_claim(content, path=path).pins
+        if pin.role == BASED_ON_CLAIM_PIN_ROLE
+    }
+
+
+def _digest(instance_id: str, claim: str | None) -> str:
+    from cruxible_client.contracts.claims import claim_artifact_digest, claim_path, parse_claim
+
+    assert claim is not None
+    instance = get_playbill_manager().get(instance_id)
+    path = claim_path(claim.removeprefix("Claim:"))
+    content = instance.blob_at(instance.accepted_coordinate().git_oid, path)
+    assert content is not None
+    return claim_artifact_digest(parse_claim(content, path=path)).tagged
+
+
+def _field_claim(outcome: WriteOutcome, field: str) -> str | None:
+    (claim,) = [item.claim for item in outcome.changes if item.field == field]
+    return None if claim is None else claim.removeprefix("Claim:")
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_a_draft_pin_names_the_claim_a_sibling_draft_writes(
+    pb: Cruxible, playbill_http: tuple[TestClient, str, Path], reverse: bool
+) -> None:
+    _client, instance_id, _key = playbill_http
+    world = pb.world()
+    observed = world.project.work_item.define("wi-9").set(status="ready")
+    judged = world.project.work_item.define("wi-10").set(
+        title="Ready to ship", based_on=observed.pin("status")
+    )
+    drafts = (judged, observed) if reverse else (observed, judged)
+    outcome = world.write(*drafts, because="Judged from the sibling's status.")
+    assert outcome.status == "accepted", outcome
+    status, title = _field_claim(outcome, "status"), _field_claim(outcome, "title")
+    assert _based_on_pins(instance_id, title) == {status: _digest(instance_id, status)}
+    assert observed.address == f"{KIND}/wi-9"
+    # Once landed, a pin names address#field: the field's one live Claim.
+    follow = world.project.work_item["wi-2"].set(
+        title="After", based_on=observed.pin("status"), because="Rests on it."
+    )
+    assert follow.status == "accepted", follow
+    assert set(_based_on_pins(instance_id, _field_claim(follow, "title"))) == {status}
+
+
+def test_a_draft_named_only_by_a_pin_is_created_in_the_same_write(
+    pb: Cruxible, playbill_http: tuple[TestClient, str, Path]
+) -> None:
+    _client, instance_id, _key = playbill_http
+    world = pb.world()
+    observed = world.project.work_item.define("wi-9").set(status="ready")
+    judged = world.project.work_item.define("wi-10").set(
+        title="Ready", based_on=[observed.pin("status")]
+    )
+    outcome = world.write(judged, because="Judged.")
+    assert outcome.status == "accepted", outcome
+    assert observed.address == f"{KIND}/wi-9" and judged.address == f"{KIND}/wi-10"
+    status = _field_claim(outcome, "status")
+    assert set(_based_on_pins(instance_id, _field_claim(outcome, "title"))) == {status}
+
+
+def test_an_edit_pin_names_the_claim_a_sibling_edit_revises(
+    pb: Cruxible, playbill_http: tuple[TestClient, str, Path]
+) -> None:
+    _client, instance_id, _key = playbill_http
+    world = pb.world()
+    first = world.project.work_item["wi-1"].set(status="ready", because="Checked.")
+    status = _field_claim(first, "status")
+    source = world.project.work_item["wi-1"].edit(status="done")
+    assert source.pin("status") == f"{KIND}/wi-1#{KIND}.status"
+    judged = world.project.work_item["wi-2"].edit(title="Follows", based_on=source.pin("status"))
+    outcome = world.write(judged, source, because="Judged from the new status.")
+    assert outcome.status == "accepted", outcome
+    assert _field_claim(outcome, "status") == status
+    assert _based_on_pins(instance_id, _field_claim(outcome, "title")) == {
+        status: _digest(instance_id, status)
+    }
+
+
+def test_a_draft_pin_previews_proposes_and_activates(pb: Cruxible) -> None:
+    world = pb.world()
+    observed = world.project.work_item.define("wi-9").set(status="ready")
+    judged = world.project.work_item.define("wi-10").set(
+        title="Ready", based_on=observed.pin("status")
+    )
+    preview = world.write(observed, judged, because="Judged.", dry_run=True)
+    assert preview.status == "would_accept", preview
+    (planned,) = [item for item in preview.changes if item.field == "title"]
+    assert planned.based_on == (_field_claim(preview, "status"),)
+    assert observed.address is None
+
+    proposed = world.write(observed, judged, because="Judged.", accept="never")
+    assert proposed.status == "awaiting_approval" and proposed.proposal is not None, proposed
+    status = _field_claim(proposed, "status")
+    (shown,) = [item for item in proposed.changes if item.field == "title"]
+    assert shown.based_on == (status,)
+    receipt = pb.proposal(proposed.proposal.proposal_id).activate()
+    assert receipt.status == "accepted"
+
+
+def test_a_draft_pin_checks_its_field_and_refuses_a_self_pin(pb: Cruxible) -> None:
+    world = pb.world()
+    draft = world.project.work_item.define("wi-9")
+    with pytest.raises(AttributeError, match="stauts"):
+        draft.pin("stauts")
+    draft.set(status="ready", based_on=draft.pin("status"))
+    with pytest.raises(WriteRefusalError) as caught:
+        world.write(draft, because="Rests on itself.")
+    assert caught.value.error_code == "cruxible.authoring.based_on_self"
+
+
+def test_the_world_stub_types_pin_by_field_for_drafts_and_edits(
+    pb: Cruxible, tmp_path: Path
+) -> None:
+    from tests.test_client.test_playbill_sdk_world import _mypy
+
+    stub = pb.world().stub()
+    ast.parse(stub)
+    assert "    WorldDraftPin," in stub
+    assert ") -> WorldDraftPin: ..." in stub
+    project = tmp_path / "pin-project"
+    project.mkdir()
+    (project / "world.pyi").write_text(stub, encoding="utf-8")
+    (project / "uses_pin.py").write_text(
+        "from __future__ import annotations\n"
+        "\n"
+        "from world import World\n"
+        "\n"
+        "\n"
+        "def pinned(world: World) -> None:\n"
+        "    source = world.project.work_item.define('wi-9').set(status='ready')\n"
+        "    edit = world.project.work_item['wi-1'].edit(title='x')\n"
+        "    world.project.work_item.define('wi-10').set(\n"
+        "        title='y', based_on=[source.pin('status'), edit.pin('title'), 'CLM-x']\n"
+        "    )\n"
+        "    source.pin('stauts')\n",
+        encoding="utf-8",
+    )
+    report = _mypy(project, "uses_pin.py")
+    assert "uses_pin.py:12: error:" in report, report
+    assert report.count(": error:") == 1, report
+
+
+def test_a_long_chain_of_draft_pins_is_walked_without_recursion(pb: Cruxible) -> None:
+    # Each fresh change pins the draft before it: a chain as long as a write
+    # may carry, walked from its last draft alone.
+    world = pb.world()
+    drafts = [world.project.work_item.define(f"wi-{n}") for n in range(100, 500)]
+    landed = world.write(*drafts, because="Each work item exists.")
+    assert landed.status == "accepted", landed
+    drafts[0].set(title="First")
+    for earlier, draft in zip(drafts, drafts[1:], strict=False):
+        draft.set(title=f"After {earlier.address}", based_on=earlier.pin("title"))
+
+    preview = world.write(drafts[-1], because="Each rests on the one before.", dry_run=True)
+
+    assert preview.status == "would_accept", preview
+    titles = [item for item in preview.changes if item.field == "title"]
+    assert len(titles) == len(drafts)
+    assert all(item.based_on for item in titles[1:])
+
+
+def test_a_draft_pin_on_its_key_names_the_key_claim_its_creation_writes(
+    pb: Cruxible, playbill_http: tuple[TestClient, str, Path]
+) -> None:
+    _client, instance_id, _key = playbill_http
+    world = pb.world()
+    created = world.project.work_item.define("wi-9")
+    judged = world.project.work_item["wi-2"].edit(
+        title="Follows wi-9", based_on=created.pin("slug")
+    )
+    outcome = world.write(created, judged, because="Judged from the new key.")
+    assert outcome.status == "accepted", outcome
+    instance = get_playbill_manager().get(instance_id)
+    with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
+        (key_claim,) = [
+            str(row[0]).removeprefix("Claim:")
+            for row in projection.typed.connection.execute(
+                "SELECT identity FROM claims WHERE subject_path=? AND predicate=?",
+                (f"subjects/{KIND}/wi-9.json", f"{KIND}.slug"),
+            )
+        ]
+    assert _based_on_pins(instance_id, _field_claim(outcome, "title")) == {
+        key_claim: _digest(instance_id, key_claim)
+    }

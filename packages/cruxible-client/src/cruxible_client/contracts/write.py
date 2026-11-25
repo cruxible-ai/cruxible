@@ -619,11 +619,29 @@ def based_on_slot(name: str) -> tuple[str, str] | None:
     return subject, field
 
 
+def based_on_created_slot(name: str) -> tuple[str, str] | None:
+    """``label#field`` as (create label, field); ``None`` for anything else.
+
+    The shorthand names the Claim this same write makes in a field of the
+    Subject its ``create`` change labels, before core has assigned that
+    Subject's id. A label holds no ``/``, so it never reads as ``kind/id``.
+    """
+
+    label, sep, field = name.rpartition("#")
+    if not sep or not field or len(field) > 512:
+        return None
+    if not re.fullmatch(NEW_SUBJECT_LABEL_PATTERN, label):
+        return None
+    return label, field
+
+
 def _based_on_ids(value: tuple[str, ...] | None) -> tuple[str, ...] | None:
     """Sorted and once each: the order a list was typed in carries no meaning.
 
-    A Claim is named by id (``CLM-...``) or as ``kind/id#field``, its field's
-    one live Claim, which the write resolves to the id before it is pinned.
+    A Claim is named by id (``CLM-...``), as ``kind/id#field``, its field's
+    one live Claim (or the one this write makes there), or as ``label#field``,
+    the Claim this write makes in a field of the Subject a create change
+    labels. The write resolves each to an id before it is pinned.
     """
 
     if value is None:
@@ -634,9 +652,16 @@ def _based_on_ids(value: tuple[str, ...] | None) -> tuple[str, ...] | None:
         if _CLAIM_ID.fullmatch(name):
             names.add(name)
             continue
+        created = based_on_created_slot(item)
+        if created is not None:
+            names.add(f"{created[0]}#{created[1]}")
+            continue
         slot = based_on_slot(item)
         if slot is None:
-            raise ValueError("based_on names Claims as CLM-<32 hex> or kind/id#field")
+            raise ValueError(
+                "based_on names Claims as CLM-<32 hex> or kind/id#field (label#field for "
+                "a Subject a create change of this write labels)"
+            )
         names.add(f"{slot[0]}#{slot[1]}")
     return tuple(sorted(names, key=str.encode))
 
@@ -1406,6 +1431,7 @@ __all__ = [
     "WriteStatus",
     "WriteValue",
     "as_write_request",
+    "based_on_created_slot",
     "based_on_slot",
     "capture_handle",
 ]

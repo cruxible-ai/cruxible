@@ -4379,7 +4379,13 @@ the write's base, less any the same write retires; the write pins its
 `CLM-...` id, never the shorthand. A field holding none refuses
 `cruxible.write.based_on_not_found`, one holding several refuses
 `cruxible.write.based_on_ambiguous` listing their ids, and an unknown Subject or
-field refuses as `set` does (`subject_not_found`, `unknown_field`).
+field refuses as `set` does (`subject_not_found`, `unknown_field`). In a write
+file the shorthand reads the field as the whole write leaves it: a set or add of
+the same write to that field is the Claim pinned (a revision under its id, a new
+Claim under the id the write mints for it), staged before the Claim that rests
+on it, and `LABEL#FIELD` names a field of the Subject a create change labels.
+Pinning the field a change itself writes refuses `based_on_self`, and changes
+resting on each other refuse `cruxible.write.based_on_cycle`.
 
 A none states that a field holds nothing: an inverse Claim, on a ClaimType
 whose `inverse` declares how (any other refuses

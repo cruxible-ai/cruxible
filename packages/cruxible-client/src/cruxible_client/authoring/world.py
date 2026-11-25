@@ -32,9 +32,10 @@ from __future__ import annotations
 
 import keyword
 import re
-from collections.abc import Iterator, Mapping, Sequence
+from collections import deque
+from collections.abc import Generator, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeVar, cast
 
 from cruxible_client.authoring.sdk_types import (
     AbsentSubject,
@@ -97,40 +98,54 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     )
 
     #: What ``based_on=`` takes on a World write: Claim ids (``CLM-...``), the
-    #: ``kind/id#field`` shorthand for a field's one live Claim, ``ClaimRef``s,
-    #: or the ``ClaimView``s a Subject's field read answers.
-    WorldBasedOn: TypeAlias = str | ClaimRef | ClaimView | Sequence[str | ClaimRef | ClaimView]
+    #: ``kind/id#field`` shorthand for a field's one Claim, ``ClaimRef``s, the
+    #: ``ClaimView``s a Subject's field read answers, or ``draft.pin(field)``
+    #: for the Claim a new Subject's draft writes in the same write.
+    WorldBasedOn: TypeAlias = (
+        "str | ClaimRef | ClaimView | WorldDraftPin"
+        " | Sequence[str | ClaimRef | ClaimView | WorldDraftPin]"
+    )
 
 _SEGMENT_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 
+_T = TypeVar("_T")
+#: One step of ``World.write``'s walk over drafts: it yields each step it needs
+#: done first and is sent that step's result (driven by ``run`` in ``write``).
+_Step: TypeAlias = Generator[Generator[Any, Any, Any], Any, _T]
 
-def _world_based_on(claims: WorldBasedOn | None) -> tuple[str, ...] | None:
-    """``based_on`` as wire names; ``None`` keeps a revision's pins as they are."""
+
+def _world_based_on(claims: WorldBasedOn | None) -> tuple[str | WorldDraftPin, ...] | None:
+    """``based_on`` as wire names, a draft's pin kept until ``World.write`` labels it.
+
+    ``None`` keeps a revision's pins as they are.
+    """
 
     from cruxible_client.authoring.sdk import ClaimView
 
     if claims is None:
         return None
     items: Sequence[object] = (
-        (claims,) if isinstance(claims, str | ClaimRef | ClaimView) else claims
+        (claims,) if isinstance(claims, str | ClaimRef | ClaimView | WorldDraftPin) else claims
     )
     if not isinstance(items, Sequence):
         raise TypeError(
-            "based_on takes a Claim (CLM-..., kind/id#field, a ClaimRef or a ClaimView) "
-            f"or a list of them, not {type(claims).__name__}"
+            "based_on takes a Claim (CLM-..., kind/id#field, a ClaimRef, a ClaimView or "
+            f"draft.pin(field)) or a list of them, not {type(claims).__name__}"
         )
-    names: list[str] = []
+    names: list[str | WorldDraftPin] = []
     for item in items:
         if isinstance(item, ClaimView):
             names.append(item.claim_id)
         elif isinstance(item, ClaimRef):
             names.append(item.address)
+        elif isinstance(item, WorldDraftPin):
+            names.append(item)
         elif isinstance(item, str):
             names.append(item.removeprefix("Claim:"))
         else:
             raise TypeError(
-                "based_on names Claims as CLM-..., kind/id#field, a ClaimRef or a "
-                f"ClaimView, not {type(item).__name__}"
+                "based_on names Claims as CLM-..., kind/id#field, a ClaimRef, a "
+                f"ClaimView or draft.pin(field), not {type(item).__name__}"
             )
     return tuple(names)
 
@@ -755,7 +770,7 @@ class _FieldChange:
     role: WriteRole | None = None
     contend: bool = False
     expect_absent: bool = False
-    based_on: tuple[str, ...] | None = None
+    based_on: tuple[str | WorldDraftPin, ...] | None = None
 
 
 class _Landing:
@@ -828,8 +843,9 @@ class WorldNewSubject(WorldWritable):
 
         The change is recorded on this draft, so ``draft.set(...)`` needs no
         reassignment; the draft is returned so calls chain. ``based_on=`` names
-        the accepted Claims the values were judged from, as ``WorldSubject.set``
-        takes it.
+        the Claims the values were judged from, as ``WorldSubject.set`` takes
+        it, or ``other.pin(field)`` for a Claim another draft of the same write
+        makes.
 
         Next: ``.write(because=...)`` authors the section and creates this Subject.
         """
@@ -864,6 +880,24 @@ class WorldNewSubject(WorldWritable):
         self._extend(changes)
         return self
 
+    def pin(self, field: str | ClaimTypeRef, /) -> WorldDraftPin:
+        """The Claim this draft writes in ``field``, for ``based_on=`` in the same write.
+
+        A new Subject has no id until its write is accepted, so another change
+        of the same ``w.write`` names the value this draft sets as
+        ``based_on=draft.pin("field")``: the write pins the Claim it makes
+        there (its ``CLM-...`` id, minted in that write). The field is checked
+        against this World now; the draft must set it in that write, be created
+        by it (a key field: its key Claim), or land on a Subject whose field
+        holds one live value. A draft named only by a pin is created too. Once
+        accepted, a pin names ``address#field``.
+
+        Next: ``other.set(..., based_on=draft.pin("field"))``, then ``w.write(draft, other, ...)``.
+        """
+
+        name = field.address if isinstance(field, ClaimTypeRef) else field
+        return WorldDraftPin(draft=self, field=self._world._write_field(self.subject_kind, name))
+
     def _extend(self, changes: tuple[_FieldChange, ...]) -> None:
         # The dataclass is frozen against field reassignment by callers; the
         # change list is the one member a draft grows, in place.
@@ -882,6 +916,24 @@ class WorldNewSubject(WorldWritable):
     def __repr__(self) -> str:
         landed = "" if self._landing.ref is None else f" -> {self._landing.ref}"
         return f"<WorldNewSubject {self.subject_kind} key={self._key!r}{landed}>"
+
+
+@dataclass(frozen=True, eq=False)
+class WorldDraftPin:
+    """The Claim a new Subject's draft writes in one field: ``draft.pin(field)``.
+
+    Passed to ``based_on=`` of another change of the same ``w.write``, it is
+    sent as ``label#field`` (the draft's create label), which the write
+    resolves to the Claim it makes there; once the draft was accepted, as
+    ``kind/id#field``.
+    """
+
+    draft: WorldNewSubject
+    #: The field's predicate, checked against the draft's World.
+    field: str
+
+    def __repr__(self) -> str:
+        return f"<WorldDraftPin {self.draft!r}#{self.field}>"
 
 
 @dataclass(frozen=True, repr=False, eq=False)
@@ -977,6 +1029,19 @@ class WorldSubjectEdit(WorldWritable):
         change = RetireChange(target=SlotRef(subject=self.address, field=predicate), reason=reason)
         self._extend((change,))
         return self
+
+    def pin(self, field: str | ClaimTypeRef, /) -> str:
+        """``kind/id#field`` for ``based_on=``: the field's one Claim after the write.
+
+        Sent in the same ``w.write`` as this edit, it names the Claim this edit
+        writes in that field (the revised or new one); otherwise the field's
+        one live Claim. The field is checked against this World now.
+
+        Next: ``other.set(..., based_on=edit.pin("field"))``.
+        """
+
+        name = field.address if isinstance(field, ClaimTypeRef) else field
+        return f"{self.address}#{self._world._write_field(self.address.split('/', 1)[0], name)}"
 
     def _extend(self, changes: tuple[_FieldChange | RetireChange, ...]) -> None:
         # Frozen against reassignment by callers; the change list grows in place.
@@ -1406,7 +1471,9 @@ class World:
 
         Each draft is one ``create`` change, sent first, and the drafts and edits
         name it by a label the write assigns, so a draft may be the value of
-        another in any order; a draft named only as a value is created too.
+        another in any order; a draft named only as a value is created too. A
+        ``based_on=draft.pin(field)`` (or ``edit.pin(field)``) pins the Claim
+        this same write makes in that field, in any argument order.
         Checked from this World's write basis, like every write of it. Once
         accepted, each draft's ``address`` is the id the outcome reports.
 
@@ -1437,56 +1504,110 @@ class World:
                     f"{item!r} was drafted from another World; draft it from this one"
                 )
 
-        def value(raw: object) -> Any:
+        # Drafts name each other (as values, key parts and pins) in chains as
+        # long as a write's changes, so each step below is a generator that
+        # yields the step it needs first, and ``run`` drives them from one
+        # explicit stack: the same depth-first order and dedup a recursive walk
+        # gives, without Python's recursion limit. Cost: linear in the changes.
+
+        def run(step: _Step[_T]) -> _T:
+            stack: list[Generator[Any, Any, Any]] = [step]
+            result: Any = None
+            while True:
+                try:
+                    needed = stack[-1].send(result)
+                except StopIteration as stop:
+                    stack.pop()
+                    if not stack:
+                        return cast("_T", stop.value)
+                    result = stop.value
+                    continue
+                stack.append(needed)
+                result = None
+
+        def value(raw: object) -> _Step[Any]:
             if isinstance(raw, WorldNewSubject):
                 if raw._landing.ref is not None:
-                    return landed(raw)
-                return CreatedSubject(created=label(raw))
+                    return (yield landed(raw))
+                return CreatedSubject(created=(yield label(raw)))
             return _write_value(raw)
 
-        def landed(draft: WorldNewSubject) -> str:
-            # An accepted draft is a reference to its Subject: only changes it
-            # gained after that acceptance are sent, under the assigned id.
+        pending_drafts: deque[WorldNewSubject] = deque()
+
+        def ensure_landed(draft: WorldNewSubject) -> str:
+            # Record an accepted draft without sending its changes yet (used while
+            # resolving composite keys so a key part never re-enters label()).
             mine(draft)
             ref = draft._landing.ref
             assert ref is not None
             key = id(draft._landing)
             if key not in landings:
                 landings[key] = draft._landing
+                pending_drafts.append(draft)
+            return ref
+
+        def landed(draft: WorldNewSubject) -> _Step[str]:
+            # An accepted draft is a reference to its Subject: only changes it
+            # gained after that acceptance are sent, under the assigned id.
+            ref = ensure_landed(draft)
+            key = id(draft._landing)
             done = sent.setdefault(key, [])
             fresh = [c for c in draft._changes if id(c) not in draft._landing.accepted]
-            send(ref, fresh, done)
+            yield send(ref, fresh, done)
             return ref
+
+        def pinned(
+            names: tuple[str | WorldDraftPin, ...] | None,
+        ) -> _Step[tuple[str, ...] | None]:
+            # A draft's pin names its create label (or, once landed, its id).
+            if names is None:
+                return None
+            sent_names: list[str] = []
+            for name in names:
+                if isinstance(name, WorldDraftPin):
+                    draft = name.draft
+                    mine(draft)
+                    owner = (
+                        (yield landed(draft))
+                        if draft._landing.ref is not None
+                        else (yield label(draft))
+                    )
+                    sent_names.append(f"{owner}#{name.field}")
+                else:
+                    sent_names.append(name)
+            return tuple(sent_names)
 
         def send(
             subject: str | CreatedSubject,
             items: Sequence[_FieldChange],
             done: list[_FieldChange],
-        ) -> None:
+        ) -> _Step[None]:
             for item in items:
                 if any(item is earlier for earlier in done):
                     continue
                 done.append(item)
                 evidence = cited(item.evidence)
+                based_on = yield pinned(item.based_on)
+                written = yield value(item.value)
                 changes.append(
                     SetChange(
                         subject=subject,
                         field=item.field,
-                        value=value(item.value),
+                        value=written,
                         evidence=evidence,
                         role=item.role,
                         contend=item.contend,
-                        based_on=item.based_on,
+                        based_on=based_on,
                     )
                     if item.op == "set"
                     else AddChange(
                         subject=subject,
                         field=item.field,
-                        value=value(item.value),
+                        value=written,
                         evidence=evidence,
                         role=item.role,
                         expect_absent=item.expect_absent,
-                        based_on=item.based_on,
+                        based_on=based_on,
                     )
                 )
 
@@ -1500,16 +1621,16 @@ class World:
                 return evidence.citation
             return evidence
 
-        def key_of(draft: WorldNewSubject) -> CreateKey:
+        def key_of(draft: WorldNewSubject) -> _Step[CreateKey]:
             if not draft._key_drafts:
                 return draft._key
             parts: list[CreateKeyPart] = []
             for predicate, part in draft._key_drafts:
                 if isinstance(part, WorldNewSubject):
                     resolved: SubjectKeyValue | CreatedSubject = (
-                        landed(part)
+                        ensure_landed(part)
                         if part._landing.ref is not None
-                        else CreatedSubject(created=label(part))
+                        else CreatedSubject(created=(yield ensure_label(part)))
                     )
                     parts.append(CreateKeyPart(predicate=predicate, value=resolved))
                 else:
@@ -1518,12 +1639,15 @@ class World:
                 return parts[0].value
             return tuple(parts)
 
-        def label(draft: WorldNewSubject) -> str:
+        def ensure_label(draft: WorldNewSubject) -> _Step[str]:
+            # Register this draft and any transitive key-part drafts first without
+            # sending their changes, so a key part whose change pins or references
+            # the composite draft never re-enters label() before its label is set.
             mine(draft)
             key = id(draft._landing)
             name = labels.get(key)
             if name is None:
-                resolved_key = key_of(draft)
+                resolved_key = yield key_of(draft)
                 landings[key] = draft._landing
                 name = labels[key] = f"new-{len(labels) + 1}"
                 creates.append(
@@ -1540,23 +1664,39 @@ class World:
                         ),
                     )
                 )
-            send(CreatedSubject(created=name), draft._changes, sent.setdefault(key, []))
+                pending_drafts.append(draft)
             return name
+
+        def label(draft: WorldNewSubject) -> _Step[str]:
+            name: str = yield ensure_label(draft)
+            key = id(draft._landing)
+            yield send(CreatedSubject(created=name), draft._changes, sent.setdefault(key, []))
+            return name
+
+        def flush_pending() -> None:
+            while pending_drafts:
+                draft = pending_drafts.popleft()
+                if draft._landing.ref is not None:
+                    run(landed(draft))
+                else:
+                    run(label(draft))
 
         for item in items:
             if isinstance(item, WorldNewSubject):
                 if item._landing.ref is not None:
-                    landed(item)
+                    run(landed(item))
                 else:
-                    label(item)
+                    run(label(item))
+                flush_pending()
             elif isinstance(item, WorldSubjectEdit):
                 mine(item)
                 done = sent.setdefault(id(item), [])
                 for change in item._changes:
                     if isinstance(change, _FieldChange):
-                        send(item.address, (change,), done)
+                        run(send(item.address, (change,), done))
                     else:
                         changes.append(change)
+                flush_pending()
             else:
                 raise TypeError(f"write() takes drafts and edits, not {type(item).__name__}")
         outcome = self._write(
@@ -2624,6 +2764,7 @@ __all__ = [
     "SUBJECT_MEMBERS",
     "World",
     "WorldClaimType",
+    "WorldDraftPin",
     "WorldNewSubject",
     "WorldStructureError",
     "WorldSubject",

@@ -426,7 +426,10 @@ Leaving `based_on` out of a revision keeps the pins it had. A pinned Claim must
 be live and not the one written (`cruxible.authoring.based_on_not_found`,
 `based_on_retired`, `based_on_self`); `kind/id#field` naming a field with no
 live Claim refuses `cruxible.write.based_on_not_found`, and one with several
-`cruxible.write.based_on_ambiguous`, listing their ids. An instance still on
+`cruxible.write.based_on_ambiguous`, listing their ids. In `cruxible_write` the
+field is read as the whole write leaves it, so a set or add of the same write is
+the Claim pinned, and `label#field` names a field of a Subject a create change
+labels; changes resting on each other refuse `cruxible.write.based_on_cycle`. An instance still on
 revision 73 refuses `based_on` with
 `cruxible.authoring.based_on_requires_compiler_upgrade`.
 

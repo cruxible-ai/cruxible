@@ -82,8 +82,38 @@ _EDIT_OPTIONS = frozenset({"based_on", "contend", "evidence", "role"})
 
 #: ``based_on=`` on a write member: the Claims each value was judged from.
 _BASED_ON_PARAMETER = (
-    "    based_on: str | ClaimRef | ClaimView | Sequence[str | ClaimRef | ClaimView] | None = ...,"
+    "    based_on: str | ClaimRef | ClaimView | WorldDraftPin"
+    " | Sequence[str | ClaimRef | ClaimView | WorldDraftPin] | None = ...,"
 )
+
+
+def _pin_member(world: World, kind: str, returns: str) -> list[str]:
+    """Type ``pin(field)`` over every field of this kind, its keys included, as runtime takes it.
+
+    Each predicate in full, and an unambiguous leaf as it stands and as its
+    escaped keyword (``keyword_name``: ``class_``, ``import_``). A leaf already
+    ending in ``_`` is offered only escaped: runtime reads one trailing
+    underscore as the escape (``World._write_field``).
+    """
+
+    names: set[str] = set()
+    for leaf, predicates in world._leaf_map(kind).items():
+        names.update(predicates)
+        if len(predicates) != 1:
+            continue
+        if not leaf.endswith("_"):
+            names.add(leaf)
+        spelled = keyword_name(leaf)
+        if spelled is not None:
+            names.add(spelled)
+    if not names:
+        return []
+    spelled = ", ".join(repr(name) for name in _sorted(names))
+    return [
+        "def pin(  # type: ignore[override]",
+        f"    self, field: Literal[{spelled}] | ClaimTypeRef, /",
+        f") -> {returns}: ...",
+    ]
 
 
 def _fields_beside(lines: Iterable[str], options: Iterable[str]) -> list[str]:
@@ -120,6 +150,7 @@ _STUB_IMPORTS = (
     "    KindNamespace,",
     "    Names,",
     "    WorldClaimType,",
+    "    WorldDraftPin,",
     "    WorldNewSubject,",
     "    WorldSubjectEdit,",
     "    WorldWritable,",
@@ -463,6 +494,9 @@ def _edit_block(world: World, node: _Node) -> list[str]:
             f") -> {edit}: ...",
         ]
     )
+    pin = _pin_member(world, node.path, "str")
+    if pin:
+        body.declare_lines(pin)
     body.declare_lines(_SEND_MEMBER)
     lines.extend(body.rendered())
     return lines
@@ -493,6 +527,9 @@ def _new_block(world: World, node: _Node) -> list[str]:
         ["def add(  # type: ignore[override]", "    self,", "    /,", "    *,", *options]
         + [*_fields_beside(by_cardinality["many"], options), f") -> {draft}: ..."]
     )
+    pin = _pin_member(world, node.path, "WorldDraftPin")
+    if pin:
+        body.declare_lines(pin)
     body.declare_lines(_SEND_MEMBER)
     lines.extend(body.rendered())
     return lines

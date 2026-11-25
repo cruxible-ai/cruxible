@@ -15,7 +15,10 @@ read. A moved head re-reads the vocabulary listing alone (the ``claim_types``
 and ``subject_kinds`` orient sections, O(vocabulary), without the per-Claim
 counters) and re-renders only when that listing changed. A stub recorded for
 another daemon endpoint, or one whose file no longer carries the recorded
-digest, renders again.
+digest, renders again. So does a stub rendered by another renderer: the state
+records `world_stub_renderer_key`, a digest of the client version and the
+renderer's own source, so an upgraded package or an edited checkout renders the
+stub again even when the vocabulary did not move.
 """
 
 from __future__ import annotations
@@ -26,10 +29,12 @@ import os
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from functools import cache
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import TYPE_CHECKING, Any, Literal
 
+from cruxible_client.authoring import world_stub
 from cruxible_client.authoring.world_stub import render_world_stub_for, stub_vocabulary_digest
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -38,7 +43,8 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 #: The module name the stub is imported as (``from world import World``).
 WORLD_STUB_MODULE = "world"
-STUB_CACHE_FORMAT = "cruxible-world-stub-cache-v1"
+#: v2 records the renderer key; a v1 state reads as no state, so it renders once.
+STUB_CACHE_FORMAT = "cruxible-world-stub-cache-v2"
 
 _SAFE_COMPONENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 #: Per-Claim counters the claim_types section carries; they move with every
@@ -82,6 +88,30 @@ def world_stub_cache_directory(instance_id: str, environ: Mapping[str, str] | No
         else "sha256-" + hashlib.sha256(instance_id.encode("utf-8")).hexdigest()[:32]
     )
     return user_cruxible_directory(environ) / "stubs" / component
+
+
+@cache
+def world_stub_renderer_key() -> str:
+    """sha256 over the client version and the stub renderer's source bytes.
+
+    A released package moves the version; an editable checkout moves the source.
+    Where the source cannot be read (a frozen or zipped install), the version
+    alone keys it. Read once per process.
+    """
+
+    from cruxible_client import __version__
+
+    source = b""
+    get_source = getattr(getattr(world_stub, "__loader__", None), "get_source", None)
+    try:
+        text = get_source(world_stub.__name__) if callable(get_source) else None
+    except (ImportError, OSError):
+        text = None
+    if isinstance(text, str):
+        source = text.encode("utf-8")
+    hasher = hashlib.sha256(__version__.encode("utf-8") + b"\0")
+    hasher.update(source)
+    return "sha256:" + hasher.hexdigest()
 
 
 def vocabulary_fingerprint(client: CruxibleClient, instance_id: str, *, at: Any) -> str:
@@ -146,14 +176,19 @@ def cached_world_stub(
     transport: str | None,
     environ: Mapping[str, str] | None = None,
     render: Callable[[CruxibleClient, str], str] | None = None,
+    renderer_key: str | None = None,
 ) -> CachedWorldStub:
     """The instance's cached stub, re-rendered only when its vocabulary moved.
 
     ``transport`` is the daemon endpoint as the CLI context compares it (a URL
     or ``unix://<realpath>``): instance IDs are not unique across daemons, so a
     stub recorded for another endpoint is rendered again. ``render`` defaults to
-    `render_world_stub_for`.
+    `render_world_stub_for`; ``renderer_key`` names the renderer the state
+    records (default `world_stub_renderer_key`), and a stub recorded under
+    another key is rendered again.
     """
+
+    renderer = world_stub_renderer_key() if renderer_key is None else renderer_key
 
     directory = world_stub_cache_directory(instance_id, environ)
     stub_path = directory / f"{WORLD_STUB_MODULE}.pyi"
@@ -166,6 +201,7 @@ def cached_world_stub(
         state is not None
         and state.get("instance") == instance_id
         and state.get("transport") == transport
+        and state.get("renderer") == renderer
         and digest is not None
         and state.get("vocabulary_digest") == digest
     )
@@ -192,6 +228,7 @@ def cached_world_stub(
             {
                 "format": STUB_CACHE_FORMAT,
                 "instance": instance_id,
+                "renderer": renderer,
                 "transport": transport,
                 "git_oid": git_oid,
                 "fingerprint": fingerprint,
@@ -214,4 +251,5 @@ __all__ = [
     "user_cruxible_directory",
     "vocabulary_fingerprint",
     "world_stub_cache_directory",
+    "world_stub_renderer_key",
 ]
