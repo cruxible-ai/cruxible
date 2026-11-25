@@ -1,4 +1,5 @@
-"""A kit add stopped at awaiting_providers proposes its definitions once the installs land."""
+"""A kit add stopped at awaiting_providers (recorded by an earlier version) proposes its
+definitions once the installs land; a fresh add records no wait."""
 
 from __future__ import annotations
 
@@ -56,48 +57,38 @@ def _release(publisher: Any, bundled: Path, **options: Any) -> Any:
     return _build(publisher, bundled, **options)
 
 
-def test_the_activation_that_lands_the_last_install_proposes_the_definitions(
+def test_a_fresh_add_records_no_resume_and_proposes_one_change(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, provider_checkout: ProviderCheckout
 ) -> None:
+    """0.6.0: the install and the definitions are one proposal, so nothing waits.
+
+    The resume reader stays for a wait an earlier version recorded (below).
+    """
+
     opened = _open_worlds(tmp_path, monkeypatch, independent=True)
     publisher, consumer = next(opened)
     try:
         bundled = _package(tmp_path / "kit-source", provider_checkout, name="kit-call")
         release = _release(publisher, bundled)
-        # The install kit add proposes pins local.increment's Contract to the
-        # accepted one, so the consumer accepts it first, as every world that
-        # installs a local-call package does.
         _accept_local_call_contract(consumer)
 
         added = _add(consumer, release, dry_run=False)
 
-        assert added.status == "awaiting_providers", added
+        assert added.status == "proposed", added
+        assert added.proposal_id is not None
         (step,) = added.providers
-        assert step.action == "awaiting_approval" and step.proposal_id is not None
-        assert "proposed automatically" in (added.detail or "")
+        assert step.action == "awaiting_approval" and step.proposal_id == added.proposal_id
+        assert "proposed automatically" not in (added.detail or "")
         # Under independent approval creation's base kit add stopped at its
-        # proposal too: kit status shows it as a proposed row beside acme's.
+        # proposal: kit status shows that row, and none for acme.
         (base,) = _resumes(consumer, kit_id="base")
         assert base.state == "proposed" and base.waiting_on == ()
-        (waiting,) = _resumes(consumer, kit_id="acme")
-        assert (waiting.kit_id, waiting.state, waiting.waiting_on) == (
-            "acme",
-            "waiting",
-            ("kit-call",),
-        )
-        assert waiting.source == "test"
+        assert _resumes(consumer, kit_id="acme") == ()
+        assert kit_resume._any_waiting(get_playbill_manager().get(consumer.instance_id)) is False
 
-        # The reviewer's approval activates the install; that activation
-        # proposes the kit's definitions as the principal who ran kit add.
-        consumer.approve(step.proposal_id)
-
-        (resumed,) = _resumes(consumer, kit_id="acme")
-        assert resumed.state == "proposed" and resumed.waiting_on == ()
-        assert resumed.proposal_id is not None
         assert f"procedures/{PROCEDURE}.json" not in _tree(consumer)
-        consumer.approve(resumed.proposal_id)
+        consumer.approve(added.proposal_id)
         assert f"procedures/{PROCEDURE}.json" in _tree(consumer)
-        # Its proposal landed: kit status no longer says "kit add proposed".
         assert _resumes(consumer, kit_id="acme") == ()
     finally:
         for _ in opened:

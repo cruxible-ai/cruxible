@@ -1,10 +1,13 @@
-"""Typed pin-only automation succession; consumer authority never transfers.
+"""Typed pin-only automation succession; consumer authority transfers only by ruling.
 
 Only the affected reverse-pin closure calls this module. A Line successor pins
 its Procedure's successor (or rebinds a moved build); each Mandate pinning the
 old Line digest takes a propose-only successor pinning the new one, because a
-grant never follows a changed Line (ruling C3). Literal digest-looking
-parameters and conditions are data, never reference replacement targets.
+grant never follows a changed Line (ruling C3) -- except an observation-only
+settle grant across a pure, non-widening provider build move, which keeps its
+terms (compiler revision 74, ``providers.observation_carry``). Literal
+digest-looking parameters and conditions are data, never reference replacement
+targets.
 """
 
 from collections.abc import Callable, Mapping
@@ -35,6 +38,7 @@ from cruxible_client.contracts.provider_installation import (
     AutomationCarryV1,
     CarriedLineV1,
     CarriedMandateV1,
+    SettleDemotion,
 )
 from cruxible_client.contracts.shapes import Contract, ContractRef, EnumResolver
 
@@ -108,21 +112,48 @@ def carry_line(
     )
 
 
-def carry_mandate(
-    path: str, content: bytes, line_replacements: Mapping[str, str], *, planned: bool = False
-) -> tuple[bytes | None, AutomationCarryV1]:
-    """One propose-only Mandate successor pinning its Line's successor."""
-
-    mandate = _MANDATES.parse(
+def parse_carry_mandate(content: bytes, *, path: str) -> ProcedureMandateAny:
+    return _MANDATES.parse(
         content,
         path,
         None,
         lambda: parse_procedure_mandate_any(content, path=path),
     )
+
+
+def carry_mandate(
+    path: str,
+    content: bytes,
+    line_replacements: Mapping[str, str],
+    *,
+    planned: bool = False,
+    demotion: SettleDemotion | None = "line_changed",
+) -> tuple[bytes | None, AutomationCarryV1]:
+    """One Mandate successor pinning its Line's successor.
+
+    Propose-only, settle fields cleared (``demotion`` says why a settle grant
+    lost settle), unless the caller passes ``demotion=None``: it found an
+    observation-only settle grant across a pure, non-widening build move
+    (``providers.observation_carry``), which keeps every term and only re-pins
+    its Line.
+    """
+
+    mandate = parse_carry_mandate(content, path=path)
     old = _mandate_digest(mandate).tagged
     target = line_replacements.get(mandate.line.artifact_digest)
+    grant = mandate_grant(mandate)
+    retained = grant == "settle" and demotion is None
     successor_mandate = (
-        ProcedureMandate(
+        None
+        if planned or target is None
+        else mandate.model_copy(
+            update={
+                "line": mandate.line.model_copy(update={"artifact_digest": target}),
+                "lifecycle": ArtifactLifecycle(predecessor_digest=old),
+            }
+        )
+        if retained
+        else ProcedureMandate(
             identity=mandate.identity,
             line=mandate.line.model_copy(update={"artifact_digest": target}),
             grants="propose",
@@ -132,10 +163,7 @@ def carry_mandate(
             suspended=mandate.suspended,
             lifecycle=ArtifactLifecycle(predecessor_digest=old),
         )
-        if not planned and target is not None
-        else None
     )
-    grant = mandate_grant(mandate)
     return (
         None if successor_mandate is None else render_procedure_mandate(successor_mandate),
         CarriedMandateV1(
@@ -151,14 +179,25 @@ def carry_mandate(
             ),
             phase="planned" if planned else "validated",
             old_grant=grant,
-            loses_settle=grant == "settle",
-            subject_creation_namespace_limitation=bool(mandate.subject_creation),
+            new_grant="settle" if retained else "propose",
+            loses_settle=grant == "settle" and not retained,
+            subject_creation_namespace_limitation=bool(mandate.subject_creation) and not retained,
+            demotion=demotion if grant == "settle" and not retained else None,
+            retained_scope=(
+                tuple(item.claim_type.target.name for item in mandate.scope) if retained else ()
+            ),
+            carries_line_enablement=retained,
         ),
     )
 
 
 def carry_automation(
-    path: str, content: bytes, replacements: Mapping[str, str], *, planned: bool = False
+    path: str,
+    content: bytes,
+    replacements: Mapping[str, str],
+    *,
+    planned: bool = False,
+    demotion: SettleDemotion = "line_changed",
 ) -> tuple[bytes | None, AutomationCarryV1]:
     """One accepted predecessor -> one final successor, or an inventory-only row.
 
@@ -168,4 +207,4 @@ def carry_automation(
 
     if path.startswith("lines/"):
         return carry_line(path, content, replacements, planned=planned)
-    return carry_mandate(path, content, replacements, planned=planned)
+    return carry_mandate(path, content, replacements, planned=planned, demotion=demotion)

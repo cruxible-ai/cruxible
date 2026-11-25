@@ -231,6 +231,7 @@ from cruxible_client.contracts.resolution_contracts import (
 )
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.shapes import (
+    FieldType,
     claim_value_kind,
     subject_value_kinds,
     tree_contract_resolver,
@@ -259,7 +260,7 @@ from cruxible_client.contracts.triggers import (
     schedule_satisfies_input,
     trigger_digest,
 )
-from cruxible_client.contracts.types import PrincipalRecord
+from cruxible_client.contracts.types import CompilerCoordinate, PrincipalRecord
 from cruxible_client.contracts.workspace_advertisement import (
     NOT_ATTACHED_ADVERTISEMENT,
     WorkspaceAdvertisement,
@@ -2105,6 +2106,20 @@ def _procedure_member(context: _MemberContext) -> _MemberVerdict:
         return _MemberVerdict(diagnostics=tuple(law.diagnostics))
     if law.artifact_digest is None or law.required_tier is None:
         raise ProposalIntegrityError("accepted Procedure law result is incomplete")
+    if procedure.lifecycle.state == "retired":
+        stranded_runbooks = _procedure_runbook_dependents(context, procedure)
+        if stranded_runbooks:
+            return _MemberVerdict(
+                diagnostics=(
+                    _diagnostic(
+                        "cruxible.procedure.runbooks_not_settled",
+                        "Retiring this Procedure would strand live Runbooks that fan out over it; "
+                        "retire or update them in the same ChangeSet: "
+                        + ", ".join(stranded_runbooks),
+                        context.path,
+                    ),
+                )
+            )
     return _accepted(
         context,
         installed,
@@ -2381,16 +2396,79 @@ def _trigger_member(context: _MemberContext) -> _MemberVerdict:
     )
 
 
-def _runbook_member(context: _MemberContext) -> _MemberVerdict:
-    """Judge one Runbook: its succession, and the Lines and actions it names (O(steps))."""
+def _procedure_runbook_dependents(context: _MemberContext, procedure: Any) -> tuple[str, ...]:
+    """Live Runbooks in the candidate that fan out over ``procedure``, sorted.
 
+    On the Procedure-retirement path only. With an indexed candidate it is one
+    ``runbook_lines_by_line`` seek of the accepted rows (minus the sources this
+    change touches) and one of the change's own: the work is that Procedure's
+    Runbook memberships, never the Runbooks. An unindexed candidate (an
+    in-memory tree) walks its Runbook paths.
+    """
+
+    from cruxible_client.contracts.runbooks import RUNBOOK_PATH_RE, parse_runbook
+    from cruxible_core.indexes.evaluated_state import EvaluationRows, SelectedRows
+
+    identity = procedure.identity
+    states = context.candidate_states
+    if isinstance(states, SelectedRows) and states.owner is not None:
+        owner = states.owner
+
+        def _members(rows: EvaluationRows) -> tuple[str, ...]:
+            if rows.prefix == "selected_":
+                sql = (
+                    "SELECT source_identity FROM main.runbook_lines INDEXED BY "
+                    "runbook_lines_by_line WHERE line=? AND source_identity NOT IN "
+                    "(SELECT identity FROM changed_sources) "
+                    "UNION SELECT source_identity FROM temp.runbook_lines WHERE line=?"
+                )
+                parameters: tuple[str, ...] = (identity.qualified, identity.qualified)
+            else:
+                sql = f"SELECT source_identity FROM {rows.table('runbook_lines')} WHERE line=?"
+                parameters = (identity.qualified,)
+            return tuple(str(row[0]) for row in rows.connection.execute(sql, parameters))
+
+        found = _members(owner) if isinstance(owner, EvaluationRows) else owner.call(_members)
+        return tuple(sorted(set(found), key=lambda item: item.encode("utf-8")))
+    stranded: set[str] = set()
+    for path, content in context.candidate_tree.items():
+        if not (path.startswith("runbooks/") and RUNBOOK_PATH_RE.fullmatch(path)):
+            continue
+        runbook = parse_runbook(content, path=path)
+        if runbook.lifecycle.state == "live" and identity in runbook.procedures:
+            stranded.add(runbook.identity.qualified)
+    return tuple(sorted(stranded, key=lambda item: item.encode("utf-8")))
+
+
+def _runbook_member(context: _MemberContext) -> _MemberVerdict:
+    """Judge one Runbook: its succession, and the Lines, Procedures and actions it names."""
+
+    from cruxible_client.contracts.runbooks import parse_runbook
+    from cruxible_core.compiler.compiler import admits_revision_74
     from cruxible_core.runbooks.law import judge_runbook_member
 
+    parsed = parse_runbook(context.content, path=context.path)
+    if (
+        parsed.lifecycle.state == "live"
+        and parsed.procedures
+        and not admits_revision_74(context.current.compiler)
+    ):
+        return _MemberVerdict(
+            diagnostics=(
+                _diagnostic(
+                    "cruxible.runbook.procedure_target_requires_compiler_upgrade",
+                    "A Procedure fan-out Runbook step needs compiler revision 74; "
+                    "run `cruxible compiler upgrade` first.",
+                    context.path,
+                ),
+            )
+        )
     verdict = judge_runbook_member(
         context.content,
         path=context.path,
         parent_content=context.parent_content,
         lines=context.resolved.lines,
+        procedures=context.resolved.procedures,
     )
     if verdict.verdict == "refused":
         return _MemberVerdict(diagnostics=tuple(verdict.diagnostics))
@@ -2544,6 +2622,25 @@ def _subject_kind_member(context: _MemberContext) -> _MemberVerdict:
     )
 
 
+def _ordered_enum_diagnostic(
+    context: _MemberContext, field_types: tuple[FieldType, ...], *, family: str
+) -> CompilerDiagnostic | None:
+    """An ordered enum is new in compiler revision 74: an earlier head refuses it."""
+
+    from cruxible_client.contracts.shapes import declares_ordered_enum
+    from cruxible_core.compiler.compiler import admits_revision_74
+
+    if admits_revision_74(context.current.compiler):
+        return None
+    if not any(declares_ordered_enum(item) for item in field_types):
+        return None
+    return _diagnostic(
+        f"cruxible.{family}.ordered_enum_requires_compiler_upgrade",
+        "An ordered enum needs compiler revision 74; run `cruxible compiler upgrade` first.",
+        context.path,
+    )
+
+
 def _contract_member(context: _MemberContext) -> _MemberVerdict:
     """Judge one Contract version: immutable, succeeding exactly, every pin exact.
 
@@ -2578,6 +2675,11 @@ def _contract_member(context: _MemberContext) -> _MemberVerdict:
                 _diagnostic(problem.code, problem.message, context.path) for problem in problems
             )
         )
+    ordered = _ordered_enum_diagnostic(
+        context, tuple(field.type for field in contract.fields.values()), family="contract"
+    )
+    if ordered is not None:
+        return _MemberVerdict(diagnostics=(ordered,))
     digest = contract_digest(contract).tagged
     return _accepted(
         context,
@@ -3550,6 +3652,61 @@ def historical_capture_contract_resolver(
     return CaptureContractVersions(resolve=resolve, authoritative=provider is not None and indexed)
 
 
+def _based_on_refusal(
+    context: _MemberContext, claim: ClaimArtifact, predecessor: AcceptedClaim | None
+) -> CompilerDiagnostic | None:
+    """Judge a Claim's ``based-on`` pins (compiler revision 74).
+
+    A based-on pin records the exact version of another Claim this one rests
+    on. It is provenance (``PROVENANCE_PIN_ROLES``): closure never carries or
+    retires the Claim when its target moves. So the pin is proved here, once,
+    when it is written: a pin new in this version (or re-pinned) names a live
+    Claim other than this one at exactly its version in the candidate tree. A
+    pin carried byte-identical from the predecessor stays as written, stale or
+    not; ``next`` surfaces it. Under revision 73 the role is not admitted.
+    """
+
+    from cruxible_client.contracts.claims import BASED_ON_CLAIM_PIN_ROLE, claim_path
+    from cruxible_core.compiler.compiler import admits_revision_74
+    from cruxible_core.compiler.sealed_members import sealed_claim_member
+
+    pins = tuple(pin for pin in claim.pins if pin.role == BASED_ON_CLAIM_PIN_ROLE)
+    if not pins:
+        return None
+    if not admits_revision_74(context.current.compiler):
+        return _diagnostic(
+            "cruxible.claim.based_on_requires_compiler_upgrade",
+            "A based-on Claim pin needs compiler revision 74; run `cruxible compiler upgrade` "
+            "first.",
+            context.path,
+        )
+    carried = frozenset(() if predecessor is None else predecessor.claim.pins)
+    for pin in pins:
+        if pin.target.kind != "Claim" or pin.target == claim.identity:
+            return _diagnostic(
+                "cruxible.claim.based_on_invalid",
+                f"A based-on pin names another Claim; {pin.target.qualified} is not one.",
+                context.path,
+            )
+        if pin in carried:
+            continue
+        target_path = claim_path(pin.target.name)
+        content = context.candidate_tree.get(target_path)
+        target = None if content is None else sealed_claim_member(content, path=target_path).claim
+        if (
+            target is None
+            or target.lifecycle.state != "live"
+            or claim_artifact_digest(target).tagged != pin.artifact_digest
+        ):
+            return _diagnostic(
+                "cruxible.claim.based_on_unresolved",
+                f"The based-on pin to {pin.target.qualified} names no live version at "
+                f"{pin.artifact_digest}; pin the Claim's current version.",
+                context.path,
+            )
+    return None
+
+
 def _claim_member(context: _MemberContext) -> _MemberVerdict:
     from cruxible_core.compiler.sealed_members import sealed_claim_member
     from cruxible_core.indexes.evaluated_state import mapped_values
@@ -3575,6 +3732,9 @@ def _claim_member(context: _MemberContext) -> _MemberVerdict:
             statement_digest=claim_statement_digest(previous.statement).tagged,
             artifact_digest=claim_artifact_digest(previous).tagged,
         )
+    based_on = _based_on_refusal(context, claim, predecessor)
+    if based_on is not None:
+        return _MemberVerdict(diagnostics=(based_on,))
     installed = _installed(context, claim.artifact_format)
     if not isinstance(context.bodies, CaptureObjectStoreProtocol):
         return _MemberVerdict(
@@ -3850,6 +4010,9 @@ def _claim_type_member(context: _MemberContext) -> _MemberVerdict:
         return _MemberVerdict(diagnostics=tuple(law.diagnostics))
     if law.artifact_digest is None or law.required_tier is None:
         raise ProposalIntegrityError("accepted ClaimType law result is incomplete")
+    ordered = _ordered_enum_diagnostic(context, (claim_type.value,), family="claim_type")
+    if ordered is not None:
+        return _MemberVerdict(diagnostics=(ordered,))
     if claim_type.lifecycle.state == "live":
         from cruxible_client.contracts.shapes import Contract, ContractField, evaluate_contract_law
 
@@ -4610,12 +4773,56 @@ def _line_pin(state: ArtifactDependencyStateV1) -> ArtifactPin | None:
     )
 
 
+def _observation_carry_demotion(
+    mandate: ProcedureMandate,
+    *,
+    path: str,
+    before: ArtifactDependencyStateV1,
+    old_line_path: str | None,
+    new_line_path: str | None,
+    parent: DependencyIndexV1,
+    current_tree: Mapping[str, bytes],
+    candidate_tree: Mapping[str, bytes],
+    compiler: CompilerCoordinate,
+) -> str | None:
+    """Why this carried settle grant must demote, or None when it may keep settle."""
+
+    from cruxible_client.contracts.procedure_mandates import parse_procedure_mandate_any
+    from cruxible_core.compiler.compiler import admits_revision_74
+    from cruxible_core.providers.observation_carry import (
+        carried_terms_refusal,
+        index_neighbors,
+        observation_carry_refusal,
+    )
+
+    if not admits_revision_74(compiler):
+        return "compiler_revision"
+    previous = current_tree.get(path)
+    old_line = None if old_line_path is None else current_tree.get(old_line_path)
+    new_line = None if new_line_path is None else candidate_tree.get(new_line_path)
+    if previous is None or old_line is None or new_line is None:
+        return "line_changed"
+    old_mandate = parse_procedure_mandate_any(previous, path=path)
+    return carried_terms_refusal(
+        old_mandate, mandate, old_digest=before.artifact_digest
+    ) or observation_carry_refusal(
+        old_mandate=old_mandate,
+        old_line=parse_line_spec(old_line, path=old_line_path or ""),
+        new_line=parse_line_spec(new_line, path=new_line_path or ""),
+        before=current_tree,
+        after=candidate_tree,
+        neighbors=index_neighbors(parent),
+    )
+
+
 def _line_mandate_pair_diagnostics(
     *,
     parent: DependencyIndexV1,
     candidate: DependencyIndexV1,
     scope: tuple[str, ...],
+    current_tree: Mapping[str, bytes],
     candidate_tree: Mapping[str, bytes],
+    compiler: CompilerCoordinate,
 ) -> tuple[CompilerDiagnostic, ...]:
     """Enforce exact Line/Mandate succession in both directions (ruling C3).
 
@@ -4624,6 +4831,11 @@ def _line_mandate_pair_diagnostics(
     the same ChangeSet, that a changed Line carries every live Mandate granting
     it, and that a carried Mandate is propose-only: a grant never follows a
     changed Line, so settle is renewed by a later governed Mandate change.
+
+    Compiler revision 74 admits one exception (maintainer ruling 3): an
+    observation-only settle grant carried, terms unchanged, across a pure and
+    non-widening provider build move keeps ``settle``
+    (``providers.observation_carry``).
     """
 
     scoped = frozenset(scope)
@@ -4660,12 +4872,26 @@ def _line_mandate_pair_diagnostics(
         if content is not None and after.lifecycle.state == "live":
             mandate = parse_procedure_mandate_any(content, path=path)
             if mandate.grants != "propose":
-                refuse(
-                    "cruxible.procedure_mandate.carried_grant_must_propose",
-                    "A Mandate carried to a Line successor is propose-only; renew settle in a "
-                    "separate governed Mandate change.",
-                    path,
+                demotion = _observation_carry_demotion(
+                    mandate,
+                    path=path,
+                    before=before,
+                    old_line_path=before_target_path,
+                    new_line_path=after_target_path,
+                    parent=parent,
+                    current_tree=current_tree,
+                    candidate_tree=candidate_tree,
+                    compiler=compiler,
                 )
+                if demotion is not None:
+                    refuse(
+                        "cruxible.procedure_mandate.carried_grant_must_propose",
+                        "A Mandate carried to a Line successor is propose-only "
+                        f"({demotion.replace('_', ' ')}); settle is kept only for "
+                        "observation-only ClaimTypes across a pure, non-widening provider "
+                        "build move. Renew settle in a separate governed Mandate change.",
+                        path,
+                    )
 
     for path in scope:
         before = parent.states.get(path)
@@ -4859,7 +5085,9 @@ def _evaluate_scoped_members(
         parent=parent.dependencies,
         candidate=candidate_dependencies,
         scope=scope,
+        current_tree=current_tree,
         candidate_tree=candidate_tree,
+        compiler=current.compiler,
     )
     if pair_diagnostics:
         return CandidateEvaluation(

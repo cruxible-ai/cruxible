@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 from cruxible_client._error_base import printable
 from cruxible_client.contracts.claim_type_inputs import CLAIM_TYPE_LINT_TEXT
 from cruxible_client.contracts.get_display import get_value_display
-from cruxible_client.contracts.get_text import file_shown
+from cruxible_client.contracts.get_text import based_on_text, file_shown
 from cruxible_client.contracts.public_names import public_name as _public_name
 
 if TYPE_CHECKING:
@@ -82,7 +82,8 @@ def short_provider_build(name: str) -> str:
 def _orient_predicate_line(item: Mapping[str, Any]) -> str:
     kind = item["type"]
     if item.get("members"):
-        kind = "enum[" + "|".join(str(member) for member in item["members"]) + "]"
+        prefix = "ordered_enum[" if str(kind).startswith("ordered_enum") else "enum["
+        kind = prefix + "|".join(str(member) for member in item["members"]) + "]"
     parts = [str(item["name"]), str(item["cardinality"]), kind]
     if item.get("live_claims") is not None:
         parts.append(f"claims={item['live_claims']}")
@@ -158,6 +159,15 @@ def render_orient(result: Mapping[str, Any]) -> str:
                 else f"{behind} generation(s) behind"
             )
             + ("" if behind == 0 else "; refresh: cruxible floor export --force")
+        )
+    files = result.get("workspace_files")
+    if files is not None:
+        more = files["total"] - len(files["paths"])
+        lines.append(
+            f"Files ({files['total']}): "
+            + ", ".join(files["paths"])
+            + (f", +{more} more" if more > 0 else "")
+            + "; read one: cruxible section FILE#Heading"
         )
     vocabulary = result.get("vocabulary_file")
     if vocabulary is not None:
@@ -495,6 +505,10 @@ def change_outcome_line(
         details.append(f"also retires {', '.join(change.retired)}")
     if change.contenders_created:
         details.append(f"contends with {', '.join(change.contenders_created)}")
+    if change.role is not None:
+        details.append(f"role {change.role}")
+    if change.based_on:
+        details.append(f"based on {', '.join(change.based_on)}")
     details.extend(extra)
     return line + (f"  [{'; '.join(details)}]" if details else "")
 
@@ -611,8 +625,12 @@ def review_change_lines(
     when ``file_paths`` maps its catalog name (``file_shown``).
     """
 
-    extra = [] if item.role in (None, "normative") else [f"role {item.role}"]
-    lines = [f"  {change_outcome_line(item.change, extra=extra, file_paths=file_paths)}"]
+    # The role a value is stated in is part of what a reviewer approves, the
+    # common normative role included; the outcome's own role is not repeated.
+    shown_role = item.role is not None and item.change.op not in ("create", "retire")
+    extra = [f"role {item.role}"] if shown_role and item.change.role is None else []
+    change = item.change.model_copy(update={"based_on": ()}) if item.based_on else item.change
+    lines = [f"  {change_outcome_line(change, extra=extra, file_paths=file_paths)}"]
     for citation in item.citations:
         where = file_shown(citation.source, file_paths, public=True) if citation.source else "-"
         if citation.section:
@@ -640,6 +658,8 @@ def review_change_lines(
             lines.extend(f"      | {printable(line)}" for line in text_lines)
     if item.citations_more:
         lines.append(f"    cites {item.citations_more} more")
+    for pin in item.based_on:
+        lines.append(f"    based on {based_on_text(pin.claim, pin.subject, pin.field)}")
     if item.rationale:
         lines.append(f"    because: {printable(item.rationale)}")
     return lines
@@ -672,12 +692,15 @@ def review_definition_lines(
         ReviewLineDefinition,
         ReviewMandateDefinition,
         ReviewNoteDefinition,
+        ReviewProviderDefinition,
         ReviewRunbookDefinition,
         ReviewTriggerDefinition,
     )
 
     # Names read in their public spelling (`playbill.` -> `cruxible.`); JSON keeps them.
-    lines = [f"  {item.kind} {_public_name(item.name)}: {item.action}"]
+    # A provider build reads as ``NAME/<12 hex>``; its ``build`` row has the whole key.
+    name = short_provider_build(item.name) if item.kind == "Provider" else item.name
+    lines = [f"  {item.kind} {_public_name(name)}: {item.action}"]
     rows: list[tuple[str, str]] = []
     detail = item.detail
     if isinstance(detail, ReviewLineDefinition):
@@ -717,6 +740,8 @@ def review_definition_lines(
             rows.append(("may create", ", ".join(detail.subject_creation)))
         if detail.suspended:
             rows.append(("suspended", "yes"))
+        if detail.carry:
+            rows.append(("carry", detail.carry))
     elif isinstance(detail, ReviewRunbookDefinition):
         if detail.description:
             lines.append(f"    {printable(detail.description)}")
@@ -745,8 +770,34 @@ def review_definition_lines(
         section = "/".join(detail.section)
         rows.append(("section", f"{file_shown(detail.file, file_paths)}#{section}"))
         rows.extend(("about", subject) for subject in detail.about)
+    elif isinstance(detail, ReviewProviderDefinition):
+        if detail.package is not None:
+            source = "" if detail.materialization is None else f" ({detail.materialization})"
+            rows.append(("package", f"{detail.package} {detail.version}{source}"))
+        if detail.build is not None:
+            rows.append(("build", detail.build))
+        rows.append(("control", detail.control_domain))
+        if detail.capture_contracts:
+            rows.append(("captures", ", ".join(detail.capture_contracts)))
+        if not detail.operations:
+            rows.append(("operations", "none"))
     if rows:
         lines.extend(_table([(label, printable(value)) for label, value in rows], "    "))
+    if isinstance(detail, ReviewProviderDefinition):
+        for operation in detail.operations:
+            truncates = "  may truncate" if operation.may_truncate else ""
+            lines.append(
+                printable(
+                    f"    op {operation.name}: {operation.effect}  "
+                    f"{operation.in_} -> {operation.out}{truncates}"
+                )
+            )
+            facts = [("serves", ", ".join(operation.serves)), ("entry", operation.entrypoint)]
+            if operation.declared_endpoints:
+                facts.append(("endpoints", ", ".join(operation.declared_endpoints)))
+            if operation.requires_extras:
+                facts.append(("extras", ", ".join(operation.requires_extras)))
+            lines.extend(_table([(label, printable(value)) for label, value in facts], "      "))
     if isinstance(detail, ReviewMandateDefinition) and detail.scope:
         moves = any(scope.value is not None for scope in detail.scope)
         binds = any(scope.binds != "subject" for scope in detail.scope)
@@ -1611,9 +1662,13 @@ def inbox_item_lines(result: Any) -> list[str]:
 
 
 def runbook_target_text(target: Any) -> str:
-    """A Runbook step's target: ``Line:NAME`` or ``action:NAME``."""
+    """A Runbook step's target: ``Line:NAME``, ``Procedure:NAME`` or ``action:NAME``."""
 
-    return f"Line:{target.line.target.name}" if target.kind == "line" else f"action:{target.action}"
+    if target.kind == "line":
+        return f"Line:{target.line.target.name}"
+    if target.kind == "procedure":
+        return f"Procedure:{target.procedure.target.name}"
+    return f"action:{target.action}"
 
 
 def inbox_counts_text(counts: Any) -> str:
@@ -1664,7 +1719,9 @@ def runbook_run_lines(result: Any) -> list[str]:
         )
     lines = [f"Runbook {result.runbook}: {stopped}  [{result.run_id}]"]
     for step in result.steps:
+        from_proc = getattr(step, "from_procedure", None)
         extra = [
+            *([f"via Procedure:{from_proc}"] if from_proc else []),
             *([step.run_id] if step.run_id else []),
             *(f"proposal {item}" for item in step.proposal_ids),
             *([f"event {step.event_id}"] if step.event_id is not None else []),
@@ -1674,6 +1731,8 @@ def runbook_run_lines(result: Any) -> list[str]:
             f"  {step.step:>2}  {step.status:<11} {runbook_target_text(step.target)}"
             + (f"  ({', '.join(extra)})" if extra else "")
         )
+        if step.status == "skipped" and step.message:
+            lines.append(f"      {step.message}")
         if step.counts is not None:
             mark = "!" if step.counts.needs_attention else " "
             lines.append(f"    {mark} {run_counts_text(step.counts)}")
@@ -1743,10 +1802,26 @@ def runbook_preview_lines(preview: Any) -> list[str]:
         if step.unavailable:
             lines.append(head + "  unavailable: the run would stop here")
             continue
+        excluded = getattr(step, "excluded", None)
+        if excluded is not None:
+            from_proc = getattr(step, "from_procedure", None)
+            lines.append(head + f"  (from Procedure:{from_proc})  left out: takes an event")
+            continue
         if step.action_effect is not None:
             lines.append(head + f"  effect {step.action_effect}")
             continue
-        lines.append(head + (f"  {step.procedure}" if step.procedure else ""))
+        if step.target.kind == "procedure":
+            lines.append(head + "  (0 lines configured)")
+            for write in step.writes:
+                lines.append(
+                    f"      would write {write.subject_kind}: {', '.join(write.claim_types)}"
+                )
+            continue
+        from_proc = getattr(step, "from_procedure", None)
+        proc_note = f"  {step.procedure}" if step.procedure else ""
+        if from_proc:
+            proc_note += f"  (from Procedure:{from_proc})"
+        lines.append(head + proc_note)
         for read in step.reads:
             source = f"query {read.query}" if read.query else "claims"
             late = " (late)" if read.late else ""
@@ -1777,9 +1852,12 @@ def runbook_preview_lines(preview: Any) -> list[str]:
                 f"      fires  {cascade.trigger} ({cascade.schedule}) -> {cascade.target} [{where}]"
             )
     for problem in preview.order_problems:
+        steps_text = ", ".join(map(str, problem.written_by_steps))
         detail = (
-            f"written only by later step(s) {', '.join(map(str, problem.written_by_steps))}"
+            f"written only by later step(s) {steps_text}"
             if problem.kind == "reads_later_write"
+            else f"written only by step(s) {steps_text}, which run no Line"
+            if problem.kind == "reads_unbound_write"
             else "written by no Line (direct entry only)"
         )
         lines.append(f"  order: step {problem.step} reads {problem.claim_type}: {detail}")

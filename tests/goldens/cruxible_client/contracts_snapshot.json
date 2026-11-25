@@ -8349,6 +8349,7 @@
           },
           "EnumType": {
             "additionalProperties": false,
+            "description": "A closed set of string members.\n\n``ordered`` (compiler revision 74) declares the members in ascending rank:\nthe first is lowest, the last highest. Queries then compare and order the\nstored member strings by that rank; values are never remapped. Unordered,\nthe field is omitted from the canonical bytes, so existing digests hold.",
             "properties": {
               "kind": {
                 "const": "enum",
@@ -8364,6 +8365,11 @@
                 "minItems": 1,
                 "title": "Members",
                 "type": "array"
+              },
+              "ordered": {
+                "default": false,
+                "title": "Ordered",
+                "type": "boolean"
               }
             },
             "required": [
@@ -10367,7 +10373,7 @@
           },
           "ProcedureMandateInput": {
             "additionalProperties": false,
-            "description": "A propose grant, or a settle grant with its Claim scope and condition query.\n\n``line_name`` names the Line the grant authorizes (accepted, or defined in\nthe same set); lowering pins its exact digest, so changing the Line's\nProcedure version, parameters or bindings renews the grant. ``grants`` is\nthe verb the mandate delegates. A settle grant names the ClaimTypes (by\npredicate), per change kind the evidence bases that settle, an optional\n``value: {from, to}`` for enum and bool ClaimTypes, and an optional accepted\ncondition query (which may bind ``$target.value`` and ``$target.before``);\nlowering pins every exact digest. ``subjects: expected`` limits the grant\nto Subjects the Line's claims templates fence with ``within``.",
+            "description": "A propose grant, or a settle grant with its Claim scope and condition query.\n\n``line_name`` names the Line the grant authorizes (accepted, or defined in\nthe same set); lowering pins its exact digest, so changing the Line's\nProcedure version, parameters or bindings renews the grant. ``grants`` is\nthe verb the mandate delegates. A settle grant names the ClaimTypes (by\npredicate), per change kind the evidence bases that settle, an optional\n``value: {from, to}`` for enum and bool ClaimTypes, and an optional accepted\ncondition query (which may bind ``$target.value`` and ``$target.before``);\nlowering pins every exact digest. ``subjects: expected`` limits the grant\nto Subjects the Line's claims templates fence with ``within``.\n\n``scope: observations`` is one settle grant over the observations the Line\nwrites: lowering pins every ClaimType of the Procedure's claims templates\n(each must permit only the observation role), with creates and revises on\n``extracted`` and ``measured`` (plus ``derived`` with ``include_derived``)\nand the absence changes its ``when_absent`` templates make; the namespace\ndefaults to ``claims``.",
             "properties": {
               "condition": {
                 "anyOf": [
@@ -10380,10 +10386,30 @@
                 ],
                 "default": null
               },
+              "expires": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Expires"
+              },
               "expires_at": {
-                "format": "date-time",
-                "title": "Expires At",
-                "type": "string"
+                "anyOf": [
+                  {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Expires At"
               },
               "grants": {
                 "enum": [
@@ -10392,6 +10418,12 @@
                 ],
                 "title": "Grants",
                 "type": "string"
+              },
+              "include_derived": {
+                "default": false,
+                "description": "scope: observations only: also settle values on basis derived.",
+                "title": "Include Derived",
+                "type": "boolean"
               },
               "kind": {
                 "const": "procedure_mandate",
@@ -10407,6 +10439,7 @@
                 "type": "string"
               },
               "namespace": {
+                "default": [],
                 "items": {
                   "type": "string"
                 },
@@ -10419,12 +10452,20 @@
                 "type": "boolean"
               },
               "scope": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "$ref": "#/$defs/MandateScopeAuthoring"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "const": "observations",
+                    "type": "string"
+                  }
+                ],
                 "default": [],
-                "items": {
-                  "$ref": "#/$defs/MandateScopeAuthoring"
-                },
-                "title": "Scope",
-                "type": "array"
+                "title": "Scope"
               },
               "subject_creation": {
                 "default": [],
@@ -10475,19 +10516,25 @@
                 "type": "string"
               },
               "valid_from": {
-                "format": "date-time",
-                "title": "Valid From",
-                "type": "string"
+                "anyOf": [
+                  {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Give exactly one of expires_at (an instant) or expires (a span: 36h, 90d, 12w, 1y, P90D). valid_from defaults to the intent's time; expires counts from valid_from.",
+                "title": "Valid From"
               }
             },
             "required": [
               "kind",
               "name",
               "line_name",
-              "grants",
-              "namespace",
-              "valid_from",
-              "expires_at"
+              "grants"
             ],
             "title": "ProcedureMandateInput",
             "type": "object"
@@ -13739,7 +13786,7 @@
               },
               "steps": {
                 "default": [],
-                "description": "In run order: {line: <Line name>} or {action: <internal action>}.",
+                "description": "In run order: {line: <Line name>}, {procedure: <Procedure name>} or {action: <internal action>}.",
                 "items": {
                   "$ref": "#/$defs/RunbookStepAuthoring"
                 },
@@ -13756,7 +13803,7 @@
           },
           "RunbookStepAuthoring": {
             "additionalProperties": false,
-            "description": "One Runbook step: exactly one of an accepted Line (by name) or a registered action.",
+            "description": "One Runbook step: exactly one of an accepted Line, a registered action, or a Procedure.",
             "properties": {
               "action": {
                 "anyOf": [
@@ -13789,6 +13836,18 @@
                 ],
                 "default": null,
                 "title": "Line"
+              },
+              "procedure": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Procedure"
               }
             },
             "title": "RunbookStepAuthoring",
@@ -25773,6 +25832,23 @@
             "default": null
           }
         },
+        "incomplete_reasons": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "incomplete_reasons",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/CompletenessReason"
+            },
+            "maxItems": 20,
+            "title": "Incomplete Reasons",
+            "type": "array"
+          }
+        },
         "input": {
           "default": null,
           "default_json_serializable": true,
@@ -26028,6 +26104,47 @@
       },
       "json_schema": {
         "$defs": {
+          "CompletenessReason": {
+            "additionalProperties": false,
+            "properties": {
+              "inputs": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 20,
+                "title": "Inputs",
+                "type": "array"
+              },
+              "kind": {
+                "enum": [
+                  "incomplete_input",
+                  "count_mismatch",
+                  "invalid_record",
+                  "duplicate_key",
+                  "invalid_field",
+                  "unknown_predicate",
+                  "may_truncate",
+                  "control_incomplete",
+                  "upstream_incomplete",
+                  "glob_enumeration",
+                  "expect_unknown"
+                ],
+                "title": "Kind",
+                "type": "string"
+              },
+              "node": {
+                "title": "Node",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node",
+              "kind"
+            ],
+            "title": "CompletenessReason",
+            "type": "object"
+          },
           "JsonValue": {}
         },
         "additionalProperties": false,
@@ -26099,6 +26216,15 @@
           "incoming_value": {
             "$ref": "#/$defs/JsonValue",
             "default": null
+          },
+          "incomplete_reasons": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/CompletenessReason"
+            },
+            "maxItems": 20,
+            "title": "Incomplete Reasons",
+            "type": "array"
           },
           "input": {
             "anyOf": [
@@ -45321,6 +45447,25 @@
             "default": null
           }
         },
+        "workspace_files": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "workspace_files",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/OrientWorkspaceFiles"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
         "you": {
           "default": null,
           "default_json_serializable": true,
@@ -45514,7 +45659,9 @@
                   "unknown_predicate",
                   "may_truncate",
                   "control_incomplete",
-                  "upstream_incomplete"
+                  "upstream_incomplete",
+                  "glob_enumeration",
+                  "expect_unknown"
                 ],
                 "title": "Kind",
                 "type": "string"
@@ -48445,6 +48592,30 @@
             "title": "OrientVocabularyFile",
             "type": "object"
           },
+          "OrientWorkspaceFiles": {
+            "additionalProperties": false,
+            "description": "The workspace's catalogued files (files.yaml), by path: what notes and\nsection citations point into, and what ``cruxible section FILE#Heading`` reads.\n\nOnly a client that sees the workspace (CLI, MCP, SDK) fills this in, on the\ndefault map; a daemon answer never carries it. ``paths`` are the first\n``ORIENT_WORKSPACE_FILES`` in byte order; ``total`` counts them all.",
+            "properties": {
+              "paths": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Paths",
+                "type": "array"
+              },
+              "total": {
+                "minimum": 0,
+                "title": "Total",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "total",
+              "paths"
+            ],
+            "title": "OrientWorkspaceFiles",
+            "type": "object"
+          },
           "OrientYou": {
             "additionalProperties": false,
             "description": "The caller as the daemon resolved it, and whether it can author.",
@@ -49347,6 +49518,17 @@
             ],
             "default": null
           },
+          "workspace_files": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/OrientWorkspaceFiles"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
           "you": {
             "anyOf": [
               {
@@ -49467,6 +49649,62 @@
       "required_fields": [
         "at",
         "state"
+      ]
+    },
+    "OrientWorkspaceFiles": {
+      "fields": {
+        "paths": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "paths",
+          "required": true,
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Paths",
+            "type": "array"
+          }
+        },
+        "total": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "total",
+          "required": true,
+          "schema": {
+            "minimum": 0,
+            "title": "Total",
+            "type": "integer"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "The workspace's catalogued files (files.yaml), by path: what notes and\nsection citations point into, and what ``cruxible section FILE#Heading`` reads.\n\nOnly a client that sees the workspace (CLI, MCP, SDK) fills this in, on the\ndefault map; a daemon answer never carries it. ``paths`` are the first\n``ORIENT_WORKSPACE_FILES`` in byte order; ``total`` counts them all.",
+        "properties": {
+          "paths": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Paths",
+            "type": "array"
+          },
+          "total": {
+            "minimum": 0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "paths"
+        ],
+        "title": "OrientWorkspaceFiles",
+        "type": "object"
+      },
+      "required_fields": [
+        "paths",
+        "total"
       ]
     },
     "OriginatingLine": {
@@ -57064,6 +57302,7 @@
           },
           "EnumType": {
             "additionalProperties": false,
+            "description": "A closed set of string members.\n\n``ordered`` (compiler revision 74) declares the members in ascending rank:\nthe first is lowest, the last highest. Queries then compare and order the\nstored member strings by that rank; values are never remapped. Unordered,\nthe field is omitted from the canonical bytes, so existing digests hold.",
             "properties": {
               "kind": {
                 "const": "enum",
@@ -57079,6 +57318,11 @@
                 "minItems": 1,
                 "title": "Members",
                 "type": "array"
+              },
+              "ordered": {
+                "default": false,
+                "title": "Ordered",
+                "type": "boolean"
               }
             },
             "required": [
@@ -66313,6 +66557,15 @@
                 "$ref": "#/$defs/JsonValue",
                 "default": null
               },
+              "incomplete_reasons": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/CompletenessReason"
+                },
+                "maxItems": 20,
+                "title": "Incomplete Reasons",
+                "type": "array"
+              },
               "input": {
                 "anyOf": [
                   {
@@ -66620,7 +66873,9 @@
                   "unknown_predicate",
                   "may_truncate",
                   "control_incomplete",
-                  "upstream_incomplete"
+                  "upstream_incomplete",
+                  "glob_enumeration",
+                  "expect_unknown"
                 ],
                 "title": "Kind",
                 "type": "string"
@@ -71887,6 +72142,15 @@
                 "$ref": "#/$defs/JsonValue",
                 "default": null
               },
+              "incomplete_reasons": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/CompletenessReason"
+                },
+                "maxItems": 20,
+                "title": "Incomplete Reasons",
+                "type": "array"
+              },
               "input": {
                 "anyOf": [
                   {
@@ -72037,6 +72301,47 @@
               "target"
             ],
             "title": "ClaimsDiagnostic",
+            "type": "object"
+          },
+          "CompletenessReason": {
+            "additionalProperties": false,
+            "properties": {
+              "inputs": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 20,
+                "title": "Inputs",
+                "type": "array"
+              },
+              "kind": {
+                "enum": [
+                  "incomplete_input",
+                  "count_mismatch",
+                  "invalid_record",
+                  "duplicate_key",
+                  "invalid_field",
+                  "unknown_predicate",
+                  "may_truncate",
+                  "control_incomplete",
+                  "upstream_incomplete",
+                  "glob_enumeration",
+                  "expect_unknown"
+                ],
+                "title": "Kind",
+                "type": "string"
+              },
+              "node": {
+                "title": "Node",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node",
+              "kind"
+            ],
+            "title": "CompletenessReason",
             "type": "object"
           },
           "InboxPostTruncation": {
@@ -79218,6 +79523,15 @@
                 "title": "Already Live",
                 "type": "boolean"
               },
+              "based_on": {
+                "default": [],
+                "description": "Claims the value rests on, by ID.",
+                "items": {
+                  "type": "string"
+                },
+                "title": "Based On",
+                "type": "array"
+              },
               "before": {
                 "$ref": "#/$defs/ShownValue",
                 "default": null
@@ -79354,6 +79668,24 @@
                 ],
                 "default": null,
                 "title": "Revises"
+              },
+              "role": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "normative",
+                      "observation",
+                      "environment_binding"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "The role the write named.",
+                "title": "Role"
               },
               "section": {
                 "anyOf": [
@@ -79632,10 +79964,58 @@
             "title": "PriorRefusalCoverage",
             "type": "object"
           },
+          "ReviewBasedOn": {
+            "additionalProperties": false,
+            "description": "A Claim a proposed value was judged from (a ``based_on`` pin), and what it is about.\n\n``subject`` and ``field`` name the pinned Claim's Subject and field when its\nversion is readable in the candidate's tree; ``claim`` alone otherwise.",
+            "properties": {
+              "claim": {
+                "description": "CLM-<32 hex>; get accepts it.",
+                "title": "Claim",
+                "type": "string"
+              },
+              "field": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Field"
+              },
+              "subject": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Subject"
+              }
+            },
+            "required": [
+              "claim"
+            ],
+            "title": "ReviewBasedOn",
+            "type": "object"
+          },
           "ReviewChange": {
             "additionalProperties": false,
-            "description": "One proposed value change, in the write outcome's form, with what it cites.\n\n``change`` is a ``ChangeOutcome`` exactly as ``write`` answers one: op,\nSubject, field, before and after, the Claim and its candidate verdict.\n``role`` is the Claim's role; ``rationale`` the item's own reason, when a\nProcedure proposed it (the change set's ``rationale`` covers the rest).",
+            "description": "One proposed value change, in the write outcome's form, with what it cites.\n\n``change`` is a ``ChangeOutcome`` exactly as ``write`` answers one: op,\nSubject, field, before and after, the Claim and its candidate verdict.\n``role`` is the Claim's role; ``rationale`` the item's own reason, when a\nProcedure proposed it (the change set's ``rationale`` covers the rest).\n``based_on`` lists the Claims the value was judged from, which a reviewer\nchecks it against.",
             "properties": {
+              "based_on": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/ReviewBasedOn"
+                },
+                "title": "Based On",
+                "type": "array"
+              },
               "change": {
                 "$ref": "#/$defs/ChangeOutcome"
               },
@@ -79905,7 +80285,7 @@
           },
           "ReviewDefinition": {
             "additionalProperties": false,
-            "description": "One proposed definition: its kind, name and action, and its typed fields.\n\n``detail`` is the definition as it would stand (Line, ProcedureMandate,\nRunbook, Trigger, Document, note; a ClaimType when created); other kinds,\nand retirements, carry none. ``changed`` lists a revision's changed fields.",
+            "description": "One proposed definition: its kind, name and action, and its typed fields.\n\n``detail`` is the definition as it would stand (Line, ProcedureMandate,\nRunbook, Trigger, Document, note, Provider; a ClaimType when created);\nother kinds, and retirements (but a Provider's), carry none. ``changed``\nlists a revision's changed fields.",
             "properties": {
               "action": {
                 "enum": [
@@ -79934,6 +80314,7 @@
                         "line": "#/$defs/ReviewLineDefinition",
                         "note": "#/$defs/ReviewNoteDefinition",
                         "procedure-mandate": "#/$defs/ReviewMandateDefinition",
+                        "provider": "#/$defs/ReviewProviderDefinition",
                         "runbook": "#/$defs/ReviewRunbookDefinition",
                         "trigger": "#/$defs/ReviewTriggerDefinition"
                       },
@@ -79960,6 +80341,9 @@
                       },
                       {
                         "$ref": "#/$defs/ReviewNoteDefinition"
+                      },
+                      {
+                        "$ref": "#/$defs/ReviewProviderDefinition"
                       }
                     ]
                   },
@@ -80215,6 +80599,18 @@
           "ReviewMandateDefinition": {
             "additionalProperties": false,
             "properties": {
+              "carry": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Carry"
+              },
               "condition": {
                 "anyOf": [
                   {
@@ -80341,6 +80737,169 @@
               "about"
             ],
             "title": "ReviewNoteDefinition",
+            "type": "object"
+          },
+          "ReviewProviderDefinition": {
+            "additionalProperties": false,
+            "description": "A Provider build as it would stand: the package it runs and what it serves.\n\n``package``, ``version`` and ``materialization`` are absent for a signing\nidentity with no package runtime.",
+            "properties": {
+              "build": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Build"
+              },
+              "capture_contracts": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Capture Contracts",
+                "type": "array"
+              },
+              "control_domain": {
+                "title": "Control Domain",
+                "type": "string"
+              },
+              "kind": {
+                "const": "provider",
+                "default": "provider",
+                "title": "Kind",
+                "type": "string"
+              },
+              "materialization": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "registry",
+                      "local"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Materialization"
+              },
+              "operations": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/ReviewProviderOperation"
+                },
+                "title": "Operations",
+                "type": "array"
+              },
+              "package": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Package"
+              },
+              "provider": {
+                "title": "Provider",
+                "type": "string"
+              },
+              "version": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Version"
+              }
+            },
+            "required": [
+              "provider",
+              "control_domain"
+            ],
+            "title": "ReviewProviderDefinition",
+            "type": "object"
+          },
+          "ReviewProviderOperation": {
+            "additionalProperties": false,
+            "description": "One operation a provider build declares: what it serves and how it runs.\n\n``in`` and ``out`` are Contract refs (``name@N``). ``declared_endpoints``\nand ``requires_extras`` are the manifest row of the operation's entrypoint.",
+            "properties": {
+              "declared_endpoints": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Declared Endpoints",
+                "type": "array"
+              },
+              "effect": {
+                "enum": [
+                  "pure",
+                  "external_read",
+                  "external_mutation"
+                ],
+                "title": "Effect",
+                "type": "string"
+              },
+              "entrypoint": {
+                "title": "Entrypoint",
+                "type": "string"
+              },
+              "in": {
+                "title": "In",
+                "type": "string"
+              },
+              "may_truncate": {
+                "default": false,
+                "title": "May Truncate",
+                "type": "boolean"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "out": {
+                "title": "Out",
+                "type": "string"
+              },
+              "requires_extras": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Requires Extras",
+                "type": "array"
+              },
+              "serves": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Serves",
+                "type": "array"
+              }
+            },
+            "required": [
+              "name",
+              "effect",
+              "serves",
+              "in",
+              "out",
+              "entrypoint"
+            ],
+            "title": "ReviewProviderOperation",
             "type": "object"
           },
           "ReviewRunbookDefinition": {
@@ -82046,6 +82605,35 @@
             "title": "Lock Digest"
           }
         },
+        "move": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "move",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Move",
+            "type": "boolean"
+          }
+        },
+        "move_only": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "move_only",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Move Only",
+            "type": "array"
+          }
+        },
         "package": {
           "default": null,
           "default_json_serializable": true,
@@ -82203,6 +82791,19 @@
             "default": null,
             "title": "Lock Digest"
           },
+          "move": {
+            "default": false,
+            "title": "Move",
+            "type": "boolean"
+          },
+          "move_only": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Move Only",
+            "type": "array"
+          },
           "package": {
             "anyOf": [
               {
@@ -82251,6 +82852,36 @@
     },
     "ProviderInstallResult": {
       "fields": {
+        "automation_carries": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "automation_carries",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "line": "#/$defs/CarriedLineV1",
+                  "mandate": "#/$defs/CarriedMandateV1"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/CarriedLineV1"
+                },
+                {
+                  "$ref": "#/$defs/CarriedMandateV1"
+                }
+              ]
+            },
+            "title": "Automation Carries",
+            "type": "array"
+          }
+        },
         "build": {
           "default": null,
           "default_json_serializable": true,
@@ -82348,6 +82979,22 @@
           "schema": {
             "title": "Installed",
             "type": "boolean"
+          }
+        },
+        "moved": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "moved",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/ProviderRepinV1"
+            },
+            "title": "Moved",
+            "type": "array"
           }
         },
         "not_run": {
@@ -82464,6 +83111,22 @@
             "type": "string"
           }
         },
+        "stops": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "stops",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/StoppedAutomationV1"
+            },
+            "title": "Stops",
+            "type": "array"
+          }
+        },
         "tag": {
           "default": "playbill-provider-install-result-v1",
           "default_json_serializable": true,
@@ -82517,6 +83180,217 @@
             "title": "AcceptedCoordinate",
             "type": "object"
           },
+          "CarriedLineV1": {
+            "additionalProperties": false,
+            "description": "A same-identity Line successor over a Procedure successor; its enablement stops.",
+            "properties": {
+              "enablement": {
+                "const": "disabled",
+                "default": "disabled",
+                "title": "Enablement",
+                "type": "string"
+              },
+              "identity": {
+                "title": "Identity",
+                "type": "string"
+              },
+              "kind": {
+                "const": "line",
+                "default": "line",
+                "title": "Kind",
+                "type": "string"
+              },
+              "new_artifact_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "New Artifact Digest"
+              },
+              "new_procedure_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "New Procedure Digest"
+              },
+              "old_artifact_digest": {
+                "title": "Old Artifact Digest",
+                "type": "string"
+              },
+              "old_procedure_digest": {
+                "title": "Old Procedure Digest",
+                "type": "string"
+              },
+              "phase": {
+                "default": "validated",
+                "enum": [
+                  "planned",
+                  "validated"
+                ],
+                "title": "Phase",
+                "type": "string"
+              },
+              "procedure": {
+                "title": "Procedure",
+                "type": "string"
+              }
+            },
+            "required": [
+              "identity",
+              "procedure",
+              "old_procedure_digest",
+              "old_artifact_digest"
+            ],
+            "title": "CarriedLineV1",
+            "type": "object"
+          },
+          "CarriedMandateV1": {
+            "additionalProperties": false,
+            "description": "A same-name successor pinning its Line's successor.\n\nPropose-only, settle fields removed (``demotion`` says why a settle grant\nlost settle); or, for an observation-only settle grant across a pure,\nnon-widening provider build move, the same grant with its terms unchanged\n(``new_grant`` settle, ``retained_scope`` its ClaimTypes), and an enabled\nLine stays enabled on its successor (``carries_line_enablement``).",
+            "properties": {
+              "carries_line_enablement": {
+                "default": false,
+                "title": "Carries Line Enablement",
+                "type": "boolean"
+              },
+              "demotion": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "compiler_revision",
+                      "procedure_changed",
+                      "kit_change",
+                      "line_changed",
+                      "capability_changed",
+                      "effect_widened",
+                      "endpoints_widened",
+                      "may_truncate_widened",
+                      "judgment_claim_type",
+                      "subject_creation",
+                      "condition_coupling",
+                      "mandate_terms_changed"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Demotion"
+              },
+              "identity": {
+                "title": "Identity",
+                "type": "string"
+              },
+              "kind": {
+                "const": "mandate",
+                "default": "mandate",
+                "title": "Kind",
+                "type": "string"
+              },
+              "line": {
+                "title": "Line",
+                "type": "string"
+              },
+              "loses_settle": {
+                "title": "Loses Settle",
+                "type": "boolean"
+              },
+              "new_artifact_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "New Artifact Digest"
+              },
+              "new_grant": {
+                "default": "propose",
+                "enum": [
+                  "propose",
+                  "settle"
+                ],
+                "title": "New Grant",
+                "type": "string"
+              },
+              "new_line_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "New Line Digest"
+              },
+              "old_artifact_digest": {
+                "title": "Old Artifact Digest",
+                "type": "string"
+              },
+              "old_grant": {
+                "enum": [
+                  "propose",
+                  "settle"
+                ],
+                "title": "Old Grant",
+                "type": "string"
+              },
+              "old_line_digest": {
+                "title": "Old Line Digest",
+                "type": "string"
+              },
+              "phase": {
+                "default": "validated",
+                "enum": [
+                  "planned",
+                  "validated"
+                ],
+                "title": "Phase",
+                "type": "string"
+              },
+              "retained_scope": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Retained Scope",
+                "type": "array"
+              },
+              "subject_creation_namespace_limitation": {
+                "default": false,
+                "title": "Subject Creation Namespace Limitation",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "identity",
+              "line",
+              "old_line_digest",
+              "old_artifact_digest",
+              "old_grant",
+              "loses_settle"
+            ],
+            "title": "CarriedMandateV1",
+            "type": "object"
+          },
           "ProviderOperationReadiness": {
             "additionalProperties": false,
             "properties": {
@@ -82543,10 +83417,126 @@
             ],
             "title": "ProviderOperationReadiness",
             "type": "object"
+          },
+          "ProviderRepinV1": {
+            "additionalProperties": false,
+            "description": "One live Line moved (or not) from a provider build to another.",
+            "properties": {
+              "action": {
+                "enum": [
+                  "successor",
+                  "kept",
+                  "refused"
+                ],
+                "title": "Action",
+                "type": "string"
+              },
+              "from_build": {
+                "title": "From Build",
+                "type": "string"
+              },
+              "identity": {
+                "title": "Identity",
+                "type": "string"
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "contract_changed",
+                      "not_movable",
+                      "keep_build"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Reason"
+              },
+              "tag": {
+                "const": "cruxible-provider-repin-v1",
+                "default": "cruxible-provider-repin-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "to_build": {
+                "title": "To Build",
+                "type": "string"
+              }
+            },
+            "required": [
+              "identity",
+              "from_build",
+              "to_build",
+              "action"
+            ],
+            "title": "ProviderRepinV1",
+            "type": "object"
+          },
+          "StoppedAutomationV1": {
+            "additionalProperties": false,
+            "description": "Automation retired with a retired definition; live successors instead carry\nLines disabled and their Mandates propose-only.",
+            "properties": {
+              "identity": {
+                "title": "Identity",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "line",
+                  "trigger",
+                  "mandate"
+                ],
+                "title": "Kind",
+                "type": "string"
+              },
+              "stopped_by": {
+                "title": "Stopped By",
+                "type": "string"
+              },
+              "tag": {
+                "const": "cruxible-stopped-automation-v1",
+                "default": "cruxible-stopped-automation-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "identity",
+              "kind",
+              "stopped_by"
+            ],
+            "title": "StoppedAutomationV1",
+            "type": "object"
           }
         },
         "additionalProperties": false,
         "properties": {
+          "automation_carries": {
+            "default": [],
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "line": "#/$defs/CarriedLineV1",
+                  "mandate": "#/$defs/CarriedMandateV1"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/CarriedLineV1"
+                },
+                {
+                  "$ref": "#/$defs/CarriedMandateV1"
+                }
+              ]
+            },
+            "title": "Automation Carries",
+            "type": "array"
+          },
           "build": {
             "anyOf": [
               {
@@ -82601,6 +83591,14 @@
           "installed": {
             "title": "Installed",
             "type": "boolean"
+          },
+          "moved": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/ProviderRepinV1"
+            },
+            "title": "Moved",
+            "type": "array"
           },
           "not_run": {
             "default": [],
@@ -82665,6 +83663,14 @@
             ],
             "title": "Status",
             "type": "string"
+          },
+          "stops": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/StoppedAutomationV1"
+            },
+            "title": "Stops",
+            "type": "array"
           },
           "tag": {
             "const": "playbill-provider-install-result-v1",
@@ -83239,7 +84245,7 @@
           },
           "CarriedLineV1": {
             "additionalProperties": false,
-            "description": "A same-identity Line successor; exact-version enablement never transfers.",
+            "description": "A same-identity Line successor over a Procedure successor; its enablement stops.",
             "properties": {
               "enablement": {
                 "const": "disabled",
@@ -83314,8 +84320,39 @@
           },
           "CarriedMandateV1": {
             "additionalProperties": false,
-            "description": "A same-name propose successor pinning its Line's successor; settle fields removed.",
+            "description": "A same-name successor pinning its Line's successor.\n\nPropose-only, settle fields removed (``demotion`` says why a settle grant\nlost settle); or, for an observation-only settle grant across a pure,\nnon-widening provider build move, the same grant with its terms unchanged\n(``new_grant`` settle, ``retained_scope`` its ClaimTypes), and an enabled\nLine stays enabled on its successor (``carries_line_enablement``).",
             "properties": {
+              "carries_line_enablement": {
+                "default": false,
+                "title": "Carries Line Enablement",
+                "type": "boolean"
+              },
+              "demotion": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "compiler_revision",
+                      "procedure_changed",
+                      "kit_change",
+                      "line_changed",
+                      "capability_changed",
+                      "effect_widened",
+                      "endpoints_widened",
+                      "may_truncate_widened",
+                      "judgment_claim_type",
+                      "subject_creation",
+                      "condition_coupling",
+                      "mandate_terms_changed"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Demotion"
+              },
               "identity": {
                 "title": "Identity",
                 "type": "string"
@@ -83347,8 +84384,11 @@
                 "title": "New Artifact Digest"
               },
               "new_grant": {
-                "const": "propose",
                 "default": "propose",
+                "enum": [
+                  "propose",
+                  "settle"
+                ],
                 "title": "New Grant",
                 "type": "string"
               },
@@ -83388,6 +84428,14 @@
                 ],
                 "title": "Phase",
                 "type": "string"
+              },
+              "retained_scope": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Retained Scope",
+                "type": "array"
               },
               "subject_creation_namespace_limitation": {
                 "default": false,
@@ -88089,6 +89137,7 @@
           },
           "EnumType": {
             "additionalProperties": false,
+            "description": "A closed set of string members.\n\n``ordered`` (compiler revision 74) declares the members in ascending rank:\nthe first is lowest, the last highest. Queries then compare and order the\nstored member strings by that rank; values are never remapped. Unordered,\nthe field is omitted from the canonical bytes, so existing digests hold.",
             "properties": {
               "kind": {
                 "const": "enum",
@@ -88104,6 +89153,11 @@
                 "minItems": 1,
                 "title": "Members",
                 "type": "array"
+              },
+              "ordered": {
+                "default": false,
+                "title": "Ordered",
+                "type": "boolean"
               }
             },
             "required": [
@@ -96796,6 +97850,7 @@
           },
           "EnumType": {
             "additionalProperties": false,
+            "description": "A closed set of string members.\n\n``ordered`` (compiler revision 74) declares the members in ascending rank:\nthe first is lowest, the last highest. Queries then compare and order the\nstored member strings by that rank; values are never remapped. Unordered,\nthe field is omitted from the canonical bytes, so existing digests hold.",
             "properties": {
               "kind": {
                 "const": "enum",
@@ -96811,6 +97866,11 @@
                 "minItems": 1,
                 "title": "Members",
                 "type": "array"
+              },
+              "ordered": {
+                "default": false,
+                "title": "Ordered",
+                "type": "boolean"
               }
             },
             "required": [
@@ -103676,7 +104736,9 @@
                   "unknown_predicate",
                   "may_truncate",
                   "control_incomplete",
-                  "upstream_incomplete"
+                  "upstream_incomplete",
+                  "glob_enumeration",
+                  "expect_unknown"
                 ],
                 "title": "Kind",
                 "type": "string"
@@ -104005,7 +105067,9 @@
                   "unknown_predicate",
                   "may_truncate",
                   "control_incomplete",
-                  "upstream_incomplete"
+                  "upstream_incomplete",
+                  "glob_enumeration",
+                  "expect_unknown"
                 ],
                 "title": "Kind",
                 "type": "string"

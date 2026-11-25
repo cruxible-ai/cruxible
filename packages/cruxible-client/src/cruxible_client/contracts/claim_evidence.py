@@ -158,6 +158,31 @@ class ClaimEvidenceReceipt(_Receipt):
         return self
 
 
+CompletenessReasonKind = Literal[
+    "incomplete_input",
+    "count_mismatch",
+    "invalid_record",
+    "duplicate_key",
+    "invalid_field",
+    "unknown_predicate",
+    "may_truncate",
+    "control_incomplete",
+    "upstream_incomplete",
+    # Named only on an ``incomplete_source`` finding, never in a run's
+    # completeness: a glob enumeration never judges absence (D-R41), and an
+    # ``expect`` header field that was absent or invalid leaves the Subjects
+    # expected unknown.
+    "glob_enumeration",
+    "expect_unknown",
+]
+
+
+class CompletenessReason(_Receipt):
+    node: str
+    kind: CompletenessReasonKind
+    inputs: tuple[str, ...] = Field(default=(), max_length=20)
+
+
 FindingKind = Literal[
     "extract_refused",
     "duplicate_key",
@@ -171,12 +196,12 @@ FindingKind = Literal[
 class ClaimsDiagnostic(_Receipt):
     kind: FindingKind
     target: str
-    field: str | None = None
-    problem: str | None = None
-    lexeme: str | None = Field(default=None, max_length=512)
-    input: str | None = None
-    claim: str | None = None
-    role: str | None = None
+    field: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    problem: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    lexeme: str | None = Field(default=None, max_length=512, exclude_if=lambda value: value is None)
+    input: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    claim: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    role: str | None = Field(default=None, exclude_if=lambda value: value is None)
     subject: str | None = Field(default=None, exclude_if=lambda value: value is None)
     claim_type: str | None = Field(default=None, exclude_if=lambda value: value is None)
     qualifier: JsonValue = Field(default=None, exclude_if=lambda value: value is None)
@@ -187,11 +212,17 @@ class ClaimsDiagnostic(_Receipt):
         default=None, exclude_if=lambda value: value is None
     )
     source_incomplete: bool = Field(default=False, exclude_if=lambda value: not value)
-    key: dict[str, JsonValue] | None = None
-    record_locators: tuple[str, ...] = Field(default=(), max_length=10)
-    record_count: int = Field(default=0, ge=0)
-    held_value: JsonValue = None
-    incoming_value: JsonValue = None
+    #: On ``incomplete_source``: why the source read as incomplete, each node and kind.
+    incomplete_reasons: tuple[CompletenessReason, ...] = Field(
+        default=(), max_length=20, exclude_if=lambda value: not value
+    )
+    key: dict[str, JsonValue] | None = Field(default=None, exclude_if=lambda value: value is None)
+    record_locators: tuple[str, ...] = Field(
+        default=(), max_length=10, exclude_if=lambda value: not value
+    )
+    record_count: int = Field(default=0, ge=0, exclude_if=lambda value: value == 0)
+    held_value: JsonValue = Field(default=None, exclude_if=lambda value: value is None)
+    incoming_value: JsonValue = Field(default=None, exclude_if=lambda value: value is None)
 
     @model_validator(mode="after")
     def _absence_finding(self) -> ClaimsDiagnostic:
@@ -211,25 +242,6 @@ class ClaimsDiagnostic(_Receipt):
                 "claim_not_in_source requires a Claim and its complete absence attribution"
             )
         return self
-
-
-CompletenessReasonKind = Literal[
-    "incomplete_input",
-    "count_mismatch",
-    "invalid_record",
-    "duplicate_key",
-    "invalid_field",
-    "unknown_predicate",
-    "may_truncate",
-    "control_incomplete",
-    "upstream_incomplete",
-]
-
-
-class CompletenessReason(_Receipt):
-    node: str
-    kind: CompletenessReasonKind
-    inputs: tuple[str, ...] = Field(default=(), max_length=20)
 
 
 class RunCompleteness(_Receipt):

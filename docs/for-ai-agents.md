@@ -12,6 +12,21 @@ examples use the car parts example from
 
 ## Connect
 
+Pick the surface by what the agent can run:
+
+1. **The typed Python SDK, whenever the agent can run code.** It is the
+   primary authoring surface: `.cruxible/world.pyi` types the instance's kinds,
+   fields and enum members, so a wrong name fails in the editor or pyright, not
+   at the daemon; `define()`, `AuthoredSection` and `based_on` take Python
+   values instead of JSON shapes. `cruxible python script.py` (or `-c CODE`, or
+   `- <<'PY'`) runs it with the CLI's own interpreter and connection, from any
+   repository, whatever its language or virtual environment. See [Writing from
+   the SDK](#writing-from-the-sdk).
+2. **MCP, for a general agent with no code environment.** The tools below.
+3. **The CLI, for shell inspection, people and backup.** `cruxible orient`,
+   `cruxible next`, `cruxible proposal review` and `approve`; `cruxible write
+   --example` prints a worked write file to start from.
+
 **MCP.** An MCP client launches `cruxible mcp` (`uvx cruxible mcp` from the
 registry listing). Every tool runs on a daemon; the server is only its client.
 
@@ -49,9 +64,12 @@ adding principals) is operator work on the CLI. On MCP, `cruxible_init` is the
 only setup tool: it takes `principal_id` and creates the owner only under
 `self_approval_allowed`.
 
-- **New instance with cosign**: run `cruxible init --reviewer-key-dir DIR
-  --require-independent-approval` (on an already-initialized instance, `init`
-  answers "already initialized" and adds nothing).
+- **New instance with cosign**: run `cruxible init
+  --require-independent-approval`. It creates the reviewer's key and settings
+  beside the owner's (`$XDG_CONFIG_HOME/cruxible/keys/INSTANCE/reviewer`, by
+  default `~/.config/cruxible/keys/INSTANCE/reviewer`; `--reviewer-key-dir DIR`
+  puts them elsewhere). On an already-initialized instance, `init` answers
+  "already initialized" and adds nothing.
 - **Adding cosign to an existing instance**: run these two CLI steps in order—add
   the reviewer first, because once `independent_approval_required` lands, the
   owner can no longer land a change alone (`graph_write` is the tier that may
@@ -72,8 +90,10 @@ file in the file catalog (`cruxible files add PATH`), and stopping the daemon
 First setup on one machine, in order:
 
 1. In the project folder, run `cruxible init --principal-id owner
-   --reviewer-key-dir DIR --require-independent-approval`. This is the
-   recommended setup, cosign: an owner who writes and a reviewer who approves.
+   --require-independent-approval`. This is the recommended setup, cosign: an
+   owner who writes and a reviewer who approves. Init prints how to act as the
+   reviewer (`cruxible context use --principal reviewer`, or
+   `CRUXIBLE_ENV_FILE` naming its settings for another process).
    With no daemon running, the CLI starts one on
    `~/.cruxible/run/daemon.sock` and says so (`cruxible server stop` stops
    it). The folder may be a Git repository or not; init writes
@@ -286,7 +306,10 @@ in the SDK).
   knowledge](building-team-knowledge.md), [Evidence and
   admission](evidence-and-admission.md)).
 - **Notes**: write the reasoning into a document section in the same `write`
-  as the Claims that cite it ([Documents and notes](documents-and-notes.md)).
+  as the Claims that cite it (`w.section(FILE, heading=..., body=...)` as
+  `evidence=`, or `set --section FILE#Heading --section-body ...`); a Subject's
+  `get` card points to the notes about it, and `cruxible section
+  FILE#Heading/Path` reads one ([Documents and notes](documents-and-notes.md)).
 - **Definitions**: kinds and fields go through the vocabulary file
   (`.cruxible/vocabulary.yaml`: `vocabulary export`, edit, `plan`, `apply`);
   saved queries, CaptureKinds and automation go through authoring ([Evolving
@@ -302,6 +325,19 @@ is a signal, not a success: `uncovered` usually means the field's rules don't
 admit your evidence for that role. Run `next` again after a batch of work.
 
 ## Writing from the SDK
+
+An agent with a code environment writes here. `cruxible python` runs the
+script with the CLI's own SDK, so nothing is installed in the agent's
+repository and the SDK always matches the CLI:
+
+~~~bash
+cruxible python - <<'PY'
+from cruxible_client import Cruxible
+with Cruxible.connect() as cx:
+    w = cx.world()
+    print(cx.orient())
+PY
+~~~
 
 The value verbs on each surface:
 
@@ -408,7 +444,9 @@ w.write(rotor, part.edit().add(replaces=rotor), because="New rotor line from Acm
 ~~~
 
 Passing `part.set(...)` itself to `w.write` fails (it has already tried to
-write, and lacks `because`); pass `part.edit().set(...)`.
+write, and lacks `because`); pass `part.edit().set(...)`, or `part.edit(title=...)`,
+which sets the fields it is given and still chains `.add(...)`. A many-valued
+field takes a list in `define(...)` and `add(...)`: one added value per item.
 `.cruxible/world.pyi` holds the vocabulary as Python types, so an editor or a
 model completes real names; floor delivery keeps it current, and `cruxible
 stub` writes one. `cruxible python script.py` runs an SDK script with the CLI's

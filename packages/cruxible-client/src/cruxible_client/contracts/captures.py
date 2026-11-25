@@ -3032,6 +3032,29 @@ def observed_content(envelope: CaptureEnvelopeV1 | CaptureEnvelope) -> ObservedC
     return ObservedContent(digest=envelope.commitment.digest)
 
 
+def provider_capture_is_cas_output(
+    contract: CaptureContractAny, occurrence: ProviderExternalOccurrencePlan
+) -> bool:
+    """Whether a provider's capture field commits a CAS-sourced Capture.
+
+    A CAS-only CaptureContract (shape ``procedure_output``) admits no external
+    observation: its Capture has no logical source, coordinate or selector,
+    only its exact bytes. A pure operation's output (a computation, never a
+    fetch) is committed under such a contract with a CAS source: the
+    provider's invocation evidence, and for a derived kind its input manifest
+    and reducer, say how the bytes were produced. A non-pure operation stays
+    an external observation and cannot produce one.
+    """
+
+    kinds = contract_source_kinds(contract)
+    return (
+        "external" not in kinds
+        and "cas" in kinds
+        and not is_coordinator_self_source_contract(contract)
+        and occurrence.operation.effect == "pure"
+    )
+
+
 def validate_provider_external_capture_result(
     *,
     contract: CaptureContractAny,
@@ -3062,8 +3085,18 @@ def validate_provider_external_capture_result(
 
     if occurrence.occurrence_kind != "source":
         raise CaptureFormatError("Provider Capture conversion requires a Source occurrence")
-    if "external" not in contract_source_kinds(contract):
-        raise CaptureFormatError("CaptureContract does not permit external observations")
+    cas_output = provider_capture_is_cas_output(contract, occurrence)
+    if not cas_output and "external" not in contract_source_kinds(contract):
+        raise CaptureFormatError(
+            "CaptureContract does not permit external observations"
+            + (
+                f" (a {contract.shape} CaptureKind takes only a pure operation's output; "
+                f"operation {occurrence.operation.name!r} declares effect: "
+                f"{occurrence.operation.effect})"
+                if isinstance(contract, CaptureContract | NamedCaptureContract)
+                else ""
+            )
+        )
     if "cas" not in contract_materialization_modes(contract):
         raise CaptureFormatError("CaptureContract does not permit CAS materialization")
     contract_digest_value = capture_contract_digest(contract).tagged
@@ -3080,6 +3113,14 @@ def validate_provider_external_capture_result(
         ProviderInvocationOutputDigest.model_validate(receipt.output)
     except ValidationError as exc:
         raise CaptureFormatError("Provider Source receipt lacks its output digest") from exc
+    workspace_source = is_workspace_file_signature(occurrence.operation_signature_digest)
+    if cas_output:
+        # A CAS-sourced Capture records no logical source, coordinate, selector
+        # or replayability: the wire's statements of them stay in the output the
+        # invocation receipt digests, and the envelope names only the bytes.
+        if workspace_source or source_read_receipt is not None:
+            raise CaptureFormatError("a workspace.file read is an external observation")
+        return
     if (
         isinstance(contract, CaptureContractV1)
         and result.source_identity not in contract.logical_source_identities
@@ -3090,8 +3131,11 @@ def validate_provider_external_capture_result(
     } or result.selector_type not in {
         pin.target.name for pin in capture_components(contract).selector_schema_pins
     }:
-        raise CaptureFormatError("Provider Capture source schemas are not admitted")
-    workspace_source = is_workspace_file_signature(occurrence.operation_signature_digest)
+        raise CaptureFormatError(
+            f"Provider Capture source schemas are not admitted: coordinate_type "
+            f"{result.coordinate_type!r} and selector_type {result.selector_type!r} must be "
+            "ones the CaptureContract pins"
+        )
     if workspace_source != (source_read_receipt is not None):
         raise CaptureFormatError("workspace.file Capture requires exactly one source-read receipt")
     if source_read_receipt is not None and (
@@ -3239,9 +3283,12 @@ def build_provider_external_capture_v2(
             ),
             "derive reducer",
         )
-    envelope = CaptureEnvelope(
-        capture_contract_digest=contract_digest_value,
-        source=ExternalSourceReference(
+    source: ExternalSourceReference | CasSourceReference = (
+        # A pure operation's output under a CAS-only contract: the bytes are
+        # the source (``provider_capture_is_cas_output``).
+        CasSourceReference(content_digest=stored.digest)
+        if provider_capture_is_cas_output(contract, occurrence)
+        else ExternalSourceReference(
             source_identity=result.source_identity,
             producer_binding_digest=occurrence_digest,
             coordinate_type=result.coordinate_type,
@@ -3249,7 +3296,11 @@ def build_provider_external_capture_v2(
             selector_type=result.selector_type,
             selector=result.selector,
             replayability=result.replayability,
-        ),
+        )
+    )
+    envelope = CaptureEnvelope(
+        capture_contract_digest=contract_digest_value,
+        source=source,
         commitment=EvidenceCommitment(
             digest_kind="exact_bytes",
             digest=result.bytes_digest,
@@ -4292,6 +4343,7 @@ __all__ = [
     "CaptureReplay",
     "capture_shape_components",
     "contract_source_kinds",
+    "provider_capture_is_cas_output",
     "contract_materialization_modes",
     "COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1",
     "COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACTS",

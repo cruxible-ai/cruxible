@@ -562,7 +562,24 @@ def test_define_reads_each_kind_s_identity_rule_and_the_stub_types_it(
         "        expect_new: bool = ...,\n"
     ) in stub
     assert "class _N_sec__vulnerability(WorldNewSubject):" in stub
-    assert "    def edit(self) -> _E_sec__vulnerability: ..." in stub
+    # edit() starts an empty edit, or sets the single-value fields it is given.
+    assert (
+        "    def edit(\n"
+        "        self,\n"
+        "        /,\n"
+        "        *,\n"
+        "        evidence: Evidence | AuthoredSection | None = ...,\n"
+        "        role: WriteRole | None = ...,\n"
+        "        contend: bool = ...,\n"
+    ) in stub
+    assert "    ) -> _E_sec__vulnerability: ...\n" in stub
+    # based_on= is typed on every write member, drafts and edits included.
+    based_on = (
+        "        based_on: str | ClaimRef | ClaimView | WorldDraftPin"
+        " | Sequence[str | ClaimRef | ClaimView | WorldDraftPin] | None = ...,\n"
+    )
+    assert stub.count(based_on) >= 6
+    assert "    ClaimRef,\n" in stub
     assert "    *items: WorldWritable," in stub
 
 
@@ -585,7 +602,7 @@ def test_a_kind_no_subject_kind_declares_has_no_define(tmp_path: Path) -> None:
     assert "no live SubjectKind declares dev.batch, so it has no define()" in stub
 
 
-def test_drafts_are_frozen_and_one_write_sends_each_create_first_by_its_label(
+def test_drafts_grow_in_place_and_one_write_sends_each_create_first_by_its_label(
     connection: tuple[Cruxible, _WorldClient],
 ) -> None:
     from cruxible_client.contracts.write import CreateChange, CreatedSubject
@@ -595,8 +612,8 @@ def test_drafts_are_frozen_and_one_write_sends_each_create_first_by_its_label(
     click = world.sec.package.define("click")
     advisory = world.sec.vulnerability.define(severity=world.sec.vuln.severity.high)
     linked = advisory.set(affects_package=click)
-    # Frozen: deriving a draft leaves the one it came from as it was.
-    assert len(advisory._changes) == 1 and len(linked._changes) == 2
+    # In place: set() records on the draft and returns it for chaining.
+    assert linked is advisory and len(advisory._changes) == 2
     edit = world.sec.vulnerability["cve-2026-69247"].edit().set(affects_package=click)
 
     outcome = world.write(linked, edit, because="The advisory names the package.")
@@ -623,6 +640,100 @@ def test_drafts_are_frozen_and_one_write_sends_each_create_first_by_its_label(
         click.set()
     with pytest.raises(TypeError, match="drafts and edits"):
         world.write("sec.package/click", because="Not a draft.")  # type: ignore[arg-type]
+
+
+def test_a_statement_set_on_a_draft_or_an_edit_keeps_every_claim(
+    connection: tuple[Cruxible, _WorldClient],
+) -> None:
+    """``d.set(...)`` without reassignment once dropped the Claim silently."""
+
+    from cruxible_client.contracts.write import AddChange, SetChange
+
+    playbill, client = connection
+    world = playbill.world()
+    click = world.sec.package.define("click")
+    # Statement style: nothing reassigned.
+    statement = world.sec.vulnerability.define()
+    statement.set(severity=world.sec.vuln.severity.high)
+    statement.set(affects_package=click)
+    edit = world.sec.vulnerability["cve-2026-69247"].edit()
+    edit.set(severity=world.sec.vuln.severity.low)
+    edit.set(affects_package=click)
+
+    world.write(statement, edit, because="Statement-style calls.")
+
+    (request,) = client.write_requests
+    sets = [c for c in request.changes if isinstance(c, SetChange | AddChange)]
+    assert [(c.field, c.subject) for c in sets] == [
+        (SEVERITY, statement_label(request, "sec.vulnerability")),
+        (AFFECTS, statement_label(request, "sec.vulnerability")),
+        (SEVERITY, "sec.vulnerability/cve-2026-69247"),
+        (AFFECTS, "sec.vulnerability/cve-2026-69247"),
+    ]
+
+
+def test_a_chained_set_on_a_draft_or_an_edit_keeps_every_claim(
+    connection: tuple[Cruxible, _WorldClient],
+) -> None:
+    from cruxible_client.contracts.write import AddChange, SetChange
+
+    playbill, client = connection
+    world = playbill.world()
+    click = world.sec.package.define("click")
+    chained = world.sec.vulnerability.define()
+    chained = chained.set(severity=world.sec.vuln.severity.high)
+    chained = chained.set(affects_package=click)
+    edit = world.sec.vulnerability["cve-2026-69247"].edit()
+    edit = edit.set(severity=world.sec.vuln.severity.low).set(affects_package=click)
+
+    world.write(chained, edit, because="Chained calls.")
+
+    (request,) = client.write_requests
+    sets = [c for c in request.changes if isinstance(c, SetChange | AddChange)]
+    assert [c.field for c in sets] == [SEVERITY, AFFECTS, SEVERITY, AFFECTS]
+    # Naming one draft twice in one call sends each of its changes once.
+    twice = world.sec.vulnerability.define()
+    twice.set(severity=world.sec.vuln.severity.high)
+    world.write(twice, twice, because="Same draft twice.")
+    again = [c for c in client.write_requests[-1].changes if isinstance(c, SetChange)]
+    assert [c.field for c in again] == [SEVERITY]
+
+
+def test_based_on_on_a_world_set_reaches_the_wire(
+    connection: tuple[Cruxible, _WorldClient],
+) -> None:
+    from cruxible_client.contracts.write import SetChange
+
+    playbill, client = connection
+    world = playbill.world()
+    pinned = "CLM-" + "a" * 32
+    draft = world.sec.vulnerability.define()
+    draft.set(severity=world.sec.vuln.severity.high, based_on=[pinned])
+    edit = world.sec.vulnerability["cve-2026-69247"].edit()
+    edit.set(
+        severity=world.sec.vuln.severity.low,
+        based_on="sec.vulnerability/cve-2026-69247#severity",
+    )
+
+    world.write(draft, edit, because="Judged from the pinned Claims.")
+
+    (request,) = client.write_requests
+    sets = [c for c in request.changes if isinstance(c, SetChange)]
+    assert [c.based_on for c in sets] == [
+        (pinned,),
+        ("sec.vulnerability/cve-2026-69247#severity",),
+    ]
+    with pytest.raises(TypeError, match="based_on names Claims"):
+        draft.set(severity=world.sec.vuln.severity.high, based_on=[7])  # type: ignore[list-item]
+
+
+def statement_label(request: Any, kind: str) -> object:
+    from cruxible_client.contracts.write import CreateChange, CreatedSubject
+
+    (create,) = [
+        c for c in request.changes if isinstance(c, CreateChange) and c.subject_kind == kind
+    ]
+    return CreatedSubject(created=create.label)
 
 
 def test_a_predicate_is_a_claim_type_ref_carrying_its_own_structure(
@@ -1882,3 +1993,394 @@ def test_world_subjects_and_predicates_repr_short(
         f"WorldSubject('sec.package/cryptography' @ {'a' * 12})"
     )
     assert repr(world.sec.vuln.severity) == f"WorldClaimType('sec.vuln.severity' @ {'a' * 12})"
+
+
+def test_world_section_and_note_sit_beside_write_and_send_one_change_set(
+    connection: tuple[Cruxible, _WorldClient],
+) -> None:
+    """``w.section`` is ``cx.section``; ``w.note`` writes from the World's basis."""
+
+    from cruxible_client.authoring.section_evidence import AuthoredSection
+    from cruxible_client.contracts.write import AboutChange, SectionEvidence, SetChange
+
+    playbill, client = connection
+    world = playbill.world()
+    section = world.section("corpus/runbook.md", heading="Why", body="The advisory says so.")
+    assert isinstance(section, AuthoredSection)
+    assert (
+        section.operation
+        == playbill.section(
+            "corpus/runbook.md", heading="Why", body="The advisory says so."
+        ).operation
+    )
+    assert section.citation == SectionEvidence(file="corpus/runbook.md", section=("Why",))
+
+    world.sec.vulnerability["cve-2026-69247"].set(
+        severity="high", evidence=section, because="Rated high."
+    )
+    (request,) = client.write_requests
+    # The client observed the append; the daemon gets its bytes, never the path.
+    ((edited,),) = (request.docs,)
+    assert (edited.op, edited.source_id, edited.section) == ("append", "corpus.runbook", ("Why",))
+    (change,) = request.changes
+    assert isinstance(change, SetChange) and change.evidence.kind == "section"
+    assert "# Why" in (playbill._workspace_root / "corpus" / "runbook.md").read_text()
+
+    world.note(
+        "corpus/runbook.md",
+        heading="Triage",
+        text="Patched in review.",
+        about=[world.sec.vulnerability["cve-2026-69247"], "sec.package/cryptography"],
+        because="Triage notes.",
+    )
+    note = client.write_requests[-1]
+    # Checked from the World's basis, advanced past its own accepted write.
+    assert note.at == "c" * 12
+    ((appended,),) = (note.docs,)
+    assert (appended.op, appended.section) == ("append", ("Triage",))
+    ((about,),) = (note.changes,)
+    assert isinstance(about, AboutChange) and about.section == ("Triage",)
+    assert about.subjects == ("sec.vulnerability/cve-2026-69247", "sec.package/cryptography")
+
+    stub = world.stub()
+    ast.parse(stub)
+    world_body = stub.split("\nclass World:\n", 1)[1]
+    assert "    def section(\n        self,\n        file: str,\n" in world_body
+    assert "    ) -> AuthoredSection: ...\n" in world_body
+    assert "    def note(\n        self,\n        file: str,\n" in world_body
+    assert "        about: Sequence[str | SubjectRef],\n" in world_body
+
+
+def test_subject_edit_takes_fields_as_a_set_and_still_chains(
+    connection: tuple[Cruxible, _WorldClient],
+) -> None:
+    from cruxible_client.contracts.write import RetireChange, SetChange
+
+    playbill, client = connection
+    world = playbill.world()
+    subject = world.sec.vulnerability["cve-2026-69247"]
+    click = world.sec.package.define("click")
+
+    empty = subject.edit()
+    assert empty._changes == ()
+    edit = subject.edit(severity="high", role="observation").set(affects_package=click)
+    assert [(change.op, change.field, change.role) for change in edit._changes] == [
+        ("set", SEVERITY, "observation"),
+        ("set", AFFECTS, None),
+    ]
+    retiring = subject.edit(severity="low").retire("affects_package")
+    assert isinstance(retiring._changes[-1], RetireChange)
+
+    world.write(edit, because="Rated and linked.")
+    (request,) = client.write_requests
+    sets = [change for change in request.changes if isinstance(change, SetChange)]
+    assert [change.field for change in sets] == [SEVERITY, AFFECTS]
+
+    with pytest.raises(TypeError, match="only beside the fields"):
+        subject.edit(role="observation")
+    from cruxible_client.authoring.world import WorldFieldValueRefused
+
+    with pytest.raises(WorldFieldValueRefused, match="keyword"):
+        subject.edit("severity", "high")  # type: ignore[misc]
+
+
+def test_define_and_add_take_a_list_on_a_many_valued_field_and_the_stub_types_it(
+    tmp_path: Path,
+) -> None:
+    """A many-valued field takes one value or a sequence; the stub admits both."""
+
+    from tests.test_client.test_world_field_messages import SKILLS, _FieldsClient
+
+    _workspace(tmp_path)
+    client = _FieldsClient()
+    playbill = Cruxible._from_client(  # type: ignore[arg-type]
+        client,
+        instance_id="inst_world",
+        workspace=tmp_path,
+        clock=lambda: datetime(2026, 9, 7, 12, tzinfo=UTC),
+    )
+    world = playbill.world()
+    world.write(world.sec.package.define("click", skills=["b", "a"]), because="Seeded.")
+    (request,) = client.write_requests
+    assert [(change.op, getattr(change, "value", None)) for change in request.changes] == [
+        ("create", None),
+        ("add", "b"),
+        ("add", "a"),
+    ]
+    assert {getattr(change, "field", SKILLS) for change in request.changes[1:]} == {SKILLS}
+
+    stub = world.stub()
+    ast.parse(stub)
+    assert "        skills: str | Sequence[str] = ...,\n" in stub
+
+
+def test_define_accepts_world_subject_and_new_subject_drafts_for_subject_key_parts(
+    tmp_path: Path,
+) -> None:
+    """Subject-typed key parts accept WorldSubject/SubjectRef and WorldNewSubject drafts."""
+
+    from cruxible_client.contracts.write import CreateChange, CreatedSubject, CreateKeyPart
+
+    class _PairClient(_WorldClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.subjects["sec.package/click"] = "live"
+            self.subject_kinds.append(
+                {
+                    "kind": "sec.exposure",
+                    "rule": "keys",
+                    "keys": ("sec.exposure.package", "sec.exposure.vulnerability"),
+                    "uniqueness": "unique",
+                }
+            )
+
+        def _claim_type_list(self, instance_id: str, *, at: Any = None) -> ClaimTypeListing:
+            listing = super()._claim_type_list(instance_id, at=at)
+            listing.claim_types.extend(
+                [
+                    _claim_type(
+                        "sec.exposure.package",
+                        value_type=("sec.package",),
+                        allowed_subject_kinds=("sec.exposure",),
+                    ),
+                    _claim_type(
+                        "sec.exposure.vulnerability",
+                        value_type=("sec.vulnerability",),
+                        allowed_subject_kinds=("sec.exposure",),
+                    ),
+                    _claim_type(
+                        "sec.exposure.verdict",
+                        value_type={"kind": "enum", "members": ["affected", "not_affected"]},
+                        allowed_subject_kinds=("sec.exposure",),
+                    ),
+                ]
+            )
+            return listing
+
+    _workspace(tmp_path)
+    client = _PairClient()
+    playbill = Cruxible._from_client(  # type: ignore[arg-type]
+        client,
+        instance_id="inst_world",
+        workspace=tmp_path,
+        clock=lambda: datetime(2026, 9, 7, 12, tzinfo=UTC),
+    )
+    world = playbill.world()
+
+    # 1. Existing WorldSubject objects unwrap to their kind/id addresses.
+    pkg = world.sec.package["click"]
+    vuln = world.sec.vulnerability["cve-2026-69247"]
+    existing_pair = world.sec.exposure.define(
+        package=pkg,
+        vulnerability=vuln,
+        verdict="affected",
+    )
+    assert existing_pair._key == (
+        CreateKeyPart(predicate="sec.exposure.package", value="sec.package/click"),
+        CreateKeyPart(
+            predicate="sec.exposure.vulnerability",
+            value="sec.vulnerability/cve-2026-69247",
+        ),
+    )
+
+    # 2. Unlanded WorldNewSubject drafts in a composite key emit dependency creates FIRST
+    #    and wire CreatedSubject labels into CreateKeyPart.
+    new_pkg = world.sec.package.define("httpx")
+    new_pair = world.sec.exposure.define(
+        package=new_pkg,
+        vulnerability=vuln,
+        verdict="not_affected",
+    )
+    outcome = world.write(new_pair, because="Create package and exposure together.")
+    assert outcome.status == "accepted"
+    (request,) = client.write_requests
+    creates = [c for c in request.changes if isinstance(c, CreateChange)]
+    assert [c.subject_kind for c in creates] == ["sec.package", "sec.exposure"]
+    assert creates[0].key == "httpx"
+    assert creates[1].key == (
+        CreateKeyPart(
+            predicate="sec.exposure.package",
+            value=CreatedSubject(created=creates[0].label),
+        ),
+        CreateKeyPart(
+            predicate="sec.exposure.vulnerability",
+            value="sec.vulnerability/cve-2026-69247",
+        ),
+    )
+    assert new_pkg.address is not None and new_pair.address is not None
+
+    # 3. An already-landed draft in a later define() uses its accepted address without re-creating.
+    later_pair = world.sec.exposure.define(
+        package=new_pkg,
+        vulnerability=vuln,
+        verdict="affected",
+    )
+    world.write(later_pair, because="Second write using landed draft.")
+    second_creates = [c for c in client.write_requests[-1].changes if isinstance(c, CreateChange)]
+    assert [c.subject_kind for c in second_creates] == ["sec.exposure"]
+    assert second_creates[0].key == (
+        CreateKeyPart(predicate="sec.exposure.package", value=new_pkg.address),
+        CreateKeyPart(
+            predicate="sec.exposure.vulnerability",
+            value="sec.vulnerability/cve-2026-69247",
+        ),
+    )
+
+    # 4. A literal-typed key still refuses a WorldSubject or WorldNewSubject.
+    with pytest.raises(TypeError, match="a non-empty string, an integer or a boolean"):
+        world.sec.package.define(pkg)
+    with pytest.raises(TypeError, match="a non-empty string, an integer or a boolean"):
+        world.sec.package.define(new_pkg)
+
+
+class _KeywordLeafClient(_WorldClient):
+    """A keyed kind whose fields include leaves Python reserves."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.subject_kinds = [
+            {
+                "kind": "proj.item",
+                "rule": "keys",
+                "keys": ("proj.item.slug",),
+                "uniqueness": "unique",
+            }
+        ]
+
+    def _claim_type_list(self, _instance_id: str, *, at: Any = None) -> ClaimTypeListing:
+        self.claim_type_list_calls += 1
+        return ClaimTypeListing(
+            coordinate=self.coordinate,
+            claim_types=[
+                _claim_type(
+                    f"proj.item.{leaf}",
+                    value_type={"type": "string"},
+                    allowed_subject_kinds=("proj.item",),
+                )
+                for leaf in ("class", "import", "slug", "title")
+            ],
+        )
+
+
+def test_pin_takes_escaped_keyword_leaves_and_keys_in_runtime_and_stub(tmp_path: Path) -> None:
+    _workspace(tmp_path)
+    playbill = Cruxible._from_client(  # type: ignore[arg-type]
+        _KeywordLeafClient(),
+        instance_id="inst_world",
+        workspace=tmp_path,
+        clock=lambda: datetime(2026, 9, 7, 12, tzinfo=UTC),
+    )
+    world = playbill.world()
+    draft = world.kind("proj.item").define("p-1")
+    # The runtime spellings: escaped keyword leaves, and the key the draft is created by.
+    assert draft.pin("import_").field == "proj.item.import"
+    assert draft.pin("class_").field == "proj.item.class"
+    assert draft.pin("slug").field == "proj.item.slug"
+
+    stub = world.stub()
+    ast.parse(stub)
+    project = tmp_path / "keyword-pin-project"
+    project.mkdir()
+    (project / "world.pyi").write_text(stub, encoding="utf-8")
+    (project / "pins.py").write_text(
+        "from __future__ import annotations\n"
+        "\n"
+        "from world import World\n"
+        "\n"
+        "\n"
+        "def pinned(world: World) -> None:\n"
+        "    draft = world.proj.item.define('p-1')\n"
+        "    draft.pin('import_')\n"
+        "    draft.pin('class_')\n"
+        "    draft.pin('import')\n"
+        "    draft.pin('slug')\n"
+        "    draft.pin('proj.item.slug')\n"
+        "    edit = world.proj.item['p-1'].edit()\n"
+        "    edit.pin('import_')\n"
+        "    edit.pin('class_')\n"
+        "    edit.pin('slug')\n"
+        "    draft.pin('imprt')\n",
+        encoding="utf-8",
+    )
+    report = _mypy(project, "pins.py")
+    assert "pins.py:17: error:" in report, report
+    assert report.count(": error:") == 1, report
+
+
+def test_a_key_part_draft_pinning_its_composite_draft_creates_each_draft_once(
+    tmp_path: Path,
+) -> None:
+    """A key-part draft whose change pins the composite draft must not re-enter create."""
+
+    from cruxible_client.contracts.write import CreateChange, CreatedSubject, SetChange
+
+    class _PairClient(_WorldClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.subject_kinds.append(
+                {
+                    "kind": "sec.exposure",
+                    "rule": "keys",
+                    "keys": ("sec.exposure.package", "sec.exposure.vulnerability"),
+                    "uniqueness": "unique",
+                }
+            )
+
+        def _claim_type_list(self, instance_id: str, *, at: Any = None) -> ClaimTypeListing:
+            listing = super()._claim_type_list(instance_id, at=at)
+            listing.claim_types.extend(
+                [
+                    _claim_type(
+                        "sec.exposure.package",
+                        value_type=("sec.package",),
+                        allowed_subject_kinds=("sec.exposure",),
+                    ),
+                    _claim_type(
+                        "sec.exposure.vulnerability",
+                        value_type=("sec.vulnerability",),
+                        allowed_subject_kinds=("sec.exposure",),
+                    ),
+                    _claim_type(
+                        "sec.exposure.verdict",
+                        value_type={"kind": "enum", "members": ["affected", "not_affected"]},
+                        allowed_subject_kinds=("sec.exposure",),
+                    ),
+                    _claim_type(
+                        "sec.package.note",
+                        value_type="string",
+                        allowed_subject_kinds=("sec.package",),
+                    ),
+                ]
+            )
+            return listing
+
+    _workspace(tmp_path)
+    client = _PairClient()
+    playbill = Cruxible._from_client(  # type: ignore[arg-type]
+        client,
+        instance_id="inst_world",
+        workspace=tmp_path,
+        clock=lambda: datetime(2026, 9, 7, 12, tzinfo=UTC),
+    )
+    world = playbill.world()
+
+    pkg = world.sec.package.define("httpx")
+    vuln = world.sec.vulnerability["cve-2026-69247"]
+    exposure = world.sec.exposure.define(package=pkg, vulnerability=vuln, verdict="affected")
+    pkg.set(note="Tracked via exposure", based_on=exposure.pin("verdict"))
+    other = world.sec.package.define("urllib3")
+
+    outcome = world.write(exposure, other, because="Composite, key part, and unrelated draft.")
+    assert outcome.status == "accepted"
+    (request,) = client.write_requests
+    creates = [c for c in request.changes if isinstance(c, CreateChange)]
+    sets = [c for c in request.changes if isinstance(c, SetChange)]
+    assert [c.subject_kind for c in creates] == ["sec.package", "sec.exposure", "sec.package"]
+    labels = [c.label for c in creates]
+    assert len(labels) == len(set(labels)), f"repeated create labels: {labels}"
+    pkg_label, exp_label, _other_label = labels
+    (pkg_set,) = [s for s in sets if s.field == "sec.package.note"]
+    assert pkg_set.subject == CreatedSubject(created=pkg_label)
+    assert pkg_set.based_on == (f"{exp_label}#sec.exposure.verdict",)
+    (exp_set,) = [s for s in sets if s.field == "sec.exposure.verdict"]
+    assert exp_set.subject == CreatedSubject(created=exp_label)

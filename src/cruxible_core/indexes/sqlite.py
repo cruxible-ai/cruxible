@@ -451,10 +451,10 @@ def update_projection_database(
 ) -> dict[str, int]:
     """Copy one verified typed publication, then replace changed owners atomically."""
     from cruxible_client.contracts.types import CompilerCoordinate
-    from cruxible_core.compiler.compiler import require_current_compiler
+    from cruxible_core.compiler.compiler import require_installed_compiler
     from cruxible_core.indexes.typed_sqlite import update
 
-    require_current_compiler(CompilerCoordinate(rule_digest=request.compiler_digest))
+    require_installed_compiler(CompilerCoordinate(rule_digest=request.compiler_digest))
     return update(
         path,
         parent=None if clone_verified_piece(parent, path) else parent._connection,
@@ -482,10 +482,10 @@ def initialize_projection_database(
     """Create and populate the complete PB-B one-piece SQLite projection."""
 
     from cruxible_client.contracts.types import CompilerCoordinate
-    from cruxible_core.compiler.compiler import require_current_compiler
+    from cruxible_core.compiler.compiler import require_installed_compiler
     from cruxible_core.indexes.typed_sqlite import initialize
 
-    require_current_compiler(CompilerCoordinate(rule_digest=request.compiler_digest))
+    require_installed_compiler(CompilerCoordinate(rule_digest=request.compiler_digest))
     if repository is None:
         repository = _source_repository(request.repository_path)
     if sources is None:

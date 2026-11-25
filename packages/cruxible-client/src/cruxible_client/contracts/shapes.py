@@ -271,9 +271,32 @@ class DurationType(_Shape):
     kind: Literal["duration"] = "duration"
 
 
+def _not_true(value: object) -> bool:
+    return value is not True
+
+
 class EnumType(_Shape):
+    """A closed set of string members.
+
+    ``ordered`` (compiler revision 74) declares the members in ascending rank:
+    the first is lowest, the last highest. Queries then compare and order the
+    stored member strings by that rank; values are never remapped. Unordered,
+    the field is omitted from the canonical bytes, so existing digests hold.
+    """
+
     kind: Literal["enum"] = "enum"
     members: tuple[str, ...] = Field(min_length=1, max_length=MAX_ENUM_MEMBERS)
+    ordered: StrictBool = Field(default=False, exclude_if=_not_true)
+
+    def rank(self, member: object) -> int | None:
+        """The declared rank of ``member`` (0 is lowest), or None when not a member."""
+
+        if not isinstance(member, str):
+            return None
+        try:
+            return self.members.index(member)
+        except ValueError:
+            return None
 
     @field_validator("members")
     @classmethod
@@ -574,7 +597,7 @@ def _read_type(reader: _Spelling, depth: int = 0) -> dict[str, Any]:
         return {"kind": name, **_read_refinement(reader, ("min", "max"), numeric=name)}
     if name in _SIMPLE_TYPES:
         return {"kind": name}
-    if name == "enum":
+    if name in ("enum", "ordered_enum"):
         try:
             reader.take("sym", "[")
             members = [_read_literal_text(reader)]
@@ -584,6 +607,8 @@ def _read_type(reader: _Spelling, depth: int = 0) -> dict[str, Any]:
             reader.take("sym", "]")
         except ContractFormatError as error:
             raise ContractFormatError(str(error) + _enum_spelling_hint(reader.text)) from error
+        if name == "ordered_enum":
+            return {"kind": "enum", "members": members, "ordered": True}
         return {"kind": "enum", "members": members}
     if name == "enum_of":
         if reader.at_symbol(":"):
@@ -683,7 +708,7 @@ def _read_ref(reader: _Spelling) -> dict[str, Any]:
 def _enum_spelling_hint(text: str) -> str:
     """The repair for an enum spelling that does not read, else nothing."""
 
-    if not text.lstrip().startswith("enum"):
+    if not text.lstrip().startswith(("enum", "ordered_enum")):
         return ""
     return (
         ": quote a member that is not a plain name or number, such as a version "
@@ -789,7 +814,8 @@ def render_type(field_type: FieldType) -> str:
         high = "" if field_type.max is None else str(field_type.max)
         return f"{kind}{{{low}..{high}}}"
     if isinstance(field_type, EnumType):
-        return "enum[" + ", ".join(json.dumps(member) for member in field_type.members) + "]"
+        spelled = ", ".join(json.dumps(member) for member in field_type.members)
+        return ("ordered_enum[" if field_type.ordered else "enum[") + spelled + "]"
     if isinstance(field_type, EnumOfType):
         return f"enum_of {field_type.claim_type}"
     if isinstance(field_type, ListType):
@@ -836,6 +862,24 @@ def subject_value_kinds(value: FieldType | None) -> tuple[str, ...]:
 
 def value_members(value: FieldType | None) -> tuple[str, ...]:
     return value.members if isinstance(value, EnumType) else ()
+
+
+def ordered_enum(value: FieldType | None) -> EnumType | None:
+    """``value`` when it is an ordered enum (members in ascending rank), else None."""
+
+    return value if isinstance(value, EnumType) and value.ordered else None
+
+
+def declares_ordered_enum(value: FieldType) -> bool:
+    """Whether ``value`` declares an ordered enum anywhere (compiler revision 74)."""
+
+    if isinstance(value, EnumType):
+        return value.ordered
+    if isinstance(value, ListType):
+        return declares_ordered_enum(value.item)
+    if isinstance(value, FieldResultType):
+        return declares_ordered_enum(value.value)
+    return False
 
 
 def claim_has_line_break(value: object) -> bool:
@@ -2219,11 +2263,15 @@ def edge_refusal(src: FieldType, dst: FieldType, *, via: EdgeVia | None = None) 
             else ("the source decimal range is wider than the destination's")
         )
     if isinstance(src, EnumType) and isinstance(dst, EnumType):
-        return (
-            None
-            if set(src.members) <= set(dst.members)
-            else ("the source enum has members the destination does not")
-        )
+        if not set(src.members) <= set(dst.members):
+            return "the source enum has members the destination does not"
+        if src.ordered and dst.ordered:
+            # Both rank their members: the destination must keep the source's order,
+            # or a comparison would change meaning across the edge.
+            ranks = [dst.members.index(member) for member in src.members]
+            if ranks != sorted(ranks):
+                return "the destination enum ranks the source's members in another order"
+        return None
     if isinstance(src, ListType) and isinstance(dst, ListType):
         if src.max_items > dst.max_items:
             return "the source list may hold more items than the destination admits"
@@ -2612,6 +2660,8 @@ __all__ = [
     "DurationType",
     "EnumOfType",
     "EnumType",
+    "declares_ordered_enum",
+    "ordered_enum",
     "FieldAbsent",
     "FieldInvalid",
     "FieldPresent",

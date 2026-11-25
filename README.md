@@ -9,22 +9,26 @@
 
 # Cruxible
 
-**Cruxible is a state layer that gives your agents and teams a shared model of what they believe to be true.**
+**Make every agent persistent.**
+
+Cruxible lets your agents treat domain knowledge like what they're already good
+at: typed, Git-versioned, reviewable code, so every run compounds instead of
+starting from scratch.
 
 It lets you:
 
-- **Accumulate evidence-backed knowledge** — agents and people build on what's
-  already verified instead of starting from scratch or overwriting each other,
-  recording typed facts and judgments through a Python SDK, MCP, or CLI with
-  citations and signed review.
-- **Keep it current automatically** — autonomous pipelines pull from APIs,
+- **Model domain knowledge like code:** agents and teams record typed facts and
+  judgments with citations, signed review, and per-field history through a
+  typed Python SDK, MCP, or CLI, building on what is already verified instead
+  of rediscovering or overwriting it.
+- **Keep it current automatically:** autonomous pipelines pull from APIs,
   scanners, static analyzers, or custom models on a schedule or trigger,
   without an agent in the loop.
-- **Draw attention only to what changed** — when an input moves, only the
-  affected facts and judgments surface for review; everything else stays
-  current and untouched.
+- **Surface only what changed:** when an input moves, only the affected claims
+  and judgments surface for review; everything else stays current and
+  untouched.
 
-Cruxible doesn't replace your Markdown notes, code, or databases—prose and
+Cruxible does not replace your Markdown notes, code, or databases. Prose and
 source records stay where they live, while Cruxible holds the typed claims
 pointing to them and tracks when they change.
 
@@ -210,15 +214,25 @@ Cruxible combines typed state, linked prose, and deterministic automation:
 
 ## Use it from your agent
 
-One daemon owns the state; three clients talk to it:
+One daemon owns the state; three clients talk to it. Pick by what the agent
+can run:
 
-- **MCP:** configure your MCP client to launch `cruxible mcp` (`uvx cruxible
-  mcp` from the registry listing). See [MCP tools](docs/mcp-tools.md).
-- **CLI:** every command above, with `--json` for scripts and shell-capable
-  agents. See the [CLI reference](docs/cli-reference.md).
-- **Python SDK:** `cruxible-client`, installed with `cruxible`, loads your
-  vocabulary into typed Python handles and atomic write batches. See the
+- **Python SDK, for any agent that can run code:** the primary authoring
+  surface. `cruxible-client`, installed with `cruxible`, loads your vocabulary
+  into typed Python handles and atomic write batches: kinds, fields and enum
+  members are closed types (`.cruxible/world.pyi`), and `define()`,
+  `AuthoredSection` and `based_on` replace hand-written JSON. `cruxible python
+  script.py` (or `-c`, or `-` for a heredoc) runs a script with the CLI's own
+  interpreter and SDK from any repository, Go, Rust or TypeScript included,
+  with nothing installed there. See the
   [SDK reference](packages/cruxible-client/README.md).
+- **MCP, for agents without a code environment:** configure your MCP client to
+  launch `cruxible mcp` (`uvx cruxible mcp` from the registry listing). See
+  [MCP tools](docs/mcp-tools.md).
+- **CLI, for the shell, people and backup:** `orient`, `next`, `proposal
+  review` and every command above, with `--json` for scripts; `cruxible write
+  --example` prints a worked write file. See the
+  [CLI reference](docs/cli-reference.md).
 
 All three share the same verbs: `orient`, `query` and `get` read; `set` and
 `write` change values; `authoring` changes definitions. `cruxible init` starts

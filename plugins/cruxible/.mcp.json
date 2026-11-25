@@ -5,7 +5,7 @@
       "command": "uvx",
       "args": [
         "--from",
-        "cruxible==0.5.1",
+        "cruxible==0.6.0",
         "cruxible",
         "mcp"
       ],

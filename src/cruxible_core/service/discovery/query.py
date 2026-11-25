@@ -45,6 +45,7 @@ from cruxible_client.contracts.query.results import (
     QueryArtifactDefinition,
     QueryExecutionReceipt,
 )
+from cruxible_client.contracts.shapes import EnumType
 from cruxible_client.contracts.subjects import AcceptedSubject, parse_subject, subject_digest
 from cruxible_core.errors import DataValidationError
 from cruxible_core.evidence.claim_reobservations import (
@@ -231,6 +232,7 @@ def _fact_row(
         cardinality=claim_type.cardinality,
         canonical_form=effective_canonical_form(claim_type),
         key_normalizer=_key_normalizer(tree, claim_type, key_normalizers),
+        value_enum=claim_type.value if isinstance(claim_type.value, EnumType) else None,
     )
     keys = None if reobservation_keys is None else reobservation_keys(claim, captures)
     if keys is not None and isinstance(instance, PlaybillInstance):
@@ -908,6 +910,7 @@ def _operand_probe(
     canonical_forms: Mapping[str, tuple[str, ...]],
     key_normalizers: Mapping[str, KeyNormalizer],
     connection: Any,
+    enum_types: Mapping[str, EnumType] | None = None,
 ) -> OperandProbe | None:
     """The evaluator's operand coercion for planning, over the bound projection."""
 
@@ -922,6 +925,7 @@ def _operand_probe(
         canonical_forms=canonical_forms,
         key_normalizers=key_normalizers,
         resolve_reference=reference_resolver(lambda: nullcontext(connection)),
+        enum_types=enum_types,
     )
 
 
@@ -989,6 +993,7 @@ def evaluate_accepted_query(
     selection = None
     canonical_forms = None
     key_normalizers: dict[str, KeyNormalizer] | None = None
+    enum_types: dict[str, EnumType] | None = None
     if facts is None:
         with instance.bind_accepted_projection(coordinate) as projection:
             connection = projection.typed.connection
@@ -1000,6 +1005,19 @@ def evaluate_accepted_query(
             forms: dict[str, tuple[str, ...]] = {}
             normalizers: dict[str, KeyNormalizer] = {}
             kinds = tree_subject_kind_reader(tree)
+            # Each referenced ClaimType's enum value, live Claims or not: an
+            # ordering comparison's rank (or refusal) never depends on the rows.
+            # One tree read per referenced predicate.
+            enum_types = {}
+            parsed: dict[str, ClaimType] = {}
+            for predicate in definition.query.referenced_predicates:
+                path = claim_type_path(predicate)
+                type_bytes = tree.get(path)
+                if type_bytes is not None:
+                    parsed[predicate] = parse_claim_type(type_bytes, path=path)
+                    value = parsed[predicate].value
+                    if isinstance(value, EnumType):
+                        enum_types[predicate] = value
             for predicate in definition.query.referenced_predicates:
                 if (
                     connection.execute(
@@ -1009,7 +1027,7 @@ def evaluate_accepted_query(
                     is not None
                 ):
                     path = claim_type_path(predicate)
-                    claim_type = parse_claim_type(tree[path], path=path)
+                    claim_type = parsed.get(predicate) or parse_claim_type(tree[path], path=path)
                     form = effective_canonical_form(claim_type)
                     if form:
                         forms[predicate] = form
@@ -1030,6 +1048,7 @@ def evaluate_accepted_query(
                     canonical_forms=forms,
                     key_normalizers=normalizers,
                     connection=connection,
+                    enum_types=enum_types,
                 ),
             )
             if selection is not None:
@@ -1073,6 +1092,7 @@ def evaluate_accepted_query(
         canonical_forms=canonical_forms,
         procedure_read=procedure_read,
         key_normalizers=key_normalizers,
+        enum_types=enum_types,
     )
 
 

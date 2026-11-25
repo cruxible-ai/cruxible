@@ -45,11 +45,11 @@ kit's vocabulary without writing anything.
 
 Setting up follows the user's agreement. `cruxible init` attaches the project
 and installs the base kit under a single owner (`self_approval_allowed`) by
-default. For independent review, pass a second reviewing principal
-(`cruxible init --principal-id owner --reviewer-key-dir DIR
---require-independent-approval`, the key directory outside the repository, or
-`cruxible_init` with `reviewer_id="reviewer"` and
-`require_independent_approval=true`): nothing its author proposed activates
+default. For independent review, `cruxible init --require-independent-approval` also
+creates a second principal, `reviewer`, with its key in the per-user config
+path (`--reviewer-key-dir DIR` to choose another, outside the repository), or
+use `cruxible_init` with `reviewer_id="reviewer"` and
+`require_independent_approval=true`: nothing its author proposed activates
 until the reviewer, normally a separate agent session, approves it. Which one
 is the user's choice; `cruxible next` shows what waits for whom. The first
 vocabulary goes in `.cruxible/vocabulary.yaml` (`cruxible vocabulary export`,

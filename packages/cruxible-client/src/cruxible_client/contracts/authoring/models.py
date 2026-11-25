@@ -105,7 +105,7 @@ from cruxible_client.contracts.subject_kinds import (
     key_value_problem,
 )
 from cruxible_client.contracts.subjects import SubjectShell
-from cruxible_client.contracts.temporal import ensure_utc, format_datetime
+from cruxible_client.contracts.temporal import ensure_utc, format_datetime, parse_validity_span
 from cruxible_client.contracts.triggers import (
     CadenceSchedule,
     CronSchedule,
@@ -139,9 +139,9 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # Before this lineage's first public release, a version's digest may be re-pinned
 # only with its audited snapshot, SDK handshake, and digest guardrail in the same
 # commit. After first public release, every contract change must succeed the version.
-AUTHORING_SDK_VERSION = "0.5.1"
+AUTHORING_SDK_VERSION = "0.6.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:4548bb98236807ed719cb93414c8de90599a7ac11422a112394f09198088807e"
+    "sha256:52f69a111d8ff3ee06cbdc2714546aa9512369b56f9722ab9cf39088ddacf02f"
 )
 
 MAX_DIAGNOSTICS = 128
@@ -535,8 +535,15 @@ class WorkingAnchorWindow(_StrictAuthoringModel):
     @field_validator("anchor")
     @classmethod
     def _anchor(cls, value: str) -> str:
-        if not value or value.strip() != value:
-            raise ValueError("working selection anchor must be nonblank and normalized")
+        # Leading indentation (spaces, tabs) is kept: it tells equal code lines
+        # at different depths apart. Trailing whitespace and a leading line
+        # break are not part of a quoted anchor.
+        indented = value.lstrip(" \t")
+        if not value.strip() or value.rstrip() != value or indented.lstrip() != indented:
+            raise ValueError(
+                "working selection anchor must be nonblank, with no trailing whitespace "
+                "and no leading line break"
+            )
         return value
 
     @model_validator(mode="after")
@@ -745,8 +752,26 @@ class ClaimAuthoringPayload(_StrictAuthoringModel):
     procedure_evidence: ClaimEvidenceReceipt | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    #: The Claims (``CLM-...``) this one rests on, each pinned ``based-on`` at its
+    #: current version (compiler revision 74). Omitted: a revision keeps the
+    #: based-on pins it revises, stale or not. Given: they replace them, so an
+    #: empty list drops every one and naming a Claim again re-pins its current
+    #: version (which clears ``claim_dependency_stale``).
+    based_on: tuple[str, ...] | None = Field(default=None, exclude_if=lambda value: value is None)
 
     _replaces = field_validator("replaces_citations")(_replaced_citations)
+
+    @field_validator("based_on")
+    @classmethod
+    def _based_on(cls, value: tuple[str, ...] | None) -> tuple[str, ...] | None:
+        if value is None:
+            return None
+        names = tuple(item.removeprefix("Claim:") for item in value)
+        for name in names:
+            claim_path(name)
+        if names != tuple(sorted(set(names), key=lambda item: item.encode("ascii"))):
+            raise ValueError("based_on names Claims sorted and once each")
+        return names
 
     @model_serializer(mode="wrap")
     def _preserve_location_presence(self, handler: Any) -> dict[str, object]:
@@ -994,8 +1019,43 @@ class MandateConditionAuthoring(_StrictAuthoringModel):
     fallback: Literal["refuse", "propose"]
 
 
+#: ``valid_from``, ``expires_at`` and ``expires`` on a Mandate's authoring input.
+MANDATE_VALIDITY_DESCRIPTION = (
+    "Give exactly one of expires_at (an instant) or expires (a span: 36h, 90d, 12w, 1y, "
+    "P90D). valid_from defaults to the intent's time; expires counts from valid_from."
+)
+
+
+def mandate_validity_problem(
+    valid_from: datetime | None, expires_at: datetime | None, expires: str | None
+) -> str | None:
+    """Why a Mandate's authored validity is not one window, or ``None``.
+
+    Exactly one of ``expires_at`` and ``expires``; ``expires`` must parse as a
+    span. Lowering makes both instants concrete (``valid_from`` defaults to the
+    intent's timestamp), so a stored Mandate never carries a span.
+    """
+
+    del valid_from
+    if expires_at is None and expires is None:
+        return "procedure_mandate validity: give expires_at (an instant) or expires (a span)"
+    if expires_at is not None and expires is not None:
+        return "procedure_mandate validity: give expires_at or expires, not both"
+    if expires is not None:
+        try:
+            parse_validity_span(expires)
+        except ValueError as exc:
+            return f"procedure_mandate expires: {exc}"
+    return None
+
+
 class ProcedureMandateAuthoringPayload(_StrictAuthoringModel):
-    """Decision-only grant input; lowering owns every exact digest it pins."""
+    """Decision-only grant input; lowering owns every exact digest it pins.
+
+    The validity window is exactly one of ``expires_at`` or ``expires`` (a
+    span such as ``90d``); ``valid_from`` omitted is the intent's timestamp.
+    Lowering stores both as concrete UTC instants.
+    """
 
     tag: Literal["cruxible-procedure-mandate-authoring-payload-v3"] = (
         "cruxible-procedure-mandate-authoring-payload-v3"
@@ -1003,10 +1063,17 @@ class ProcedureMandateAuthoringPayload(_StrictAuthoringModel):
     name: str
     line_name: str
     grants: Literal["propose", "settle"]
-    namespace: tuple[str, ...]
-    valid_from: datetime
-    expires_at: datetime
-    scope: tuple[MandateScopeAuthoring, ...] = ()
+    #: Omitted with ``scope: observations``: lowering reaches ``claims``.
+    namespace: tuple[str, ...] = ()
+    valid_from: datetime | None = Field(default=None, exclude_if=lambda value: value is None)
+    expires_at: datetime | None = Field(default=None, exclude_if=lambda value: value is None)
+    #: A span (``36h``, ``90d``, ``12w``, ``1y``, ``P90D``) from ``valid_from``.
+    expires: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    #: Per ClaimType, or ``observations``: one grant over every observation-only
+    #: ClaimType the Line's Procedure writes, lowered to that exact per-ClaimType scope.
+    scope: tuple[MandateScopeAuthoring, ...] | Literal["observations"] = ()
+    #: ``scope: observations`` only: also settle values on basis ``derived``.
+    include_derived: bool = Field(default=False, exclude_if=lambda value: not value)
     subject_scope: tuple[SemanticAddress, ...] | None = None
     #: ``expected``: every target lies within the Line's claims templates' fence.
     subjects: Literal["expected"] | None = None
@@ -1015,6 +1082,13 @@ class ProcedureMandateAuthoringPayload(_StrictAuthoringModel):
     subject_creation: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
     suspended: bool = False
     retire: bool = False
+
+    @model_validator(mode="after")
+    def _validity(self) -> ProcedureMandateAuthoringPayload:
+        problem = mandate_validity_problem(self.valid_from, self.expires_at, self.expires)
+        if problem is not None:
+            raise ValueError(problem)
+        return self
 
 
 class CaptureContractAuthoringPayload(_StrictAuthoringModel):
@@ -1152,10 +1226,11 @@ class TriggerAuthoringPayload(_StrictAuthoringModel):
 
 
 class RunbookStepAuthoring(_StrictAuthoringModel):
-    """One Runbook step: exactly one of an accepted Line (by name) or a registered action."""
+    """One Runbook step: exactly one of an accepted Line, a registered action, or a Procedure."""
 
     line: str | None = Field(default=None, exclude_if=lambda value: value is None)
     action: InternalActionName | None = Field(default=None, exclude_if=lambda value: value is None)
+    procedure: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @field_validator("line")
     @classmethod
@@ -1164,19 +1239,27 @@ class RunbookStepAuthoring(_StrictAuthoringModel):
             ArtifactIdentity(kind="Line", name=value)
         return value
 
+    @field_validator("procedure")
+    @classmethod
+    def _procedure(cls, value: str | None) -> str | None:
+        if value is not None:
+            ArtifactIdentity(kind="Procedure", name=value)
+        return value
+
     @model_validator(mode="after")
     def _one(self) -> "RunbookStepAuthoring":
-        if (self.line is None) == (self.action is None):
-            raise ValueError("a Runbook step names exactly one of line or action")
+        if sum(item is not None for item in (self.line, self.action, self.procedure)) != 1:
+            raise ValueError("a Runbook step names exactly one of line, action or procedure")
         return self
 
 
 class RunbookAuthoringPayload(_StrictAuthoringModel):
-    """One Runbook decision (D-R36): an ordered list of Lines and internal actions.
+    """One Runbook decision (D-R36): an ordered list of Lines, Procedures and internal actions.
 
     No branching, no parameters of its own and no new action kinds: each Line
     step runs as that Line's manual occurrence, on its own parameters and
-    authority. ``retire`` retires the accepted Runbook (``steps`` then unused).
+    authority; a Procedure step runs every live Line of that Procedure, in
+    Line-name order. ``retire`` retires the accepted Runbook (``steps`` then unused).
     """
 
     tag: Literal["cruxible-runbook-authoring-payload-v1"] = "cruxible-runbook-authoring-payload-v1"
@@ -2710,6 +2793,8 @@ class BlockDetachResult(_StrictAuthoringModel):
 
 __all__ = [
     "BlockDetachResult",
+    "MANDATE_VALIDITY_DESCRIPTION",
+    "mandate_validity_problem",
     "AUTHORING_INTENT_ID_RE",
     "AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST",
     "AUTHORING_SDK_VERSION",

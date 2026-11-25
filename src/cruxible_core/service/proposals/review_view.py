@@ -12,7 +12,7 @@ import json
 from collections.abc import Callable, Mapping
 from typing import Any, Literal, cast
 
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter
 
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_path
@@ -26,6 +26,7 @@ from cruxible_client.contracts.procedures.line_specs import LineSpec
 from cruxible_client.contracts.proposal_summary import (
     REVIEW_CITATIONS_MAX,
     REVIEW_CITED_TEXT_MAX_CHARS,
+    ReviewBasedOn,
     ReviewChange,
     ReviewCitation,
     ReviewClaimTypeDefinition,
@@ -38,9 +39,17 @@ from cruxible_client.contracts.proposal_summary import (
     ReviewLink,
     ReviewMandateDefinition,
     ReviewNoteDefinition,
+    ReviewProviderDefinition,
+    ReviewProviderOperation,
     ReviewRunbookDefinition,
     ReviewSummaryValue,
     ReviewTriggerDefinition,
+)
+from cruxible_client.contracts.providers import (
+    NamedProviderBuild,
+    NamedProviderIdentity,
+    ProviderAny,
+    ProviderV2,
 )
 from cruxible_client.contracts.public_names import public_name
 from cruxible_client.contracts.read_values import summary_value, whole_value_read
@@ -59,8 +68,17 @@ _ACTION: dict[str, Literal["created", "revised", "retired"]] = {
     "delete": "retired",
 }
 #: Definitions with a text block come first, in this order; the rest by kind.
-_DETAIL_ORDER = {"line": 0, "procedure-mandate": 1, "runbook": 2, "trigger": 3}
+#: Providers come first so combined kit/provider proposals never hide added
+#: provider operations or external egress behind paginated kit definitions.
+_DETAIL_ORDER = {
+    "provider": 0,
+    "line": 1,
+    "procedure-mandate": 2,
+    "runbook": 3,
+    "trigger": 4,
+}
 _SERVICE_ACCESS = BodyAccessContext(principal_id="playbill-review-view", can_read_body=True)
+_PROVIDER: TypeAdapter[ProviderAny] = TypeAdapter(ProviderAny)
 
 
 def _value(value: Any, limit: int = 1024) -> ReviewSummaryValue:
@@ -114,6 +132,59 @@ def _claim_id(path: str) -> str:
     return path.rsplit("/", 1)[-1].removesuffix(".json")
 
 
+def based_on_claim_ids(artifact: Mapping[str, Any] | None) -> tuple[str, ...]:
+    """The Claims a stored Claim artifact's ``based-on`` pins name, in pin order."""
+
+    from cruxible_client.contracts.claims import BASED_ON_CLAIM_PIN_ROLE
+
+    found: list[str] = []
+    for pin in (artifact or {}).get("pins", ()):
+        if not isinstance(pin, Mapping) or pin.get("role") != BASED_ON_CLAIM_PIN_ROLE:
+            continue
+        target = pin.get("target")
+        name = target.get("name") if isinstance(target, Mapping) else None
+        if isinstance(name, str) and name not in found:
+            found.append(name)
+    return tuple(found)
+
+
+def based_on_rows(
+    claim_ids: tuple[str, ...], read: Callable[[tuple[str, ...]], Mapping[str, bytes]]
+) -> list[dict[str, str]]:
+    """Each pinned Claim with the Subject and field it is about, where its artifact reads.
+
+    ``read`` maps Claim paths to their stored bytes in the tree the pins resolve
+    in (one batched read per call); an unreadable Claim keeps only its id.
+    Cost: one read of the pinned Claims, bounded by the pins of one Claim.
+    """
+
+    from cruxible_client.contracts.claims import claim_path
+
+    if not claim_ids:
+        return []
+    paths: dict[str, str] = {}
+    for claim in claim_ids:
+        try:
+            paths[claim] = claim_path(claim)
+        except ValueError:
+            continue
+    contents = read(tuple(paths.values())) if paths else {}
+    rows: list[dict[str, str]] = []
+    for claim in claim_ids:
+        row = {"claim": claim}
+        content = contents.get(paths.get(claim, ""))
+        if content is not None:
+            try:
+                statement = json.loads(content)["statement"]
+                kind, subject = _subject_ref(str(statement["subject"]["artifact_path"]))
+                row["subject"] = subject
+                row["field"] = _field(str(statement["predicate"]), kind)
+            except (KeyError, TypeError, ValueError):
+                pass
+        rows.append(row)
+    return rows
+
+
 def _live(artifact: Mapping[str, Any] | None) -> bool:
     return artifact is not None and artifact.get("lifecycle", {}).get("state", "live") == "live"
 
@@ -146,8 +217,13 @@ def claim_change_row(
     verdict: str | None,
     cardinality: Callable[[str], str | None],
     base_oid: str,
+    read_claims: Callable[[tuple[str, ...]], Mapping[str, bytes]] | None = None,
 ) -> tuple[tuple[str, ...], str, str | None, str, dict[str, Any]]:
-    """One Claim member as a change row: (sort key, Subject kind, field, op, stored data)."""
+    """One Claim member as a change row: (sort key, Subject kind, field, op, stored data).
+
+    ``read_claims`` reads Claim paths in the candidate's tree, so each
+    ``based_on`` pin is stored with the Subject and field it is about.
+    """
 
     artifact = new if new is not None else old
     assert artifact is not None
@@ -219,6 +295,9 @@ def claim_change_row(
         "citations": citations,
         "spans": [list(span) for span in spans],
     }
+    pinned = based_on_claim_ids(new) if op != "retire" else ()
+    if pinned:
+        data["based_on"] = based_on_rows(pinned, read_claims or (lambda paths: {}))
     return (subject, "1", field, claim), kind, field, op, data
 
 
@@ -370,6 +449,7 @@ def review_change(
         rationale=rationale,
         citations=shown,
         citations_more=max(0, len(citations) - REVIEW_CITATIONS_MAX),
+        based_on=tuple(ReviewBasedOn.model_validate(item) for item in data.get("based_on", ())),
     )
 
 
@@ -449,10 +529,11 @@ def _mandate_detail(mandate: ProcedureMandate) -> ReviewMandateDefinition:
 
 
 def _step(step: object) -> str:
-    if isinstance(step, LineTarget):
-        return step.line.target.qualified
-    if isinstance(step, ActionTarget):
-        return f"action:{step.action}"
+    from cruxible_client.contracts.runbooks import ProcedureTarget
+    from cruxible_client.contracts.text_display import runbook_target_text
+
+    if isinstance(step, (LineTarget, ProcedureTarget, ActionTarget)):
+        return runbook_target_text(step)
     return str(step)
 
 
@@ -516,9 +597,54 @@ def _note_detail(note: Note) -> ReviewNoteDefinition:
     )
 
 
+def _provider_detail(provider: ProviderAny) -> ReviewProviderDefinition:
+    """The package a Provider build runs, and each operation with where it may reach."""
+
+    if isinstance(provider, NamedProviderBuild | NamedProviderIdentity):
+        captures = [ref.target.qualified for ref in provider.capture_contracts]
+    else:
+        captures = [pin.target.qualified for pin in provider.pins if pin.role == "capture-contract"]
+    package = version = None
+    materialization: Literal["registry", "local"] | None = None
+    operations: list[ReviewProviderOperation] = []
+    if isinstance(provider, ProviderV2):
+        runtime = provider.runtime_artifact
+        package, version = runtime.distribution.name, runtime.distribution.version
+        materialization = runtime.distribution.materialization_source
+        rows = {item.entrypoint: item for item in runtime.manifest.implementations}
+        for operation in provider.operations:
+            row = rows.get(operation.entrypoint)
+            operations.append(
+                ReviewProviderOperation(
+                    name=operation.name,
+                    effect=operation.effect,
+                    serves=operation.serves,
+                    # The field's wire name is ``in``, as on the build itself.
+                    **{"in": operation.in_.spelling},
+                    out=operation.out.spelling,
+                    may_truncate=operation.may_truncate,
+                    entrypoint=operation.entrypoint,
+                    declared_endpoints=() if row is None else row.declared_endpoints,
+                    requires_extras=() if row is None else row.requires_extras,
+                )
+            )
+    return ReviewProviderDefinition(
+        provider=provider.provider_name,
+        build=provider.build_key,
+        control_domain=provider.control_domain,
+        package=package,
+        version=version,
+        materialization=materialization,
+        capture_contracts=tuple(
+            public_name(name).removeprefix("CaptureContract:") for name in captures
+        ),
+        operations=tuple(operations),
+    )
+
+
 def _detail(artifact_kind: str, artifact: Mapping[str, Any]) -> ReviewDefinitionDetail | None:
-    """The typed text block of a Line, Mandate, Runbook, Trigger, ClaimType, Document or
-    note; None for other kinds."""
+    """The typed text block of a Line, Mandate, Runbook, Trigger, ClaimType, Document,
+    note or Provider; None for other kinds."""
 
     parse: dict[str, Callable[[Mapping[str, Any]], BaseModel]] = {
         "line": lambda item: _line_detail(LineSpec.model_validate(item)),
@@ -531,6 +657,7 @@ def _detail(artifact_kind: str, artifact: Mapping[str, Any]) -> ReviewDefinition
         "claim-type": lambda item: _claim_type_detail(ClaimType.model_validate(item)),
         "document": lambda item: _document_detail(DocumentShell.model_validate(item)),
         "note": lambda item: _note_detail(Note.model_validate(item)),
+        "provider": lambda item: _provider_detail(_PROVIDER.validate_python(item)),
     }
     builder = parse.get(artifact_kind)
     if builder is None:
@@ -550,10 +677,12 @@ def definition_row(
     new: Mapping[str, Any] | None,
     before: Mapping[str, Any] | None,
     after: Mapping[str, Any] | None,
+    carry: str | None = None,
 ) -> tuple[tuple[Any, ...], dict[str, Any]]:
     """One definition member: (sort key, the stored ``ReviewDefinition``).
 
-    ``before`` and ``after`` are a revision's changed top-level fields only.
+    ``before`` and ``after`` are a revision's changed top-level fields only;
+    ``carry`` is a carried Mandate's note (``mandate_carry_note``).
     """
 
     artifact = new if new is not None else old
@@ -562,14 +691,21 @@ def definition_row(
     action: Literal["created", "revised", "retired"] = _ACTION[disposition]
     if action == "revised" and not _live(new):
         action = "retired"
-    detail = (
-        None
-        if action == "retired"
-        or new is None
-        # A revised ClaimType lists its changed fields below instead.
-        or (artifact_kind == "claim-type" and action != "created")
-        else _detail(artifact_kind, new)
-    )
+    if artifact_kind == "provider":
+        # A Provider shows the build it adds, revises or retires: the reviewer
+        # approves (or withdraws) exactly that code and what it may reach.
+        detail = _detail(artifact_kind, artifact)
+    else:
+        detail = (
+            None
+            if action == "retired"
+            or new is None
+            # A revised ClaimType lists its changed fields below instead.
+            or (artifact_kind == "claim-type" and action != "created")
+            else _detail(artifact_kind, new)
+        )
+    if carry is not None and isinstance(detail, ReviewMandateDefinition):
+        detail = detail.model_copy(update={"carry": carry})
     changed: tuple[ReviewFieldChange, ...] = ()
     if action == "revised" and before is not None and after is not None:
         changed = tuple(
@@ -588,6 +724,31 @@ def definition_row(
     return (rank, kind, name), definition.model_dump(mode="json")
 
 
+def mandate_carry_note(
+    old: Mapping[str, Any], new: Mapping[str, Any], demotion: Callable[[], str | None]
+) -> str | None:
+    """What carrying a Mandate to its Line's successor did to its grant; None otherwise.
+
+    ``demotion`` names why a settle grant demoted (``providers.observation_carry``),
+    asked only for one that did.
+    """
+
+    try:
+        previous = ProcedureMandate.model_validate(old)
+        current = ProcedureMandate.model_validate(new)
+    except ValueError:
+        return None
+    if previous.line == current.line or current.lifecycle.state != "live":
+        return None
+    if current.grants == "settle":
+        scope = ", ".join(item.claim_type.target.name for item in current.scope)
+        return f"retains observation settle on {scope}; retains Line enablement"
+    if previous.grants != "settle":
+        return None
+    reason = demotion()
+    return "settle -> propose" + (f": {reason.replace('_', ' ')}" if reason else "")
+
+
 def subject_revision_row(path: str) -> tuple[tuple[Any, ...], dict[str, Any]]:
     """A Subject revised in place (its pins): a one-line definition row."""
 
@@ -598,10 +759,13 @@ def subject_revision_row(path: str) -> tuple[tuple[Any, ...], dict[str, Any]]:
 
 __all__ = [
     "CitedText",
+    "based_on_claim_ids",
+    "based_on_rows",
     "claim_change_row",
     "claim_type_cardinality",
     "definition_row",
     "drops_citation",
+    "mandate_carry_note",
     "review_change",
     "subject_change_row",
     "subject_revision_row",

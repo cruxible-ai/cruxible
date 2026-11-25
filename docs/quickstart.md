@@ -101,9 +101,7 @@ Mandate settles a judgment.
 
 ~~~bash
 cruxible runbook preview security.start     # what each step reads, writes and calls; runs nothing
-for l in sbom-import.app osv-query osv-unkeyed kev-triage epss-triage exposure-attention.unjudged exposure-attention.contested; do
-  cruxible line enable security.$l
-done
+cruxible line enable security.osv-unkeyed --runbook security.start   # the seven Lines
 cruxible runbook run security.start         # SBOM import, OSV, KEV, EPSS, then the attention Lines
 ~~~
 
@@ -164,17 +162,23 @@ CRUXIBLE_PRINCIPAL_ID=reviewer cruxible proposal review PROPOSAL_ID          # i
 CRUXIBLE_PRINCIPAL_ID=reviewer cruxible proposal approve PROPOSAL_ID --yes   # sign and activate it
 ~~~
 
-On a new project, `cruxible init --principal-id owner --reviewer-key-dir
-../reviewer-keys --require-independent-approval` sets up both principals and
-the policy from the start (every setup step then waits for the reviewer, as in
-the [Security walkthrough](security-walkthrough.md)). Cosign between agents on
+On a new project, `cruxible init --principal-id owner
+--require-independent-approval` sets up both principals and the policy from
+the start: every setup step then waits for the reviewer, as in the
+[Security walkthrough](security-walkthrough.md). The reviewer's key goes
+beside the owner's in your per-user config directory (`--reviewer-key-dir DIR`
+puts it elsewhere), and init prints the `cruxible context use --principal
+reviewer` that switches to it. Cosign between agents on
 one machine is a convention, not a security boundary: both keys are files your
 OS user can read. See [Review and governance](review-and-governance.md).
 
 ## 8. Bring in your agent
 
-Connect a coding agent to the same instance through MCP or the CLI
-([For AI agents](for-ai-agents.md)). Started in this project, it acts as the
+Connect a coding agent to the same instance ([For AI
+agents](for-ai-agents.md)): an agent that can run code writes through the
+typed Python SDK with `cruxible python` (vocabulary types in
+`.cruxible/world.pyi`), a general agent through MCP, and the CLI serves the
+shell and people. Started in this project, it acts as the
 owner with no further setup. `cruxible orient` and `cruxible next` show it
 what is there and what needs attention, and the kit's governed guidance
 (`cruxible get Document:security.guidance.dependency`) says how to judge an

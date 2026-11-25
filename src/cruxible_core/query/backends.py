@@ -58,6 +58,7 @@ from cruxible_client.contracts.query.definitions import (
 )
 from cruxible_client.contracts.query.grammar import byte_sorted
 from cruxible_client.contracts.query.results import QueryClaimVisibility
+from cruxible_client.contracts.shapes import EnumType
 from cruxible_client.contracts.subjects import AcceptedSubject
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 
@@ -93,6 +94,9 @@ class ClaimFactRowV1(_StrictQueryBackendModel):
     key_normalizer: KeyNormalizer | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    #: Its ClaimType's enum value, when it is one: an ordered enum compares and
+    #: orders by declared rank; ordering an unordered one refuses. Omitted otherwise.
+    value_enum: EnumType | None = Field(default=None, exclude_if=lambda value: value is None)
     #: How to read the recorded re-observations of content this Claim cites at
     #: an evaluation instant (``evidence.claim_reobservations``). Not part of the
     #: row's bytes: set only for a lineage that was re-observed.

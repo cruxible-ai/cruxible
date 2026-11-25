@@ -145,9 +145,11 @@ def test_every_command_defined_in_the_commands_package_is_reachable() -> None:
     # First-run adds rebind; Capture erasure adds capture erase; `console` adds one;
     # the vocabulary file adds `vocabulary export|plan|apply`; the six `curation`
     # verbs left with 0.5.0 and the duplicates audit came back as `duplicates`;
-    # `link` adds one; `python` adds one.
-    assert len(leaf_claims) == 117, (
-        f"expected 117 Cruxible/host leaf commands, found {len(leaf_claims)}"
+    # `link` adds one; `python` adds one; `line grant` adds one; `provider publish` adds one;
+    # `section` (read one workspace section) adds one; kit recipes and scripts add
+    # `kit adopt` and `kit run`.
+    assert len(leaf_claims) == 122, (
+        f"expected 122 Cruxible/host leaf commands, found {len(leaf_claims)}"
     )
 
     reachable = set(leaf_claims)
@@ -188,7 +190,8 @@ def test_every_lazy_map_entry_points_at_the_kind_of_object_it_claims() -> None:
 
 
 def test_line_help_lists_exactly_the_line_verbs_each_with_help() -> None:
-    """`line status` folded into `get Line:<name>`; `line check` is `line evaluate --dry-run`."""
+    """`line status` folded into `get Line:<name>`; `line check` is `line evaluate --dry-run`;
+    `line grant` writes the one observation settle Mandate."""
 
     from click.testing import CliRunner
 
@@ -201,7 +204,7 @@ def test_line_help_lists_exactly_the_line_verbs_each_with_help() -> None:
     # A verb row is indented two spaces; a wrapped summary continues deeper.
     rows = [row for row in listed.splitlines() if row.startswith("  ") and row[2] != " "]
     verbs = {row.split()[0]: row.split(None, 1)[1:] for row in rows}
-    assert set(verbs) == {"enable", "disable", "run", "evaluate", "dispatch"}, shown.output
+    assert set(verbs) == {"enable", "disable", "run", "evaluate", "dispatch", "grant"}, shown.output
     assert all(summary and summary[0].strip() for summary in verbs.values()), shown.output
     for verb in verbs:
         page = runner.invoke(cli, ["line", verb, "--help"])

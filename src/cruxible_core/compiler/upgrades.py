@@ -14,17 +14,23 @@ from cruxible_client.contracts.compiler_upgrade import (
     CompilerUpgradeNotice,
 )
 from cruxible_client.contracts.errors import SettlementIntegrityError
-from cruxible_client.contracts.laws import InstalledAcceptanceLaw
+from cruxible_client.contracts.laws import (
+    COMPILER_UPGRADE_ACCEPTANCE_LAW,
+    InstalledAcceptanceLaw,
+)
 from cruxible_client.contracts.types import CompilerCoordinate
-from cruxible_core.compiler.compiler import compiler_revision_label
+from cruxible_core.compiler.compiler import (
+    COMPILER_REVISION_73,
+    CURRENT_COMPILER,
+    compiler_revision_label,
+)
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 
 #: Explicit forward edges: (source, target) -> the law that judges the
-#: transition. This release installs one compiler, so no edge exists; a future
-#: revision adds its edge from the current coordinate here, and nothing else
-#: implies permission to move.
+#: transition. Revision 73 (0.5.x) moves to revision 74; nothing else implies
+#: permission to move, and no edge leads back.
 _UPGRADE_EDGES: Mapping[tuple[CompilerCoordinate, CompilerCoordinate], InstalledAcceptanceLaw] = (
-    MappingProxyType({})
+    MappingProxyType({(COMPILER_REVISION_73, CURRENT_COMPILER): COMPILER_UPGRADE_ACCEPTANCE_LAW})
 )
 
 

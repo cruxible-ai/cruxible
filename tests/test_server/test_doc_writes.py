@@ -338,12 +338,23 @@ def test_a_write_catalogues_the_workspace_file_it_cites(playbill_http, tmp_path)
         ("app/gone.py", "x", "cruxible.doc.file_missing"),
         ("../outside.py", "x", "cruxible.doc.path_outside_workspace"),
         ("app/forms.py", "e", "cruxible.doc.anchor_not_unique"),
-        ("app/forms.py", "absent text", "cruxible.doc.anchor_not_unique"),
+        ("app/forms.py", "absent text", "cruxible.doc.anchor_not_found"),
     ):
         with pytest.raises(WriteRefusalError) as caught:
             cite(anchor=anchor, path=path)
         assert caught.value.error_code == code, (path, anchor)
         assert caught.value.repair_line, (path, anchor)
+
+    # A quoted code line keeps its indentation: an equal line at another depth
+    # does not make it a duplicate.
+    (workspace / "app" / "nested.py").write_text(
+        "def check(x):\n    if x:\n        return None\n    return None\n"
+    )
+    nested = cite(anchor="        return None", path="app/nested.py")
+    assert nested.status == "accepted", nested
+    with pytest.raises(WriteRefusalError) as caught:
+        cite(anchor="return None", path="app/nested.py")
+    assert caught.value.error_code == "cruxible.doc.anchor_not_unique"
 
 
 def _own_words_size(cx, claim_id):

@@ -520,7 +520,7 @@ def test_a_review_summary_prints_changes_and_definitions_not_json() -> None:
     expected = [
         "Values (2; showing 1):",
         "  set security.pair/p1 justification: not_in_execute_path"
-        f"  [CLM-{'e' * 32}; verdict supported]",
+        f"  [CLM-{'e' * 32}; verdict supported; role normative]",
         "    cites CAP-98cc912e1ba4 doc-notes.md#CVE-1 (own words)",
         "      | ## CVE-1",
         "      | No caller reaches it.",

@@ -50,8 +50,9 @@ def immutable_capability_error(path: str) -> RequestRefusedError:
 
 _PIN = ("*", "artifact_digest")
 # A Claim's capture-contract pins are provenance -- the exact contract versions its
-# evidence used -- so a Claim's references skip them and they never move.
-_REQUIRED_CLAIM_PIN = ("*!role=capture-contract", "artifact_digest")
+# evidence used -- and so are its based-on pins -- the exact versions of the Claims
+# its judgment rested on -- so a Claim's references skip both and they never move.
+_REQUIRED_CLAIM_PIN = ("*!role=capture-contract|based-on", "artifact_digest")
 
 # Paths are field names, with "*" stepping into each list element. For the
 # definition families every digest field is a reference; for Claims and
@@ -164,11 +165,12 @@ def _at(value: object, steps: tuple[str, ...], remap: Mapping[str, str] | None) 
         return
     head, rest = steps[0], steps[1:]
     if head.startswith("*!"):
-        # "*!field=value": every list element except those whose field equals value.
+        # "*!field=a|b": every list element except those whose field is one of them.
         field, _, excluded = head[2:].partition("=")
+        excluded_values = frozenset(excluded.split("|"))
         if isinstance(value, list):
             for item in value:
-                if not (isinstance(item, dict) and item.get(field) == excluded):
+                if not (isinstance(item, dict) and item.get(field) in excluded_values):
                     yield from _at(item, rest, remap)
         return
     if head == "*":

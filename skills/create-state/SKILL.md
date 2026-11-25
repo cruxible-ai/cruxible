@@ -55,11 +55,19 @@ PATH#TEXT`) is a pointer for reviewers, not a witness that resurfaces the
 judgment; a judgment that depends on code cites a check result where one exists
 (a scanner's finding), and prose keeps quote and section citations. Evidence belongs to each Claim: a decision and the values that
 rest on its reasoning (its date included) cite the section written in the
-same change. Preserve verdict flags instead of treating every stored value as
-supported.
+same change: `w.section(FILE, heading=..., body=...)` as `evidence=`, or CLI
+`--section FILE#Heading --section-body TEXT`. `cruxible section
+FILE#Heading/Path` reads one section a `get` card or note points to. Preserve
+verdict flags instead of treating every stored value as supported.
+
+A judgment made from observed values pins them with `--based-on` (SDK and
+write files `based_on`): a `CLM-...` id or `kind/id#field`, which the write
+resolves to that field's one live Claim. Revising a pinned Claim leaves the
+judgment standing and `next` lists it as stale until it is re-pinned.
 
 Use [guarded edits](../_shared/references/concurrent-edits.md) and
 [governance](../_shared/references/governance-flow.md) for shared or reviewed
-changes. Report the accepted references and coordinate, or the specific proposal
+changes; `cruxible init --require-independent-approval` alone creates the
+`reviewer` principal and its key. Report the accepted references and coordinate, or the specific proposal
 still awaiting acceptance. Pages and automation are additions only when the
 user's intended outcome needs them.

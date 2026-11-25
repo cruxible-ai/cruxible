@@ -652,7 +652,8 @@ def test_cli_whoami_explains_credential_binding_and_lists_open_proposals(
     assert identity.exit_code == proposals.exit_code == 0
     assert "Actor ID is the principal this bearer credential is bound to" in identity.output
     assert "governed_write" in identity.output
-    assert "open  -  sha256:" in proposals.output
+    # Human text names a proposal by its 12-character handle; --json keeps the full id.
+    assert "open  -  555555555555  " in proposals.output
     assert calls == ["whoami:inst_authoring", "proposals:inst_authoring:open"]
 
 

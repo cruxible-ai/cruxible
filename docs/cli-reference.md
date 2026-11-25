@@ -65,7 +65,7 @@ A request that names no principal acts as the implicit local operator
 names who did it: authoring and the write verbs, approve (submitting an
 approval), activate, reject, withdraw and readmit, `capture erase`, `claim
 attest`, `prediction propose` and `settle`, `instance decommission` and
-`rebuild-next`, `provider install`, `retire` and `move`, `kit build`, `add` and
+`rebuild-next`, `provider install`, `publish`, `retire` and `move`, `kit build`, `add` and
 `remove`, `compiler upgrade` and principal changes (`principal add`, `rotate`,
 `recover`, `revoke`), `procedure measure` and `dispose`, `inbox ack`, `dismiss` and `link`, the block
 declarations and observations `files add`, `block repin` and `block sync`
@@ -163,7 +163,8 @@ preview answered with, exactly as `--commit --at OID` would, so it refuses
 `cruxible.preview.state_moved` if that state moved in between; no commits
 nothing and prints the `--commit --at OID` to run later. `--yes` (on every
 command that takes `--dry-run|--commit`) commits the preview without asking,
-on a terminal or not; it refuses with `--json`, `--dry-run` or `--commit`.
+on a terminal or not; it refuses with `--json` or `--dry-run`, and beside
+`--commit`, which already commits, it changes nothing.
 Off a terminal, and with `--json`, nothing asks: the preview prints the
 `--commit --at OID` hint as before.
 
@@ -895,11 +896,17 @@ whose caller is not one of the owner principals it names is refused with
 
 Generates a client-held ordinary key outside the workspace and bootstraps the
 ledger with its public principal record. A missing `--key-dir` is created with
-mode 0700; an existing one must already exclude group and other access. An optional `--reviewer-key-dir` adds a
-second ordinary principal, `reviewer`, and writes its settings (`cruxible.env`)
-beside its key, printing the `cruxible context use --principal reviewer` that
-switches to it; pair it with `--require-independent-approval` to make
-one non-creator approval mandatory. Local key directories provide attribution
+mode 0700; an existing one must already exclude group and other access.
+`--require-independent-approval` makes one non-creator approval mandatory and
+adds a second ordinary principal, `reviewer`, to give it; `--reviewer-key-dir`
+alone adds the reviewer without the policy. The reviewer's key directory
+defaults to `$XDG_CONFIG_HOME/cruxible/keys/INSTANCE/reviewer`, beside the
+owner's, and passes the same custody checks. Init writes the reviewer's
+settings (`cruxible.env`) beside its key and prints how to act as it:
+`cruxible context use --principal reviewer`, or `CRUXIBLE_ENV_FILE=PATH` for
+another process (`--json` adds `reviewer_principal_id`,
+`reviewer_private_key_path` and `reviewer_settings_path`). An owner principal
+ID `reviewer` is refused when init makes the reviewer. Local key directories provide attribution
 and repository hygiene, not a security boundary. Organization review normally
 rides branch protection/CODEOWNERS on the state repository. The optional
 recovery key remains lifecycle-only.
@@ -1151,6 +1158,10 @@ cruxible provider move NAME --to newest|BUILD [--only Line:NAME]...
 cruxible provider retire NAME/BUILD [--dry-run|--commit] [--at OID] [--json]
 cruxible provider install NAME[==VERSION] | WHEEL [--lock FILE]
   [--dependency WHEEL]... [--extra NAME]... [--control-domain NAME] [--reverify]
+  [--move [--only Line:NAME]...] [--dry-run|--commit] [--at OID] [--json]
+cruxible provider publish FILE [--name NAME] [--version VERSION]
+  [--move [--only Line:NAME]...] [--control-domain NAME] [--runtime-wheel WHEEL]
+  [--dependency WHEEL]... [--declares FILE] [--offline]
   [--dry-run|--commit] [--at OID] [--json]
 ~~~
 
@@ -1207,6 +1218,39 @@ Installation requires the current compiler; an instance on an older one runs
 `cruxible compiler upgrade` first. Installing grants nothing: credentials,
 grants, and invocation remain separate.
 
+`--move` also moves every live Line bound to another build of the provider onto
+the installed build (`--only Line:NAME` narrows them), in the same proposal as
+the registration: exactly what `provider move NAME --to BUILD` would write once
+the build landed, judged as one change. A carried observation-only settle grant
+keeps settle (and its Line's enablement) under the same conditions as `provider
+move`; any other carried grant demotes in that proposal and says why. The
+result lists each Line moved, the automation carried and what stopped; a move
+that cannot be made is `blocked` with nothing proposed. With no Line on another
+build, `--move` installs plainly. The installation itself does not depend on
+`--move`: the same package keeps its prepared installation either way.
+
+`provider publish FILE` builds a provider from one Python file whose operations
+are `@derive` functions (`cruxible-provider-runtime` 0.6.0 and later) and
+installs it as `provider install WHEEL --lock` would. The client runs `python -m
+cruxible_provider_runtime.single_file` in the interpreter
+`CRUXIBLE_PROVIDER_RUNTIME_PYTHON` names, else from `--runtime-wheel`, else in
+its own interpreter when its runtime has the packager, else through `uv run`
+with the published runtime. The Contracts and CaptureKinds the operations
+reach are read from this instance (one `get` per shape, following each
+Contract's pins and each CaptureKind's record-set rows); `--declares` supplies
+shapes the instance does not hold and wins over the instance's copy. The file
+becomes `<module>/__init__.py` of a one-module project (the module is FILE's
+stem; the distribution and provider name default to the stem's canonical form,
+`stock_signals.py` -> `stock-signals`), which is locked with `uv lock` and
+built with `uv build --wheel` under a pinned build backend, so one file and
+pool give one wheel and one build. Without `--version` the version is
+`0.0.0.devN`, `N` taken from the digest of the file, its names and its shape
+pool. `--runtime-wheel` locks against that runtime wheel and transfers it;
+`--dependency` wheels are lock sources (`--find-links`) and are transferred;
+`--offline` locks and builds from the uv cache and those wheels. A file the
+packager refuses (it fails to import, a `@derive` is invalid, or it defines no
+operation) is reported as that typed error before anything reaches the daemon.
+
 Retries reuse the prepared installation and an open registration proposal.
 Package updates create a new environment and preserve earlier deployments.
 Runs reuse the retained verification record without hashing the environment.
@@ -1223,7 +1267,8 @@ and `POST /{instance}/providers/install`.
 ~~~text
 cruxible kit build --id ID --version X.Y.Z --owns PREFIX. [--owns PREFIX.]...
   --out KIT_DIR [--provider PACKAGE_DIR]... [--default-provider PACKAGE_DIR]...
-  [--automation-template FILE] [--file PATH]... [--json]
+  [--automation-template FILE] [--file PATH]... [--recipes FILE] [--scripts FILE]
+  [--json]
 cruxible kit add KIT [--source TEXT] [--keep IDENTITY]... [--keep-local-edits]
   [--keep-build Line:NAME]...
   [--retire-dependents IDENTITY]... [--allow-downgrade] [--detail]
@@ -1231,7 +1276,29 @@ cruxible kit add KIT [--source TEXT] [--keep IDENTITY]... [--keep-local-edits]
 cruxible kit pull REFERENCE --out DIR [--layout] [--json]
 cruxible kit status [--offline] [--json]
 cruxible kit remove ID [--detail] [--dry-run|--commit] [--at OID] [--json]
+cruxible kit adopt KIT[:RECIPE] [--list] [--param NAME=VALUE]... [--dry-run|--render]
+  [--yes] [--no-accept] [--from KIT] [--json]
+cruxible kit run KIT[:SCRIPT] [--list] [--from KIT] [--json] [-- ARGS...]
 ~~~
+
+`adopt` renders one of an installed kit's recipes (`KIT` alone names its
+`default` recipe) with the `--param` values and submits it through the ordinary
+authoring submit, under your approval policy; `--dry-run` previews, `--render`
+prints the change set, `--list` names each recipe's parameters; the preview
+names the target, each Mandate's scope and expiry, each Line's providers and
+network origins, and its `--yes` rerun line keeps the selectors you gave. `run`
+runs one of its scripts with this CLI's interpreter and connection, client-side,
+on a private verified snapshot of the kit files. A script's `mode: read_only` is
+the publisher's declaration, not a sandbox: it runs as a local Python process
+with your CLI session and environment, and the daemon governs any proposal it
+submits. Both first look up the kit's receipt, check that the client's cached
+copy (`<state-root>/kit-files/`, written by `kit add --commit` and `kit pull`;
+`CRUXIBLE_KIT_CACHE_DIR` overrides) is the installed release (its content digest
+and the receipt's bundle digest), and verify every file against the manifest's
+sha256; a missing copy is fetched from the recorded source or `--from`, and
+`--from` or `kit pull` replaces a damaged one. Refusals: `cruxible.kit.not_installed`, `cruxible.kit.cache_invalid`,
+`cruxible.kit.entry_unknown`, `cruxible.kit.recipe_param_invalid`,
+`cruxible.kit.recipe_invalid`.
 
 `KIT` is a kit directory, an OCI image layout directory, or a registry
 reference. A bare name such as `project-state:1.0.0` resolves under
@@ -1412,24 +1479,22 @@ gets names that command as its repair. `add`
 records a `kit_receipt` Document, `documents/kit-<id>.json`, with each path's
 release digest, installed digest and content digest, and the bundled packages.
 
-A kit that bundles provider packages installs them before its definitions. A
-commit stages each file in the daemon's body store (the CLI and MCP adapters do
-it; a preview stages and installs nothing and reports `would install`), then
-installs each package not yet installed through the ordinary transfer install,
-which needs the install permission (`ADMIN`) and lands when the approval policy
-requires no approval. Providers carry their own shapes, so nothing is accepted
-before the installs: the preview says a commit installs the bundled providers
-first, then proposes these definitions, which are checked against the
-installed providers. The definitions are proposed once every bundled provider
-is installed; while an install awaits approval the result is
-`awaiting_providers` with that install's proposal. The daemon records that
-kit add, and the activation that lands the last awaited install proposes the
-definitions on its own, as the principal who ran it, at the head it lands on:
-they land at once when the approval policy requires none, exactly as the
-original add would. `kit status` lists each recorded resume (`waiting`,
-`proposed` with its proposal, or `blocked` with why); a blocked one is also a
-`kit_resume_blocked` row in `next`. A later commit `kit add` of the same kit
-replaces the record. A commit first reads the staged files
+A kit that bundles provider packages proposes them together with its
+definitions, as one change. A commit stages each file in the daemon's body
+store (the CLI and MCP adapters do it; a preview stages and installs nothing
+and reports `would install`), then prepares each package not yet installed,
+which needs the install permission (`ADMIN`); preparing registers and proposes
+nothing. It then submits ONE proposal holding every missing provider build,
+the kit's definitions (checked against those builds), the Lines moved to the
+kit's builds and the kit receipt: one review lists every provider's operations
+and reach beside the definitions, and one approval lands them all in one
+generation, at once when the approval policy requires none. A provider that
+cannot be prepared refuses the add before anything is proposed. A resume left
+by an earlier version's two-step add (`awaiting_providers`) still completes:
+`kit status` lists each recorded resume (`waiting`, `proposed` with its
+proposal, or `blocked` with why), a blocked one is also a `kit_resume_blocked`
+row in `next`, and a later commit `kit add` of the same kit replaces the
+record. A commit first reads the staged files
 (metadata only), refuses `cruxible.kit.provider_manifest_mismatch` unless they
 reproduce the manifest, and refuses what the current state already decides
 (ownership overlap, a definition another installed kit owns or holds, a pinned
@@ -1877,7 +1942,9 @@ cruxible capture-contract propose --template [--expanded]
 The authored input is `{name: catalog.fetched, shape: http_response}`.
 `shape` is `http_response`, `procedure_output`, `foreign_span` or
 `database_snapshot`. Optional fields: `grade` (`observed` by default;
-`derived` for a provider derive's output, declared on `http_response`), `replay` (`attested` for HTTP,
+`derived` for a provider derive's output, declared on `procedure_output`, `http_response` or
+`foreign_span` with `json` or `csv` decoding; a `procedure_output` kind takes only a pure
+operation's output), `replay` (`attested` for HTTP,
 `exact` otherwise), `retention` (`P30D`), `erasable` (`false`), `max_bytes`
 (16777216) and `selector_privacy` (`direct_allowed` or `pseudonymous_required`).
 The engine expands the shape into stored components. The template requires no
@@ -2469,6 +2536,7 @@ cruxible query [KIND] [--where 'f=v'|'f!=v'|'f<v'|'f<=v'|'f>v'|'f>=v'|'f in a,b'
     [--limit N | --all] [--cursor C]
     [--spec FILE | --name N --param k=v ... [--budgets JSON] [--receipt compact|full]]
     [--at GIT_OID] [--evaluation-time TS] [--json]
+cruxible query NAME --param k=v ... [--budgets JSON] [--receipt compact|full]
 ~~~
 
 `query` has no subcommands: it answers any question over accepted state in one
@@ -2565,7 +2633,9 @@ past the page. Cells show each slot's answer as `get` shows it; `--status` adds 
 resolution overturned or reads ineligible, or retired ones, and `--claims` names each
 cell's Claims (ID, status, verdict, role) beneath the table. `--spec` runs a
 `QueryDefinitionSpec` file inline; `--name` with `--param` runs an accepted
-named query (`orient --section queries` lists them, `get query:NAME --detail
+named query (so does a positional NAME given `--param`, `--budgets` or
+`--receipt` and no compact option: `cruxible query security.code_facts --param
+repo=acme`) (`orient --section queries` lists them, `get query:NAME --detail
 proof` reads one), `--budgets` sets its budgets up to the definition's maximum,
 and `--receipt full` adds its replay receipt (`receipt.replay`: the Claims each
 row read, traversal paths, bound parameters, verdict, and the
@@ -2834,17 +2904,39 @@ PRD-c1… rollout-healthy procedure_unit satisfied run=RUN-3f…
 ## line
 
 ~~~text
-cruxible line enable LINE [--dry-run|--commit] [--at OID] [--yes] [--json]
+cruxible line enable [LINE]... [--runbook RUNBOOK] [--dry-run|--commit] [--at OID] [--yes]
+  [--json]
 cruxible line disable LINE [--dry-run|--commit] [--at OID] [--yes] [--json]
 cruxible line run LINE [--event FILE|-] [--repeat] [--resolution-contract FILE|-]
   [--occurrence-id ID] [--evaluation-time TS] [--parameters FILE|-] [--json]
 cruxible line evaluate LINE [--since TS --until TS] [--dry-run | --dispatch] [--limit N]
   [--cursor CURSOR] [--json]
 cruxible line dispatch LINE [--occurrence-id DIGEST] [--retry] [--limit N] [--json]
+cruxible line grant LINE --settle-observations [--include-derived] [--create-subjects KIND]...
+  [--expires SPAN|TS] [--name NAME] [--dry-run] [--no-accept] [--json]
 ~~~
 
 `enable`, `disable` and `run` are the normal flow; `evaluate` and `dispatch`
 recover what automation missed, and `cruxible next` points to them.
+`enable` takes several Lines (`LINE` or `Line:LINE`), and `--runbook RUNBOOK`
+adds every Line the Runbook's steps name, after those named, each once; a
+missing or retired Runbook, or one whose steps are all actions, refuses before
+any Line is enabled. One `LINE` alone prints its enablement as before; several
+print one receipt line per Line (enabled, already enabled, or refused with its
+code and repair) and a `Lines:` count, `--json` gives `{"lines": [...]}` with
+each Line's `enablement` or `refused`, and any refusal exits 1 after every
+Line is tried.
+`grant --settle-observations` authors one settle Mandate (`scope: observations`)
+over every ClaimType the Line's Procedure writes; each must permit only the
+observation role, and a Procedure with an `invoke` node refuses. It lowers to the
+exact per-ClaimType scope: creates and revises on `extracted` and `measured`
+(`--include-derived` adds `derived`), `retire` on `absence` for `mirror` and
+`inverse` templates, and `create`/`revise` on `absence` for `inverse`. Subject
+creation settles only for the kinds `--create-subjects` names. `--expires`
+defaults to `90d` (a span such as `30d`, `12w`, `1y`, `P90D`, or an ISO-8601
+instant); `--name` defaults to `LINE-settle`. Text output lists each pinned
+ClaimType with its change kinds and bases; the grant lands when policy and your
+tier allow, like any change set.
 Manual `run --occurrence-id` only asserts the id derived at admission, including
 that admission's daemon evaluation instant. A later retry derives a different
 manual id. Select retained pending work with `line dispatch --occurrence-id ID`,
@@ -4109,22 +4201,34 @@ scope, and operational input head remain unchanged.
 
 ~~~text
 cruxible set SUBJECT FIELD (VALUE | --none) --because TEXT
-  [--evidence-file PATH#ANCHOR | --capture CAP-HANDLE|DIGEST | --evidence-contract NAME]
+  [--evidence-file PATH#ANCHOR | --capture CAP-HANDLE|DIGEST | --evidence-contract NAME
+   | --section FILE#Heading/Path [--section-body TEXT|-] [--own-words]]
   [--role ROLE] [--contend] [--expect VALUE... | --expect-absent]
+  [--based-on CLAIM_ID... | --clear-based-on]
   [--workspace-root DIR] [--dry-run] [--no-accept] [--at GIT_OID] [--json]
 cruxible add SUBJECT FIELD VALUE [--none] --because TEXT
-  [--evidence-file PATH#ANCHOR | --capture CAP-HANDLE|DIGEST | --evidence-contract NAME]
-  [--role ROLE] [--expect-absent]
+  [--evidence-file PATH#ANCHOR | --capture CAP-HANDLE|DIGEST | --evidence-contract NAME
+   | --section FILE#Heading/Path [--section-body TEXT|-] [--own-words]]
+  [--role ROLE] [--expect-absent] [--based-on CLAIM_ID... | --clear-based-on]
   [--workspace-root DIR] [--dry-run] [--no-accept] [--at GIT_OID] [--json]
 cruxible retire TARGET [FIELD [VALUE]] --because TEXT
   [--reason was-rescinded|was-wrong|superseded] [--expect VALUE]... [--with-claims]
   [--dry-run] [--no-accept] [--at GIT_OID] [--json]
 cruxible rebind CLAIM (--file FILE#ANCHOR | --section FILE#Heading/Path | --capture CAP) --because TEXT
   [--citation HEX] [--workspace-root DIR] [--dry-run] [--no-accept] [--at GIT_OID] [--json]
-cruxible write FILE [--because TEXT] [--workspace-root DIR] [--dry-run] [--no-accept]
-  [--at GIT_OID] [--json]
+cruxible write FILE [--because TEXT] [--based-on CLAIM_ID]... [--workspace-root DIR]
+  [--dry-run] [--no-accept] [--at GIT_OID] [--json]
+cruxible write --example
 cruxible write --schema
 ~~~
+
+`set` and `add` take `--section FILE#Heading/Path` to cite a section (with
+`--own-words` when its text is yours), as `rebind` and `claim attest` do. With
+`--section-body TEXT` (`-` reads stdin) the same write appends that heading
+with the body, under its parent headings, and cites the new section: the
+one-step form of the `docs` op below, for reasoning longer than a 280-character
+`--because`. The parents must exist (a new file takes a root heading), and the
+outcome reports the file write (`docs`) as `write` does.
 
 `write` accepts `docs` with heading paths as lists. Append adds a child subtree
 (`under: []` appends at EOF); replace replaces a subtree (`section: []` selects
@@ -4185,8 +4289,12 @@ the file cannot be anchored, since any text taken from it is found more than
 once: the write refuses with the occurrences' byte offsets (`anchor resolved
 to N occurrences at byte offsets [...]`). Anchor a nearby line that is unique.
 
-Use `write - --workspace-root DIR` for stdin and `write --schema` for the
-payload schema. Docs-only writes create no change set. Accepted and
+Use `write - --workspace-root DIR` for stdin, `write --example` for a worked
+FILE to start from (a `docs` append, a `create` named by `{"created":
+label}`, a `set` with `file` evidence, `role` and `based_on`, and a `set`
+citing the appended section), and `write --schema` for the payload schema.
+With a code environment, the typed SDK through `cruxible python` writes the
+same changes without hand-written JSON. Docs-only writes create no change set. Accepted and
 awaiting-approval outcomes write files; dry runs and refusals do not. Inspect
 `docs[].written`, digests, refusal/repair, and `next`: post-admission conflicts
 retain Claims but leave the file untouched. Projection blocks and paths under
@@ -4253,6 +4361,31 @@ value of a many-valued field); `--expect-absent` expects the field to hold
 nothing. Both compose with `--at`. Each change prints
 before and after, its Claim and its verdict; a verdict other than `supported`
 prints a warning with its repair.
+
+`--based-on CLAIM_ID` (repeatable) names a Claim the value was judged from: the
+Claim is pinned at its current version (a `based-on` pin, compiler revision 74).
+Revising or retiring that Claim later never retires this one; `next` lists it
+as `claim_dependency_stale` until it is set again with `--based-on` the same
+Claim (pinning its current version), set with `--clear-based-on` (dropping the
+pins), or retired. A revision without either keeps the pins it had. A Claim
+named must be live and not the one written (`cruxible.authoring.based_on_not_found`,
+`based_on_retired`, `based_on_self`); an instance still on revision 73 refuses
+the option (`based_on_requires_compiler_upgrade`). On `write`, `--based-on`
+applies to each set and add change whose own `based_on` is unset.
+`--based-on SUBJECT#FIELD` (for example
+`sec.finding/acme-cve-2026-1234#kev_status`; the field short or as its
+predicate, the Subject by id, alias or key) names that field's one live Claim at
+the write's base, less any the same write retires; the write pins its
+`CLM-...` id, never the shorthand. A field holding none refuses
+`cruxible.write.based_on_not_found`, one holding several refuses
+`cruxible.write.based_on_ambiguous` listing their ids, and an unknown Subject or
+field refuses as `set` does (`subject_not_found`, `unknown_field`). In a write
+file the shorthand reads the field as the whole write leaves it: a set or add of
+the same write to that field is the Claim pinned (a revision under its id, a new
+Claim under the id the write mints for it), staged before the Claim that rests
+on it, and `LABEL#FIELD` names a field of the Subject a create change labels.
+Pinning the field a change itself writes refuses `based_on_self`, and changes
+resting on each other refuse `cruxible.write.based_on_cycle`.
 
 A none states that a field holds nothing: an inverse Claim, on a ClaimType
 whose `inverse` declares how (any other refuses
@@ -4345,7 +4478,7 @@ up front, a proposal, then review and activation. ClaimTypes keep their own
 `claim-type` group, because changing vocabulary disposes the Claims that
 depend on it.
 
-## note, link and backlinks
+## note, link, backlinks and section
 
 ~~~text
 cruxible note FILE --text TEXT [--under Heading/Path] --about KIND/ID [--about ...] --because WHY
@@ -4354,6 +4487,7 @@ cruxible link FILE#Heading/Path --about KIND/ID [--about ...] --because WHY [--u
 cruxible link FILE --guides ClaimType:NAME|Procedure:NAME [--guides ...] [--unlink]
   [--name NAME] [--workspace-root DIR] [--dry-run] [--no-accept] [--at GIT_OID] [--json]
 cruxible backlinks [REF | --section FILE#Heading/Path] [--limit N] [--cursor C] [--at OID] [--json]
+cruxible section FILE#Heading/Path [--workspace-root DIR] [--json]
 ~~~
 
 `cruxible note` appends TEXT (which starts with its heading) to a workspace
@@ -4410,10 +4544,20 @@ section changed since it was cited, checked against the file in the workspace
 (`changed_since_cited`, `unchanged`, or `unknown` when the file is not
 catalogued here). Pages are bounded by `--limit`; `--cursor` continues one.
 
+`cruxible section FILE#Heading/Path` reads one section of a catalogued
+Markdown file, the locator `get`, `backlinks` and floor files print (FILE a
+path or a catalog name; `FILE#` reads the preamble). It prints the section's
+own body (its heading and prose, up to its first subsection) and the
+subsections' locators; `--json` gives `file` (catalog name), `path`,
+`section`, `digest` (sha256 of those bytes, as a citation or note records
+them), `text` and `subsections`. It reads the workspace only. A miss refuses
+`cruxible.doc.section_not_found` with the nearest heading paths and the
+top-level headings; an uncatalogued file `cruxible.doc.file_not_catalogued`.
+
 ## get
 
 ~~~text
-cruxible get REF [--detail summary|evidence|why|history|incoming|pairs|runs|proof|proof-full|body]
+cruxible get REF [--detail summary|evidence|why|history|incoming|pairs|runs|backlinks|notes|proof|proof-full|body]
   [--range START:END] [--output FILE] [--limit N] [--cursor C] [--field FIELD]
   [--at GIT_OID] [--evaluation-time TS] [--json]
 ~~~
@@ -4519,6 +4663,11 @@ target); past five, `links_total` says how many and `next` names `--detail
 proof`, whose envelope carries every link. A card read with `--at` names
 either read with the same `--at`, so it answers the generation the card cut.
 A card with none has no such field.
+A Subject card lists up to five live notes about it (`notes`: each note's
+handle, `file` and `section`, the cited digest and, beside the workspace,
+`drift`), pointers only, never the section's prose; past five, `notes_total`
+says how many. `--detail notes` pages every note with `next: cruxible section
+FILE#Heading/Path` for each.
 A wrong or ambiguous REF
 refuses with a code and the nearest names. `--json` prints the whole structured
 result. A dotted tail is
@@ -4822,8 +4971,11 @@ Runs a script with the interpreter the CLI itself runs on, so `import
 cruxible_client` is the SDK installed with this `cruxible`, from any repository
 or worktree and with nothing installed into that project's environment.
 `-c CODE` runs a string and `-` reads the script from standard input, as
-`python` does; options for the script go after SCRIPT, and the exit status is
-the script's.
+`python` does (`cruxible python - <<'PY'` takes a heredoc); options for the
+script go after SCRIPT, and the exit status is the script's. It is how an agent
+in any repository (Go, Rust, TypeScript, or Python with an unrelated virtual
+environment) uses the typed SDK, the primary authoring surface whenever it can
+run code, with `.cruxible/world.pyi` typing the vocabulary.
 
 The connection this command resolved reaches the script through its
 environment: the daemon (`--server-url` / `--server-socket`, as
@@ -5543,7 +5695,7 @@ registration is only proposed and the command prints each remaining step:
 `proposal approve` (which activates it), and, with auth,
 `credential mint --principal-id ID --key-dir DIR`, which writes the token into
 the same settings file. `cruxible init` writes the owner's settings file the
-same way, and with `--reviewer-key-dir` the reviewer's too. `proposal approve` defaults `--signer-id` to the configured principal.
+same way, and with `--require-independent-approval` or `--reviewer-key-dir` the reviewer's too. `proposal approve` defaults `--signer-id` to the configured principal.
 Which key signs as a principal is one lookup, the same on the CLI, the SDK
 (`cx.signer(ID)`) and the MCP server (`cruxible_proposal_approve`): `--key`;
 `CRUXIBLE_PRINCIPAL_KEY`, unless `CRUXIBLE_PRINCIPAL_ID` names another

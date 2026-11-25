@@ -60,7 +60,7 @@ from cruxible_client.contracts.projection import AcceptedCoordinate
 VOCABULARY_FILE_FORMAT: Final = "cruxible-vocabulary-v1"
 
 #: The shorthand keys a field entry may state beside its ClaimType input fields.
-FIELD_SHORTHANDS: Final = ("key", "enum", "link", "many", "retired", "reason")
+FIELD_SHORTHANDS: Final = ("key", "enum", "ordered", "link", "many", "retired", "reason")
 
 #: The keys a field entry may not state: the predicate is ``<kind>.<field>``.
 _FIELD_FORBIDDEN = ("predicate",)
@@ -260,6 +260,9 @@ class VocabularyField(_StrictFileModel):
 
     key: StrictBool | None = None
     enum: dict[str, EnumMeaning] | tuple[StrictStr, ...] | None = None
+    #: ``true``: the enum's members are written in ascending rank (lowest first),
+    #: and queries compare and order its values by that rank. Goes with ``enum``.
+    ordered: StrictBool | None = None
     link: StrictStr | tuple[StrictStr, ...] | None = None
     many: StrictBool | None = None
     retired: StrictBool | None = None
@@ -293,6 +296,8 @@ class VocabularyField(_StrictFileModel):
             raise ValueError("a field is an enum or a link, not both")
         if (self.enum is not None or self.link is not None) and "value" in stated:
             raise ValueError("enum and link state the value; drop value")
+        if self.ordered is not None and self.enum is None:
+            raise ValueError("ordered goes with enum: list the members lowest first")
         if self.enum is not None and "member_descriptions" in stated:
             raise ValueError("enum states the member meanings; drop member_descriptions")
         if self.many is not None and "cardinality" in stated:

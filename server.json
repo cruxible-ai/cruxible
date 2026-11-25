@@ -6,12 +6,12 @@
     "url": "https://github.com/cruxible-ai/cruxible",
     "source": "github"
   },
-  "version": "0.5.1",
+  "version": "0.6.0",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "cruxible",
-      "version": "0.5.1",
+      "version": "0.6.0",
       "runtimeHint": "uvx",
       "transport": {
         "type": "stdio"

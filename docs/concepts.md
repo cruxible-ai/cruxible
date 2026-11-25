@@ -475,6 +475,12 @@ shows:
 - **A different value** is a new statement, proposed as a revision like any
   other change. Claims that depend on the old value are not revised for you:
   `next` resurfaces them, and an agent decides what the change means for each.
+  A judgment says what it rests on with a `based-on` pin (`set ...
+  --based-on CLM-...`, or `--based-on kind/id#field` for that field's live
+  Claim), which pins the observation's exact version. When the observation is
+  revised, retired or contradicted, the judgment stays live and `next` lists it
+  as `claim_dependency_stale` until it is re-pinned, its pins are dropped, or it
+  is retired. The pin is provenance; it never changes the judgment's verdict.
 - **A failed observation** is a failure to observe, recorded in the run's
   journal. It is not evidence that the value changed, vanished or stayed the
   same.
@@ -629,7 +635,8 @@ attribution and hygiene, not a security boundary between processes of one OS
 user.
 
 `cruxible init` makes you the owner and remembers your settings (with
-`--reviewer-key-dir`, it also creates a reviewer and writes its settings);
+`--require-independent-approval`, it also creates a reviewer, with its key and
+settings beside yours unless `--reviewer-key-dir` names another directory);
 `cruxible principal add` registers another principal and writes its settings
 to its key directory; `cruxible context use --principal ID` switches which
 principal the CLI acts as; `cruxible whoami` reports who you are and whether
@@ -871,8 +878,9 @@ Autonomy is granted explicitly, and can be taken back. Lines are enabled, not
 armed:
 
 - A Trigger aimed at a Line does nothing until a principal enables the Line
-  (`line enable`). Enabling needs governed write, even for a Line that only
-  observes.
+  (`line enable`, which takes several Lines, or `--runbook RUNBOOK` for every
+  Line a Runbook names). Enabling needs governed write, even for a Line that
+  only observes.
 - Enabling pins the Line version and the exact Trigger versions aimed at it.
   Changing the Line or any of its Triggers stops the enablement until someone
   enables it again, which is consent to the new schedule.
@@ -882,6 +890,23 @@ armed:
   Procedure that settles still only proposes when its Line is capped at
   `propose` (`max_authority`) or its only mandate grants propose, so one
   Procedure serves a Line before and after it graduates to settling.
+- A Line whose writes are all observations (every ClaimType it writes
+  permits only the observation role) can take one settle grant over all of
+  them, `scope: observations`, which `cruxible line grant LINE
+  --settle-observations` authors. A Line writing any ClaimType that also
+  permits judgments (`normative`) cannot take it.
+- Mandates expire. A mandate's `expires` may be a span (`90d`, `12w`, `1y`)
+  counted from when the change is prepared; the accepted mandate holds the
+  instant.
+- A mandate is pinned to its Line's exact version. When a provider move or a
+  kit change carries a Line to a new version, its mandates carry propose-only.
+  One exception keeps settle: a Line that changes only its provider bindings
+  (`provider move`, or `provider install` or `publish --move`), to operations
+  serving the same capabilities with no wider effect, endpoint or truncation,
+  under a grant that covers only observations, creates no Subjects and no live
+  mandate condition reads. Then the grant keeps settle, an enabled Line stays
+  enabled, and the proposal's review says so; any other carried grant says why
+  it demoted ([the full rule](upgrading.md#provider-moves-and-observation-settle)).
 - `line run` always runs one manual occurrence now, under the Line's own
   settings; it never consumes or waits on a Trigger.
 - Timed Triggers tick on their schedule's own grid. Enabling or resuming a

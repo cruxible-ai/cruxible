@@ -99,7 +99,7 @@ cruxible compiler upgrade
 ~~~
 
 With no `--to`, the upgrade targets the compiler the daemon runs and is named
-`upgrade-to-<revision>` (for example `upgrade-to-provider-builds-v1`). The
+`upgrade-to-<revision>` (for example `upgrade-to-based-on-observation-carry`). The
 proposal pins that compiler's full digest, bound to the exact accepted head,
 and its preview and review show the digest. `--to DIGEST` and `--name NAME`
 override either default. The proposal is admin-only.
@@ -205,20 +205,68 @@ compiler, so reads and proofs at them are unchanged. The instance descriptor
 keeps its genesis compiler; inspection reports the active compiler from
 accepted history.
 
-This release installs one compiler, revision 73 (`retiring-query-traversal`:
-a query's pair-hop and traversal checks apply only to a live query, so a query
-retiring with the kinds it walks, as in `kit remove`, is not checked against
-them), and no upgrade edge leads to or from it: `cruxible compiler upgrade`
-refuses `cruxible.compiler_upgrade.already_current` (or
-`cruxible.compiler_upgrade.unsupported_transition` for any other target). An
-instance created by an earlier build (any 0.3.x release, or an unshipped
-development build, including one on revision 72 `one-capture-per-citation`)
-records another compiler and is refused, never converted:
-the daemon answers `cruxible.instance.reseed_required` and `cruxible host
-show` reports it `reseed_required` (`compiler_lineage_not_writable`). Move it
-aside and re-import its content into a fresh instance. A fresh instance starts
-with the base kit installed ([Kits](kits.md#the-base-kit)), so a kit that
-requires `base` installs on it directly.
+## Compilers in 0.6.0
+
+This release writes compiler revision 74 (`based-on-observation-carry`) at
+genesis. Revision 74 admits a `based-on` Claim pin (a judgment pinning the
+exact version of the observation it rests on; a later revision or retirement of
+that observation leaves the judgment live and lists it in `next` as
+`claim_dependency_stale`), keeps an observation-only settle grant, with an
+enabled Line's enablement, across a pure, non-widening `provider move` (below),
+and admits an ordered enum (`ordered: true`, members ranked lowest first).
+
+It also serves revision 73 (`retiring-query-traversal`, the compiler 0.5.0 and
+0.5.1 record), as the source of one upgrade edge: an instance created by 0.5.x
+opens, keeps working under revision 73's laws (what revision 74 adds refuses,
+for example `cruxible.authoring.based_on_requires_compiler_upgrade` and
+`cruxible.authoring.ordered_enum_requires_compiler_upgrade`), and
+reports the compiler facet `upgrade_available` until `cruxible compiler
+upgrade` moves it to revision 74. No edge leads back, and any other target
+refuses `cruxible.compiler_upgrade.unsupported_transition`. An instance created
+by an earlier build (any 0.3.x release, or an unshipped development build,
+including one on revision 72 `one-capture-per-citation`) records another
+compiler and is refused, never converted: the daemon answers
+`cruxible.instance.reseed_required` and `cruxible host show` reports it
+`reseed_required` (`compiler_lineage_not_writable`). Move it aside and
+re-import its content into a fresh instance. A fresh instance starts with the
+base kit installed ([Kits](kits.md#the-base-kit)), so a kit that requires
+`base` installs on it directly.
+
+### Provider moves and observation settle
+
+A `provider move` carries each Mandate on a moved Line to the Line's
+successor propose-only, unless (revision 74) all of these hold: the Line
+changes only its slot bindings (same Procedure version, parameters and
+acquisition); each moved slot's new operation serves every capability the old
+one did under the same Contracts, with no wider `effect` (`pure` <
+`external_read` < `external_mutation`), no endpoint the old one did not declare,
+and no `may_truncate` the old one lacked; every ClaimType in the grant's scope
+is observation-only; the grant creates no Subjects; and no live Mandate's
+condition query reads a predicate in its scope. Then the grant keeps `settle`
+with its terms unchanged, an enabled Line stays enabled on its successor, and
+the move and `cruxible review` say "retains observation settle on …". Any
+other carried settle grant names why it demoted. `provider install --move` and
+`provider publish --move` carry the same way, with the new build's registration
+in the same proposal. A `kit add` or `kit upgrade` always demotes.
+
+### What else 0.6.0 adds
+
+Two of these need revision 74; the rest work as soon as the software is
+updated.
+
+| Change | Where |
+|---|---|
+| `based-on` pins: `set`/`add --based-on`, `write --based-on`, `based_on` in the SDK, MCP and write files, naming a `CLM-...` id or `kind/id#field` (revision 74) | [write](cli-reference.md#set-add-retire-rebind-and-write) |
+| Observation settle kept across a pure, non-widening build move (revision 74) | [above](#provider-moves-and-observation-settle) |
+| `cruxible provider publish FILE [--move]`: a provider from one file of `@derive` functions, built on the client with `cruxible-provider-runtime` 0.6.0 or later; `provider install --move` | [Lines and automation](lines-and-automation.md#a-pure-provider-in-one-file) |
+| A pure operation's output committed as a `procedure_output` Capture | [Evidence and admission](evidence-and-admission.md#define-captured-evidence) |
+| One observation settle grant: `scope: observations`, `cruxible line grant LINE --settle-observations` | [Lines and automation](lines-and-automation.md#one-grant-for-a-line-that-observes) |
+| A mandate's `expires` as a span (`36h`, `90d`, `12w`, `1y`, `P90D`), with `valid_from` defaulted | [Lines and automation](lines-and-automation.md#write-the-line-its-trigger-and-its-mandate) |
+| `cruxible line enable LINE... [--runbook RUNBOOK]` | [Lines and automation](lines-and-automation.md#running-on-a-schedule) |
+| `cruxible init --require-independent-approval` alone creates the reviewer, its key in `$XDG_CONFIG_HOME/cruxible/keys/INSTANCE/reviewer` | [Review and governance](review-and-governance.md#setting-up-cosign) |
+| A provider build's package, operations, effects and endpoints in `proposal review` | [Lines and automation](lines-and-automation.md#a-pure-provider-in-one-file) |
+
+### Artifact formats
 
 A ClaimType has one format (`cruxible-claim-type-v11`) with one evidence
 policy (`cruxible-claim-evidence-admission-policy-v4`), and a Claim one artifact

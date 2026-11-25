@@ -687,6 +687,7 @@ no accepted query yet backs.
 
 PROVENANCE_PIN_ROLES: Final = frozenset(
     {
+        ("claim", "based-on"),
         ("claim", "capture-contract"),
         ("claim", "line"),
         ("claim", "procedure"),
@@ -697,6 +698,10 @@ PROVENANCE_PIN_ROLES: Final = frozenset(
 
 A Claim pins the exact CaptureContract version each backing Capture used, and
 the exact producer (Line, Procedure, provider build) versions that made them.
+A ``based-on`` pin (compiler revision 74) records the exact version of a Claim a
+judgment rested on: the target moving or retiring leaves the judgment live and
+surfaces it in ``next`` as ``claim_dependency_stale`` instead of carrying or
+retiring it.
 Those pins are provenance: the Claim law verifies them against accepted
 history, and the target moving on to a successor -- or retiring -- never obliges
 the Claim to move with it (F08). The edge still exists while its target version is live, so proofs

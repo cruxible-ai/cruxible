@@ -778,7 +778,8 @@ def test_projection_format_invalidation_and_candidate_pruning(tmp_path):
 def test_a_format_5_note_summary_with_no_cited_captures_is_discarded(tmp_path):
     """Round-two F-002: an intermediate build wrote format-5 note summaries that hold
     the section's file and heading with an empty cited-Capture list; a cache hit
-    would serve them unredacted. Format 6 discards every earlier build."""
+    would serve them unredacted. Format 6 discards every earlier build (format 7,
+    which adds a Provider's detail, discards format 6 the same way)."""
 
     import sqlite3
 
@@ -788,7 +789,7 @@ def test_a_format_5_note_summary_with_no_cited_captures_is_discarded(tmp_path):
     )
     from cruxible_core.service.proposals.summary import _SCHEMA
 
-    assert REVIEW_PROJECTION_VERSION == 6
+    assert REVIEW_PROJECTION_VERSION >= 6
     path = tmp_path / "projection.sqlite3"
     note = {
         "kind": "Note",
@@ -808,7 +809,7 @@ def test_a_format_5_note_summary_with_no_cited_captures_is_discarded(tmp_path):
         )
         connection.commit()
         initialize_review_projection(connection, _SCHEMA)
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 6
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == REVIEW_PROJECTION_VERSION
         for table in ("review_builds", "review_definitions"):
             assert connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0
 
@@ -1091,3 +1092,87 @@ def test_a_new_field_a_guidance_link_and_a_note_review_as_what_they_say():
     assert shown[0] == f"  Note {note.identity.name}: created"
     assert any(line.split() == ["section", "docs/notes.md#Triage/Why"] for line in shown)
     assert any(line.split() == ["about", f"{KIND}/wi-1"] for line in shown)
+
+
+def test_a_provider_build_reviews_as_its_package_operations_and_reach():
+    """Cold run A3: a provider-install review listed no operations, so the reviewer
+    read raw JSON to see what code, capabilities and endpoints they approved. The
+    build now shows its package, build key, control domain and each operation."""
+
+    from cruxible_client.contracts.proposal_summary import (
+        ReviewDefinition,
+        ReviewProviderDefinition,
+    )
+    from cruxible_client.contracts.providers import provider_path
+    from cruxible_client.contracts.text_display import review_definition_lines
+    from cruxible_core.service.proposals.review_view import definition_row
+    from tests.support.operation_world import operation, operation_build
+
+    truncating = operation("listing", effect="external_read").model_copy(
+        update={"may_truncate": True}
+    )
+    build = operation_build(
+        operations=(operation("compute"), truncating),
+        endpoints=("api.example.com",),
+        extras=("net",),
+    )
+    dumped = build.model_dump(mode="json")
+    retired = {**dumped, "lifecycle": {**dumped["lifecycle"], "state": "retired"}}
+
+    def row(disposition: str, old: object, new: object) -> ReviewDefinition:
+        _key, stored = definition_row(
+            path=provider_path(build.identity.name),
+            artifact_kind="provider",
+            disposition=disposition,
+            old=old,  # type: ignore[arg-type]
+            new=new,  # type: ignore[arg-type]
+            before=None,
+            after=None,
+        )
+        return ReviewDefinition.model_validate(stored)
+
+    created = row("create", None, dumped)
+    assert created.kind == "Provider" and created.action == "created"
+    detail = created.detail
+    assert isinstance(detail, ReviewProviderDefinition)
+    assert (detail.provider, detail.build, detail.control_domain) == (
+        "demo-provider",
+        build.build_key,
+        "demo-provider",
+    )
+    assert (detail.package, detail.version, detail.materialization) == (
+        "demo-provider",
+        "1.0.0",
+        "local",
+    )
+    by_name = {item.name: item for item in detail.operations}
+    assert set(by_name) == {"compute", "listing"}
+    assert by_name["compute"].effect == "pure" and not by_name["compute"].may_truncate
+    assert by_name["listing"].effect == "external_read" and by_name["listing"].may_truncate
+    assert by_name["compute"].in_ == by_name["compute"].out == "test.value@1"
+    assert by_name["compute"].declared_endpoints == ("api.example.com",)
+    assert by_name["compute"].requires_extras == ("net",)
+    # The wire spells the Contract refs ``in`` and ``out``, as the build does.
+    wire = created.model_dump(mode="json")["detail"]["operations"][0]
+    assert wire["in"] == "test.value@1" and "in_" not in wire
+    assert "may_truncate" not in wire
+
+    text = review_definition_lines(created)
+    short = build.build_key[:12]  # type: ignore[index]
+    assert text[0] == f"  Provider demo-provider/{short}: created"
+    rows = {line.split()[0]: line.split(None, 1)[1] for line in text[1:5]}
+    assert rows == {
+        "package": "demo-provider 1.0.0 (local)",
+        "build": build.build_key,
+        "control": "demo-provider",
+        "op": "compute: pure  test.value@1 -> test.value@1",
+    }
+    assert "    op listing: external_read  test.value@1 -> test.value@1  may truncate" in text
+    assert any(line.split() == ["endpoints", "api.example.com"] for line in text)
+    assert any(line.split() == ["extras", "net"] for line in text)
+    assert not any(line.lstrip().startswith(("{", "[")) for line in text)
+
+    # A retirement still names the build and what it served: that is what is withdrawn.
+    gone = row("retire", dumped, retired)
+    assert gone.action == "retired" and isinstance(gone.detail, ReviewProviderDefinition)
+    assert review_definition_lines(gone)[0] == f"  Provider demo-provider/{short}: retired"

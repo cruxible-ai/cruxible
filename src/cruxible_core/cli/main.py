@@ -65,6 +65,7 @@ MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     ("body", "store"): "active",
     ("provider", "install"): "active",
     ("provider", "move"): "active",
+    ("provider", "publish"): "active",
     ("provider", "retire"): "active",
     ("kit", "add"): "active",
     ("kit", "remove"): "active",
@@ -737,6 +738,11 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 "playbill", "install_provider", "Install and register a provider package."
             ),
             "move": _command("playbill", "move_provider", "Move Lines to a provider build."),
+            "publish": _command(
+                "playbill",
+                "publish_provider",
+                "Build a provider from one Python file and install it.",
+            ),
             "retire": _command("playbill", "retire_provider", "Retire an unpinned provider build."),
         },
         module="playbill",
@@ -756,6 +762,14 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 "playbill", "pull_kit", "Fetch and verify a kit without installing it."
             ),
             "remove": _command("playbill", "remove_kit", "Retire what a kit installed."),
+            "adopt": _command(
+                "playbill",
+                "adopt_kit",
+                "Render an installed kit's recipe and submit it as your change.",
+            ),
+            "run": _command(
+                "playbill", "run_kit_script", "Run an installed kit's verified script locally."
+            ),
         },
         module="playbill",
         attr="kit_group",
@@ -973,7 +987,7 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
         attr="procedure_group",
     ),
     "line": _group(
-        "Enable, run and recover accepted Lines.",
+        "Enable, run, grant and recover accepted Lines.",
         {
             "enable": _command(
                 "playbill", "enable_line", "Enable a Line so its Triggers admit work."
@@ -986,6 +1000,9 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 "playbill", "evaluate_line", "Turn a missed range into pending Line work."
             ),
             "dispatch": _command("playbill", "dispatch_line", "Run a Line's pending work."),
+            "grant": _command(
+                "playbill", "grant_line", "Grant a Line settle over the observations it writes."
+            ),
         },
         module="playbill",
         attr="line_group",
@@ -1031,6 +1048,9 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
         "playbill",
         "backlinks",
         "What points into a Subject, ClaimType, Procedure or workspace section.",
+    ),
+    "section": _command(
+        "playbill", "section_read", "Read one section of a catalogued file: FILE#Heading/Path."
     ),
     "note": _command(
         "playbill", "note", "Append a workspace section linked about Subjects (no Claim)."

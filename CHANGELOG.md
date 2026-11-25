@@ -7,6 +7,262 @@ that lands it; entries move under a version heading when the release is
 tagged. Work items for these changes live on the active release line in
 the project's own state instance.
 
+## [0.6.0] - 2026-11-23
+
+This release cuts the ceremony around routine change: one command sets up an
+independent reviewer, one grant settles an observing Line, a pure provider
+build moves its Lines in one proposal, and judgments pin the Claims they were
+made from.
+
+### Added
+
+- **One-command reviewer bootstrap:** `cruxible init
+  --require-independent-approval` no longer needs `--reviewer-key-dir`; the
+  reviewer's key custody defaults to the owner's sibling per-user path. The
+  text output names the reviewer's `CRUXIBLE_ENV_FILE`; `--json` adds
+  `reviewer_principal_id` and `reviewer_private_key_path`. An owner principal
+  named `reviewer` is refused when init makes the reviewer.
+- **One observation settle grant:** `scope: "observations"` on a
+  `procedure_mandate` input, and `cruxible line grant LINE
+  --settle-observations`, settle every observation-only ClaimType the Line's
+  pinned Procedure writes, pinned at its exact digest, instead of a
+  hand-written per-ClaimType matrix (`include_derived` adds derived values). It
+  lowers to the existing mandate scope: no stored format change.
+- **Pure operations commit `procedure_output` Captures:** a provider operation
+  declared `effect: pure` that returns into a CAS-only `procedure_output`
+  CaptureContract (as a `@derive` operation does) commits its Capture with a
+  CAS source carrying the invocation evidence, instead of refusing as a
+  provider protocol violation. A non-pure operation still cannot, and its
+  refusal names the shape and the effect.
+- **Compiler revision 74 (`based-on-observation-carry`)** is written at
+  genesis. Revision 73 (0.5.x) instances open and keep working under revision
+  73's laws, report the compiler facet `upgrade_available`, and move forward by
+  `cruxible compiler upgrade` along the one edge 73 -> 74.
+- **`based-on` Claim pins:** `set` and `add` take `--based-on CLAIM_ID`
+  (repeatable; `--clear-based-on` drops them), `write` takes `--based-on`, and
+  the SDK (`cx.set`, `cx.add`, `WriteBatch.set`/`add`), the MCP `cruxible_set`
+  tool and write files take `based_on`. A judgment pins the exact version of
+  each Claim it was made from; revising or retiring that Claim (by `retire` or
+  a Procedure's mirror retirement) never retires the judgment, and `next` lists
+  it as `claim_dependency_stale` until it is re-pinned, the pin is dropped, or
+  it is retired.
+- **`based_on` takes `SUBJECT#FIELD`:** beside a `CLM-...` id, `--based-on`,
+  write files, the SDK and MCP accept `kind/id#field` (field short or as its
+  predicate; Subject by id, alias or key). The write resolves it at its base to
+  the field's one live Claim and pins that id; a field holding none refuses
+  `cruxible.write.based_on_not_found`, several `cruxible.write.based_on_ambiguous`
+  naming each.
+- **`cruxible line enable` takes several Lines or a Runbook's:** `line enable
+  LINE [LINE ...]` and `--runbook RUNBOOK` (every Line its steps name, after
+  those named, each once) enable each in turn with one receipt line per Line
+  (enabled, already enabled, or refused with code and repair; `--json`:
+  `{"lines": [...]}`), exiting 1 after every Line is tried if any refused. One
+  `LINE` alone prints and serializes exactly as before.
+- **Mandate validity as a span:** a `procedure_mandate` takes `expires` (`36h`,
+  `90d`, `12w`, `1y`, `P90D`, the spelling `line grant --expires` uses) instead
+  of `expires_at`, exactly one of the two; `valid_from` may be omitted and
+  defaults to the intent's timestamp. Lowering stores concrete UTC instants, so
+  kit automation templates no longer need hand-edited dates. An `expires_at`
+  not after the defaulted `valid_from` refuses
+  `cruxible.authoring.procedure_mandate_window`.
+- **Observation settle survives a pure provider build move:** `provider move`
+  keeps an observation-only settle grant (terms unchanged) across a Line
+  successor that changes only slot bindings, when every moved slot's new
+  operation is no wider than the old (capability, effect, declared endpoints,
+  `may_truncate`), the grant creates no Subjects and no live condition query
+  reads its scope; an enabled Line stays enabled on its successor. The move
+  output and `cruxible review` say "retains observation settle on ..."; every
+  other carried settle grant says why it demoted. `kit add`, `kit upgrade` and
+  Procedure edits still demote.
+- **`cruxible provider publish FILE`** builds a provider from one Python file of
+  `@derive` operations (`cruxible-provider-runtime` 0.6.0) and installs it: the
+  Contracts and CaptureKinds the operations reach come from the instance (and
+  `--declares`), the wheel and its lock are built locally and reproducibly, and
+  the default version (`0.0.0.devN`) derives from the file, so an edit is a new
+  build and an unchanged file the same one. `--runtime-wheel` and
+  `--dependency` build and install with local wheels; `--offline` locks from
+  the uv cache.
+- **`provider install --move` and `provider publish --move`** register the new
+  build and move the Lines bound to other builds of the provider onto it in ONE
+  proposal (`--only Line:NAME` narrows them): under independent approval,
+  iterating on a pure provider is one command and one approval, and an
+  observation-only settle grant keeps settle with its Line's enablement.
+- **Notes show where you read:** a Subject's `get` card lists the live notes
+  about it as section pointers (`file#Heading/Path`, the note's handle and,
+  beside the workspace, whether the section moved since it was linked), never
+  the prose; `get --detail notes` pages them all with each section's read.
+  Floor Subject files list them under `notes:` (renderer v7.2: a client holding
+  an older floor is sent the whole floor once). Default `orient` names the
+  workspace's catalogued files on a `Files:` line.
+- **`cruxible section FILE#Heading/Path`** reads one section of a catalogued
+  Markdown file (`FILE#` for the preamble): its own body and the subsections to
+  read next; `--json` adds the digest a citation records. A miss names the
+  nearest headings.
+- **`set`/`add --section FILE#Heading/Path`** cites a section (with
+  `--own-words`); with `--section-body TEXT` (`-` reads stdin) the same write
+  appends that heading and cites it, so reasoning past a 280-character
+  `--because` lands in one step. The `rationale_invalid` refusal names this,
+  `w.section(...)`, and the write file's `docs` op.
+- **Ordered enums (compiler revision 74):** an enum value may declare
+  `ordered: true` (`vocabulary.yaml` beside `enum:`, `ordered_enum[low, high]`,
+  `EnumType(members=..., ordered=True)`, `{"kind": "enum", ..., "ordered":
+  true}`); its members ascend in rank, lowest first. Values stay stored as
+  member strings; `lt`/`lte`/`gt`/`gte` (query, `--where`, `where(severity__gte=
+  ...)`, QueryDefinitions) compare by declared rank and `order_by` sorts by it.
+  Ordering an unordered enum, comparing two different enums, or naming a
+  non-member refuses. An unordered enum keeps its canonical bytes, so no
+  existing digest moves; a revision 73 instance refuses `ordered: true`
+  (`ordered_enum_requires_compiler_upgrade`) until `cruxible compiler upgrade`.
+- **World ergonomics:** `w.section(...)` and `w.note(...)` sit beside
+  `w.write(...)` (typed in `world.pyi`); `subject.edit(field=...)` sets fields
+  and still chains `.add`/`.retire`; a many-valued field takes a list or tuple
+  in `define(...)` and `add(...)` (one added value per item, in order).
+- **Composable kit recipes (`cruxible kit adopt`):** kits may ship parameterized
+  automation recipes (validated with linear-time regex checks and verified by
+  bundle digest). `cruxible kit adopt KIT[:RECIPE] [--param K=V ...] [--dry-run]
+  [--yes]` renders the recipe, previews its authority footprint (Lines,
+  Triggers, ProcedureMandates, and per-output origins), submits one proposal,
+  and prints the exact approval and enable commands.
+- **Verified read-only kit scripts (`cruxible kit run`):** kits may ship
+  digest-pinned helper scripts (`cruxible kit run KIT:SCRIPT [-- ARGS...]`).
+  Before execution, the CLI checks the cached bundle digest against the
+  instance receipt, discloses the script path and mode (`readonly_client` or
+  `local_inspect`), and runs it without write authority.
+- **Atomic `cruxible kit add`:** installing a kit now submits its providers and
+  definitions together in one batched proposal, and stages and promotes cached
+  kit files atomically with `dir_fd`-anchored symlink protection.
+- **Multi-ID `proposal approve` and bare-hex selectors:** `cruxible proposal
+  approve ID [ID ...]` approves several proposals in one command (disclosing
+  every paged Provider definition before prompting), accepts bare-hex prefixes
+  without `PROP-`, and prints compact 12-character proposal IDs in CLI output.
+- **Runbook `procedure` fan-out:** a Runbook step may declare
+  `{"procedure": "NAME"}` instead of a single Line; preview and execution fan
+  out across every enabled Line bound to that Procedure in deterministic order,
+  so newly adopted source Lines join the Runbook without editing it.
+- **`cruxible write --example`** prints a worked, valid write file (about 20
+  lines): a `docs` append, a `create` named by `{"created": label}`, a `set`
+  with `file` evidence, `role: "normative"` and `based_on`, and a `set` citing
+  the appended section. `--schema` is unchanged; `write --help` names both.
+- **`cruxible query NAME --param k=v`** runs the named query NAME: a
+  positional name given `--param`, `--budgets` or `--receipt` (and no compact
+  option such as `--where` or `--select`) binds as `--name`, instead of
+  refusing `cruxible.query.mode_invalid`.
+- **`based_on` pins in review:** `proposal review` (text, `--json`, MCP, SDK)
+  shows each proposed value's `based_on` Claims with the Subject and field
+  each is about (`based on CLM-... kind/id field`), and `get CLM --detail
+  proof` prints them as `based on:` lines (in `--json`, `proof.based_on`). The
+  disposable review projection moves to format 8 and rebuilds.
+- **`based_on=` on typed World writes and same-write pinning:** `draft.set(...)`,
+  `draft.add(...)`, `edit.set(...)`, `edit.add(...)`, `subject.set(...)` and
+  `subject.add(...)` take `based_on=` (a `CLM-...` id, `kind/id#field`, a
+  `ClaimRef`, the `ClaimView`s a field read answers, `draft.pin("field")`, or a
+  list of them), and the world stub (`.cruxible/world.pyi`) types it so
+  `cruxible python --check` accepts it. Pins can now name Claims written or
+  created in the same write batch via `draft.pin("field")` (including key
+  fields), `label#field`, or `kind/id#field` for Subjects whose key determines
+  their ID; change-set lowering stages Claim members (and ClaimType succession
+  re-authored Claims together with their ordinary `based_on` prerequisites) in
+  dependency order and refuses cycles (`based_on_cycle`) and self-pins.
+- **`cruxible query --no-truncate`** shows every cell whole. A query table
+  never cuts its `subject` and `subject_id` columns, whatever their length.
+- **Dry runs show `role` and `based_on`:** a write outcome (CLI text, `--json`,
+  MCP, SDK) names the role a change was written with when the writer named one
+  (`role normative`) and the Claims it rests on (`based on CLM-...`).
+
+### Changed
+
+- **The typed Python SDK is the primary authoring surface.** README, For AI
+  agents, the quickstart and the SDK reference now say which surface to use:
+  the typed SDK (`cruxible python` with `.cruxible/world.pyi`) whenever an
+  agent can run code, MCP for agents without a code environment, and the CLI
+  for shell inspection, people and backup. `cruxible python --help` shows
+  `cruxible python -c ...`, `cruxible python - <<'PY'` and the world stub, and
+  `cruxible orient` names `cruxible python` when the folder holds
+  `.cruxible/world.pyi`.
+
+- **Compact `ClaimsDiagnostic` findings with `incomplete_reasons`:** diagnostic
+  findings omit unset fields on the wire and include `incomplete_reasons` when
+  completeness evaluation is partial.
+- **Provider review shows what is installed:** a proposal that adds, revises
+  or retires a Provider build now reviews (CLI `proposal review` and
+  `approve`, MCP, SDK) its package, build key, control domain, declared
+  CaptureContracts and, per operation, effect, serves, Contracts,
+  `may_truncate`, entrypoint and declared endpoints, instead of "created".
+  The disposable review projection moves to format 7 and rebuilds.
+- **Plugin skills teach the 0.6.0 surfaces.** The governance reference sorts
+  changes into cold (trust boundaries, always reviewed), warm (one observation
+  settle grant, a pure `provider publish --move`, `line enable --runbook`) and
+  hot (judgments pinned with `--based-on kind/id#field`, reading
+  `procedure_output` Captures); the skills drop the hand-made reviewer key
+  directory and cover `@derive` providers, span `expires` and the provider
+  review summary.
+
+### Fixed
+
+- **Cached world stubs invalidate on renderer upgrades:** the world stub cache
+  (`state.json`, bumped to `cruxible-world-stub-cache-v2`) records a renderer
+  key hashing the client version and `world_stub.py` source (falling back to
+  version alone when source is unavailable), re-rendering old v1 or upgraded
+  caches automatically instead of serving stale type stubs.
+- **A statement-style World `.set()` no longer drops its Claim:** `Draft` and
+  `Edit` `.set()`, `.add()` and `.retire()` record the change on the draft or
+  edit itself and return it for chaining, so `d.set(...)` without reassigning
+  `d` keeps every Claim (it used to return a new draft and silently drop the
+  change while `cruxible python --check` and dry runs passed).
+- **A missing `file:` anchor says so:** an anchor that occurs nowhere in the
+  cited file refuses `cruxible.doc.anchor_not_found` (it used to report
+  `cruxible.doc.anchor_not_unique`); one that occurs more than once still
+  refuses `anchor_not_unique`.
+- **A quoted code line keeps its indentation:** a `file:` anchor's leading
+  spaces and tabs are part of what it matches, so equal lines at different
+  nesting depths no longer collide as duplicates, and an indented anchor no
+  longer refuses `working selection anchor must be nonblank and normalized`.
+  A trailing line break (LF or CRLF) is dropped; a blank anchor still refuses.
+- **`existing_claim_dispositions_incomplete` names the slot:** the refusal
+  says which Subject, field (and qualifier) collided and which Claim IDs went
+  undispositioned; the repair adds `subject`, `predicate` and `qualifier`.
+- **`cruxible query NAME` runs a named query with no parameters:** a bare
+  positional that is no Subject kind but names an accepted QueryDefinition runs
+  it (exit 0, an empty answer included) instead of refusing
+  `cruxible.query.unknown_kind` and exiting 1.
+- **`proposal review` shows every value's role,** the common `normative` role
+  included, so a reviewer sees the role being approved.
+- **Approve hints never name the author:** a write stopped for independent
+  approval (or kept with `accept: never`) names its one eligible approver, or
+  else `--signer-id '<INDEPENDENT_REVIEWER>'` (MCP `signer_id`, SDK
+  `cx.signer(...)`), never the author or the caller's own signer; `init`'s
+  base kit and a compiler upgrade awaiting independent approval say the same.
+- **`--commit --yes` composes:** on every command with `--dry-run|--commit`
+  (`principal add` among them), `--yes` beside `--commit` is a no-op instead of
+  a usage error; `--yes` with `--dry-run` still refuses.
+- **An observation grant may create a composite key's ends:** `scope:
+  "observations"` now reads the pair ends a Subject spec creates (an
+  occurrence's `inventory` and `component` with `create: if_absent`, nested to
+  any depth) when the enclosing spec creates too, so `subject_creation` may
+  name them; an end under a spec that does not create is still refused. The
+  Runbook preview counts creations by the same rule.
+- **Coverage scans no longer truncate on citation-dense workspaces.** The
+  working-occurrence scan searches each source once for all cited passages
+  (a shared multi-needle pass) and charges the scan budget the source's length
+  once, not once per citation, so a 2 MB document holding 200 citations scans
+  in about 2 MB of budget instead of 400 MB; unchanged files are answered from a
+  per-process memo without a rescan. `next` no longer reports every citation of
+  a large document `citation_source_unobserved` with `coverage_partial`. The
+  per-source cap on coverage cards, scan proofs and citation windows in a
+  `next` observation rises from 256 to 4096, so an instance with more than 256
+  cited passages, or a document with more than 256 citations, keeps its
+  evidence.
+- **Write planning costs its changes.** Planning and lowering a write batch
+  no longer carry O(batch²) terms (the identity overlay, planned-change sets,
+  create-label scans and creation lookups are kept incrementally): a 400-change
+  batch plans in 7,514 SQL statements instead of 39,198. Slot reads for named
+  Subjects keep the lifecycle term off the index (`+lifecycle`) and seek the
+  Subject-and-predicate index instead of walking every live Claim.
+- **Capture conversion failures say why:** a provider capture field that
+  fails Capture conversion journals the field, the error type and a bounded
+  detail (never input values), and the run's terminal message carries it,
+  instead of only "Capture conversion failed".
+
 ## [0.5.1] - 2026-11-22
 
 ### Added

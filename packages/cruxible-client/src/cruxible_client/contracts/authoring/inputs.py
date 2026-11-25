@@ -23,6 +23,7 @@ from pydantic_core import PydanticCustomError
 
 from cruxible_client.contracts.approval_policy import ApprovalPolicy
 from cruxible_client.contracts.authoring.models import (
+    MANDATE_VALIDITY_DESCRIPTION,
     ApprovalPolicyAuthoringPayload,
     AuthoringChangeSetMember,
     AuthoringClaimStatement,
@@ -56,6 +57,7 @@ from cruxible_client.contracts.authoring.models import (
     TriggerAuthoringPayload,
     WorkingSelectionObservation,
     authoring_member_identity,
+    mandate_validity_problem,
 )
 from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.claims import (
@@ -384,6 +386,13 @@ class ProcedureMandateInput(_StrictInputModel):
     condition query (which may bind ``$target.value`` and ``$target.before``);
     lowering pins every exact digest. ``subjects: expected`` limits the grant
     to Subjects the Line's claims templates fence with ``within``.
+
+    ``scope: observations`` is one settle grant over the observations the Line
+    writes: lowering pins every ClaimType of the Procedure's claims templates
+    (each must permit only the observation role), with creates and revises on
+    ``extracted`` and ``measured`` (plus ``derived`` with ``include_derived``)
+    and the absence changes its ``when_absent`` templates make; the namespace
+    defaults to ``claims``.
     """
 
     tag: Literal["cruxible-procedure-mandate-input-v3"] = "cruxible-procedure-mandate-input-v3"
@@ -391,10 +400,20 @@ class ProcedureMandateInput(_StrictInputModel):
     name: str
     line_name: str
     grants: Literal["propose", "settle"]
-    namespace: tuple[str, ...]
-    valid_from: datetime
-    expires_at: datetime
-    scope: tuple[MandateScopeAuthoring, ...] = ()
+    namespace: tuple[str, ...] = ()
+    valid_from: datetime | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+        description=MANDATE_VALIDITY_DESCRIPTION,
+    )
+    expires_at: datetime | None = Field(default=None, exclude_if=lambda value: value is None)
+    expires: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    scope: tuple[MandateScopeAuthoring, ...] | Literal["observations"] = ()
+    include_derived: bool = Field(
+        default=False,
+        exclude_if=lambda value: not value,
+        description="scope: observations only: also settle values on basis derived.",
+    )
     subject_scope: tuple[SemanticAddress, ...] | None = None
     subjects: Literal["expected"] | None = None
     condition: MandateConditionAuthoring | None = None
@@ -419,6 +438,13 @@ class ProcedureMandateInput(_StrictInputModel):
                 "budget (Line budgets)"
             )
         return value
+
+    @model_validator(mode="after")
+    def _validity(self) -> ProcedureMandateInput:
+        problem = mandate_validity_problem(self.valid_from, self.expires_at, self.expires)
+        if problem is not None:
+            raise ValueError(problem)
+        return self
 
 
 class LineInput(_StrictInputModel):
@@ -523,7 +549,10 @@ class RunbookInput(_StrictInputModel):
     description: str | None = None
     steps: tuple[RunbookStepAuthoring, ...] = Field(
         default=(),
-        description="In run order: {line: <Line name>} or {action: <internal action>}.",
+        description=(
+            "In run order: {line: <Line name>}, {procedure: <Procedure name>} "
+            "or {action: <internal action>}."
+        ),
     )
     retire: bool = False
 

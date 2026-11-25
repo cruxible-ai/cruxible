@@ -1,6 +1,6 @@
 {
   "name": "cruxible",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "Typed, governed shared state and evidence for agents.",
   "marketplace": "cruxible-plugins",
   "publisher": "Cruxible LLC",

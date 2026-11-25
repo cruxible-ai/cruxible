@@ -33,7 +33,12 @@ from cruxible_client.contracts.claim_type_structure import ClaimRole
 from cruxible_client.contracts.claim_types import ClaimType, effective_canonical_form
 from cruxible_client.contracts.compact_query import QueryFilterOperator
 from cruxible_client.contracts.identity_normalizers import KeyNormalizer
-from cruxible_client.contracts.shapes import subject_value_kinds, value_members
+from cruxible_client.contracts.shapes import (
+    EnumType,
+    ordered_enum,
+    subject_value_kinds,
+    value_members,
+)
 from cruxible_client.contracts.subject_kinds import SubjectKind
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.indexes.subject_identity import (
@@ -152,7 +157,18 @@ class PredicateInfo:
     def type_name(self) -> str:
         return self.value_type
 
+    @property
+    def ranked(self) -> EnumType | None:
+        """Its ordered enum (members in ascending rank), when it declares one."""
+
+        if self.value_type != "enum" or self.claim_type is None:
+            return None
+        return ordered_enum(self.claim_type.value)
+
     def operators(self) -> frozenset[str]:
+        if self.ranked is not None:
+            # An ordered enum also compares by declared rank.
+            return _OPERATORS["enum"] | _COMPARISONS
         return _OPERATORS[self.value_type]
 
 
@@ -590,7 +606,13 @@ def check_operator(
     admitted = _SUBJECT_ID_OPERATORS if isinstance(info, str) else info.operators()
     if operator in admitted:
         return
-    type_name = "subject_id" if isinstance(info, str) else info.value_type
+    type_name = (
+        "subject_id"
+        if isinstance(info, str)
+        else "ordered_enum"
+        if info.ranked is not None
+        else info.value_type
+    )
     raise query_refusal(
         "cruxible.query.operator_not_applicable",
         f"{operator!r} does not apply to {label} ({type_name})",
@@ -607,6 +629,8 @@ def object_label(info: PredicateInfo) -> str:
     if info.value_type == "subject":
         # The type grammar's spelling (``subject<K1 | K2>``), as orient serves it.
         return "subject<" + " | ".join(info.object_kinds) + ">" if info.object_kinds else "subject"
+    if info.ranked is not None:
+        return "ordered_enum"
     return info.value_type
 
 

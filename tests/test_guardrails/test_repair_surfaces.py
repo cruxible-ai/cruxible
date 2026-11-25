@@ -722,9 +722,13 @@ def _value_for(spelling: RepairSpelling, key: str) -> object:
     prop = _mcp_prop(spelling, key) or {}
     if key == "dry_run":
         return True
+    # The wire shape decides where the MCP tool declares it: a variadic CLI
+    # argument (``line enable [LINE]...``) also takes the one value a repair names.
     listed = (
-        param is not None and (getattr(param, "multiple", False) or param.nargs == -1)
-    ) or _is_array(prop)
+        _is_array(prop)
+        if prop
+        else param is not None and (getattr(param, "multiple", False) or param.nargs == -1)
+    )
     if listed:
         return [f"{key}-a", f"{key}-b"]
     if (isinstance(param, click.Option) and param.is_flag) or prop.get("type") == "boolean":
@@ -874,6 +878,8 @@ def _expected_cli(param: click.Parameter, value: object) -> object:
         return tuple(value) if isinstance(param, click.Argument) else value
     if isinstance(value, bool):
         return value
+    if isinstance(param, click.Argument) and param.nargs == -1:
+        return (str(value),)
     return str(value)
 
 

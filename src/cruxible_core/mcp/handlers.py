@@ -55,6 +55,7 @@ from cruxible_client.authoring.workspace import (
     floor_export_parts,
     inspect_workspace_floor,
     observe_next_workspace_with_coverage,
+    workspace_catalog_files,
     workspace_floor_freshness,
     workspace_vocabulary_at,
     workspace_vocabulary_freshness,
@@ -895,7 +896,10 @@ def handle_playbill_orient(
     )
     if workspace is None:
         return result
-    return workspace_vocabulary_freshness(workspace, workspace_floor_freshness(workspace, result))
+    return workspace_catalog_files(
+        workspace,
+        workspace_vocabulary_freshness(workspace, workspace_floor_freshness(workspace, result)),
+    )
 
 
 def handle_playbill_list_proposals(
@@ -1713,10 +1717,13 @@ def handle_playbill_get(
     result = _daemon_call(
         lambda client: client.get(instance_id, request=request), operation_name="cruxible_get"
     )
-    if isinstance(result, GetResult) and result.backlinks is not None:
+    if isinstance(result, GetResult) and (
+        result.backlinks is not None or result.notes is not None or result.kind == "subject"
+    ):
         from cruxible_client.authoring.backlink_sections import observe_get_drift
 
-        # Section rows checked against the MCP workspace, as cruxible_backlinks does.
+        # Section rows and note pointers checked against the MCP workspace, as
+        # cruxible_backlinks does.
         result = observe_get_drift(result, optional_mcp_workspace_root())
     if (
         isinstance(result, GetResult)

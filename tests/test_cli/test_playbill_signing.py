@@ -176,7 +176,7 @@ def test_cli_approval_signs_exact_challenge_without_transmitting_key(
         else:
             operation = "review" if recompiled_status == "pending_review" else "activate"
             assert result.stdout.splitlines()[-1] == (
-                f"Next: cruxible proposal {operation} {recompiled.proposal_id}"
+                f"Next: cruxible proposal {operation} {recompiled.proposal_id[7:19]}"
             )
         return
     if not output_json:
@@ -665,13 +665,14 @@ def test_an_approval_awaiting_more_names_whose_and_the_approve_next() -> None:
         "Awaiting 2 more approvals (owner must sign; 1 from: ops2); the approval that "
         "completes it activates it"
     )
+    handle = proposal[7:19]
     assert lines[1:] == [
-        f"Next: cruxible proposal approve {proposal} --signer-id owner",
-        f"Next: cruxible proposal approve {proposal} --signer-id ops2",
+        f"Next: cruxible proposal approve {handle} --signer-id owner",
+        f"Next: cruxible proposal approve {handle} --signer-id ops2",
     ]
     assert steps[:2] == [
-        f"cruxible proposal approve {proposal} --signer-id owner",
-        f"cruxible proposal approve {proposal} --signer-id ops2",
+        f"cruxible proposal approve {handle} --signer-id owner",
+        f"cruxible proposal approve {handle} --signer-id ops2",
     ]
     assert not any("proposal activate" in step for step in steps)
 

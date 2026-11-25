@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import heapq
 import json
 import sqlite3
 from collections.abc import Callable, Iterable, Mapping, MutableMapping, Sequence
@@ -124,6 +125,7 @@ from cruxible_client.contracts.claim_types import (
     render_claim_type,
 )
 from cruxible_client.contracts.claims import (
+    BASED_ON_CLAIM_PIN_ROLE,
     CitationOrigin,
     CitationRole,
     ClaimArtifact,
@@ -163,6 +165,11 @@ from cruxible_client.contracts.notes import (
     note_path,
     parse_note,
     render_note,
+)
+from cruxible_client.contracts.observation_settle import (
+    OBSERVATION_SETTLE_NAMESPACE,
+    ObservationSettleRefusal,
+    observation_settle_scope,
 )
 from cruxible_client.contracts.procedure_mandates import (
     MandateClaimScope,
@@ -223,16 +230,20 @@ from cruxible_client.contracts.query.definitions import (
     parse_query_definition,
     query_definition_digest,
     query_definition_path,
+    query_enum_comparison_problem,
     render_query_definition,
 )
 from cruxible_client.contracts.runbooks import runbook_path
 from cruxible_client.contracts.semantic import ContentSpan, SemanticAddress, SourceMapping
 from cruxible_client.contracts.shapes import (
     ContractRef,
+    EnumType,
+    FieldType,
     claim_has_line_break,
     claim_value_kind,
     contract_digest,
     contract_path,
+    declares_ordered_enum,
     map_type_refs,
     parse_contract,
     subject_value_kinds,
@@ -244,6 +255,7 @@ from cruxible_client.contracts.source_references import (
     LedgerSourceReference,
 )
 from cruxible_client.contracts.subject_kinds import (
+    SUBJECT_KIND_PREFIX,
     KeyClaimTypeShape,
     SubjectEnd,
     SubjectIdUnassignable,
@@ -268,6 +280,11 @@ from cruxible_client.contracts.subjects import (
     render_subject,
     subject_digest,
     subject_path,
+)
+from cruxible_client.contracts.temporal import (
+    ensure_utc,
+    format_datetime,
+    parse_validity_span,
 )
 from cruxible_client.contracts.triggers import (
     ActionTarget,
@@ -299,6 +316,7 @@ from cruxible_core.claims.claim_type_migrations import (
     resolve_claim_type_succession,
 )
 from cruxible_core.claims.enum_resolution import tree_enum_resolver
+from cruxible_core.compiler.compiler import admits_revision_74
 from cruxible_core.derived.derived_state import CandidateTree, SnapshotTree, fork_tree
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.indexes.subject_aliases import (
@@ -600,6 +618,22 @@ def _refuse(
 # or integrity failure (CasError) is the daemon's, never the author's selection,
 # and keeps its server-error classification.
 _WORKING_SELECTION_REFUSALS = (CaptureFormatError, CanonicalEncodingError, ValidationError)
+
+
+def _few(names: Sequence[str], *, shown: int = 5) -> str:
+    """The first few names, and how many more the repair lists."""
+
+    head = ", ".join(names[:shown])
+    return head if len(names) <= shown else f"{head} and {len(names) - shown} more"
+
+
+def _subject_shown(address: SemanticAddress) -> str:
+    """A statement subject as an author names it: ``kind/id`` for a Subject."""
+
+    path = address.artifact_path
+    if path.startswith("subjects/") and path.endswith(".json"):
+        return path.removeprefix("subjects/").removesuffix(".json")
+    return path
 
 
 def _refuse_unserved_action(action: str, offending_element: str) -> None:
@@ -1554,6 +1588,98 @@ def _claim_pin(
     )
 
 
+def _refuse_ordered_enum_before_revision_74(
+    field_types: Iterable[FieldType], *, base: AcceptedProjectionCoordinate, element: str
+) -> None:
+    """An ordered enum is new in compiler revision 74; an earlier head refuses it."""
+
+    if admits_revision_74(base.compiler):
+        return
+    if any(declares_ordered_enum(item) for item in field_types):
+        _refuse(
+            "cruxible.authoring.ordered_enum_requires_compiler_upgrade",
+            element,
+            "An ordered enum needs compiler revision 74; this instance is on an earlier revision.",
+            repair_kind="upgrade_compiler",
+            repair_description="Back up the instance, then run `cruxible compiler upgrade`.",
+        )
+
+
+def _based_on_of(claim: ClaimArtifact) -> tuple[ArtifactPin, ...]:
+    return tuple(pin for pin in claim.pins if pin.role == BASED_ON_CLAIM_PIN_ROLE)
+
+
+def _based_on_pins(
+    payload: ClaimAuthoringPayload,
+    *,
+    base: AcceptedProjectionCoordinate,
+    tree: Mapping[str, bytes],
+    claim_id: str,
+    predecessor: ClaimArtifact | None,
+) -> tuple[ArtifactPin, ...]:
+    """The ``based-on`` pins this Claim version carries.
+
+    ``based_on`` omitted keeps the predecessor's pins exactly (a stale pin
+    stays stale, and ``next`` keeps saying so). Given, it replaces them: each
+    named Claim must be live in ``tree`` (the base with this change's earlier
+    members) and is pinned at its version there; an empty list drops them all.
+    Cost: one parse and digest per named Claim.
+    """
+
+    if payload.based_on is None:
+        return () if predecessor is None else _based_on_of(predecessor)
+    if payload.based_on and not admits_revision_74(base.compiler):
+        _refuse(
+            "cruxible.authoring.based_on_requires_compiler_upgrade",
+            "based_on",
+            "A based-on Claim pin needs compiler revision 74; this instance is on an earlier "
+            "revision.",
+            repair_kind="upgrade_compiler",
+            repair_description="Back up the instance, then run `cruxible compiler upgrade`.",
+        )
+    pins: list[ArtifactPin] = []
+    for name in payload.based_on:
+        if name == claim_id:
+            _refuse(
+                "cruxible.authoring.based_on_self",
+                "based_on",
+                f"{name} cannot rest on itself.",
+                repair_kind="replace_based_on",
+                repair_description="Name the Claims this one was judged from.",
+            )
+        path = claim_path(name)
+        content = tree.get(path)
+        target = None if content is None else parse_claim(content, path=path)
+        if target is None:
+            _refuse(
+                "cruxible.authoring.based_on_not_found",
+                "based_on",
+                f"{name} is not an accepted Claim at the intent base.",
+                repair_kind="replace_based_on",
+                repair_description="Name an accepted live Claim (`cruxible get CLM-...`).",
+                replacement={"claim": name},
+            )
+        if target.lifecycle.state != "live":
+            _refuse(
+                "cruxible.authoring.based_on_retired",
+                "based_on",
+                f"{name} is retired; a Claim rests only on live Claims.",
+                repair_kind="replace_based_on",
+                repair_description="Name the live Claim that replaced it, or drop it.",
+                replacement={"claim": name},
+            )
+        previous = () if predecessor is None else predecessor.pins
+        pins.append(
+            _claim_pin(
+                role=BASED_ON_CLAIM_PIN_ROLE,
+                target=target.identity,
+                artifact_digest=claim_artifact_digest(target).tagged,
+                previous=previous,
+            )
+        )
+    return tuple(pins)
+
+
 def _lower_claim(
     instance: PlaybillInstance,
     *,
@@ -1624,6 +1750,12 @@ def _lower_claim(
     elif key_paths:
         payload = _with_keys_landed(payload, key_paths)
     payload = _with_aliases_resolved(instance, base, base_tree, payload)
+    if payload.dependency_drafts.claim_type is not None:
+        _refuse_ordered_enum_before_revision_74(
+            (payload.dependency_drafts.claim_type.value,),
+            base=base,
+            element="dependency_drafts.claim_type.value",
+        )
     candidate_base_tree, dependency_paths = _install_claim_dependencies(
         payload,
         base_tree=base_tree,
@@ -1770,14 +1902,35 @@ def _lower_claim(
     required_ids = expected - inferred
     if not required_ids.issubset(supplied) or not supplied.issubset(dispositionable):
         required = tuple(sorted(slot_claims, key=lambda item: item.identity.name.encode("ascii")))
+        subject_shown = _subject_shown(statement.subject)
+        missing_ids = sorted(
+            (required_ids - supplied), key=lambda identity: identity.encode("ascii")
+        )
+        unexpected_ids = sorted(
+            supplied - dispositionable, key=lambda identity: identity.encode("ascii")
+        )
+        slot_shown = f"{subject_shown} {statement.predicate}" + (
+            "" if statement.qualifier is None else f" (qualifier {statement.qualifier!r})"
+        )
+        named = "; ".join(
+            part
+            for part in (
+                f"not dispositioned: {_few(missing_ids)}" if missing_ids else "",
+                f"not in this slot: {_few(unexpected_ids)}" if unexpected_ids else "",
+            )
+            if part
+        )
         _refuse(
             "cruxible.authoring.existing_claim_dispositions_incomplete",
             "existing_claim_dispositions",
-            "Every live Claim in this statement's (subject, predicate, qualifier) "
-            "slot must receive an explicit disposition.",
+            f"Every live Claim in the slot {slot_shown} must receive an explicit "
+            f"disposition ({named}).",
             repair_kind="replace_dispositions",
             repair_description="Disposition exactly the listed existing Claim IDs.",
             replacement={
+                "subject": subject_shown,
+                "predicate": statement.predicate,
+                "qualifier": statement.qualifier,
                 "required_claims": [
                     {"claim_id": claim.identity.name, "status": claim.lifecycle.state}
                     for claim in required
@@ -2169,6 +2322,15 @@ def _lower_claim(
                 artifact_digest=object_referent[1],
             )
         )
+    pins.extend(
+        _based_on_pins(
+            payload,
+            base=base,
+            tree=candidate_base_tree,
+            claim_id=identity.name,
+            predecessor=predecessor,
+        )
+    )
     if derivation is not None:
         try:
             if statement.role != "derivation":
@@ -2241,9 +2403,13 @@ def _lower_claim(
             else tuple(
                 pin
                 for pin in inherited.pins
-                if rebound is None
-                or pin.role != "capture-contract"
-                or pin.artifact_digest not in rebound.contract_versions
+                # Based-on pins are decided by ``_based_on_pins`` alone.
+                if pin.role != BASED_ON_CLAIM_PIN_ROLE
+                and (
+                    rebound is None
+                    or pin.role != "capture-contract"
+                    or pin.artifact_digest not in rebound.contract_versions
+                )
             ),
             tuple(pins),
         ),
@@ -2348,6 +2514,8 @@ def _lower_claim(
     same_statement = (
         predecessor is not None
         and final.statement == predecessor.statement
+        # Re-pinning what the Claim rests on is a revision, never a no-op.
+        and _based_on_of(final) == _based_on_of(predecessor)
         and all(item.disposition == "not_tested" for item in payload.existing_claim_dispositions)
         and not dependency_paths
     )
@@ -2996,6 +3164,7 @@ def _render_non_procedure_member(
                     }
                 )
         if tree is not None:
+            enums: dict[str, EnumType] = {}
             for predicate in query.referenced_predicates:
                 target_path = claim_type_path(predicate)
                 content = tree.get(target_path)
@@ -3016,6 +3185,20 @@ def _render_non_procedure_member(
                         repair_kind="replace_input",
                         repair_description="Choose a live ClaimType.",
                     )
+                if isinstance(target.value, EnumType):
+                    enums[predicate] = target.value
+            enum_problem = query_enum_comparison_problem(query, enums.get)
+            if enum_problem is not None:
+                _refuse(
+                    "cruxible.query_definition.enum_comparison_invalid",
+                    "query_definition",
+                    enum_problem,
+                    repair_kind="replace_input",
+                    repair_description=(
+                        "Compare an enum with eq, ne or in; lt, lte, gt and gte need an "
+                        "ordered enum compared with its own members."
+                    ),
+                )
             for attr, label in (("parameter_contract", "parameter"), ("row_contract", "row")):
                 ref = getattr(query, attr)
                 if ref is not None:
@@ -3661,10 +3844,53 @@ def _mandate_alias_resolver(
     return resolve
 
 
+def _mandate_window(
+    payload: ProcedureMandateAuthoringPayload, *, intent_time: datetime
+) -> tuple[datetime, datetime]:
+    """The concrete UTC ``(valid_from, expires_at)`` a Mandate's authored validity lowers to.
+
+    ``valid_from`` omitted is the intent's canonical timestamp, so a dry run,
+    a preflight and the submission of one intent lower to the same instants;
+    ``expires`` counts its span from ``valid_from``. A stored Mandate never
+    carries a span.
+    """
+
+    valid_from = ensure_utc(payload.valid_from if payload.valid_from is not None else intent_time)
+    if payload.expires is not None:
+        try:
+            expires_at = valid_from + parse_validity_span(payload.expires)
+        except (ValueError, OverflowError) as exc:
+            _refuse(
+                "cruxible.authoring.procedure_mandate_window",
+                "expires",
+                f"expires {payload.expires!r} does not give an instant after valid_from: {exc}",
+                repair_kind="revise_procedure_mandate",
+                repair_description="Give a span such as 90d, 12w, 1y, 36h or P90D.",
+            )
+    else:
+        assert payload.expires_at is not None
+        expires_at = ensure_utc(payload.expires_at)
+    if expires_at <= valid_from and payload.valid_from is None:
+        # Both instants given and out of order refuse as an invalid Mandate,
+        # as they always have; this names the default the author did not see.
+        _refuse(
+            "cruxible.authoring.procedure_mandate_window",
+            "expires_at",
+            f"expires_at {format_datetime(expires_at)} is not after the intent's time "
+            f"{format_datetime(valid_from)}, which valid_from defaults to.",
+            repair_kind="revise_procedure_mandate",
+            repair_description=(
+                "Give a later expires_at, or a span (expires: 90d) counted from valid_from."
+            ),
+        )
+    return valid_from, expires_at
+
+
 def _render_procedure_mandate_member(
     payload: ProcedureMandateAuthoringPayload,
     *,
     tree: Mapping[str, bytes],
+    intent_time: datetime,
     resolve: Callable[[str, str], str] | None = None,
 ) -> tuple[str, bytes, str]:
     if payload.grants == "propose":
@@ -3678,6 +3904,7 @@ def _render_procedure_mandate_member(
                 ("subject_scope", payload.subject_scope is not None),
                 ("subjects", payload.subjects is not None),
                 ("subject_creation", bool(payload.subject_creation)),
+                ("include_derived", payload.include_derived),
             )
             if present
         ]
@@ -3711,8 +3938,21 @@ def _render_procedure_mandate_member(
     if previous_content is not None:
         previous = parse_procedure_mandate_any(previous_content, path=path)
         predecessor_digest = procedure_mandate_digest(previous).tagged
+    namespace = payload.namespace
     scope: list[MandateClaimScope] = []
-    for index, item in enumerate(payload.scope):
+    if payload.scope == "observations":
+        scope = _observation_settle_scope(payload, granted_line, tree=tree)
+        namespace = namespace or OBSERVATION_SETTLE_NAMESPACE
+    elif payload.include_derived:
+        _refuse(
+            "cruxible.authoring.procedure_mandate_include_derived_unscoped",
+            "include_derived",
+            "include_derived widens scope: observations only; a per-ClaimType scope names "
+            "its bases itself.",
+            repair_kind="remove_include_derived",
+            repair_description="Remove include_derived, or add derived to the scope's bases.",
+        )
+    for index, item in enumerate(() if payload.scope == "observations" else payload.scope):
         type_path = claim_type_path(item.claim_type)
         type_content = tree.get(type_path)
         if type_content is None:
@@ -3771,6 +4011,7 @@ def _render_procedure_mandate_member(
             required_fields=tuple(sorted(set(payload.condition.required_fields))),
             fallback=payload.condition.fallback,
         )
+    valid_from, expires_at = _mandate_window(payload, intent_time=intent_time)
     try:
         mandate = ProcedureMandate(
             identity=ArtifactIdentity(kind="ProcedureMandate", name=payload.name),
@@ -3780,9 +4021,9 @@ def _render_procedure_mandate_member(
                 artifact_digest=line_spec_digest(granted_line).tagged,
             ),
             grants=payload.grants,
-            namespace=payload.namespace,
-            valid_from=payload.valid_from,
-            expires_at=payload.expires_at,
+            namespace=namespace,
+            valid_from=valid_from,
+            expires_at=expires_at,
             scope=tuple(sorted(scope, key=lambda item: item.claim_type.target.qualified.encode())),
             subject_scope=(
                 None
@@ -3828,6 +4069,74 @@ def _render_procedure_mandate_member(
     ):
         return path, previous_content, procedure_mandate_digest(previous).tagged
     return path, render_procedure_mandate(mandate), procedure_mandate_digest(mandate).tagged
+
+
+def _observation_settle_scope(
+    payload: ProcedureMandateAuthoringPayload,
+    line: LineSpec,
+    *,
+    tree: Mapping[str, bytes],
+) -> list[MandateClaimScope]:
+    """Lower ``scope: observations`` to the exact per-ClaimType scope (D-R50).
+
+    Reads the Procedure the Line pins (which must be the one at the authoring
+    coordinate, as the Mandate law requires) and every ClaimType its claims
+    templates write; the shared ``observation_settle_scope`` decides.
+    """
+
+    name = line.procedure.target.name
+    path = procedure_path(name)
+    content = tree.get(path)
+    procedure = None if content is None else parse_procedure(content, path=path)
+    if procedure is None or procedure_artifact_digest(procedure).tagged != (
+        line.procedure.artifact_digest
+    ):
+        _refuse(
+            "cruxible.authoring.procedure_mandate_observations_procedure_moved",
+            "scope",
+            f"scope: observations reads the Procedure Line {line.identity.name!r} pins, and "
+            f"Procedure {name!r} at the authoring coordinate is another version.",
+            repair_kind="renew_line",
+            repair_description=(
+                "Revise the Line to pin the current Procedure in the same change, then grant it."
+            ),
+        )
+
+    def claim_type(predicate: str) -> ClaimType | None:
+        type_path = claim_type_path(predicate)
+        found = tree.get(type_path)
+        return None if found is None else parse_claim_type(found, path=type_path)
+
+    lowered = observation_settle_scope(
+        procedure.definition.nodes,
+        claim_type,
+        include_derived=payload.include_derived,
+        subject_creation=payload.subject_creation,
+    )
+    if isinstance(lowered, ObservationSettleRefusal):
+        _refuse(
+            lowered.code,
+            "subject_creation" if lowered.code.endswith("creation_unavailable") else "scope",
+            lowered.message,
+            repair_kind=lowered.repair_kind,
+            repair_description=lowered.repair_description,
+            replacement={"names": list(lowered.names)} if lowered.names else None,
+        )
+    scope = []
+    for item in lowered.claim_types:
+        found = claim_type(item.claim_type)
+        assert found is not None
+        scope.append(
+            MandateClaimScope(
+                claim_type=ArtifactPin(
+                    role="claim-type",
+                    target=found.identity,
+                    artifact_digest=claim_type_digest(found).tagged,
+                ),
+                changes=item.changes,
+            )
+        )
+    return scope
 
 
 def _authored_query_paths(
@@ -4616,16 +4925,34 @@ def subject_creation_paths(
     terminals use the complete mapping to name sibling Subject items by key.
     """
 
+    creations = _assign_creations(
+        instance,
+        operation=operation,
+        base=base,
+        base_tree=base_tree,
+        members=members,
+    )
+    if include_operation_dependent:
+        return {
+            identity: (creation.path, creation.resolved) for identity, creation in creations.items()
+        }
+    # A creation whose key names a minted or further-holder Subject created in
+    # the same write also derives its path from the operation, layer by layer.
+    op_dependent_paths: set[str] = {
+        creation.path for creation in creations.values() if creation.assignment is not None
+    }
+    for creation in sorted(creations.values(), key=lambda item: item.layer):
+        if creation.path in op_dependent_paths:
+            continue
+        if any(
+            isinstance(value, SubjectEnd) and value.path in op_dependent_paths
+            for _predicate, value in creation.key
+        ):
+            op_dependent_paths.add(creation.path)
     return {
         identity: (creation.path, creation.resolved)
-        for identity, creation in _assign_creations(
-            instance,
-            operation=operation,
-            base=base,
-            base_tree=base_tree,
-            members=members,
-        ).items()
-        if include_operation_dependent or creation.assignment is None
+        for identity, creation in creations.items()
+        if creation.assignment is None and creation.path not in op_dependent_paths
     }
 
 
@@ -5074,12 +5401,13 @@ def _naming_creations(
     key named (review F-002) -- never a path predicted from raw key values.
     """
 
-    by_digest = {identity.rpartition("@")[2]: creation for identity, creation in creations.items()}
-
     def landed(address: SemanticAddress, field_name: str) -> SemanticAddress:
         if address.selector.scheme != "subject-creation-v1":
             return address
-        creation = by_digest.get(address.selector.value)
+        # One keyed lookup by the member identity the address spells (its
+        # kind and digest), never an index of every creation per Claim.
+        kind = address.artifact_path.removeprefix(SUBJECT_KIND_PREFIX).removesuffix(".json")
+        creation = creations.get(f"SubjectCreation:{kind}@{address.selector.value}")
         if creation is None or address.artifact_path != subject_kind_path(creation.kind):
             _refuse(
                 SUBJECT_CREATION_REFERENCE_UNRESOLVED,
@@ -5345,6 +5673,159 @@ def _contract_member_refs(member: ContractAuthoringPayload) -> tuple[ContractRef
     for item in member.fields.values():
         found.extend(type_refs(item.type))
     return tuple(found)
+
+
+def claim_staging_order(
+    members: Sequence[AuthoringChangeSetMember],
+    indices: Iterable[int],
+    claim_ids: Mapping[str, str],
+) -> list[int]:
+    """``indices`` in the order Claim members stage: canonical, pins first.
+
+    ``claim_ids`` maps each Claim member's identity to its Claim ID (the minted
+    one, or the one it revises). A Claim whose ``based_on`` names a sibling
+    member's Claim stages after that sibling, so the pin reads the version this
+    change set writes; every other member keeps its canonical position relative
+    to the rest (a stable topological sort). A cycle of such pins refuses
+    ``based_on_cycle``. Cost: linear in the members and their pins.
+    """
+
+    order = list(indices)
+    by_claim: dict[str, int] = {}
+    for index in order:
+        member = members[index]
+        if isinstance(member, ClaimAuthoringPayload):
+            claim_id = claim_ids.get(authoring_member_identity(member))
+            if claim_id:
+                by_claim[claim_id] = index
+    deps: dict[int, set[int]] = {}
+    for index in order:
+        member = members[index]
+        if isinstance(member, ClaimAuthoringPayload) and member.based_on:
+            found = {by_claim[name] for name in member.based_on if name in by_claim} - {index}
+            if found:
+                deps[index] = found
+    if not deps:
+        return order
+    position = {index: rank for rank, index in enumerate(order)}
+    waiting = {index: len(found) for index, found in deps.items()}
+    dependents: dict[int, list[int]] = {}
+    for index, found in deps.items():
+        for dep in found:
+            dependents.setdefault(dep, []).append(index)
+    ready = [position[index] for index in order if index not in waiting]
+    heapq.heapify(ready)
+    staged: list[int] = []
+    while ready:
+        index = order[heapq.heappop(ready)]
+        staged.append(index)
+        for dependent in dependents.get(index, ()):
+            waiting[dependent] -= 1
+            if waiting[dependent] == 0:
+                heapq.heappush(ready, position[dependent])
+    if len(staged) != len(order):
+        cyclic = sorted(index for index in order if index not in set(staged))
+        _refuse(
+            "cruxible.authoring.based_on_cycle",
+            "members",
+            "These Claim members of the same change set rest on each other's Claims in a "
+            "cycle (based_on): members " + ", ".join(str(index) for index in cyclic),
+            repair_kind="replace_based_on",
+            repair_description="Drop one of the based_on pins so the Claims rest one way.",
+            replacement={"members": cyclic},
+        )
+    return staged
+
+
+class _PreStagedMemberError(Exception):
+    """An ordinary sibling Claim refused while pre-staged for a succession."""
+
+    def __init__(self, index: int, error: AuthoringLoweringError) -> None:
+        super().__init__(error.message)
+        self.index = index
+        self.error = error
+
+
+def _succession_staging_order(
+    stage_indices: list[int],
+    members: tuple[AuthoringChangeSetMember, ...],
+    claim_ids: Mapping[str, str],
+    re_author_siblings: Mapping[int, Mapping[str, int]],
+) -> list[int]:
+    """Order ClaimType successions so a re-authored Claim lowers after one it pins.
+
+    Follows transitive ``based_on`` links through both ordinary and re-authored
+    sibling Claims so a succession whose re-authored Claim rests on another
+    succession's re-authored Claim stages second.
+    """
+
+    order = list(stage_indices)
+    if len(order) <= 1:
+        return order
+    by_claim: dict[str, int] = {}
+    for index, member in enumerate(members):
+        if isinstance(member, ClaimAuthoringPayload):
+            claim_id = claim_ids.get(authoring_member_identity(member))
+            if claim_id:
+                by_claim[claim_id] = index
+    re_author_owner: dict[int, int] = {
+        sibling_index: succession_index
+        for succession_index, bound in re_author_siblings.items()
+        for sibling_index in bound.values()
+    }
+    deps: dict[int, set[int]] = {}
+    for succession_index in order:
+        visited: set[int] = set(re_author_siblings.get(succession_index, {}).values())
+        frontier = list(visited)
+        needed: set[int] = set()
+        while frontier:
+            current = frontier.pop()
+            member = members[current]
+            if not isinstance(member, ClaimAuthoringPayload) or not member.based_on:
+                continue
+            for pin_id in member.based_on:
+                dep_member = by_claim.get(pin_id)
+                if dep_member is None:
+                    continue
+                owner = re_author_owner.get(dep_member)
+                if owner is not None and owner != succession_index:
+                    needed.add(owner)
+                if dep_member not in visited:
+                    visited.add(dep_member)
+                    frontier.append(dep_member)
+        if needed:
+            deps[succession_index] = needed
+    if not deps:
+        return order
+    position = {index: rank for rank, index in enumerate(order)}
+    waiting = {index: len(found) for index, found in deps.items()}
+    dependents: dict[int, list[int]] = {}
+    for index, found in deps.items():
+        for dep in found:
+            dependents.setdefault(dep, []).append(index)
+    ready = [position[index] for index in order if index not in waiting]
+    heapq.heapify(ready)
+    staged: list[int] = []
+    while ready:
+        index = order[heapq.heappop(ready)]
+        staged.append(index)
+        for dependent in dependents.get(index, ()):
+            waiting[dependent] -= 1
+            if waiting[dependent] == 0:
+                heapq.heappush(ready, position[dependent])
+    if len(staged) != len(order):
+        cyclic = sorted(index for index in order if index not in set(staged))
+        _refuse(
+            "cruxible.authoring.based_on_cycle",
+            "members",
+            "These ClaimType succession members of the same change set depend on each "
+            "other's re-authored Claims in a cycle (based_on): members "
+            + ", ".join(str(index) for index in cyclic),
+            repair_kind="replace_based_on",
+            repair_description="Drop one of the based_on pins so the successions rest one way.",
+            replacement={"members": cyclic},
+        )
+    return staged
 
 
 def _stage_member_order(
@@ -5637,6 +6118,15 @@ def _lower_change_set(
         for siblings in re_author_siblings.values()
         for sibling_index in siblings.values()
     }
+    # Check based_on cycles across all Claim members up front, including cycles
+    # that cross between re-authored Claims and ordinary sibling Claims.
+    all_claim_indices = [
+        index
+        for index, member in enumerate(payload.members)
+        if isinstance(member, ClaimAuthoringPayload)
+    ]
+    if len(all_claim_indices) > 1:
+        claim_staging_order(payload.members, all_claim_indices, claim_identities)
     sibling_resolved: dict[int, dict[str, object]] = {}
 
     staged_tree: MutableMapping[str, bytes] = fork_tree(base_tree)
@@ -5677,14 +6167,24 @@ def _lower_change_set(
                         ].layer
                     )
                 )
-            for index in _stage_member_order(stage_indices, payload.members):
+            staging = (
+                claim_staging_order(payload.members, stage_indices, claim_identities)
+                if stage == "claim"
+                else _succession_staging_order(
+                    stage_indices, payload.members, claim_identities, re_author_siblings
+                )
+                if stage == "claim_type_succession"
+                else _stage_member_order(stage_indices, payload.members)
+            )
+            for index in staging:
                 member = payload.members[index]
                 path = primary_paths[index]
                 member_paths.add(path)
-                if index in consumed:
-                    # A re-authored Claim is lowered by the succession that names it,
-                    # under the successor vocabulary; staging it again here would
-                    # lower it a second time against a tree it has already changed.
+                if index in sibling_resolved:
+                    # A re-authored Claim, or an ordinary sibling Claim pre-staged as
+                    # a based_on prerequisite of one, was already lowered by that
+                    # succession; staging it again here would lower it a second time
+                    # against a tree it has already changed.
                     member_resolved = sibling_resolved[index]
                 else:
                     try:
@@ -5708,12 +6208,20 @@ def _lower_change_set(
                             candidate_identities=candidate_identities,
                             candidate_paths=candidate_paths,
                             re_author_siblings=re_author_siblings.get(index, {}),
+                            all_re_authored=frozenset(consumed),
+                            already_staged_claims=frozenset(sibling_resolved),
                             derivation_procedure=derivation_procedure,
                             captures=captures,
                             creations=creations,
                             key_paths=key_paths,
                             retirement_closures=retirement_closures,
                         )
+                    except _PreStagedMemberError as pre_error:
+                        raise _rescope_member_error(
+                            pre_error.error,
+                            index=pre_error.index,
+                            sibling_member_by_claim_id=sibling_member_by_claim_id,
+                        ) from pre_error.error
                     except AuthoringLoweringError as error:
                         raise _rescope_member_error(
                             error,
@@ -5725,7 +6233,7 @@ def _lower_change_set(
                             index=index,
                             changed_paths=extra_paths,
                             owner_by_path=owner_by_path,
-                            re_authored=frozenset(re_author_siblings.get(index, {}).values()),
+                            re_authored=frozenset(staged_siblings),
                             members=payload.members,
                         )
                     sibling_resolved.update(staged_siblings)
@@ -5803,6 +6311,8 @@ def _stage_change_set_member(
     candidate_identities: frozenset[str],
     candidate_paths: tuple[str, ...],
     re_author_siblings: Mapping[str, int],
+    all_re_authored: frozenset[int] = frozenset(),
+    already_staged_claims: frozenset[int] = frozenset(),
     derivation_procedure: ArtifactPin | None = None,
     captures: ProducerReceiptResolverProtocol,
     creations: Mapping[str, _Creation] | None = None,
@@ -5811,6 +6321,14 @@ def _stage_change_set_member(
 ) -> StagedMember:
     """Write one member into the staged tree and report what it resolved to."""
 
+    if isinstance(member, ClaimTypeAuthoringPayload):
+        _refuse_ordered_enum_before_revision_74(
+            (member.claim_type.value,), base=base, element="claim_type.value"
+        )
+    elif isinstance(member, ContractAuthoringPayload):
+        _refuse_ordered_enum_before_revision_74(
+            (field.type for field in member.fields.values()), base=base, element="fields"
+        )
     if isinstance(member, SubjectCreationAuthoringPayload):
         assert creations is not None
         return _stage_subject_creation(
@@ -5866,6 +6384,10 @@ def _stage_change_set_member(
             members=members,
             claim_identities=claim_identities,
             re_author_siblings=re_author_siblings,
+            all_re_authored=all_re_authored,
+            already_staged_claims=already_staged_claims,
+            derivation_procedure=derivation_procedure,
+            creations=creations,
             captures=captures,
             key_paths=key_paths or {},
         )
@@ -5894,6 +6416,7 @@ def _stage_change_set_member(
         mandate_path, content, digest = _render_procedure_mandate_member(
             member,
             tree=staged_tree,
+            intent_time=_observed_at(intent.canonical_timestamp),
             resolve=_mandate_alias_resolver(instance, base, staged_tree),
         )
         candidate_tree = fork_tree(staged_tree)
@@ -6285,6 +6808,10 @@ def _stage_claim_type_succession(
     members: tuple[AuthoringChangeSetMember, ...],
     claim_identities: Mapping[str, str],
     re_author_siblings: Mapping[str, int],
+    all_re_authored: frozenset[int] = frozenset(),
+    already_staged_claims: frozenset[int] = frozenset(),
+    derivation_procedure: ArtifactPin | None = None,
+    creations: Mapping[str, _Creation] | None = None,
     captures: ProducerReceiptResolverProtocol,
     key_paths: Mapping[tuple[str, str], str] | None = None,
 ) -> StagedMember:
@@ -6317,6 +6844,9 @@ def _stage_claim_type_succession(
                 "Name the ClaimType this set succeeds and pin its exact current digest."
             ),
         )
+    _refuse_ordered_enum_before_revision_74(
+        (successor.value,), base=base, element="successor.value"
+    )
     try:
         inventory = claim_type_migration_inventory(
             staged_tree, root=successor.identity, by_name=True
@@ -6448,49 +6978,117 @@ def _stage_claim_type_succession(
     authored: dict[str, bytes] = {}
     sibling_resolved: dict[int, dict[str, object]] = {}
     extra: set[str] = set()
-    for position, dependent in enumerate(member.dependents):
-        if dependent.disposition != "re_author":
-            continue
-        sibling_index = re_author_siblings[dependent.identity.qualified]
+    # Re-authored siblings lower in the order Claims stage, together with any
+    # ordinary sibling Claims they transitively pin via based_on (not already
+    # staged and not in this succession's own closure). Each lowered Claim's
+    # bytes are laid on the lowering tree so every dependent pin reads the
+    # version this change set writes.
+    re_authored = {
+        re_author_siblings[dependent.identity.qualified]: position
+        for position, dependent in enumerate(member.dependents)
+        if dependent.disposition == "re_author"
+    }
+    inventory_paths = {row.path for row in inventory}
+    ordinary_by_claim_id: dict[str, int] = {}
+    for sibling_idx, candidate_member in enumerate(members):
+        if (
+            isinstance(candidate_member, ClaimAuthoringPayload)
+            and sibling_idx not in all_re_authored
+            and sibling_idx not in already_staged_claims
+        ):
+            candidate_claim_id = claim_identities.get(authoring_member_identity(candidate_member))
+            if candidate_claim_id and claim_path(candidate_claim_id) not in inventory_paths:
+                ordinary_by_claim_id[candidate_claim_id] = sibling_idx
+    prereq_ordinary: set[int] = set()
+    frontier = list(re_authored)
+    while frontier:
+        current_idx = frontier.pop()
+        current_member = members[current_idx]
+        if isinstance(current_member, ClaimAuthoringPayload) and current_member.based_on:
+            for pin_id in current_member.based_on:
+                dep_idx = ordinary_by_claim_id.get(pin_id)
+                if dep_idx is not None and dep_idx not in prereq_ordinary:
+                    prereq_ordinary.add(dep_idx)
+                    frontier.append(dep_idx)
+    prereq_claim_index = _ClaimPredicateIndex(lowering_tree) if prereq_ordinary else None
+    batch = sorted(set(re_authored) | prereq_ordinary)
+    for sibling_index in claim_staging_order(members, batch, claim_identities):
         sibling = members[sibling_index]
         assert isinstance(sibling, ClaimAuthoringPayload)
         claim_id = claim_identities[authoring_member_identity(sibling)]
-        try:
-            lowered = _lower_claim(
-                instance,
-                intent=intent,
-                actor_id=actor_id,
-                base=base,
-                base_tree=lowering_tree,
-                payload=sibling,
-                claim_identity=claim_id,
-                captures=captures,
-                key_paths=key_paths or {},
-            )
-        except AuthoringLoweringError as error:
-            _refuse(
-                "cruxible.authoring.claim_type_succession_re_author_refused",
-                f"dependents[{position}].successor_claim_id",
-                error.message,
-                repair_kind="edit_re_author_member",
-                repair_description=(
-                    "Repair the sibling Claim member this dependent is re-authored as."
-                ),
-                replacement={
-                    "code": error.code,
-                    "offending_element": (f"members[{sibling_index}].{error.offending_element}"),
-                    "sibling_member": sibling_index,
-                    "successor_claim_id": dependent.identity.name,
-                },
-            )
         sibling_path = claim_path(claim_id)
-        authored[dependent.identity.qualified] = lowered.proposed_tree[sibling_path]
-        for extra_path, content in lowered.changed_members:
-            if extra_path == sibling_path:
-                continue
-            lowering_tree[extra_path] = content
-            working[extra_path] = content
-            extra.add(extra_path)
+        if sibling_index in re_authored:
+            position = re_authored[sibling_index]
+            dependent = member.dependents[position]
+            try:
+                lowered = _lower_claim(
+                    instance,
+                    intent=intent,
+                    actor_id=actor_id,
+                    base=base,
+                    base_tree=lowering_tree,
+                    payload=sibling,
+                    claim_identity=claim_id,
+                    captures=captures,
+                    key_paths=key_paths or {},
+                )
+            except AuthoringLoweringError as error:
+                _refuse(
+                    "cruxible.authoring.claim_type_succession_re_author_refused",
+                    f"dependents[{position}].successor_claim_id",
+                    error.message,
+                    repair_kind="edit_re_author_member",
+                    repair_description=(
+                        "Repair the sibling Claim member this dependent is re-authored as."
+                    ),
+                    replacement={
+                        "code": error.code,
+                        "offending_element": (
+                            f"members[{sibling_index}].{error.offending_element}"
+                        ),
+                        "sibling_member": sibling_index,
+                        "successor_claim_id": dependent.identity.name,
+                    },
+                )
+            authored[dependent.identity.qualified] = lowered.proposed_tree[sibling_path]
+            lowering_tree[sibling_path] = lowered.proposed_tree[sibling_path]
+            for extra_path, content in lowered.changed_members:
+                if extra_path == sibling_path:
+                    continue
+                lowering_tree[extra_path] = content
+                working[extra_path] = content
+                extra.add(extra_path)
+            if prereq_claim_index is not None:
+                prereq_claim_index.advance(lowering_tree, {sibling_path})
+        else:
+            try:
+                lowered = _lower_claim(
+                    instance,
+                    intent=intent,
+                    actor_id=actor_id,
+                    base=base,
+                    base_tree=lowering_tree,
+                    payload=_naming_creations(sibling, creations or {}, element=sibling_path),
+                    claim_identity=claim_id,
+                    claim_index=prereq_claim_index,
+                    derivation_procedure=derivation_procedure,
+                    captures=captures,
+                    key_paths=key_paths or {},
+                )
+            except AuthoringLoweringError as error:
+                raise _PreStagedMemberError(sibling_index, error) from error
+            lowered_bytes = lowered.proposed_tree[sibling_path]
+            lowering_tree[sibling_path] = lowered_bytes
+            working[sibling_path] = lowered_bytes
+            extra.add(sibling_path)
+            for extra_path, content in lowered.changed_members:
+                if extra_path == sibling_path:
+                    continue
+                lowering_tree[extra_path] = content
+                working[extra_path] = content
+                extra.add(extra_path)
+            if prereq_claim_index is not None:
+                prereq_claim_index.advance(lowering_tree, {sibling_path})
         member_resolved = dict(lowered.resolved_authoring)
         member_resolved["claim_id"] = claim_id
         sibling_resolved[sibling_index] = member_resolved
@@ -6944,6 +7542,7 @@ def _lower_authoring(
         path, content, digest = _render_procedure_mandate_member(
             intent.payload,
             tree=base_tree,
+            intent_time=_observed_at(intent.canonical_timestamp),
             resolve=_mandate_alias_resolver(instance, base, base_tree),
         )
         candidate_tree = fork_tree(base_tree)
@@ -6970,6 +7569,12 @@ def _lower_authoring(
             captures=captures,
         )
     if isinstance(intent.payload, CapabilityAuthoringPayload | ContractAuthoringPayload):
+        if isinstance(intent.payload, ContractAuthoringPayload):
+            _refuse_ordered_enum_before_revision_74(
+                (field.type for field in intent.payload.fields.values()),
+                base=base,
+                element="fields",
+            )
         path, content, digest = (
             _render_capability_member(intent.payload, tree=base_tree)
             if isinstance(intent.payload, CapabilityAuthoringPayload)

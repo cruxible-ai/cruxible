@@ -249,6 +249,46 @@ def test_table_cells_show_native_values_and_cut_previews() -> None:
     assert "reviewed" in table
 
 
+def test_ids_are_never_cut_and_no_truncate_shows_every_cell_whole(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from cruxible_client.authoring.compact_query import render_query_table
+
+    long_id = "finding-" + "x" * 70
+    note = "a long note " * 10
+    page = contracts.QueryResultRecord(
+        kind="legal.case",
+        columns=(contracts.QueryColumn(name="note", type="string"),),
+        rows=(
+            {
+                "subject": f"legal.case/{long_id}",
+                "subject_id": long_id,
+                "note": note,
+                "flags": [],
+            },
+        ),
+        receipt=contracts.QueryReceipt(
+            mode="inline",
+            spec_digest="sha256:" + "0" * 64,
+            coordinate=COORDINATE,  # type: ignore[arg-type]
+            evaluation_time=datetime(2026, 9, 1, tzinfo=UTC),
+        ),
+    )
+    table = render_query_table(page)
+    assert f"legal.case/{long_id}" in table and note.strip() not in table
+    whole = render_query_table(page, truncate=False)
+    assert note.strip() in whole and "…" not in whole
+
+    class _Client:
+        def query(self, instance_id: str, *, request: QueryRequest) -> Any:
+            return page
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: _Client())
+    result = _run("legal.case", "--no-truncate")
+    assert result.exit_code == 0, result.output
+    assert note.strip() in result.output
+
+
 def test_status_claims_budgets_and_receipt_reach_the_request(stub: _StubClient) -> None:
     result = _run(
         "dev.roadmap_item",

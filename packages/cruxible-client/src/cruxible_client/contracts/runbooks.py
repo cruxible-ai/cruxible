@@ -26,6 +26,7 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
+from types import MappingProxyType
 from typing import Annotated, ClassVar, Final, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -33,6 +34,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
     ArtifactLifecycle,
+    ArtifactNameRef,
     ArtifactPin,
 )
 from cruxible_client.contracts.canonical import (
@@ -71,8 +73,37 @@ class _StrictRunbookModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, json_schema_mode_override="validation")
 
 
-#: One step: exactly a Trigger's Line or internal-action target.
-RunbookStep: TypeAlias = Annotated[LineTarget | ActionTarget, Field(discriminator="kind")]
+#: Why a Line cannot run as a Runbook step: it takes an event (``trigger_input``),
+#: which no step hands it. The law refuses such a Line step; a Procedure step
+#: leaves such a Line out of its fan-out.
+LINE_TAKES_EVENT: Final = "cruxible.runbook.line_takes_event"
+
+
+class ProcedureTarget(_StrictRunbookModel):
+    """Fan-out step: run each live Line of this Procedure, in Line-name order.
+
+    The Lines are read at the head when the step is reached. A Line that takes
+    an event is left out (``cruxible.runbook.line_takes_event``); with no Line
+    left the step is skipped (``cruxible.runbook.no_lines_bound``). Each Line
+    runs as a Line step does (``LineTarget``): in a Trigger-fired run a Line not
+    enabled stops the Runbook with ``not_enabled``, as a Line step's would; a
+    manual run runs it under the caller's authority.
+    """
+
+    kind: Literal["procedure"] = "procedure"
+    procedure: ArtifactNameRef
+
+    @model_validator(mode="after")
+    def _procedure(self) -> ProcedureTarget:
+        if self.procedure.target.kind != "Procedure":
+            raise ValueError("a ProcedureTarget names a Procedure")
+        return self
+
+
+#: One step: a Line, a Procedure fan-out target, or a registered internal action.
+RunbookStep: TypeAlias = Annotated[
+    LineTarget | ActionTarget | ProcedureTarget, Field(discriminator="kind")
+]
 
 
 class Runbook(_StrictRunbookModel):
@@ -100,6 +131,16 @@ class Runbook(_StrictRunbookModel):
 
         return tuple(
             dict.fromkeys(step.line.target for step in self.steps if isinstance(step, LineTarget))
+        )
+
+    @property
+    def procedures(self) -> tuple[ArtifactIdentity, ...]:
+        """Every Procedure the steps fan out over, in first-step order, once each."""
+
+        return tuple(
+            dict.fromkeys(
+                step.procedure.target for step in self.steps if isinstance(step, ProcedureTarget)
+            )
         )
 
 
@@ -155,6 +196,13 @@ class RunbookLineState:
     takes_event: bool = False
 
 
+@dataclass(frozen=True)
+class RunbookProcedureState:
+    """What the Runbook law reads of one named Procedure in the final candidate."""
+
+    live: bool
+
+
 class RunbookLawResult(_StrictRunbookModel):
     verdict: Literal["accepted", "refused"]
     artifact_digest: str | None = None
@@ -182,6 +230,7 @@ def evaluate_runbook_law(
     path: str,
     predecessor: AcceptedRunbook | None,
     lines: Mapping[str, RunbookLineState],
+    procedures: Mapping[str, RunbookProcedureState] = MappingProxyType({}),
     actions: Mapping[str, InternalActionSpec] = INTERNAL_ACTIONS,
 ) -> RunbookLawResult:
     """Judge one Runbook against its predecessor and the targets it names.
@@ -234,6 +283,17 @@ def evaluate_runbook_law(
                         path=path,
                     )
                 continue
+            if isinstance(step, ProcedureTarget):
+                qualified = step.procedure.target.qualified
+                proc_state = procedures.get(qualified)
+                if proc_state is None or not proc_state.live:
+                    return _refusal(
+                        "cruxible.runbook.procedure_unavailable",
+                        f"Step {index}: {qualified!r} is not a live accepted Procedure in this "
+                        "candidate; accept the Procedure first.",
+                        path=path,
+                    )
+                continue
             qualified = step.line.target.qualified
             state = lines.get(qualified)
             if state is None or not state.live:
@@ -245,7 +305,7 @@ def evaluate_runbook_law(
                 )
             if state.takes_event:
                 return _refusal(
-                    "cruxible.runbook.line_takes_event",
+                    LINE_TAKES_EVENT,
                     f"Step {index}: {qualified!r} binds its triggering Capture to a Source "
                     "input, and a Runbook step runs without an event; run it from its own "
                     "capture_landing Trigger instead.",
@@ -274,6 +334,8 @@ RunbookStepStatus: TypeAlias = Literal[
     "unavailable",
     # The internal action was fired into the trigger journal.
     "fired",
+    # A Procedure fan-out step had 0 bound live Lines: recorded and continued.
+    "skipped",
     # An earlier step stopped the run.
     "not_run",
 ]
@@ -302,13 +364,20 @@ class RunbookStepOutcome(_StrictRunbookModel):
     #: The Line run's counts (written, settled, proposed, refused, inbox,
     #: completeness): a "succeeded" step can still have refused every item.
     counts: RunCounts | None = Field(default=None, exclude_if=lambda value: value is None)
+    #: For a Line step expanded from a Procedure fan-out step, that Procedure's name.
+    from_procedure: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 def runbook_attention_steps(steps: tuple[RunbookStepOutcome, ...]) -> tuple[int, ...]:
-    """The steps whose Line run counts need attention, in order."""
+    """The steps whose Line run counts need attention, in order, once each.
+
+    A Procedure step's expanded Lines share its step number: it is named once.
+    """
 
     return tuple(
-        item.step for item in steps if item.counts is not None and item.counts.needs_attention
+        dict.fromkeys(
+            item.step for item in steps if item.counts is not None and item.counts.needs_attention
+        )
     )
 
 
@@ -341,11 +410,7 @@ class RunbookRunResult(_StrictRunbookModel):
             raise ValueError("a stopped run names its stop reason, and only a stopped run")
         if (self.stop_reason is None) != (self.stopped_at_step is None):
             raise ValueError("a stop reason names the step it stopped at")
-        attention = tuple(
-            item.step
-            for item in self.steps
-            if item.counts is not None and item.counts.needs_attention
-        )
+        attention = runbook_attention_steps(self.steps)
         if self.attention_steps != attention:
             raise ValueError("attention_steps names exactly the steps whose counts need attention")
         return self
@@ -573,8 +638,15 @@ class RunbookPreviewCascade(_StrictRunbookModel):
 class RunbookPreviewStep(_StrictRunbookModel):
     step: int = Field(ge=1)
     target: RunbookStep
-    #: The step's Line is not live: the run would stop here.
+    #: The step's Line or Procedure is not live: the run would stop here.
     unavailable: bool = Field(default=False, exclude_if=lambda value: not value)
+    #: For a Line step expanded from a Procedure fan-out step, that Procedure's name.
+    from_procedure: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    #: A Procedure step's Line the run leaves out, and why: it takes an event.
+    #: Listed under the Procedure step's number with nothing else; it never runs.
+    excluded: Literal["cruxible.runbook.line_takes_event"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     procedure: str | None = Field(default=None, exclude_if=lambda value: value is None)
     reads: tuple[RunbookPreviewRead, ...] = ()
     writes: tuple[RunbookPreviewWrite, ...] = ()
@@ -592,10 +664,11 @@ class RunbookPreviewStep(_StrictRunbookModel):
 class RunbookOrderProblem(_StrictRunbookModel):
     """A read the order cannot serve: reported, never fixed."""
 
-    kind: Literal["reads_later_write", "reads_unwritten"]
+    kind: Literal["reads_later_write", "reads_unwritten", "reads_unbound_write"]
     step: int = Field(ge=1)
     claim_type: str
-    #: The later steps that write it (``reads_later_write``).
+    #: The later steps that write it (``reads_later_write``), or the earlier
+    #: Procedure steps no live Line runs that would (``reads_unbound_write``).
     written_by_steps: tuple[int, ...] = ()
     #: Live Lines outside the Runbook that write it.
     outside_writers: tuple[str, ...] = ()
@@ -634,15 +707,18 @@ class RunbookPreview(_StrictRunbookModel):
 
 __all__ = [
     "RUNBOOK_ARTIFACT_FORMAT",
+    "LINE_TAKES_EVENT",
     "RUNBOOK_MAX_STEPS",
     "RUNBOOK_PATH_RE",
     "AcceptedRunbook",
+    "ProcedureTarget",
     "Runbook",
     "RunbookFormatError",
     "RunbookInputKind",
     "RunbookInputState",
     "RunbookLawResult",
     "RunbookLineState",
+    "RunbookProcedureState",
     "RunbookOrderProblem",
     "RunbookPreview",
     "RunbookPreviewAuthority",

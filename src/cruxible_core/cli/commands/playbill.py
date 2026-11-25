@@ -7,8 +7,10 @@ import json
 import os
 import shlex
 import subprocess
+import sys
+import tempfile
 from collections import Counter
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -76,6 +78,7 @@ from cruxible_client.authoring.workspace import (
     observe_next_workspace_with_coverage,
     observe_projection_coverage,
     validate_workspace_config_write,
+    workspace_catalog_files,
     workspace_floor_freshness,
     workspace_vocabulary_at,
     workspace_vocabulary_freshness,
@@ -140,12 +143,18 @@ from cruxible_client.contracts.get_text import (  # noqa: F401
 from cruxible_client.contracts.get_text import run_node_line as _run_node_line
 from cruxible_client.contracts.kit_requires import KitRequirement
 from cruxible_client.contracts.kits import (
+    InstalledKit,
     KitAddRequest,
     KitAutomationTemplate,
     KitBuildRequest,
+    KitBundle,
     KitChangeResult,
+    KitFileBytes,
+    KitManifest,
+    KitRecipeSpec,
     KitRemoveRequest,
     KitRequirementStatus,
+    KitScriptSpec,
     kit_version_key,
 )
 from cruxible_client.contracts.line_dispatch import LineDispatchItem, LineEvaluateResult
@@ -158,8 +167,10 @@ from cruxible_client.contracts.procedures.results import (
 )
 from cruxible_client.contracts.procedures.windows import TriggerEventReference
 from cruxible_client.contracts.proposal_models import canonical_proposal_ref_name
+from cruxible_client.contracts.proposal_summary import ReviewDefinition
 from cruxible_client.contracts.provider_installation import (
     ProviderInstallRequest,
+    ProviderInstallResult,
     ProviderMoveRequest,
     ProviderRetireRequest,
 )
@@ -193,10 +204,13 @@ from cruxible_client.contracts.types import PrincipalKind, PrincipalRecord
 from cruxible_client.contracts.validation_messages import validation_summary
 from cruxible_client.contracts.workspace_layout import WorkspaceDirectoryConflict
 from cruxible_client.contracts.write import (
+    AddChange,
+    AppendSection,
     Change,
     ContractEvidence,
     DocOp,
     RetireRequest,
+    SetChange,
     SetRequest,
     SubjectRef,
     WriteOutcome,
@@ -229,6 +243,7 @@ from cruxible_core.cli.commands._common import (
     _echo_creation_write_target,
     _emit_brief,
     _emit_json,
+    _interactive_terminal,
     _remember_principal_settings,
     _require_instance_id,
     _root_ctx_obj,
@@ -1077,12 +1092,19 @@ def create_host(
 @click.option(
     "--reviewer-key-dir",
     default=None,
-    help="Optional second ordinary-principal custody directory outside the workspace.",
+    help=(
+        "Custody directory for a second ordinary principal, `reviewer`, outside the "
+        "workspace and the daemon state root (default with --require-independent-approval: "
+        "$XDG_CONFIG_HOME/cruxible/keys/INSTANCE/reviewer, else under ~/.config)."
+    ),
 )
 @click.option(
     "--require-independent-approval",
     is_flag=True,
-    help="Require one non-creator ordinary approval for governed changes.",
+    help=(
+        "Require one non-creator ordinary approval for governed changes; also creates "
+        "the `reviewer` principal that gives it."
+    ),
 )
 @click.option("--recovery-key-dir", default=None, help="Optional offline recovery custody dir.")
 @click.option("--recovery-principal-id", default="recovery", show_default=True)
@@ -1143,7 +1165,10 @@ def init_playbill(
     The owner principal ID defaults to your OS username and the key directory to
     a per-user config path outside the workspace and the daemon state root. The
     CLI remembers the owner's settings and acts as the owner from then on
-    (`cruxible context use --principal ID` switches).
+    (`cruxible context use --principal ID` switches). With
+    --require-independent-approval (or --reviewer-key-dir) init also creates a
+    second ordinary principal, `reviewer`, whose key defaults to the sibling
+    per-user config path; `cruxible context use --principal reviewer` acts as it.
 
     With daemon auth off, the owner principal ID is the identity this process
     claims for the init request; no bootstrap secret is needed.
@@ -1156,8 +1181,14 @@ def init_playbill(
     another folder, so it is never initialized here and never replaced.
     """
 
-    if require_independent_approval and reviewer_key_dir is None:
-        raise click.UsageError("--require-independent-approval requires --reviewer-key-dir")
+    # Independent approval needs a non-creator approver: init creates `reviewer`,
+    # in its own custody directory (the default one sits beside the owner's).
+    with_reviewer = require_independent_approval or reviewer_key_dir is not None
+    if with_reviewer:
+        # A named owner is checked before anything is resolved; a defaulted one below.
+        _refuse_owner_named_reviewer(
+            principal_id if principal_id is not None else _root_ctx_obj().get("principal_id")
+        )
     if not ensure_cli_daemon():
         raise click.UsageError(no_daemon_message("cruxible init"))
     git_workspace = _creation_workspace(workspace_path, fallback_to_start=True).workspace_root
@@ -1200,6 +1231,8 @@ def init_playbill(
             f"{configured} (CRUXIBLE_PRINCIPAL_ID or the global --principal-id); repair: "
             "pass one principal ID"
         )
+    if with_reviewer:
+        _refuse_owner_named_reviewer(principal_id)
     if get_runtime_bearer_token() is None:
         # Auth off: the init request claims the owner it creates. With a bearer
         # credential the credential decides who acts, so no claim is sent.
@@ -1274,11 +1307,23 @@ def init_playbill(
             flag="--key-dir",
         )
     )
+    reviewer_dir = (
+        None
+        if not with_reviewer
+        else Path(reviewer_key_dir).expanduser()
+        if reviewer_key_dir is not None
+        else _refuse_custody_inside(
+            "reviewer",
+            default_key_dir(selected, _INIT_REVIEWER_ID),
+            custody_roots,
+            flag="--reviewer-key-dir",
+        )
+    )
     specifications: list[tuple[Path, str, PrincipalKind]] = [
         (owner_key_dir, principal_id, "ordinary")
     ]
-    if reviewer_key_dir is not None:
-        specifications.append((Path(reviewer_key_dir).expanduser(), "reviewer", "ordinary"))
+    if reviewer_dir is not None:
+        specifications.append((reviewer_dir, _INIT_REVIEWER_ID, "ordinary"))
     if recovery_key_dir is not None:
         specifications.append(
             (Path(recovery_key_dir).expanduser(), recovery_principal_id, "recovery")
@@ -1294,7 +1339,7 @@ def init_playbill(
         forbidden_roots=custody_roots,
     )
     owner = materials[0]
-    reviewer = materials[1] if reviewer_key_dir is not None else None
+    reviewer = materials[1] if reviewer_dir is not None else None
     result = _server_call(
         lambda client, active: client.init(
             active,
@@ -1329,7 +1374,7 @@ def init_playbill(
     reviewer_token = (
         None
         if reviewer is None
-        else _mint_owner_credential(reviewer, principal_id="reviewer", mode="graph_write")
+        else _mint_owner_credential(reviewer, principal_id=_INIT_REVIEWER_ID, mode="graph_write")
     )
     settings = write_principal_settings(
         owner_key_dir,
@@ -1342,18 +1387,18 @@ def init_playbill(
     )
     _remember_principal_settings(result.instance_id, principal_id, settings, activate=True)
     reviewer_settings = None
-    if reviewer is not None and reviewer_key_dir is not None:
+    if reviewer is not None and reviewer_dir is not None:
         reviewer_settings = write_principal_settings(
-            Path(reviewer_key_dir).expanduser(),
+            reviewer_dir,
             ctx_obj=_root_ctx_obj(),
             instance_id=result.instance_id,
-            principal_id="reviewer",
+            principal_id=_INIT_REVIEWER_ID,
             private_key_path=reviewer.private_key_path,
             token=reviewer_token,
             written_by="cruxible init",
         )
         _remember_principal_settings(
-            result.instance_id, "reviewer", reviewer_settings, activate=False
+            result.instance_id, _INIT_REVIEWER_ID, reviewer_settings, activate=False
         )
     if git_workspace is not None:
         _write_world_stub(git_workspace, result.instance_id)
@@ -1372,8 +1417,12 @@ def init_playbill(
                 "owner_settings_path": str(settings),
                 **(
                     {}
-                    if reviewer_settings is None
-                    else {"reviewer_settings_path": str(reviewer_settings)}
+                    if reviewer is None or reviewer_settings is None
+                    else {
+                        "reviewer_principal_id": _INIT_REVIEWER_ID,
+                        "reviewer_private_key_path": str(reviewer.private_key_path),
+                        "reviewer_settings_path": str(reviewer_settings),
+                    }
                 ),
                 **({} if identity_path is None else {"folder_identity_path": str(identity_path)}),
             }
@@ -1399,7 +1448,9 @@ def init_playbill(
         if kit.status == "accepted":
             click.echo(f"Base kit: {kit.kit_id} {kit.version} installed")
         else:
-            approver = "reviewer" if reviewer is not None else _SIGNER_PLACEHOLDER
+            approver = (
+                _INIT_REVIEWER_ID if reviewer is not None else _INDEPENDENT_SIGNER_PLACEHOLDER
+            )
             click.echo(
                 f"Base kit: {kit.kit_id} {kit.version} awaits approval, proposal "
                 f"{kit.proposal_id} (cruxible proposal approve {kit.proposal_id} "
@@ -1409,8 +1460,9 @@ def init_playbill(
         click.echo(f"Workspace ref failure: {result.workspace_advertisement.failure_code}")
     if reviewer is not None:
         click.echo(
-            f"Reviewer: reviewer, private key {reviewer.private_key_path} "
-            "(cruxible context use --principal reviewer)"
+            f"Reviewer: {_INIT_REVIEWER_ID}, private key {reviewer.private_key_path} "
+            f"(cruxible context use --principal {_INIT_REVIEWER_ID}; another process: "
+            f"CRUXIBLE_ENV_FILE={shlex.quote(str(reviewer_settings))})"
         )
     if not verbose:
         click.echo("More: cruxible context show")
@@ -1439,6 +1491,21 @@ def init_playbill(
     if reviewer is not None:
         click.echo(f"Reviewer public key: {reviewer.principal.public_key}")
         click.echo(f"Reviewer settings: {reviewer_settings}")
+
+
+#: The principal ID `cruxible init` gives the second (reviewer) principal.
+_INIT_REVIEWER_ID = "reviewer"
+
+
+def _refuse_owner_named_reviewer(owner: object) -> None:
+    """Refuse an owner whose ID is the one init gives the reviewer it creates."""
+
+    if owner == _INIT_REVIEWER_ID:
+        raise click.UsageError(
+            f"the owner principal ID {_INIT_REVIEWER_ID!r} is the ID init gives the second "
+            "principal (--require-independent-approval or --reviewer-key-dir); nothing was "
+            "written. Repair: pass another --principal-id"
+        )
 
 
 def _record_folder_identity(
@@ -2039,6 +2106,25 @@ def list_provider_packages(output_json: bool) -> None:
         click.echo(result.detail)
 
 
+def _provider_move_options(fn: Callable[..., Any]) -> Callable[..., Any]:
+    """``--move`` and ``--only LINE``: move Lines to the installed build, in one proposal."""
+
+    command = click.option(
+        "--only",
+        "only",
+        multiple=True,
+        help="With --move, move only this Line (Line:NAME, repeatable).",
+    )(fn)
+    return click.option(
+        "--move",
+        is_flag=True,
+        help=(
+            "Also move the live Lines binding other builds of this provider to the new "
+            "build, in the same proposal as its registration."
+        ),
+    )(command)
+
+
 @provider_group.command("install")
 @click.argument("package_or_wheel")
 @click.option(
@@ -2062,6 +2148,7 @@ def list_provider_packages(output_json: bool) -> None:
     help="The control domain the Provider definition records for this package.",
 )
 @click.option("--reverify", is_flag=True, help="Recheck a retained installation explicitly.")
+@_provider_move_options
 @change_control_options
 @json_option
 @handle_errors
@@ -2072,6 +2159,8 @@ def install_provider(
     extras: tuple[str, ...],
     control_domain: str,
     reverify: bool,
+    move: bool,
+    only: tuple[str, ...],
     dry_run: bool | None,
     at: str | None,
     output_json: bool,
@@ -2085,8 +2174,12 @@ def install_provider(
     (awaiting_approval) for the ordinary review and activation. ``--dry-run`` is
     a validation-only preview by name: it resolves the package and, if it is
     already prepared here, evaluates the registration it would propose; it
-    fetches, builds, registers and proposes nothing.
+    fetches, builds, registers and proposes nothing. ``--move`` also moves the
+    live Lines binding other builds of the provider to this build, in the same
+    proposal (``provider move --to`` it, as one review).
     """
+    if only and not move:
+        raise click.UsageError("--only names Lines to move; it requires --move")
     if package_or_wheel.endswith(".whl"):
         if lock_path is None:
             raise click.UsageError("a local wheel requires --lock")
@@ -2105,6 +2198,8 @@ def install_provider(
                 extras=extras,
                 control_domain=control_domain,
                 reverify=reverify,
+                move=move,
+                move_only=only,
                 at=at,
             ),
             command_name="cruxible provider install",
@@ -2119,6 +2214,8 @@ def install_provider(
             extras=tuple(sorted(set(extras))),
             control_domain=control_domain,
             reverify=reverify,
+            move=move,
+            move_only=tuple(sorted(set(only))),
             dry_run=dry_run,
             at=at,
         )
@@ -2129,20 +2226,125 @@ def install_provider(
     if output_json:
         _emit_json(result.model_dump(mode="json"))
     else:
-        click.echo(f"{result.build or result.provider_id}: {result.status}")
-        if result.detail:
-            click.echo(result.detail)
-        if result.preview_scope == "validation_only":
-            click.echo(
-                "Validation-only preview; it did not run: "
-                + ", ".join(step.replace("_", " ") for step in result.not_run)
-            )
-            echo_preview_next(result.status, result.coordinate)
-        if result.proposal_id:
-            click.echo(f"Proposal: {result.proposal_id}")
-        for operation in result.operations:
-            if operation.missing_requirements:
-                click.echo(f"{operation.operation}: {', '.join(operation.missing_requirements)}")
+        _echo_provider_install(result)
+
+
+def _echo_provider_install(result: ProviderInstallResult) -> None:
+    click.echo(f"{result.build or result.provider_id}: {result.status}")
+    _echo_provider_repins(result.moved, result.stops, result.automation_carries)
+    if result.detail:
+        click.echo(result.detail)
+    if result.preview_scope == "validation_only":
+        click.echo(
+            "Validation-only preview; it did not run: "
+            + ", ".join(step.replace("_", " ") for step in result.not_run)
+        )
+        echo_preview_next(result.status, result.coordinate)
+    if result.proposal_id:
+        click.echo(f"Proposal: {result.proposal_id}")
+    for operation in result.operations:
+        if operation.missing_requirements:
+            click.echo(f"{operation.operation}: {', '.join(operation.missing_requirements)}")
+
+
+@provider_group.command("publish")
+@click.argument(
+    "file", type=click.Path(exists=True, dir_okay=False, path_type=Path), metavar="FILE"
+)
+@click.option("--name", default=None, help="Distribution and provider name (default: FILE's stem).")
+@click.option(
+    "--version",
+    "version",
+    default=None,
+    help="Normalized version (default: 0.0.0.devN from the file and the shapes it carries).",
+)
+@_provider_move_options
+@click.option(
+    "--control-domain",
+    default="operator",
+    show_default=True,
+    help="The control domain the Provider definition records for this package.",
+)
+@click.option(
+    "--runtime-wheel",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="A cruxible-provider-runtime wheel to build with and transfer (else the published one).",
+)
+@click.option(
+    "--dependency",
+    "dependencies",
+    multiple=True,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="A dependency wheel to lock against and transfer (repeatable).",
+)
+@click.option(
+    "--declares",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="A declares block of Contracts and CaptureKinds the instance does not hold.",
+)
+@click.option("--offline", is_flag=True, help="Lock and build from the uv cache and local wheels.")
+@change_control_options
+@json_option
+@handle_errors
+def publish_provider(  # noqa: PLR0913
+    file: Path,
+    name: str | None,
+    version: str | None,
+    move: bool,
+    only: tuple[str, ...],
+    control_domain: str,
+    runtime_wheel: Path | None,
+    dependencies: tuple[Path, ...],
+    declares: Path | None,
+    offline: bool,
+    dry_run: bool | None,
+    at: str | None,
+    output_json: bool,
+) -> None:
+    """Build FILE's @derive operations into a provider and install it.
+
+    The Contracts and CaptureKinds the operations reach come from this instance
+    (and --declares); the wheel is locked and built here, then installed as
+    `provider install WHEEL --lock` would. Without --version the version derives
+    from the file, so an edit is a new build and an unchanged file the same one.
+    With --move the build's registration and the Lines moved to it are one
+    proposal: an observation-only settle grant across a pure build keeps settle.
+    """
+
+    from cruxible_core.cli.provider_publish import publish_provider_file
+
+    if only and not move:
+        raise click.UsageError("--only names Lines to move; it requires --move")
+    result = _server_call(
+        lambda client, instance_id: publish_provider_file(
+            client,
+            instance_id,
+            file,
+            name=name,
+            version=version,
+            move=move,
+            only=tuple(sorted(set(only))),
+            control_domain=control_domain,
+            runtime_wheel=runtime_wheel,
+            dependency_wheels=dependencies,
+            declares=declares,
+            offline=offline,
+            dry_run=dry_run,
+            at=at,
+        ),
+        command_name="cruxible provider publish",
+    )
+    if output_json:
+        _emit_json(result.as_json())
+        return
+    package = result.package
+    click.echo(
+        f"Built {package.distribution} {package.version} ({Path(package.file).name}): "
+        + ", ".join(package.operations)
+    )
+    _echo_provider_install(result.install)
 
 
 @provider_group.command("retire")
@@ -2189,7 +2391,11 @@ def move_provider(
     at: str | None,
     output_json: bool,
 ) -> None:
-    """Move Lines to NAME's build; carry Lines disabled and Mandates propose-only."""
+    """Move Lines to NAME's build; carry Lines disabled and Mandates propose-only.
+
+    Under compiler revision 74 an observation-only settle grant the move leaves
+    pure and non-widening keeps settle, and its enabled Line stays enabled.
+    """
     request = ProviderMoveRequest(
         provider=provider, to=to, only=tuple(sorted(set(only))), dry_run=dry_run, at=at
     )
@@ -2222,9 +2428,15 @@ def _echo_provider_repins(repins: Any, stops: Any, carries: Any = ()) -> None:
                 f"  {phase}carry: {item.identity}: disabled by upgrade to "
                 f"{item.new_procedure_digest or 'pending Procedure version'}; line enable to resume"
             )
+        elif item.new_grant == "settle":
+            click.echo(
+                f"  {phase}carry: {item.identity}: retains observation settle on "
+                f"{', '.join(item.retained_scope)}; retains Line enablement"
+            )
         else:
             click.echo(
                 f"  {phase}carry: {item.identity}: {item.old_grant} -> propose"
+                + (f" ({item.demotion.replace('_', ' ')})" if item.demotion else "")
                 + ("; settle re-grant required" if item.loses_settle else "")
             )
             if item.subject_creation_namespace_limitation:
@@ -2392,7 +2604,7 @@ def _echo_kit_change(
         line = f"  provider {step.provider_id} ({step.package} {step.version}): "
         line += step.action.replace("_", " ")
         if step.proposal_id is not None:
-            line += f", proposal {step.proposal_id}"
+            line += f", proposal {_short_proposal_id(step.proposal_id)}"
         if step.detail is not None:
             line += f" ({printable(step.detail)})"
         click.echo(line)
@@ -2458,25 +2670,26 @@ def _echo_kit_change(
             and item.consequence == "takes_over_outside_definition"
         ):
             click.echo(f"Next: rerun cruxible kit add with --keep {item.identity} to keep yours.")
+    short_id = None if result.proposal_id is None else _short_proposal_id(result.proposal_id)
     if result.proposal_id and result.status == "blocked" and result.proposal_open:
         # Admitted, then accepted state moved before it could land: it stays open.
         click.echo(
-            f"Proposal: {result.proposal_id} (open; withdraw it: cruxible proposal withdraw "
-            f"{result.proposal_id} --reason '<TEXT>')"
+            f"Proposal: {short_id} (open; withdraw it: cruxible proposal withdraw "
+            f"{short_id} --reason '<TEXT>')"
         )
     elif result.proposal_id and result.status != "blocked":
         # A refused change leaves nothing to act on (--json keeps the refused record's id).
-        click.echo(f"Proposal: {result.proposal_id}")
+        click.echo(f"Proposal: {short_id}")
         if result.status == "proposed":
             if result.approval_required:
                 click.echo(
-                    f"Next: cruxible proposal approve {result.proposal_id} "
+                    f"Next: cruxible proposal approve {short_id} "
                     f"--signer-id {_SIGNER_PLACEHOLDER} (the approval that completes it "
                     "activates it)"
                 )
             elif result.detail is None:
                 # Otherwise the detail already names who activates it.
-                click.echo(f"Next: cruxible proposal activate {result.proposal_id}")
+                click.echo(f"Next: cruxible proposal activate {short_id}")
     echo_preview_next(result.status, result.coordinate)
 
 
@@ -2543,6 +2756,31 @@ def _echo_kit_change(
         "listed in the manifest's files with its sha256; it is never a definition."
     ),
 )
+@click.option(
+    "--recipes",
+    "recipes_file",
+    default=None,
+    type=PayloadFile(),
+    help=(
+        "A JSON list of the kit's recipes (name, path, description, params), or - for "
+        "stdin: each path is a change set under recipes/, relative to the workspace root, "
+        "with {{param}} placeholders. The build renders each with its defaults and "
+        "examples and refuses unless it authors cleanly against this kit's definitions; "
+        "kit adopt KIT:NAME renders and submits it."
+    ),
+)
+@click.option(
+    "--scripts",
+    "scripts_file",
+    default=None,
+    type=PayloadFile(),
+    help=(
+        "A JSON list of the kit's scripts (name, path, description, mode: read_only), or "
+        "- for stdin: each path is a Python file under scripts/, relative to the workspace "
+        "root, which kit run KIT:NAME verifies and runs client-side (never in the daemon). "
+        "mode is the publisher's declaration: a script runs with the caller's CLI session."
+    ),
+)
 @json_option
 @handle_errors
 def build_kit(
@@ -2554,6 +2792,8 @@ def build_kit(
     default_providers: tuple[Path, ...],
     automation_template: Path | None,
     kit_files: tuple[str, ...],
+    recipes_file: str | None,
+    scripts_file: str | None,
     output_json: bool,
 ) -> None:
     """Export this instance's owned definitions as one self-contained kit release.
@@ -2566,6 +2806,7 @@ def build_kit(
     """
     if out.exists():
         raise click.UsageError(f"{out} already exists")
+    recipes, scripts, adoption_files = _read_kit_adoption_specs(recipes_file, scripts_file)
     template = (
         None
         if automation_template is None
@@ -2589,6 +2830,9 @@ def build_kit(
                 for directory in default_providers
             ),
             automation_template=template,
+            recipes=recipes,
+            scripts=scripts,
+            files=adoption_files,
         )
         return client.build_kit(instance_id, request)
 
@@ -2612,6 +2856,90 @@ def build_kit(
         _echo_automation_template(
             template_path, on_disk=_kit_directory_file(str(out), template_path)
         )
+        _echo_kit_adoption_counts(bundle.manifest)
+
+
+def _read_kit_adoption_specs(
+    recipes_file: str | None, scripts_file: str | None
+) -> tuple[tuple[KitRecipeSpec, ...], tuple[KitScriptSpec, ...], tuple[KitFileBytes, ...]]:
+    """The recipes and scripts ``kit build`` declares, and their files' bytes.
+
+    Each spec payload (a file, or ``-`` for stdin) is a JSON list; each spec's
+    ``path`` is its path in the kit, read relative to the workspace root (never
+    the caller's current directory) and refused outside it, as ``--file`` is.
+    """
+
+    def specs(path: str | None, model: Any, label: str) -> tuple[Any, ...]:
+        if path is None:
+            return ()
+        try:
+            raw = json.loads(read_payload_text(path))
+        except ValueError as exc:
+            raise click.UsageError(
+                f"--{label} {payload_label(path)}: not a JSON list ({exc})"
+            ) from exc
+        if not isinstance(raw, list):
+            raise click.UsageError(f"--{label} {payload_label(path)}: a JSON list of {label}")
+        try:
+            return tuple(model.model_validate(item) for item in raw)
+        except ValidationError as exc:
+            raise click.UsageError(
+                f"--{label} {payload_label(path)}: {validation_summary(exc)}"
+            ) from exc
+
+    recipes = specs(recipes_file, KitRecipeSpec, "recipes")
+    scripts = specs(scripts_file, KitScriptSpec, "scripts")
+    paths = [item.path for item in (*recipes, *scripts)]
+    if not paths:
+        return recipes, scripts, ()
+    workspace = (_existing_workspace_root() or Path.cwd()).resolve()
+    carried = read_kit_build_files([workspace / path for path in paths], workspace=workspace)
+    found = {path for path, _content in carried}
+    moved = sorted(set(paths) - found)
+    if moved:
+        raise click.UsageError(
+            f"{moved[0]} does not sit at that path under the workspace root {workspace} "
+            "(a symbolic link to elsewhere?); name the file by its own path"
+        )
+    return (
+        recipes,
+        scripts,
+        tuple(KitFileBytes.of(path, content) for path, content in carried),
+    )
+
+
+def _echo_kit_adoption_counts(manifest: KitManifest, *, indent: str = "") -> None:
+    """``recipes: N, scripts: M`` with the listing commands; nothing when neither."""
+
+    if not manifest.recipes and not manifest.scripts:
+        return
+    parts = []
+    if manifest.recipes:
+        parts.append(f"recipes {len(manifest.recipes)} (kit adopt {manifest.kit_id} --list)")
+    if manifest.scripts:
+        parts.append(f"scripts {len(manifest.scripts)} (kit run {manifest.kit_id} --list)")
+    click.echo(f"{indent}{', '.join(parts)}")
+    if manifest.scripts:
+        click.echo(f"{indent}{KIT_SCRIPT_AUTHORITY_NOTE}")
+
+
+#: What a script's ``mode`` is and is not, said wherever scripts are listed.
+KIT_SCRIPT_AUTHORITY_NOTE = (
+    "scripts: mode read_only is the publisher's declaration, not a sandbox; each runs "
+    "here as a local Python process with your CLI session and environment, and the "
+    "daemon governs (approval policy) any proposal it submits"
+)
+
+
+def _cache_kit_files(bundle: KitBundle) -> None:
+    """Keep the verified copy kit adopt and kit run read; a failure only warns."""
+
+    from cruxible_core.cli.kit_cache import KitCacheError, write_kit_cache
+
+    try:
+        write_kit_cache(bundle)
+    except (OSError, KitCacheError) as exc:
+        click.echo(f"warning: kit files not cached ({exc})", err=True)
 
 
 @kit_group.command("add")
@@ -2686,14 +3014,16 @@ def add_kit(
     Triggers stay unchanged; use line enable to resume and re-grant settle explicitly.
     Replaced definitions' other dependents are carried along. The change
     lands at once when the approval policy requires no approval, otherwise it
-    stops at proposed. A kit that bundles provider packages installs the missing
-    ones first (admin permission, the transfer install; registry dependencies
-    resolve from the daemon's provider index, PyPI unless configured), installs a
-    default provider by name from that index unless live operations of installed
-    providers already serve every slot's capability (satisfied), and proposes the
-    definitions once they land (each provider carries its own shapes); an
-    install awaiting approval stops at awaiting_providers, and its activation
-    proposes the definitions on their own, as you (kit status shows the resume).
+    stops at proposed. A kit that bundles provider packages prepares each missing
+    one first (admin permission; registry dependencies resolve from the daemon's
+    provider index, PyPI unless configured; nothing is registered or proposed
+    yet), as it does a default provider named from that index unless live
+    operations of installed providers already serve every slot's capability
+    (satisfied). It then proposes every missing provider build, the definitions,
+    the Lines moved to the kit's builds and the kit receipt as ONE change: one
+    review lists each provider's operations and reach beside the definitions,
+    and one approval lands them all in one generation. A provider that cannot be
+    prepared refuses the add before anything is proposed.
     It previews by default; commit with ``--commit --at OID``.
     """
     # ``base`` is the base kit this core bundles, read before any directory or registry.
@@ -2723,6 +3053,14 @@ def add_kit(
         return client.add_kit(instance_id, request)
 
     result = with_automation_template(_server_call(add, command_name="cruxible kit add"), template)
+    if dry_run is False and result.status in {
+        "proposed",
+        "accepted",
+        "unchanged",
+        "awaiting_providers",
+    }:
+        # The recipes and scripts kit adopt / kit run read, verified, out of the workspace.
+        _cache_kit_files(bundle)
     if not show_unchanged:
         result = compact_kit_change(result)
     if output_json:
@@ -2759,6 +3097,7 @@ def pull_kit(reference: str, out: Path, layout: bool, output_json: bool) -> None
         write_layout(image, out, ref=origin)
     else:
         write_kit_directory(bundle, out)
+    _cache_kit_files(bundle)
     template = bundle.manifest.automation_template
     if output_json:
         _emit_json(
@@ -2878,6 +3217,20 @@ def kit_status(offline: bool, output_json: bool) -> None:
             click.echo(
                 f"  kept: {_public_name(kept.identity)} ({_KIT_KEEP_TEXT[kept.consequence][1]})"
             )
+        _echo_cached_adoption_counts(kit)
+
+
+def _echo_cached_adoption_counts(kit: InstalledKit) -> None:
+    """The installed release's recipe and script counts, when its verified copy is
+    cached here (never fetched for a status line)."""
+
+    from cruxible_core.cli.kit_cache import KitCacheError, load_installed_kit
+
+    try:
+        directory_manifest = load_installed_kit(kit, offline=True, verify_files=False).manifest
+    except (KitCacheError, OSError):
+        return
+    _echo_kit_adoption_counts(directory_manifest, indent="  ")
 
 
 @kit_group.command("remove")
@@ -2914,6 +3267,454 @@ def remove_kit(
     else:
         _echo_kit_change(result, blocked_plan="list" if show_plan else "counts")
     _exit_if_kit_blocked(result)
+
+
+def _kit_target(target: str) -> tuple[str, str | None]:
+    """``KIT`` or ``KIT:NAME`` as (kit id, name or None)."""
+
+    kit_id, sep, name = target.partition(":")
+    if not kit_id or (sep and not name):
+        raise click.UsageError(f"TARGET is KIT or KIT:NAME, not {target!r}")
+    return kit_id, (name if sep else None)
+
+
+def _verified_installed_kit(
+    kit_id: str, from_path: str | None, *, command_name: str
+) -> tuple[InstalledKit, Any]:
+    """The installed release ``kit_id`` (its one receipt, looked up directly) and its
+    verified cached copy."""
+
+    from cruxible_core.cli.kit_cache import installed_kit, load_installed_kit
+
+    status = _server_call(
+        lambda client, instance_id: client.kit_status(instance_id, kit_id=kit_id),
+        command_name=command_name,
+    )
+    kit = installed_kit(status.kits, kit_id)
+    return kit, load_installed_kit(kit, from_path=from_path)
+
+
+#: Root options that select where a command goes (never a secret), kept in the
+#: rerun command ``kit adopt`` prints.
+_RERUN_ROOT_SELECTORS = (
+    ("server_url", "--server-url"),
+    ("server_socket", "--server-socket"),
+    ("instance_id", "--instance-id"),
+    ("principal_id", "--principal-id"),
+    ("env_file", "--env-file"),
+)
+
+
+def _rerun_selectors() -> list[str]:
+    """The non-secret root selectors given on this command line, as argv tokens."""
+
+    ctx = click.get_current_context(silent=True)
+    if ctx is None:
+        return []
+    root = ctx.find_root()
+    argv: list[str] = []
+    for name, flag in _RERUN_ROOT_SELECTORS:
+        if root.get_parameter_source(name) != click.core.ParameterSource.COMMANDLINE:
+            continue
+        value = root.params.get(name)
+        if value not in (None, ""):
+            argv.extend([flag, str(value)])
+    if root.get_parameter_source(
+        "no_workspace"
+    ) == click.core.ParameterSource.COMMANDLINE and root.params.get("no_workspace"):
+        argv.append("--no-workspace")
+    return argv
+
+
+def _adopt_target_line() -> str:
+    """Where the change goes: the instance and the daemon transport."""
+
+    obj = _root_ctx_obj()
+    transport = obj.get("server_url") or (
+        f"unix socket {obj['server_socket']}" if obj.get("server_socket") else "the local daemon"
+    )
+    return f"target: instance {obj.get('instance_id') or '(default)'} at {transport}"
+
+
+def _compact_json(value: object) -> str:
+    from cruxible_client.contracts.primitives import canonical_json
+
+    return canonical_json(value, default=str)
+
+
+def _adopt_member_details(member: Mapping[str, Any]) -> list[str]:
+    """The authority and egress a member carries, terse: Mandate grants (scope,
+    subject scope, condition, expiry), Line bindings (explicit and fitted) and
+    network origins per capture output, Trigger schedules, Runbook steps."""
+
+    kind = member.get("kind")
+    rows: list[str] = []
+    if kind == "procedure_mandate":
+        rows.append(f"grants {member.get('grants')} on Line:{member.get('line_name')}")
+        scope = member.get("scope")
+        if scope == "observations":
+            derived = " (with derived)" if member.get("include_derived") else ""
+            rows.append(f"scope: observations{derived}")
+        elif scope:
+            rows.append(f"scope: {_compact_json(scope)}")
+        if member.get("namespace"):
+            rows.append(f"namespace: {', '.join(str(item) for item in member['namespace'])}")
+        if member.get("subjects"):
+            rows.append(f"subjects: {member['subjects']}")
+        if member.get("subject_scope") is not None:
+            rows.append(f"subject scope: {_compact_json(member['subject_scope'])}")
+        if member.get("condition") is not None:
+            rows.append(f"condition: {_compact_json(member['condition'])}")
+        if member.get("subject_creation"):
+            rows.append(f"creates Subjects: {', '.join(member['subject_creation'])}")
+        if member.get("valid_from"):
+            rows.append(f"valid from: {member['valid_from']}")
+        expiry = member.get("expires_at") or member.get("expires")
+        rows.append(f"expires: {expiry if expiry else 'policy default'}")
+        if member.get("suspended"):
+            rows.append("suspended")
+    elif kind == "line":
+        rows.append(f"procedure: {member.get('procedure_name')}")
+        bindings = member.get("bindings") or {}
+        if bindings:
+            rows.append(
+                "providers: "
+                + ", ".join(f"{slot}={target}" for slot, target in sorted(bindings.items()))
+            )
+            rows.append("other slots: fitted (each slot's one live operation)")
+        else:
+            rows.append("providers: fitted (each slot's one live operation)")
+        acquisition = member.get("acquisition") or {}
+        for output in sorted(acquisition):
+            rule = acquisition[output]
+            origins = rule.get("origins") if isinstance(rule, Mapping) else None
+            allowed = ", ".join(sorted(str(item) for item in origins)) if origins else "any origin"
+            rows.append(f"egress {output}: {allowed}")
+        # A capture output the Line names no rule for, or names one without
+        # ``origins``, runs under the core default: any origin.
+        rows.append(
+            "egress other capture outputs: any origin (core default)"
+            if acquisition
+            else "egress: any origin (no origin rules; core default)"
+        )
+    elif kind == "trigger":
+        schedule = member.get("schedule") or {}
+        detail = ", ".join(
+            f"{key} {value}" for key, value in sorted(schedule.items()) if key != "kind"
+        )
+        rows.append(f"schedule: {schedule.get('kind')}" + (f" ({detail})" if detail else ""))
+        target = (
+            f"Line:{member['line_name']}"
+            if member.get("line_name")
+            else (
+                f"Runbook:{member['runbook_name']}"
+                if member.get("runbook_name")
+                else f"action:{member.get('action')}"
+            )
+        )
+        rows.append(f"runs: {target}")
+    elif kind == "runbook":
+        steps: list[str] = []
+        for step in member.get("steps") or ():
+            if isinstance(step, Mapping):
+                steps.extend(f"{key}:{value}" for key, value in sorted(step.items()))
+        rows.append("steps: " + (" -> ".join(steps) if steps else "none"))
+    if member.get("retire"):
+        rows.append("retires it")
+    return rows
+
+
+def _member_label(member: Mapping[str, Any]) -> str:
+    kind = str(member.get("kind", "member"))
+    heading = "".join(part.capitalize() for part in kind.split("_"))
+    name = member.get("name")
+    return f"{heading}:{name}" if name else heading
+
+
+@kit_group.command("adopt")
+@click.argument("target")
+@click.option(
+    "--list", "list_recipes", is_flag=True, help="List the kit's recipes and their parameters."
+)
+@click.option(
+    "--param",
+    "params",
+    multiple=True,
+    metavar="NAME=VALUE",
+    help="Set one recipe parameter (repeatable); kit adopt KIT --list names them.",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Render the recipe and run its authoring preflight here; submit nothing.",
+)
+@click.option(
+    "--render",
+    is_flag=True,
+    help="Print the rendered change set as JSON; contact the daemon only to verify the kit.",
+)
+@click.option("--yes", is_flag=True, help="Submit without asking.")
+@click.option("--no-accept", is_flag=True, help="Submit a proposal without activating it.")
+@click.option(
+    "--from",
+    "from_path",
+    default=None,
+    metavar="KIT",
+    help="Read the installed release from this kit directory, layout or reference "
+    "(when this machine has no cached copy).",
+)
+@json_option
+@handle_errors
+def adopt_kit(
+    target: str,
+    list_recipes: bool,
+    params: tuple[str, ...],
+    dry_run: bool,
+    render: bool,
+    yes: bool,
+    no_accept: bool,
+    from_path: str | None,
+    output_json: bool,
+) -> None:
+    """Render one of an installed kit's recipes and submit it as your own change.
+
+    \b
+    kit adopt KIT --list                      the recipes, their parameters and defaults
+    kit adopt KIT[:RECIPE] --param K=V --dry-run   render, preflight, print a summary
+    kit adopt KIT[:RECIPE] --param K=V --yes  render and submit (one governed proposal)
+    kit adopt KIT[:RECIPE] --param K=V --render    print the rendered change set JSON
+
+    KIT alone names its ``default`` recipe. A recipe is a change set of Lines,
+    Mandates, Triggers and Runbooks with {{param}} placeholders, shipped with the
+    release and verified against it before use: the kit must be installed, the
+    cached copy must be the installed release, and the recipe file must have the
+    manifest's sha256. Adopt a recipe again with other --param values to add
+    another instance (a second SBOM). The change goes through the ordinary
+    authoring submit and approval policy. The preview names the target
+    instance, each Mandate's grant, scope and expiry, each Line's providers and
+    network origins, and each Trigger's schedule. At a terminal it previews and
+    asks; elsewhere it previews unless --yes or --no-accept submits.
+    """
+
+    from cruxible_client.contracts.kit_recipes import (
+        KitRecipeError,
+        parse_param_pairs,
+        recipe_param_table,
+        recipe_usage,
+        render_recipe,
+        resolve_params,
+        validate_rendered_recipe,
+    )
+
+    kit_id, name = _kit_target(target)
+    modes = sum((list_recipes, render, dry_run, yes or no_accept))
+    if modes > 1:
+        raise click.UsageError("choose one of --list, --render, --dry-run, or --yes/--no-accept")
+    if list_recipes and params:
+        raise click.UsageError("--list takes no --param")
+    kit, cached = _verified_installed_kit(kit_id, from_path, command_name="cruxible kit adopt")
+    manifest = cached.manifest
+    if list_recipes:
+        chosen = manifest.recipes if name is None else (cached.recipe(name),)
+        if output_json:
+            _emit_json(
+                {
+                    "kit_id": kit.kit_id,
+                    "version": kit.version,
+                    "content_digest": kit.content_digest,
+                    "recipes": [item.model_dump(mode="json") for item in chosen],
+                }
+            )
+            return
+        click.echo(f"{kit.kit_id} {kit.version}: {len(chosen)} recipe(s)")
+        for item in chosen:
+            after = f" (after {', '.join(item.depends_on)})" if item.depends_on else ""
+            click.echo(f"{item.name}: {printable(item.description)}{after}")
+            for row in recipe_param_table(item):
+                click.echo(f"  {printable(row)}")
+            click.echo(f"  usage: {recipe_usage(kit.kit_id, item)}")
+        return
+    recipe = cached.recipe(name or "default")
+    content = cached.verified_bytes(recipe.path)
+    try:
+        given = parse_param_pairs(params)
+    except ValueError as exc:
+        raise click.UsageError(str(exc)) from exc
+    rendered = render_recipe(recipe, content, resolve_params(kit.kit_id, recipe, given))
+    if rendered.get("rationale") is None:
+        rendered["rationale"] = f"kit adopt {kit.kit_id}:{recipe.name} ({kit.kit_id} {kit.version})"
+    try:
+        # The validation kit build applies to each recipe on its own.
+        parsed = validate_rendered_recipe(recipe.name, rendered)
+    except KitRecipeError as exc:
+        raise click.ClickException(str(exc)) from exc
+    payload = parsed.model_dump(mode="json")
+    if render:
+        _emit_json(payload)
+        return
+    label = f"{kit.kit_id}:{recipe.name}"
+    members = [member for member in payload["members"] if isinstance(member, Mapping)]
+    submit = yes or no_accept
+    if not submit:
+        preview = _server_call(
+            lambda client, instance_id: client.preview_authoring_input(instance_id, input=payload),
+            command_name="cruxible kit adopt",
+        )
+        if output_json:
+            _emit_json(preview.model_dump(mode="json"))
+            _exit_if_preflight_refused(preview)
+            return
+        click.echo(
+            f"{label} ({kit.version}): would "
+            f"{'submit' if preview.verdict == 'passed' else 'refuse'}"
+            + (" (unchanged: matches accepted state)" if preview.unchanged else "")
+        )
+        click.echo(f"  {printable(_adopt_target_line())}")
+        groups: dict[str, list[str]] = {}
+        for member in members:
+            labelled = _member_label(member)
+            heading, _, member_name = labelled.partition(":")
+            groups.setdefault(heading, []).append(member_name or heading)
+        for heading in sorted(groups):
+            click.echo(f"  {heading}: {', '.join(printable(item) for item in groups[heading])}")
+        for member in members:
+            details = _adopt_member_details(member)
+            if details:
+                click.echo(f"  {printable(_member_label(member))}")
+                for row in details:
+                    click.echo(f"    {printable(row)}")
+        for diagnostic in preview.frontier.diagnostics:
+            click.echo(
+                f"  {diagnostic.code} at {printable(diagnostic.offending_element)}: "
+                f"{printable(diagnostic.message)}"
+            )
+        if preview.verdict != "passed" or preview.unchanged:
+            _exit_if_preflight_refused(preview)
+            return
+        rerun = " ".join(
+            shlex.quote(part)
+            for part in (
+                "cruxible",
+                *_rerun_selectors(),
+                "kit",
+                "adopt",
+                target,
+                *(f"--param={p}" for p in params),
+                *(("--from", from_path) if from_path is not None else ()),
+            )
+        )
+        if dry_run or not _interactive_terminal():
+            click.echo(f"Next: {rerun} --yes")
+            return
+        if not click.confirm("Submit this change?", default=False):
+            click.echo(f"Not submitted. Submit it later: {rerun} --yes")
+            return
+
+    def call(client: CruxibleClient, instance_id: str) -> contracts.AuthoringSubmitResultRecord:
+        accept: AuthoringAccept = "never" if no_accept else "if_allowed"
+        return client.submit_authoring_input(instance_id, input=payload, accept=accept)
+
+    submitted = _server_call(call, command_name="cruxible kit adopt")
+    if output_json:
+        _emit_json(submitted.model_dump(mode="json"))
+    else:
+        click.echo(f"{label} ({kit.version}): {len(members)} member(s)")
+        _echo_submit_brief(submitted)
+    if isinstance(submitted.outcome, contracts.AuthoringRefused):
+        raise click.exceptions.Exit(1)
+
+
+@kit_group.command("run")
+@click.argument("target")
+@click.option("--list", "list_scripts", is_flag=True, help="List the kit's scripts.")
+@click.option(
+    "--from",
+    "from_path",
+    default=None,
+    metavar="KIT",
+    help="Read the installed release from this kit directory, layout or reference "
+    "(when this machine has no cached copy).",
+)
+@json_option
+@click.argument("script_args", nargs=-1, type=click.UNPROCESSED)
+@handle_errors
+def run_kit_script(
+    target: str,
+    list_scripts: bool,
+    from_path: str | None,
+    output_json: bool,
+    script_args: tuple[str, ...],
+) -> None:
+    """Run one of an installed kit's read-only scripts, here, never in the daemon.
+
+    \b
+    kit run KIT --list                     the scripts and what each does
+    kit run KIT:SCRIPT -- [ARGS]...        verify, then run with ARGS
+
+    The script must be the installed release's: the kit installed, the cached
+    copy that release (its content and the receipt's bundle digest), and every
+    file's sha256 the manifest's. It runs with this CLI's interpreter and
+    connection, as cruxible python runs a script (Cruxible.connect() finds this
+    daemon, instance and principal), from the current directory;
+    CRUXIBLE_KIT_ID, CRUXIBLE_KIT_VERSION and CRUXIBLE_KIT_FILES (a private,
+    verified snapshot of the kit files, removed on exit) are set. The exit
+    status is the script's.
+
+    A script's mode (read_only) is the publisher's declaration, not a sandbox:
+    the script is a local Python process with your CLI session and environment.
+    The daemon governs any proposal it submits, under the approval policy.
+    """
+
+    from cruxible_core.cli.commands.python_runner import _run, child_environment
+
+    kit_id, name = _kit_target(target)
+    if list_scripts and script_args:
+        raise click.UsageError("--list takes no script arguments")
+    if not list_scripts and name is None:
+        raise click.UsageError(
+            f"name the script: kit run {kit_id}:SCRIPT (kit run {kit_id} --list)"
+        )
+    kit, cached = _verified_installed_kit(kit_id, from_path, command_name="cruxible kit run")
+    if list_scripts:
+        chosen = cached.manifest.scripts if name is None else (cached.script(name),)
+        if output_json:
+            _emit_json(
+                {
+                    "kit_id": kit.kit_id,
+                    "version": kit.version,
+                    "content_digest": kit.content_digest,
+                    "bundle_digest": kit.bundle_digest,
+                    "scripts": [item.model_dump(mode="json") for item in chosen],
+                    "authority": KIT_SCRIPT_AUTHORITY_NOTE,
+                }
+            )
+            return
+        click.echo(f"{kit.kit_id} {kit.version}: {len(chosen)} script(s)")
+        for item in chosen:
+            click.echo(f"{item.name} ({item.mode}): {printable(item.description)}")
+        if chosen:
+            click.echo(KIT_SCRIPT_AUTHORITY_NOTE)
+        return
+    if output_json:
+        raise click.UsageError("--json applies to --list; pass the script's own flags after --")
+    assert name is not None
+    script = cached.script(name)
+    env = child_environment(_root_ctx_obj())
+    # Run exactly the verified bytes: a private snapshot of the release's files
+    # (CRUXIBLE_KIT_FILES), so nothing the script runs or reads can change between
+    # the check and the run; removed when the script exits.
+    with tempfile.TemporaryDirectory(prefix="cruxible-kit-run-") as scratch:
+        files = cached.stage(Path(scratch) / "kit")
+        env.update(
+            {
+                "CRUXIBLE_KIT_ID": kit.kit_id,
+                "CRUXIBLE_KIT_VERSION": kit.version,
+                "CRUXIBLE_KIT_FILES": str(files),
+                "CRUXIBLE_KIT_SCRIPT_MODE": script.mode,
+            }
+        )
+        exit_status = _run([sys.executable, str(files / script.path), *script_args], env)
+    sys.exit(exit_status)
 
 
 @playbill_group.group("document")
@@ -3104,9 +3905,16 @@ def proposal_group() -> None:
     help="Proposals per page.",
 )
 @click.option("--cursor", default=None, help="Continue a previous page of the same listing.")
+@click.option(
+    "--full-ids",
+    is_flag=True,
+    help="Print each proposal id whole (sha256:<64 hex>), not its 12-character handle.",
+)
 @json_option
 @handle_errors
-def list_proposals(status: str | None, limit: int, cursor: str | None, output_json: bool) -> None:
+def list_proposals(
+    status: str | None, limit: int, cursor: str | None, full_ids: bool, output_json: bool
+) -> None:
     result = _server_call(
         lambda client, instance_id: client.list_proposals(
             instance_id,
@@ -3121,7 +3929,27 @@ def list_proposals(status: str | None, limit: int, cursor: str | None, output_js
         return
     from cruxible_client.contracts.text_display import proposal_list_lines
 
-    for line in proposal_list_lines(result):
+    shown = result
+    if not full_ids:
+        # 12-character handles, which every proposal command resolves back.
+        shown = result.model_copy(
+            update={
+                "entries": [
+                    entry.model_copy(
+                        update={
+                            "proposal_id": _short_proposal_id(entry.proposal_id),
+                            "superseded_by": (
+                                None
+                                if entry.superseded_by is None
+                                else _short_proposal_id(entry.superseded_by)
+                            ),
+                        }
+                    )
+                    for entry in result.entries
+                ]
+            }
+        )
+    for line in proposal_list_lines(shown):
         click.echo(line)
     _echo_list_continuation(result.next_cursor)
 
@@ -3358,7 +4186,7 @@ def review_proposal(
 
 
 @proposal_group.command("approve")
-@click.argument("proposal_id")
+@click.argument("proposal_ids", nargs=-1, required=True, metavar="PROPOSAL_ID...")
 @click.option(
     "--signer-id",
     default=None,
@@ -3389,7 +4217,8 @@ def review_proposal(
     help="The candidate digest you reviewed (`proposal review` prints it): sign that "
     "candidate or refuse. If accepted state moved and the proposal was proposed again "
     "at the head, the refusal names the new proposal and says whether its members are "
-    "identical. Without it, one proposed again with identical members is signed.",
+    "identical. Without it, one proposed again with identical members is signed. "
+    "One PROPOSAL_ID only.",
 )
 @click.option(
     "--hold",
@@ -3404,7 +4233,7 @@ def review_proposal(
 @json_option
 @handle_errors
 def approve_proposal(
-    proposal_id: str,
+    proposal_ids: tuple[str, ...],
     signer_id: str | None,
     private_key_path: str | None,
     yes: bool,
@@ -3426,20 +4255,75 @@ def approve_proposal(
     proposal, and that one is signed. `--candidate-digest` binds the approval
     to the candidate you reviewed instead: it then refuses, naming the new
     proposal to review.
+
+    Several PROPOSAL_IDs are approved, and activated, one after another in the
+    order given, after one prompt over all of them. Each later one lands at the
+    head the earlier ones moved, as above. The first that refuses or does not
+    activate stops the rest; the ones before it stay accepted.
     """
 
-    if not yes and not _can_confirm():
+    if len(proposal_ids) > 1 and candidate_digest is not None:
         raise click.UsageError(
-            "proposal approve asks before signing and no one is at this terminal; review it "
-            f"with `cruxible proposal review {proposal_id}`, then rerun with --yes"
+            "--candidate-digest pins the one candidate you reviewed; pass a single "
+            "PROPOSAL_ID with it, or approve several proposals without it"
+        )
+    if not yes and not _can_confirm():
+        target = proposal_ids[0] if len(proposal_ids) == 1 else "ID"
+        what = "it" if len(proposal_ids) == 1 else "each"
+        raise click.UsageError(
+            f"proposal approve asks before signing and no one is at this terminal; review {what} "
+            f"with `cruxible proposal review {target}`, then rerun with --yes"
         )
     configured = _root_ctx_obj().get("principal_id")
     if signer_id is None:
         signer_id = str(configured) if configured is not None else _signer_from_daemon()
     resolved_signer: str = signer_id
 
-    # The prompt shows the reviewer's view `proposal review` prints (its first page).
-    shows_summary = not (output_json or full or yes)
+    if len(proposal_ids) == 1:
+        _approve_one(
+            proposal_ids[0],
+            resolved_signer=resolved_signer,
+            private_key_path=private_key_path,
+            yes=yes,
+            candidate_digest=candidate_digest,
+            hold=hold,
+            full=full,
+            output_json=output_json,
+        )
+        return
+    _approve_in_order(
+        proposal_ids,
+        resolved_signer=resolved_signer,
+        private_key_path=private_key_path,
+        yes=yes,
+        hold=hold,
+        full=full,
+        output_json=output_json,
+    )
+
+
+def _approve_one(
+    proposal_id: str,
+    *,
+    resolved_signer: str,
+    private_key_path: str | None,
+    yes: bool,
+    candidate_digest: str | None,
+    hold: bool,
+    full: bool,
+    output_json: bool,
+    emit_json: bool = True,
+    announce_key: bool = True,
+) -> Any:
+    """Sign one candidate and return the receipt; `proposal approve PROPOSAL_ID` is this.
+
+    `emit_json=False` leaves the receipt to the caller (an ordered batch prints
+    one document over every proposal); text output is printed either way.
+    """
+
+    # The prompt shows the reviewer's view `proposal review` prints (its first page),
+    # with --json too: the disclosure then goes to stderr, where the prompt goes.
+    shows_summary = not (full or yes)
 
     def _resolve_and_prepare(
         client: CruxibleClient, instance_id: str
@@ -3464,9 +4348,7 @@ def approve_proposal(
         )
         summary = None
         if shows_summary:
-            page = client.review_proposal(instance_id, challenge.proposal_id, groups=False)
-            assert isinstance(page, contracts.ProposalReviewSummary)
-            summary = page
+            summary = _approval_summary(client, instance_id, challenge.proposal_id)
         return resolved_id, challenge, key, summary
 
     resolved_id, challenge, key, summary = _server_call(
@@ -3483,9 +4365,11 @@ def approve_proposal(
             )
         resolved_id = challenge.proposal_id
     review = ProposalReview.model_validate(challenge.review.model_dump(mode="json"))
-    if not output_json:
+    if not output_json or not yes:
+        # With --json, stdout carries only the receipt: a disclosure before the
+        # prompt goes to stderr, as in an ordered batch.
         if full:
-            click.echo(render_playbill_proposal_review(review), nl=False)
+            click.echo(render_playbill_proposal_review(review), nl=False, err=output_json)
         elif yes:
             for line in _approval_counts_lines(review):
                 click.echo(line)
@@ -3494,8 +4378,9 @@ def approve_proposal(
             click.echo(
                 render_playbill_approval_summary(review, summary, file_paths=_display_file_paths()),
                 nl=False,
+                err=output_json,
             )
-    if key.source != "option":
+    if announce_key and key.source != "option":
         click.echo(_signing_key_line(key), err=True)
     if not yes and not click.confirm("Sign this exact candidate?", err=True):
         # Declining is an answer, not an error: say so and sign nothing.
@@ -3556,14 +4441,15 @@ def approve_proposal(
         result = _server_call(_approve_landed, command_name="cruxible proposal approve")
     result = _with_git_workspace_note(result)
     if output_json:
-        _emit_json(_json_receipt(result))
-        return
+        if emit_json:
+            _emit_json(_json_receipt(result))
+        return result
     if isinstance(result, contracts.ProposalRecompiled):
         _echo_recompiled_proposal(result)
-        return
+        return result
     if isinstance(result, contracts.ActivationReceipt):
         _echo_activation(result)
-        return
+        return result
     # Candidate, then the proposal it settles, as the Signing line names them.
     click.echo(f"Approved {result.candidate_digest} ({result.proposal_id}) as {result.signer_id}")
     if result.readmits is not None and not said_landed:
@@ -3572,6 +4458,280 @@ def approve_proposal(
         click.echo(_replaces_line(result.proposal_id, result.readmits))
     for line in _approval_outcome_lines(result):
         click.echo(line)
+    return result
+
+
+def _approval_summary(
+    client: CruxibleClient, instance_id: str, proposal_id: str
+) -> contracts.ProposalReviewSummary:
+    """The first page of the proposal's review summary, with every Provider definition.
+
+    Providers sort first among definitions, so while a page ends on a Provider
+    and another page follows, the next one is read and its Providers are added:
+    the approver sees every Provider build, its operations and what it may reach
+    before signing, even past the first page. O(the proposal's Providers).
+    """
+
+    first = client.review_proposal(instance_id, proposal_id, groups=False)
+    assert isinstance(first, contracts.ProposalReviewSummary)
+    page = first
+    extra: list[ReviewDefinition] = []
+    while (
+        page.definitions_next is not None
+        and page.definitions
+        and page.definitions[-1].kind == "Provider"
+    ):
+        following = client.review_proposal(
+            instance_id, proposal_id, groups=False, definitions_from=page.definitions_next
+        )
+        assert isinstance(following, contracts.ProposalReviewSummary)
+        page = following
+        if page.candidate_digest != first.candidate_digest:
+            raise click.ClickException(
+                "the review summary changed candidate while paging; rerun proposal approve"
+            )
+        providers = [item for item in page.definitions if item.kind == "Provider"]
+        extra.extend(providers)
+        if len(providers) < len(page.definitions):
+            break
+    if not extra:
+        return first
+    shown = len(first.definitions) + len(extra)
+    return first.model_copy(
+        update={
+            "definitions": (*first.definitions, *extra),
+            "definitions_next": shown if shown < first.definition_count else None,
+        }
+    )
+
+
+def _approve_in_order(
+    proposal_ids: Sequence[str],
+    *,
+    resolved_signer: str,
+    private_key_path: str | None,
+    yes: bool,
+    hold: bool,
+    full: bool,
+    output_json: bool,
+) -> None:
+    """`proposal approve P1 P2 ...`: one prompt, then each approved as `approve Pi --yes`.
+
+    Every selector resolves (and the signer's key is found) before anything is
+    signed, so a typo refuses the whole batch. Each proposal then goes through
+    the one-proposal path in order: when an earlier one's activation moved the
+    head, a later one with nothing it touches changed lands at the new head
+    and is signed there. The first refusal, or the first approval that does not
+    activate (without --hold), stops the batch; earlier ones stay accepted.
+    Before the one prompt, every proposal shows what `proposal approve PROPOSAL_ID`
+    shows before its own: the approval summary (Providers and their operations
+    and reach, required approvals, compiler-upgrade and earlier-refusal notices)
+    or, with `--full`, its full review (with --yes, before each is signed).
+    """
+
+    def _resolve_and_review(
+        client: CruxibleClient, instance_id: str
+    ) -> tuple[
+        list[str],
+        list[tuple[ProposalReview, contracts.ProposalReviewSummary | None]],
+        CompilerUpgradeSigningKey,
+    ]:
+        key = _signing_key(private_key_path, instance_id=instance_id, signer_id=resolved_signer)
+        if key is None:
+            raise click.UsageError(_missing_signing_key_help(instance_id, resolved_signer))
+        resolved: list[str] = []
+        for selector in proposal_ids:
+            proposal_id = client.resolve_proposal_selector(instance_id, selector).proposal_id
+            if proposal_id not in resolved:
+                resolved.append(proposal_id)
+        reviews: list[tuple[ProposalReview, contracts.ProposalReviewSummary | None]] = []
+        if not yes:
+            for proposal_id in resolved:
+                page = client.review_proposal(
+                    instance_id, proposal_id, detail=True, include_body=full, groups=False
+                )
+                review = ProposalReview.model_validate(page.model_dump(mode="json"))
+                summary = None
+                if not full:
+                    # The reviewer's view as one-proposal approve shows it: its first
+                    # page, with every Provider definition however many pages they span.
+                    summary = _approval_summary(client, instance_id, proposal_id)
+                reviews.append((review, summary))
+        return resolved, reviews, key
+
+    resolved, reviews, key = _server_call(
+        _resolve_and_review, command_name="cruxible proposal approve"
+    )
+    count = len(resolved)
+    if key.source != "option":
+        click.echo(_signing_key_line(key), err=True)
+    if not yes:
+        # The disclosure goes where the prompt goes when stdout carries the JSON.
+        file_paths = None if full else _display_file_paths()
+        for index, (review, summary) in enumerate(reviews, start=1):
+            click.echo(
+                f"[{index}/{count}] {_short_proposal_id(review.proposal_id)}", err=output_json
+            )
+            if summary is None:
+                text = render_playbill_proposal_review(review)
+            else:
+                text = render_playbill_approval_summary(review, summary, file_paths=file_paths)
+            click.echo(text, nl=False, err=output_json)
+        for line in _batch_summary_lines([review for review, _ in reviews], signer=resolved_signer):
+            click.echo(line, err=output_json)
+        verb = "Approve" if hold else "Approve and activate"
+        noun = "proposal" if count == 1 else "proposals"
+        if not click.confirm(f"{verb} {count} {noun} in order?", err=True):
+            click.echo("Not approved.", err=True)
+            raise SystemExit(1)
+    approved: list[dict[str, Any]] = []
+    failed: dict[str, Any] | None = None
+    not_attempted: list[str] = []
+    for index, proposal_id in enumerate(resolved):
+        if not output_json:
+            click.echo(f"[{index + 1}/{count}] {_short_proposal_id(proposal_id)}")
+        try:
+            result = _approve_one(
+                proposal_id,
+                resolved_signer=resolved_signer,
+                private_key_path=private_key_path,
+                yes=True,
+                candidate_digest=None,
+                hold=hold,
+                # Reviewed in full before the prompt; with --yes, before each signature.
+                full=full and yes,
+                output_json=output_json,
+                emit_json=False,
+                announce_key=False,
+            )
+        except (CoreError, click.ClickException) as exc:
+            code = getattr(exc, "error_code", None)
+            message = exc.format_message() if isinstance(exc, click.ClickException) else str(exc)
+            failed = {"proposal_id": proposal_id, "code": code, "message": message}
+        else:
+            stop = _batch_stop_reason(result, hold=hold)
+            receipt = _json_receipt(result)
+            if stop is None:
+                approved.append({"proposal_id": proposal_id, "receipt": receipt})
+            else:
+                failed = {
+                    "proposal_id": proposal_id,
+                    "code": None,
+                    "message": stop,
+                    "receipt": receipt,
+                }
+        if failed is not None:
+            not_attempted = resolved[index + 1 :]
+            break
+    if output_json:
+        _emit_json({"approved": approved, "failed": failed, "not_attempted": not_attempted})
+    else:
+        for line in _batch_outcome_lines(approved, failed, not_attempted):
+            click.echo(line)
+    if failed is not None:
+        raise SystemExit(1)
+
+
+def _batch_summary_lines(reviews: Sequence[ProposalReview], *, signer: str) -> list[str]:
+    """One numbered row per proposal: short id, proposer, change counts, candidate digest."""
+
+    lines = [f"Approving {len(reviews)} proposals in order as {signer}:"]
+    for index, review in enumerate(reviews, start=1):
+        proposer = review.provenance.get("actor_id")
+        dispositions = Counter(member.disposition for member in review.members)
+        counts = ", ".join(f"{count} {name}" for name, count in sorted(dispositions.items()))
+        total = len(review.members)
+        changes = f"{total} change{'s' if total != 1 else ''}" + (f" ({counts})" if counts else "")
+        lines.append(
+            f"  {index}. {_short_proposal_id(review.proposal_id)}  "
+            f"by {proposer or 'unknown'}  {changes}  candidate {review.candidate_digest}"
+        )
+        if review.rationale:
+            lines.append(f"     {printable(review.rationale)}")
+    lines.extend(
+        (
+            "Each is signed in turn. When an earlier one's activation moves the head, "
+            "a later one is readmitted at the live head and signed there: the candidate "
+            "digests above are not pinned across the batch.",
+            "Review any in full: cruxible proposal review ID",
+        )
+    )
+    return lines
+
+
+def _batch_stop_reason(result: Any, *, hold: bool) -> str | None:
+    """Why an ordered batch stops after this receipt, or None when it may go on.
+
+    The batch promises each lands before the next is signed; with --hold it
+    promises only the signatures.
+    """
+
+    if isinstance(result, contracts.ProposalRecompiled):
+        if result.status == "already_live":
+            return None
+        target = "-" if result.proposal_id is None else _short_proposal_id(result.proposal_id)
+        return (
+            f"recompiled as {target} ({result.status}, members identical: "
+            f"{result.members_identical}); review it"
+        )
+    if isinstance(result, contracts.ActivationReceipt):
+        return None if result.status == "accepted" else f"not accepted ({result.status})"
+    activation = result.activation
+    if activation is not None:
+        if activation.status == "accepted":
+            return None
+        return "not activated: another change was accepted first"
+    if result.not_activated is None:
+        return None
+    if hold and result.not_activated != "stale":
+        return None
+    lines = _approval_outcome_lines(result)
+    return lines[0] if lines else f"not activated ({result.not_activated})"
+
+
+def _batch_outcome_lines(
+    approved: Sequence[Mapping[str, Any]],
+    failed: Mapping[str, Any] | None,
+    not_attempted: Sequence[str],
+) -> list[str]:
+    total = len(approved) + (failed is not None) + len(not_attempted)
+    shown = " ".join(_short_proposal_id(str(item["proposal_id"])) for item in approved)
+    lines = [f"Approved {len(approved)} of {total}" + (f": {shown}" if shown else "")]
+    if failed is not None:
+        code = failed.get("code")
+        lines.append(
+            f"Failed: {_short_proposal_id(str(failed['proposal_id']))} "
+            + (f"{code}: " if code else "")
+            + printable(str(failed["message"]))
+        )
+    if not_attempted:
+        lines.append(
+            "Not attempted: " + " ".join(_short_proposal_id(item) for item in not_attempted)
+        )
+    return lines
+
+
+#: Hex characters of a proposal id that human CLI text shows. Every proposal
+#: command takes them back as a bare-hex selector (or refuses an ambiguous one);
+#: --json, receipts and `proposal review` keep the full ``sha256:<64 hex>``.
+_SHORT_PROPOSAL_HEX = 12
+
+
+def _short_proposal_id(proposal_id: str) -> str:
+    """A proposal id as human CLI text shows it: its first 12 hex characters."""
+
+    if proposal_id.startswith("sha256:"):
+        return proposal_id[7 : 7 + _SHORT_PROPOSAL_HEX]
+    return proposal_id
+
+
+def _shorten_proposal_ids(text: str, proposal_ids: Iterable[str]) -> str:
+    """``text`` with each full proposal id named in ``proposal_ids`` shown short."""
+
+    for proposal_id in proposal_ids:
+        if proposal_id.startswith("sha256:"):
+            text = text.replace(proposal_id, _short_proposal_id(proposal_id))
+    return text
 
 
 def _replaces_line(proposal_id: str, source_id: str) -> str:
@@ -3696,7 +4856,7 @@ def _echo_recompiled_proposal(result: contracts.ProposalRecompiled) -> None:
     if result.changed_members_truncated:
         click.echo("  Changed member paths truncated; review the new proposal for all members.")
     operation = "review" if result.status == "pending_review" else "activate"
-    click.echo(f"Next: cruxible proposal {operation} {result.proposal_id}")
+    click.echo(f"Next: cruxible proposal {operation} {_short_proposal_id(result.proposal_id)}")
 
 
 def _approval_outcome_lines(receipt: contracts.ApprovalReceipt) -> list[str]:
@@ -3708,9 +4868,9 @@ def _approval_outcome_lines(receipt: contracts.ApprovalReceipt) -> list[str]:
             return [f"Activated at {activation.accepted_coordinate.git_oid}"]
         return [
             "Not activated: another change was accepted first; "
-            f"Next: cruxible proposal readmit {receipt.proposal_id}"
+            f"Next: cruxible proposal readmit {_short_proposal_id(receipt.proposal_id)}"
         ]
-    proposal = receipt.proposal_id
+    proposal = _short_proposal_id(receipt.proposal_id)
     if receipt.not_activated == "approvals_remaining":
         count = receipt.approvals_remaining
         return [
@@ -3750,7 +4910,7 @@ def _awaiting_approve_steps(receipt: contracts.ApprovalReceipt) -> list[str]:
     lookup (its remembered settings here), or the refusal names the repair.
     """
 
-    proposal = receipt.proposal_id
+    proposal = _short_proposal_id(receipt.proposal_id)
     steps = [
         f"cruxible proposal approve {proposal} --signer-id {signer}"
         for signer in receipt.required_signers
@@ -3767,6 +4927,8 @@ def _awaiting_approve_steps(receipt: contracts.ApprovalReceipt) -> list[str]:
 
 #: A signer only the caller can name, as every suggested command shows it.
 _SIGNER_PLACEHOLDER = "'<SIGNER_ID>'"
+#: A signer who must not be the proposal's author (independent approval).
+_INDEPENDENT_SIGNER_PLACEHOLDER = "'<INDEPENDENT_REVIEWER>'"
 
 
 @proposal_group.command("activate")
@@ -3827,7 +4989,7 @@ def _echo_activation(result: contracts.ActivationReceipt) -> None:
         click.echo(
             f"not accepted ({result.status}): accepted state moved after this proposal was checked"
         )
-        click.echo(f"next: cruxible proposal readmit {result.proposal_id}")
+        click.echo(f"next: cruxible proposal readmit {_short_proposal_id(result.proposal_id)}")
 
 
 @playbill_group.command("whoami")
@@ -5899,38 +7061,47 @@ def submit_authoring_intent(
         )
 
     submitted = _server_call(call, command_name="cruxible authoring submit")
-    outcome = submitted.outcome
-    refused = isinstance(outcome, contracts.AuthoringRefused)
+    refused = isinstance(submitted.outcome, contracts.AuthoringRefused)
     if output_brief or (refused and not output_json):
-        if isinstance(outcome, contracts.AuthoringLanded):
-            headline = "accepted"
-            coordinate: str | None = outcome.accepted_coordinate.git_oid
-            reason = None
-            next_command = _landed_line_next(submitted.members)
-        else:
-            headline = (
-                f"refused ({outcome.reason})"
-                if isinstance(outcome, contracts.AuthoringRefused)
-                else f"submitted ({submitted.status.state})"
-            )
-            coordinate = None
-            reason = outcome.message
-            next_command = outcome.next
-        _emit_brief(
-            outcome=headline,
-            ids={
-                "intent": str(submitted.intent.get("intent_id")),
-                "proposal": getattr(outcome, "proposal_id", None),
-                "coordinate": coordinate,
-            },
-            reason=_submit_refusal_reason(submitted) or reason,
-            next_command=next_command,
-        )
+        _echo_submit_brief(submitted)
     else:
         _emit_json(submitted.model_dump(mode="json"))
     if refused:
         # Nothing was proposed: a script reading the exit code must not see success.
         raise click.exceptions.Exit(1)
+
+
+def _echo_submit_brief(submitted: contracts.AuthoringSubmitResultRecord) -> None:
+    """The brief block of one authoring submit: outcome, ids, reason, next."""
+
+    outcome = submitted.outcome
+    if isinstance(outcome, contracts.AuthoringLanded):
+        headline = "accepted"
+        coordinate: str | None = outcome.accepted_coordinate.git_oid
+        reason = None
+        next_command = _landed_line_next(submitted.members)
+    else:
+        headline = (
+            f"refused ({outcome.reason})"
+            if isinstance(outcome, contracts.AuthoringRefused)
+            else f"submitted ({submitted.status.state})"
+        )
+        coordinate = None
+        reason = outcome.message
+        next_command = outcome.next
+    proposal_id = getattr(outcome, "proposal_id", None)
+    if isinstance(proposal_id, str) and next_command is not None:
+        next_command = _shorten_proposal_ids(next_command, (proposal_id,))
+    _emit_brief(
+        outcome=headline,
+        ids={
+            "intent": str(submitted.intent.get("intent_id")),
+            "proposal": _short_proposal_id(proposal_id) if isinstance(proposal_id, str) else None,
+            "coordinate": coordinate,
+        },
+        reason=_submit_refusal_reason(submitted) or reason,
+        next_command=next_command,
+    )
 
 
 def _landed_line_next(members: Sequence[Mapping[str, Any]]) -> str | None:
@@ -6096,6 +7267,23 @@ def _write_request(model: type[ResultT], fields: Mapping[str, Any], *, example: 
         ) from None
 
 
+_BASED_ON_HELP = (
+    "A Claim (CLM-..., or SUBJECT#FIELD for that field's one live Claim) this value was "
+    "judged from, pinned at its current version; repeatable. A later revision or "
+    "retirement of it flags this value in next."
+)
+
+
+def _based_on_option_value(based_on: tuple[str, ...], clear: bool) -> list[str] | None:
+    """--based-on IDs, [] for --clear-based-on, None to keep a revision's pins."""
+
+    if clear and based_on:
+        raise click.UsageError("pass --based-on or --clear-based-on, not both")
+    if clear:
+        return []
+    return list(based_on) if based_on else None
+
+
 def _expect_option_value(values: tuple[str, ...]) -> str | tuple[str, ...] | None:
     """``--expect`` given once is the value; given again, every live value."""
 
@@ -6143,6 +7331,83 @@ _NONE_HELP = (
 )
 
 
+_SECTION_HELP = (
+    "FILE#Heading/Path: cite that section of a workspace file (FILE# for the preamble); "
+    "with --section-body, the section this write appends and cites."
+)
+_SECTION_BODY_HELP = (
+    "With --section: append that heading with this body (- reads stdin) and cite it, "
+    "in the same write; FILE is created and catalogued if new."
+)
+_OWN_WORDS_HELP = "With --section: the section's text is your own words, not observed evidence."
+#: The doc op id a --section-body append is cited by.
+_SECTION_BODY_ID = "section"
+_SECTION_BODY_EXAMPLE = (
+    "cruxible set dev.item/tidy-cli status done --section notes.md#Decisions/tidy-cli "
+    '--section-body "Shipped in 0.6." --because "Shipped."'
+)
+
+
+def _section_option_value(
+    section_ref: str | None,
+    section_body: str | None,
+    own_words: bool,
+    *,
+    others: Sequence[tuple[str, object]],
+    workspace_root: str,
+) -> tuple[Any, list[AppendSection]]:
+    """--section (and --section-body, --own-words): the evidence, and the append it cites.
+
+    --section alone cites an existing section, as rebind and claim attest do.
+    With --section-body the write appends that heading (under its parents)
+    with the body and cites the new section by the append's id: prose and
+    the Claim it backs land in one write. Returns (None, []) without --section.
+    """
+
+    from cruxible_client.authoring.write_evidence import rebind_evidence
+    from cruxible_client.contracts.write import SectionEvidence
+    from cruxible_core.cli.payloads import STDIN, _claim_stdin, read_payload_text
+
+    if section_ref is None:
+        if section_body is not None:
+            raise click.UsageError(
+                "--section-body needs --section FILE#Heading/Path: the heading it appends"
+            )
+        if own_words:
+            raise click.UsageError("--own-words applies to --section")
+        return None, []
+    given = [flag for flag, value in others if value is not None]
+    if given:
+        raise click.UsageError(f"pass --section or {', '.join(given)}, not both")
+    if section_body is None:
+        try:
+            evidence = rebind_evidence(section=section_ref, workspace=Path(workspace_root))
+        except ValueError as exc:
+            raise click.UsageError(f"--section: {exc}") from None
+        return (evidence.model_copy(update={"own_words": True}) if own_words else evidence), []
+    file, mark, rest = section_ref.partition("#")
+    heading = tuple(item.strip() for item in rest.split("/") if item.strip())
+    if not file or not mark or not heading:
+        raise click.UsageError(
+            "--section with --section-body takes FILE#Heading/Path: the heading to append"
+        )
+    if section_body == STDIN:
+        _claim_stdin(click.get_current_context(silent=True))
+        section_body = read_payload_text(STDIN)
+    try:
+        append = AppendSection(
+            id=_SECTION_BODY_ID,
+            file=file,
+            under=heading[:-1],
+            heading=heading[-1],
+            text=section_body,
+        )
+    except ValidationError as exc:
+        raise click.UsageError("--section: " + "; ".join(_model_field_errors(exc))) from None
+    evidence = SectionEvidence(ref=_SECTION_BODY_ID, own_words=True if own_words else None)
+    return evidence, [append]
+
+
 @playbill_group.command("set")
 @click.argument("subject")
 @click.argument("field")
@@ -6167,6 +7432,9 @@ _NONE_HELP = (
     default=None,
     help="Cite the newest verified Capture of this CaptureContract about SUBJECT.",
 )
+@click.option("--section", "section_ref", default=None, help=_SECTION_HELP)
+@click.option("--section-body", default=None, help=_SECTION_BODY_HELP)
+@click.option("--own-words", is_flag=True, help=_OWN_WORDS_HELP)
 @click.option("--role", default=None, help="Only when the field permits several roles.")
 @click.option("--contend", is_flag=True, help="Contest the live value instead of replacing it.")
 @click.option("--expect", "expect", multiple=True, help=_EXPECT_HELP)
@@ -6176,11 +7444,23 @@ _NONE_HELP = (
     help="Refuse unless the field holds no value now (compare-and-set on an empty field).",
 )
 @click.option(
+    "--based-on",
+    "based_on",
+    multiple=True,
+    metavar="CLAIM_ID",
+    help=_BASED_ON_HELP,
+)
+@click.option(
+    "--clear-based-on",
+    is_flag=True,
+    help="Drop the based-on pins this revision would keep.",
+)
+@click.option(
     "--workspace-root",
     default=".",
     show_default=True,
     type=click.Path(file_okay=False),
-    help="Workspace whose file catalog --evidence-file reads.",
+    help="Workspace whose file catalog --evidence-file and --section read.",
 )
 @_write_options
 @handle_errors
@@ -6193,10 +7473,15 @@ def set_value(
     evidence_file: str | None,
     capture: str | None,
     evidence_contract: str | None,
+    section_ref: str | None,
+    section_body: str | None,
+    own_words: bool,
     role: str | None,
     contend: bool,
     expect: tuple[str, ...],
     expect_absent: bool,
+    based_on: tuple[str, ...],
+    clear_based_on: bool,
     workspace_root: str,
     dry_run: bool,
     no_accept: bool,
@@ -6210,12 +7495,28 @@ def set_value(
     not exist yet is added by that key. VALUE is text: an enum member, a number or true/false
     for such fields, a Subject as kind/id, or bounded text. --none
     instead states that FIELD holds nothing (a none), replacing the live value.
+    --based-on CLM-... pins a Claim the value was judged from: a later revision
+    or retirement of it flags this value in next (claim_dependency_stale).
+    --section FILE#Heading/Path cites that section; with --section-body the
+    write appends it and cites it in one step (reasoning past a 280-character
+    --because goes there).
     """
 
     if expect_absent and expect:
         raise click.UsageError("pass --expect or --expect-absent, not both")
     if none_ == (value is not None):
         raise click.UsageError("pass VALUE, or --none for a field that holds nothing; not both")
+    section_evidence, docs = _section_option_value(
+        section_ref,
+        section_body,
+        own_words,
+        others=(
+            ("--evidence-file", evidence_file),
+            ("--capture", capture),
+            ("--evidence-contract", evidence_contract),
+        ),
+        workspace_root=workspace_root,
+    )
     request = _write_request(
         SetRequest,
         {
@@ -6223,21 +7524,29 @@ def set_value(
             "field": field,
             "value": {"none": None} if none_ else value,
             "because": because,
-            "evidence": _evidence_option_value(
-                evidence_file, capture, workspace_root, evidence_contract
-            ),
+            "evidence": section_evidence
+            or _evidence_option_value(evidence_file, capture, workspace_root, evidence_contract),
             "role": role,
             "contend": contend,
             "expect": () if expect_absent else _expect_option_value(expect),
+            "based_on": _based_on_option_value(based_on, clear_based_on),
             "dry_run": dry_run,
             "accept": "never" if no_accept else "if_allowed",
             "at": at_oid,
         },
         example='cruxible set dev.item/tidy-cli status done --because "Shipped."',
     )
-    if evidence_file is not None:
+    if evidence_file is not None or section_evidence is not None:
+        written = as_write_request(request)
+        if docs:
+            # The append the section evidence cites, in the same change set.
+            written = _write_request(
+                WriteRequest,
+                {**dict(written), "docs": docs},
+                example=_SECTION_BODY_EXAMPLE,
+            )
         _workspace_write(
-            as_write_request(request),
+            written,
             workspace_root=workspace_root,
             send=lambda observed: _server_call(
                 lambda client, instance_id: client.write(instance_id, request=observed),
@@ -6283,6 +7592,9 @@ def set_value(
     default=None,
     help="Cite the newest verified Capture of this CaptureContract about SUBJECT.",
 )
+@click.option("--section", "section_ref", default=None, help=_SECTION_HELP)
+@click.option("--section-body", default=None, help=_SECTION_BODY_HELP)
+@click.option("--own-words", is_flag=True, help=_OWN_WORDS_HELP)
 @click.option("--role", default=None, help="Only when the field permits several roles.")
 @click.option(
     "--expect-absent",
@@ -6290,11 +7602,23 @@ def set_value(
     help="Refuse when the value is already there, instead of answering it as done.",
 )
 @click.option(
+    "--based-on",
+    "based_on",
+    multiple=True,
+    metavar="CLAIM_ID",
+    help=_BASED_ON_HELP,
+)
+@click.option(
+    "--clear-based-on",
+    is_flag=True,
+    help="Drop the based-on pins this revision would keep.",
+)
+@click.option(
     "--workspace-root",
     default=".",
     show_default=True,
     type=click.Path(file_okay=False),
-    help="Workspace whose file catalog --evidence-file reads.",
+    help="Workspace whose file catalog --evidence-file and --section read.",
 )
 @_write_options
 @handle_errors
@@ -6307,8 +7631,13 @@ def add_value(
     evidence_file: str | None,
     capture: str | None,
     evidence_contract: str | None,
+    section_ref: str | None,
+    section_body: str | None,
+    own_words: bool,
     role: str | None,
     expect_absent: bool,
+    based_on: tuple[str, ...],
+    clear_based_on: bool,
     workspace_root: str,
     dry_run: bool,
     no_accept: bool,
@@ -6321,22 +7650,37 @@ def add_value(
     A Subject of a known kind that does not exist yet is added. VALUE is text, as
     for set: a Subject as kind/id for a Subject-valued field. --none adds a none:
     FIELD does not hold VALUE (retire a value it holds in the same write file).
+    --section-body appends the --section heading and cites it in the same write.
     """
 
+    section_evidence, docs = _section_option_value(
+        section_ref,
+        section_body,
+        own_words,
+        others=(
+            ("--evidence-file", evidence_file),
+            ("--capture", capture),
+            ("--evidence-contract", evidence_contract),
+        ),
+        workspace_root=workspace_root,
+    )
     request = _write_request(
         WriteRequest,
         {
+            "docs": docs,
             "changes": [
                 {
                     "op": "add",
                     "subject": subject,
                     "field": field,
                     "value": {"none": value} if none_ else value,
-                    "evidence": _evidence_option_value(
+                    "evidence": section_evidence
+                    or _evidence_option_value(
                         evidence_file, capture, workspace_root, evidence_contract
                     ),
                     "role": role,
                     "expect_absent": expect_absent,
+                    "based_on": _based_on_option_value(based_on, clear_based_on),
                 }
             ],
             "because": because,
@@ -6558,11 +7902,24 @@ def rebind(
 @click.option("--because", default=None, help="Why; overrides the file's because.")
 @click.option("--schema", is_flag=True, help="Print the JSON schema FILE is validated against.")
 @click.option(
+    "--example",
+    "example",
+    is_flag=True,
+    help="Print a worked FILE (docs, create, set with file and section evidence, based_on).",
+)
+@click.option(
     "--workspace-root",
     default=".",
     show_default=True,
     type=click.Path(file_okay=False),
     help="Workspace whose file catalog file evidence reads.",
+)
+@click.option(
+    "--based-on",
+    "based_on",
+    multiple=True,
+    metavar="CLAIM_ID",
+    help=_BASED_ON_HELP + " Applies to each set and add change that names no based_on.",
 )
 @_write_options
 @handle_errors
@@ -6570,7 +7927,9 @@ def write_changes(
     file: str | None,
     because: str | None,
     schema: bool,
+    example: bool,
     workspace_root: str,
+    based_on: tuple[str, ...],
     dry_run: bool,
     no_accept: bool,
     at_oid: str | None,
@@ -6585,17 +7944,31 @@ def write_changes(
     {field: value, ...} (e.g. {"occurrence": "kind/id", "vulnerability":
     "kind/id"}); other changes name a created Subject {"created": label}, as
     subject or value. A top-level "subject" is
-    the Subject of every change that names none. --schema prints the schema.
-    Optional docs hold append {file, under, text} or replace {file, section,
-    text, expect}. Paths are heading lists; [] selects the preamble. Section
-    evidence {kind: section, file, section} cites the edited text in the same call.
+    the Subject of every change that names none. Optional docs hold append
+    {file, under, text} or replace {file, section, text, expect}. Paths are
+    heading lists; [] selects the preamble. Section evidence {kind: section,
+    file, section} cites the edited text in the same call.
+
+    --example prints a worked FILE to start from (cruxible write --example >
+    changes.json); --schema prints the JSON schema FILE is validated against.
+    With a Python environment, the typed SDK (cruxible python, with
+    .cruxible/world.pyi) writes the same changes without hand-written JSON.
     """
 
+    if schema and example:
+        raise click.UsageError("pass --schema or --example, not both")
     if schema:
         _emit_json(_WriteFileV1.model_json_schema())
         return
+    if example:
+        from cruxible_client.authoring.examples import WRITE_FILE_EXAMPLE
+
+        click.echo(WRITE_FILE_EXAMPLE, nl=False)
+        return
     if file is None:
-        raise click.UsageError("pass FILE, or --schema to see what FILE holds")
+        raise click.UsageError(
+            "pass FILE, --example for a worked FILE, or --schema to see what FILE holds"
+        )
     source = payload_label(file)
     payload = read_payload_document(file)
     if isinstance(payload, list):
@@ -6610,10 +7983,18 @@ def write_changes(
     rationale = because or parsed.because
     if rationale is None:
         raise click.UsageError("give the write a reason: --because, or because in FILE")
+    changes: Sequence[Change] = parsed.changes
+    if based_on:
+        changes = tuple(
+            change.model_copy(update={"based_on": _based_on_option_value(based_on, False)})
+            if isinstance(change, SetChange | AddChange) and change.based_on is None
+            else change
+            for change in changes
+        )
     request = _write_request(
         WriteRequest,
         {
-            "changes": parsed.changes,
+            "changes": changes,
             "docs": parsed.docs,
             "subject": parsed.subject,
             "because": rationale,
@@ -7014,6 +8395,56 @@ def backlinks(
         click.echo(f"next: cruxible backlinks ... --cursor {result.next_cursor}")
 
 
+@playbill_group.command("section")
+@click.argument("locator")
+@click.option(
+    "--workspace-root",
+    default=".",
+    show_default=True,
+    type=click.Path(file_okay=False),
+    help="Workspace whose file catalog LOCATOR's file is read through.",
+)
+@json_option
+@handle_errors
+def section_read(locator: str, workspace_root: str, output_json: bool) -> None:
+    """Read one section of a catalogued Markdown file: LOCATOR is FILE#Heading/Path.
+
+    FILE is the file's path or its files.yaml name; FILE# reads the preamble.
+    Prints the section's own body (its heading and prose, up to its first
+    subsection) and the subsections to read next. The locators get, backlinks
+    and floor cards print read here; --json adds the digest a citation records.
+    Reads the workspace only; the daemon is not asked.
+    """
+
+    from cruxible_client.authoring.section_read import SectionReadError, read_section
+    from cruxible_core.cli.commands._common import _echo_refusal
+
+    try:
+        result = read_section(Path(workspace_root), locator)
+    except SectionReadError as exc:
+        _echo_refusal(
+            "not read",
+            code=exc.code,
+            message=exc.message,
+            candidates=exc.candidates,
+            repair=exc.repair,
+        )
+        raise SystemExit(1) from None
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    click.echo(result.text, nl=not result.text.endswith("\n"))
+    if result.subsections:
+        prefix = "/".join(result.section)
+        click.echo(
+            "subsections: "
+            + ", ".join(
+                shlex.quote(f"{result.path}#{prefix + '/' if prefix else ''}{name}")
+                for name in result.subsections
+            )
+        )
+
+
 @playbill_group.command("get")
 @click.argument("ref")
 @click.option(
@@ -7028,6 +8459,7 @@ def backlinks(
             "pairs",
             "runs",
             "backlinks",
+            "notes",
             "proof",
             "proof-full",
             "body",
@@ -7060,7 +8492,7 @@ def backlinks(
     "--limit",
     type=int,
     default=None,
-    help="Rows per --detail history, incoming, pairs, runs or backlinks page (default 20).",
+    help="Rows per --detail history, incoming, pairs, runs, backlinks or notes page (default 20).",
 )
 @click.option(
     "--cursor",
@@ -7137,21 +8569,29 @@ def get_by_ref(
         lambda client, instance_id: client.get(instance_id, request=request),
         command_name="cruxible get",
     )
-    if result.backlinks is not None:
+    if result.backlinks is not None or result.notes is not None or result.kind == "subject":
         from cruxible_client.authoring.backlink_sections import observe_get_drift
 
-        # Section rows checked against the workspace here, as `backlinks` does.
+        # Section rows and note pointers checked against the workspace here,
+        # as `backlinks` does.
         result = observe_get_drift(result, Path("."))
     proof = result.proof
     claim_summary = result.kind == "claim" and result.detail == "proof" and not proof_full
+    context = (
+        _based_on_context(proof, result.coordinate.git_oid)
+        if claim_summary and proof is not None
+        else None
+    )
     if output_json:
         if claim_summary and proof is not None:
-            result = result.model_copy(update={"proof": claim_proof_summary(proof)})
+            result = result.model_copy(
+                update={"proof": claim_proof_summary(proof, based_on_context=context)}
+            )
         _emit_json(result.model_dump(mode="json"))
         return
     if claim_summary and proof is not None:
         click.echo(f"{result.ref}  ({result.coordinate.git_oid})")
-        for line in claim_proof_summary_lines(proof):
+        for line in claim_proof_summary_lines(proof, based_on_context=context):
             click.echo(line)
         return
     _emit_get_text(result, evidence_erased=_stale_claim_evidence_erased(request, result))
@@ -7161,6 +8601,39 @@ def get_by_ref(
             f"next: cruxible get {shlex.quote(ref)} --detail {detail}{narrowed} "
             f"--cursor {result.next_cursor}"
         )
+
+
+def _based_on_context(
+    proof: Mapping[str, Any], at: str
+) -> dict[str, tuple[str | None, str | None]] | None:
+    """Each Claim a proof's based_on pins name, as (Subject, field), in one batched read.
+
+    None when the Claim pins nothing; a pin whose Claim does not read keeps its id alone.
+    """
+
+    from cruxible_client.contracts.get_reads import (
+        GET_BATCH_MAX_REFS,
+        GetBatchRequest,
+        GetClaimCard,
+    )
+    from cruxible_client.contracts.get_text import claim_proof_based_on
+
+    pinned = claim_proof_based_on(proof)[:GET_BATCH_MAX_REFS]
+    if not pinned:
+        return None
+    request = GetBatchRequest(refs=pinned, detail="summary", at=at, surface="cli")
+    try:
+        batch = _server_call(
+            lambda client, instance_id: client.get_batch(instance_id, request=request),
+            command_name="cruxible get",
+        )
+    except (CoreError, click.ClickException):
+        return {}
+    context: dict[str, tuple[str | None, str | None]] = {}
+    for claim, item in zip(pinned, batch.results, strict=False):
+        if isinstance(item.card, GetClaimCard):
+            context[claim] = (item.card.subject, item.card.predicate)
+    return context
 
 
 def _write_body(request: Any, destination: Path, *, whole: bool) -> None:
@@ -7240,7 +8713,12 @@ def _emit_get_text(result: Any, *, evidence_erased: bool = False) -> None:
     ``evidence_erased`` marks a stale Claim's verdict as read from erased evidence.
     """
 
-    names_files = result.evidence is not None or result.backlinks is not None
+    names_files = (
+        result.evidence is not None
+        or result.backlinks is not None
+        or getattr(result, "notes", None) is not None
+        or bool(getattr(result.card, "notes", ()))
+    )
     text = render_get(
         result,
         evidence_erased=evidence_erased,
@@ -7817,7 +9295,10 @@ def _land_compiler_upgrade(
                 "not activated: the approval policy needs an ordinary principal other than "
                 "the proposer; that principal's `cruxible proposal approve` activates it"
             ),
-            next=f"cruxible proposal approve {proposal_id} --signer-id {_SIGNER_PLACEHOLDER}",
+            next=(
+                f"cruxible proposal approve {proposal_id} "
+                f"--signer-id {_INDEPENDENT_SIGNER_PLACEHOLDER}"
+            ),
         )
     elif key is None or signer_id is None:
         stop = CompilerUpgradeProposed(
@@ -8119,6 +9600,12 @@ def _follow_entry(spec: str, option: str) -> dict[str, str]:
     ),
 )
 @click.option("--evaluation-time", default=None, help="ISO-8601 instant; default now.")
+@click.option(
+    "--no-truncate",
+    "no_truncate",
+    is_flag=True,
+    help="Show every cell whole (by default a cell past 60 characters is cut; ids never are).",
+)
 @json_option
 @click.pass_context
 @handle_errors
@@ -8142,6 +9629,7 @@ def query_group(
     receipt: str,
     at_oid: str | None,
     evaluation_time: str | None,
+    no_truncate: bool,
     output_json: bool,
 ) -> None:
     """Query accepted state: cruxible query [KIND] [--where 'f=v']...
@@ -8152,8 +9640,9 @@ def query_group(
     CaptureContract, ProcedureMandate or QueryDefinition (each lists its
     definitions with typed columns; --select adds the rest, such as a
     ClaimType's role, stale_after or kit, or a Trigger's cron); --name runs
-    an accepted named query (orient --section queries lists them), --spec a
-    full definition. A page holds at most 500 rows: --limit above that, or
+    an accepted named query (orient --section queries lists them), and so
+    does a positional NAME given --param (cruxible query NAME --param k=v);
+    --spec runs a full definition. A page holds at most 500 rows: --limit above that, or
     --all, follows the cursor and prints the pages as one table.
     """
 
@@ -8194,8 +9683,28 @@ def query_group(
             raise click.ClickException(
                 f"{spec_path} is not a QueryDefinitionSpec: {_validation_problems(exc)}"
             ) from exc
+    kind = ctx.meta.get("playbill_query_kind")
+    compact_options = (
+        where_expressions,
+        contains,
+        select_fields,
+        follow,
+        order_fields,
+        statuses,
+        with_claims,
+        spec,
+    )
+    if (
+        query_name is None
+        and kind is not None
+        and (params is not None or budgets_json is not None or receipt != "compact")
+        and not any(compact_options)
+    ):
+        # `cruxible query NAME --param k=v`: only a named query takes params,
+        # budgets or a receipt, so the positional is the query's name.
+        query_name, kind = kind, None
     fields: dict[str, object] = {
-        "kind": ctx.meta.get("playbill_query_kind"),
+        "kind": kind,
         "where": [item.model_dump(mode="json", by_alias=True) for item in where],
         "contains": contains,
         "select": _split_fields(select_fields),
@@ -8231,7 +9740,7 @@ def query_group(
     if output_json:
         _emit_json(result.model_dump(mode="json"))
         return
-    click.echo(render_query_table(result))
+    click.echo(render_query_table(result, truncate=not no_truncate))
     for row in result.rows if with_claims else ():
         cells = row.get("claims") or {}
         for column, entries in cells.items() if isinstance(cells, dict) else ():
@@ -8955,10 +10464,11 @@ def inbox_link(item_id: str, proposal: str | None, subject: str | None, output_j
 
 @playbill_group.group("line")
 def line_group() -> None:
-    """Enable, run and recover accepted Lines.
+    """Enable, run, grant and recover accepted Lines.
 
     enable, disable and run are the normal flow; evaluate and dispatch recover
-    what automation missed, as `cruxible next` names it. `cruxible get
+    what automation missed, as `cruxible next` names it; grant writes the one
+    settle Mandate over the observations a Line writes. `cruxible get
     Line:NAME` reads a Line's enablement, Triggers, pending work and runs.
     """
 
@@ -8971,12 +10481,134 @@ def _echo_line_enablement(result: Any) -> None:
     echo_preview_next(result.outcome or "", result.coordinate)
 
 
+def _runbook_lines(client: CruxibleClient, instance_id: str, runbook: str) -> tuple[str, ...]:
+    """The Lines RUNBOOK's steps name or fan out to, in first-step order, once each.
+
+    A Procedure step's Lines are the card's ``lines``: a Line that takes an event
+    is left out (``excluded_lines``), as the run leaves it out.
+    """
+
+    from cruxible_client.contracts.get_reads import GetRequest
+    from cruxible_client.contracts.operational_reads import GetRunbookCard
+
+    name = runbook.removeprefix("Runbook:")
+    found = client.get(instance_id, request=GetRequest(ref=f"Runbook:{name}"))
+    card = found.card
+    if not isinstance(card, GetRunbookCard):
+        raise click.ClickException(f"Runbook:{name} has no accepted definition to read Lines from")
+    if card.lifecycle != "live":
+        raise click.ClickException(f"Runbook:{name} is {card.lifecycle}; name its Lines instead")
+    lines = tuple(
+        dict.fromkeys(
+            line.removeprefix("Line:")
+            for step in card.steps
+            for line in ((step.target,) if step.target.startswith("Line:") else step.lines)
+        )
+    )
+    if not lines:
+        if any(step.excluded_lines for step in card.steps):
+            raise click.ClickException(
+                f"Runbook:{name} runs no Lines: its Procedures' Lines take an event, which "
+                "no Runbook step hands them; nothing to enable"
+            )
+        if any(step.target.startswith("Procedure:") for step in card.steps):
+            raise click.ClickException(f"Runbook:{name} runs no Lines yet; nothing to enable")
+        raise click.ClickException(
+            f"Runbook:{name} lists no Lines (only actions); nothing to enable"
+        )
+    return lines
+
+
+def _enable_lines(
+    lines: tuple[str, ...], dry_run: bool | None, at: str | None, output_json: bool
+) -> None:
+    """Enable each Line in turn and report each: enabled, unchanged, or refused and why.
+
+    Every Line is attempted; a refusal is reported beside the others and the
+    command exits 1 after its output when any Line was refused. A transport,
+    authentication or permission failure stops at once, as for one Line.
+    """
+
+    from cruxible_client.contracts.text_display import line_enablement_lines
+    from cruxible_client.errors import AuthenticationError, ServerUnreachableError
+    from cruxible_client.errors import CoreError as ClientCoreError
+    from cruxible_core.cli.main import _is_permission_denied
+
+    entries: list[dict[str, Any]] = []
+    rendered: list[str] = []
+    preview: Any = None
+    counts = {"enabled": 0, "unchanged": 0, "previewed": 0, "refused": 0}
+
+    def enable(name: str) -> Any:
+        return _server_call(
+            lambda client, instance_id: client.enable_line(
+                instance_id, name, dry_run=dry_run, at=at
+            ),
+            command_name="cruxible line enable",
+        )
+
+    for name in lines:
+        try:
+            result = enable(name)
+        except ClientCoreError as exc:
+            if isinstance(exc, ServerUnreachableError | AuthenticationError) or (
+                _is_permission_denied(exc)
+            ):
+                raise
+            counts["refused"] += 1
+            code = getattr(exc, "error_code", None)
+            message = str(exc)
+            repairs = [str(item) for item in getattr(exc, "repair_commands", ())]
+            entries.append(
+                {
+                    "line": name,
+                    "refused": {"code": code, "message": message, "repairs": repairs},
+                }
+            )
+            shown = message if not code or message.startswith(f"{code}:") else f"{code}: {message}"
+            rendered.append(f"Line:{name}: refused ({shown})")
+            rendered.extend(f"  repair: {item}" for item in repairs)
+            continue
+        entries.append({"line": name, "enablement": result.model_dump(mode="json")})
+        rendered.append(line_enablement_lines(result)[0])
+        if result.detail:
+            rendered.append(f"  {result.detail}")
+        outcome = result.outcome or ""
+        if outcome.startswith("would_"):
+            counts["previewed"] += 1
+            preview = preview or result
+        else:
+            counts["unchanged" if outcome.startswith("already_") else "enabled"] += 1
+    if output_json:
+        _emit_json({"lines": entries})
+    else:
+        for item in rendered:
+            click.echo(item)
+        click.echo("Lines: " + ", ".join(f"{n} {label}" for label, n in counts.items() if n))
+        if preview is not None and not counts["refused"]:
+            echo_preview_next(preview.outcome or "", preview.coordinate)
+    if counts["refused"]:
+        raise SystemExit(1)
+
+
 @line_group.command("enable")
-@click.argument("line")
+@click.argument("lines", nargs=-1, metavar="[LINE]...")
+@click.option(
+    "--runbook",
+    default=None,
+    metavar="RUNBOOK",
+    help="Also enable every Line RUNBOOK's steps name.",
+)
 @change_control_options
 @json_option
 @handle_errors
-def enable_line(line: str, dry_run: bool | None, at: str | None, output_json: bool) -> None:
+def enable_line(
+    lines: tuple[str, ...],
+    runbook: str | None,
+    dry_run: bool | None,
+    at: str | None,
+    output_json: bool,
+) -> None:
     """Enable LINE: its Triggers admit what they match from now on, under your credential.
 
     A Trigger aimed at a Line does nothing until the Line is enabled. The
@@ -8986,16 +10618,37 @@ def enable_line(line: str, dry_run: bool | None, at: str | None, output_json: bo
     `line evaluate` and `line dispatch`. Enabling needs governed write, even for
     an observe-only Line; a Line that proposes or settles also needs a covering
     ProcedureMandate. Read it with `cruxible get Line:LINE`.
+
+    Several LINEs, or `--runbook RUNBOOK` (every Line its steps name), enable
+    each in turn, once each, and print one receipt line per Line (`--json`:
+    `{"lines": [...]}`, each with its enablement or refusal); any refusal
+    exits 1 after every Line is tried.
     """
 
-    result = _server_call(
-        lambda client, instance_id: client.enable_line(instance_id, line, dry_run=dry_run, at=at),
-        command_name="cruxible line enable",
-    )
-    if output_json:
-        _emit_json(result.model_dump(mode="json"))
-    else:
-        _echo_line_enablement(result)
+    if not lines and runbook is None:
+        raise click.UsageError("name a LINE, or --runbook RUNBOOK")
+    if len(lines) == 1 and runbook is None:
+        line = lines[0]
+        result = _server_call(
+            lambda client, instance_id: client.enable_line(
+                instance_id, line, dry_run=dry_run, at=at
+            ),
+            command_name="cruxible line enable",
+        )
+        if output_json:
+            _emit_json(result.model_dump(mode="json"))
+        else:
+            _echo_line_enablement(result)
+        return
+    named = [item.removeprefix("Line:") for item in lines]
+    if runbook is not None:
+        named.extend(
+            _server_call(
+                lambda client, instance_id: _runbook_lines(client, instance_id, runbook),
+                command_name="cruxible line enable --runbook",
+            )
+        )
+    _enable_lines(tuple(dict.fromkeys(named)), dry_run, at, output_json)
 
 
 @line_group.command("disable")
@@ -9019,6 +10672,229 @@ def disable_line(line: str, dry_run: bool | None, at: str | None, output_json: b
         _emit_json(result.model_dump(mode="json"))
     else:
         _echo_line_enablement(result)
+
+
+#: A settle grant's validity when ``--expires`` is not given.
+LINE_GRANT_DEFAULT_EXPIRES = "90d"
+
+
+def _grant_expiry(value: str, *, now: datetime) -> datetime:
+    """``--expires``: a span (``30d``, ``12w``, ``1y``, ``36h``, ``P90D``) or an instant."""
+
+    from cruxible_client.contracts.temporal import ensure_utc, parse_validity_span
+
+    text = value.strip()
+    if text.startswith("P") or text[-1:].lower() in {"h", "d", "w", "y"}:
+        try:
+            expires = now + parse_validity_span(text)
+        except (ValueError, OverflowError) as exc:
+            raise click.BadParameter(str(exc), param_hint="--expires") from exc
+    else:
+        try:
+            expires = ensure_utc(datetime.fromisoformat(text.replace("Z", "+00:00")))
+        except ValueError as exc:
+            raise click.BadParameter(
+                "give a span (30d, 12w, 1y, 36h, P90D) or an ISO-8601 instant",
+                param_hint="--expires",
+            ) from exc
+    if expires <= now:
+        raise click.BadParameter("the grant must expire after now", param_hint="--expires")
+    return expires
+
+
+def _observation_grant_scope(
+    client: CruxibleClient, instance_id: str, line: str, mandate: Any
+) -> Any:
+    """What ``scope: observations`` lowers to for LINE at the head, read as lowering reads it."""
+
+    from cruxible_client.contracts.claim_types import ClaimType
+    from cruxible_client.contracts.get_reads import GetRequest
+    from cruxible_client.contracts.observation_settle import observation_settle_scope
+    from cruxible_client.contracts.procedures.line_specs import LineSpec
+
+    def proof(ref: str) -> Any:
+        found = client.get(instance_id, request=GetRequest(ref=ref, detail="proof")).proof
+        return None if found is None else found.get("envelope")
+
+    spec = LineSpec.model_validate(proof(f"Line:{line}"))
+    readiness = client.procedure_readiness(instance_id, spec.procedure.target.name)
+    if readiness.artifact_digest != spec.procedure.artifact_digest:
+        raise click.ClickException(
+            f"cruxible.authoring.procedure_mandate_observations_procedure_moved: Line {line!r} "
+            f"pins another version of Procedure {spec.procedure.target.name!r} than the "
+            "accepted one; revise the Line to pin it, then grant it."
+        )
+
+    def claim_type(predicate: str) -> ClaimType | None:
+        try:
+            envelope = proof(f"ClaimType:{predicate}")
+        except CoreError:
+            return None
+        return None if envelope is None else ClaimType.model_validate(envelope)
+
+    return observation_settle_scope(
+        readiness.artifact.definition.nodes,
+        claim_type,
+        include_derived=mandate.include_derived,
+        subject_creation=mandate.subject_creation,
+    )
+
+
+def _echo_observation_grant(mandate: Any, scope: Any) -> None:
+    from cruxible_client.contracts.mandate_scope import MANDATE_CHANGE_KIND_ORDER
+
+    click.echo(f"grant  Mandate:{mandate.name}  settle  Line:{mandate.line_name}")
+    click.echo(f"valid  {_instant_text(mandate.valid_from)} .. {_instant_text(mandate.expires_at)}")
+    click.echo(f"namespace  {', '.join(mandate.namespace)}")
+    for item in scope.claim_types:
+        changes = "  ".join(
+            f"{kind}={','.join(item.changes.of(kind).basis)}"
+            for kind in MANDATE_CHANGE_KIND_ORDER
+            if item.changes.of(kind) is not None
+        )
+        click.echo(f"ClaimType:{item.claim_type}  {changes}")
+    if mandate.subject_creation:
+        click.echo(f"may create  {', '.join(mandate.subject_creation)}")
+    unscoped = sorted(set(scope.creatable_subject_kinds) - set(mandate.subject_creation))
+    if unscoped:
+        click.echo(f"creates, proposes  {', '.join(unscoped)}  (--create-subjects to settle)")
+
+
+def _instant_text(value: datetime) -> str:
+    from cruxible_client.contracts.temporal import format_datetime
+
+    return str(format_datetime(value))
+
+
+@line_group.command("grant")
+@click.argument("line")
+@click.option(
+    "--settle-observations",
+    is_flag=True,
+    help="Grant settle over every observation-only ClaimType LINE's Procedure writes.",
+)
+@click.option(
+    "--include-derived",
+    is_flag=True,
+    help="Also settle values computed by Procedure logic (basis derived).",
+)
+@click.option(
+    "--create-subjects",
+    "create_subjects",
+    multiple=True,
+    metavar="KIND",
+    help="A Subject kind the run may create by key and settle; repeatable.",
+)
+@click.option(
+    "--expires",
+    default=LINE_GRANT_DEFAULT_EXPIRES,
+    show_default=True,
+    help="Span (30d, 12w, 1y, 36h, P90D) or ISO-8601 instant the grant ends at.",
+)
+@click.option("--name", "mandate_name", default=None, help="Mandate name [default: LINE-settle].")
+@click.option("--dry-run", is_flag=True, help="Preflight the grant; save nothing.")
+@click.option("--no-accept", is_flag=True, help="Propose only; do not land the grant.")
+@json_option
+@handle_errors
+def grant_line(
+    line: str,
+    settle_observations: bool,
+    include_derived: bool,
+    create_subjects: tuple[str, ...],
+    expires: str,
+    mandate_name: str | None,
+    dry_run: bool,
+    no_accept: bool,
+    output_json: bool,
+) -> None:
+    """Grant LINE settle authority over the observations it writes, as one Mandate.
+
+    --settle-observations pins every ClaimType LINE's Procedure writes (each
+    must permit only the observation role) with the changes its templates
+    make: creates and revises on extracted and measured values, retirements and
+    inverses on a complete source's absence. Subject creation settles only for
+    the kinds --create-subjects names. The grant is an ordinary Mandate pinned to
+    LINE's exact version; it lands when policy and your tier allow.
+    """
+
+    from cruxible_client.authoring.inputs import ChangeSetInput
+    from cruxible_client.contracts.authoring.inputs import ProcedureMandateInput
+    from cruxible_client.contracts.observation_settle import (
+        OBSERVATION_SETTLE_NAMESPACE,
+        ObservationSettleRefusal,
+    )
+    from cruxible_client.contracts.procedure_mandates import (
+        ProcedureMandateError,
+        procedure_mandate_path,
+    )
+
+    if not settle_observations:
+        raise click.UsageError("name the grant: --settle-observations")
+    now = datetime.now(UTC).replace(microsecond=0)
+    try:
+        mandate = ProcedureMandateInput(
+            kind="procedure_mandate",
+            name=mandate_name or f"{line}-settle",
+            line_name=line,
+            grants="settle",
+            namespace=OBSERVATION_SETTLE_NAMESPACE,
+            valid_from=now,
+            expires_at=_grant_expiry(expires, now=now),
+            scope="observations",
+            include_derived=include_derived,
+            subject_creation=tuple(sorted(set(create_subjects), key=str.encode)),
+        )
+        procedure_mandate_path(mandate.name)
+    except (ValidationError, ProcedureMandateError) as exc:
+        raise click.UsageError(
+            f"cannot name the Mandate {mandate_name or line + '-settle'!r}: "
+            "give --name in lowercase letters, digits, . _ -"
+        ) from exc
+
+    def call(client: CruxibleClient, instance_id: str) -> tuple[Any, Any]:
+        scope = _observation_grant_scope(client, instance_id, line, mandate)
+        if isinstance(scope, ObservationSettleRefusal):
+            return scope, None
+        payload = ChangeSetInput(
+            kind="change_set",
+            members=(mandate,),
+            rationale=f"Settle the observations Line {line} writes.",
+        ).model_dump(mode="json")
+        if dry_run:
+            return scope, client.preview_authoring_input(instance_id, input=payload)
+        return scope, client.submit_authoring_input(
+            instance_id, input=payload, accept="never" if no_accept else "if_allowed"
+        )
+
+    scope, result = _server_call(call, command_name="cruxible line grant")
+    if isinstance(scope, ObservationSettleRefusal):
+        if output_json:
+            _emit_json({"refusal": scope.model_dump(mode="json")})
+        else:
+            click.echo(f"refused: {scope.code}: {printable(scope.message)}", err=True)
+            click.echo(f"repair: {printable(scope.repair_description)}", err=True)
+        raise click.exceptions.Exit(1)
+    if output_json:
+        _emit_json(
+            {
+                "mandate": mandate.model_dump(mode="json"),
+                "scope": scope.model_dump(mode="json"),
+                "result": result.model_dump(mode="json"),
+            }
+        )
+        if isinstance(result, contracts.AuthoringPreflightResult) and result.verdict != "passed":
+            raise click.exceptions.Exit(1)
+        return
+    _echo_observation_grant(mandate, scope)
+    if isinstance(result, contracts.AuthoringPreflightResult):
+        click.echo(f"would {'pass' if result.verdict == 'passed' else 'refuse'}")
+        _exit_if_preflight_refused(result)
+        return
+    reason_line = _submit_refusal_reason(result)
+    if reason_line is not None:
+        click.echo(f"refused: {reason_line}", err=True)
+        raise click.exceptions.Exit(1)
+    _echo_landing(result.outcome, result.warnings)
 
 
 @line_group.command("evaluate")
@@ -9500,20 +11376,34 @@ def next_work(
     if output_json:
         _emit_json(result.model_dump(mode="json"))
         return
-    click.echo(
-        "\n".join(
-            next_lines(
-                status=result.status,
-                items=result.items,
-                delta_since=result.delta_since,
-                removed_item_ids=result.removed_item_ids,
-                unobserved=next_unobserved_reasons(result.unobserved_domains, Path(workspace_root)),
-                brief=output_brief,
-                total_items=result.total_items,
-                next_cursor=result.next_cursor,
-            )
+    rendered = "\n".join(
+        next_lines(
+            status=result.status,
+            items=result.items,
+            delta_since=result.delta_since,
+            removed_item_ids=result.removed_item_ids,
+            unobserved=next_unobserved_reasons(result.unobserved_domains, Path(workspace_root)),
+            brief=output_brief,
+            total_items=result.total_items,
+            next_cursor=result.next_cursor,
         )
     )
+    # A proposal row names its proposal, and its repair command, by the 12-character
+    # handle; --json keeps the full ids.
+    click.echo(_shorten_proposal_ids(rendered, _next_proposal_ids(result.items)))
+
+
+def _next_proposal_ids(items: Sequence[contracts.NextItem]) -> set[str]:
+    """The proposals a ``next`` page's rows (and their findings) are about. O(rows)."""
+
+    found: set[str] = set()
+    for item in items:
+        if item.reason.startswith("proposal_"):
+            found.add(item.subject_identity)
+        for finding in item.findings:
+            if finding.reason.startswith("proposal_"):
+                found.add(finding.subject_identity)
+    return found
 
 
 @playbill_group.command("duplicates")
@@ -9845,14 +11735,23 @@ def orient(
         command_name="cruxible orient",
     )
     if workspace_root is not None:
-        result = workspace_vocabulary_freshness(
-            workspace_root, workspace_floor_freshness(workspace_root, result)
+        result = workspace_catalog_files(
+            workspace_root,
+            workspace_vocabulary_freshness(
+                workspace_root, workspace_floor_freshness(workspace_root, result)
+            ),
         )
     rendered = result.model_dump(mode="json")
     if output_json:
         _emit_json(rendered)
         return
     click.echo(_render_orient(rendered))
+    if workspace_root is not None:
+        from cruxible_client.contracts.workspace_layout import WORLD_STUB_PATH
+
+        if (workspace_root / WORLD_STUB_PATH).is_file():
+            # The typed authoring surface, when this folder has its vocabulary stub.
+            click.echo(f"SDK: cruxible python SCRIPT (types: {WORLD_STUB_PATH})")
 
 
 @playbill_group.command("stub")

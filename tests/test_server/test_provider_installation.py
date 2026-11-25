@@ -818,6 +818,22 @@ def test_install_retry_reuses_pending_registration_until_approval(
     pending = install_provider_wheel(client, instance_id, **arguments)
     assert pending.status == "awaiting_approval"
     assert pending.installed and not pending.registered
+    # Cold run A3: the reviewer sees the package, build and operations it approves.
+    from cruxible_client.contracts.proposal_summary import (
+        ProposalReviewSummary,
+        ReviewProviderDefinition,
+    )
+
+    review = client.review_proposal(instance_id, pending.proposal_id)
+    assert isinstance(review, ProposalReviewSummary)
+    (provider,) = (item for item in review.definitions if item.kind == "Provider")
+    detail = provider.detail
+    assert isinstance(detail, ReviewProviderDefinition)
+    assert pending.build and detail.build == pending.build.rpartition("/")[2]
+    assert detail.package and detail.version and detail.operations
+    assert all(item.serves and item.in_ and item.out for item in detail.operations)
+    text = str(review)
+    assert f"    op {detail.operations[0].name}: {detail.operations[0].effect}" in text
 
     def forbidden(*args, **kwargs):
         raise AssertionError("pending registration retry must not rebuild")

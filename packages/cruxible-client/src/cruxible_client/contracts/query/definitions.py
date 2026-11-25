@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import re
 import unicodedata
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from typing import Any, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -38,13 +38,20 @@ from cruxible_client.contracts.governance import PermissionTier
 from cruxible_client.contracts.query.grammar import (
     QueryArtifactsEntry,
     QueryBudgets,
+    QueryClaimValueRef,
+    QueryComparisonFilter,
+    QueryConjunctionFilter,
+    QueryDisjunctionFilter,
     QueryEntry,
     QueryEvaluationTimeRef,
     QueryFilter,
     QueryInclude,
+    QueryLiteralRef,
+    QueryNegationFilter,
     QueryOrdering,
     QueryPairStep,
     QueryParameterDeclaration,
+    QueryParameterRef,
     QueryProjection,
     QueryReferenceInventory,
     QueryTraversalStep,
@@ -56,6 +63,7 @@ from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.shapes import (
     Contract,
     ContractRef,
+    EnumType,
     parse_contract_ref,
 )
 
@@ -787,8 +795,104 @@ def evaluate_query_definition_law(
     )
 
 
+#: The comparison operators that order their operands.
+QUERY_ORDERING_OPERATORS = frozenset({"lt", "lte", "gt", "gte"})
+
+
+def _filter_comparisons(filter_: QueryFilter | None) -> Iterator[QueryComparisonFilter]:
+    if filter_ is None:
+        return
+    if isinstance(filter_, QueryConjunctionFilter | QueryDisjunctionFilter):
+        for item in filter_.filters:
+            yield from _filter_comparisons(item)
+    elif isinstance(filter_, QueryNegationFilter):
+        yield from _filter_comparisons(filter_.operand)
+    elif isinstance(filter_, QueryComparisonFilter):
+        yield filter_
+
+
+def query_comparisons(query: QueryDefinition) -> Iterator[QueryComparisonFilter]:
+    """Every comparison a definition declares: its ``where``, each hop's and each include's."""
+
+    yield from _filter_comparisons(query.where)
+    for step in query.traversal:
+        yield from _filter_comparisons(step.where)
+    for include in query.includes:
+        yield from _filter_comparisons(include.where)
+
+
+def enum_comparison_problem(
+    filter_: QueryComparisonFilter, enum_of: Callable[[str], EnumType | None]
+) -> str | None:
+    """Why an ordering comparison over an enum ClaimType's values cannot run, or None.
+
+    ``lt``/``lte``/``gt``/``gte`` order an enum value by its declared rank, so
+    the ClaimType must say ``ordered``, and the other side must be a member
+    literal, a parameter, or the same predicate's value: one enum's ``high`` is
+    not another's. ``enum_of`` names the enum value of a predicate, if any.
+    """
+
+    if filter_.operator not in QUERY_ORDERING_OPERATORS:
+        return None
+    operands = (filter_.left, filter_.right)
+    enums = {
+        ref.predicate: found
+        for ref in operands
+        if isinstance(ref, QueryClaimValueRef) and (found := enum_of(ref.predicate)) is not None
+    }
+    if not enums:
+        return None
+    for predicate, enum in enums.items():
+        if not enum.ordered:
+            return (
+                f"{predicate} is an unordered enum, so {filter_.operator} does not apply; "
+                "compare with eq, ne or in, or declare the ClaimType's enum ordered"
+            )
+    if len(enums) > 1:
+        return (
+            f"{' and '.join(sorted(enums))} are different enums; {filter_.operator} compares "
+            "an ordered enum only with its own members"
+        )
+    ((predicate, enum),) = enums.items()
+    if filter_.value_type != "string":
+        return f"{predicate} is an ordered enum; it compares as value_type string"
+    for ref in operands:
+        if isinstance(ref, QueryClaimValueRef) and ref.predicate == predicate:
+            continue
+        if isinstance(ref, QueryParameterRef):
+            continue
+        if isinstance(ref, QueryLiteralRef):
+            if enum.rank(ref.value) is None:
+                return (
+                    f"{ref.value!r} is not a member of {predicate}; its members, lowest "
+                    f"first: {', '.join(enum.members)}"
+                )
+            continue
+        return (
+            f"{predicate} is an ordered enum; {filter_.operator} compares it only with a "
+            "member, a parameter or its own values"
+        )
+    return None
+
+
+def query_enum_comparison_problem(
+    query: QueryDefinition, enum_of: Callable[[str], EnumType | None]
+) -> str | None:
+    """The first :func:`enum_comparison_problem` among a definition's comparisons, or None."""
+
+    for comparison in query_comparisons(query):
+        problem = enum_comparison_problem(comparison, enum_of)
+        if problem is not None:
+            return problem
+    return None
+
+
 __all__ = [
     "AcceptedQueryDefinition",
+    "QUERY_ORDERING_OPERATORS",
+    "enum_comparison_problem",
+    "query_comparisons",
+    "query_enum_comparison_problem",
     "CLAIM_TYPE_PIN_ROLE",
     "PARAMETER_CONTRACT_PIN_ROLE",
     "QueryConflictBehavior",

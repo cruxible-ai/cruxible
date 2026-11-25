@@ -265,7 +265,19 @@ def test_move_work_is_flat_with_same_name_build_population(tmp_path, monkeypatch
             )
         seen = []
 
-        def settle(tree, *, writes, connection, movers, moves, by_name):
+        def settle(
+            tree,
+            *,
+            writes,
+            connection,
+            movers=(),
+            moves=None,
+            keep=frozenset(),
+            retire_with=frozenset(),
+            by_name=False,
+            retain_observation_settle=False,
+            settle_demotion="kit_change",
+        ):
             assert by_name
             seen.extend(movers)
             return SettledMoves()

@@ -39,7 +39,7 @@ from __future__ import annotations
 
 import threading
 from collections import OrderedDict
-from collections.abc import Collection, Iterable, Iterator, Mapping, Set
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Set
 from dataclasses import dataclass, field
 from functools import cached_property
 from typing import Any
@@ -65,6 +65,7 @@ from cruxible_client.contracts.floor_inventory import (
     FloorManifestState,
     floor_manifest_state,
 )
+from cruxible_client.contracts.notes import NOTE_PATH_RE, Note, parse_note
 from cruxible_client.contracts.subjects import SubjectShell, parse_subject
 from cruxible_core.derived.memo import memo_get, memo_put
 from cruxible_core.derived.persistent import EMPTY_PCOUNTS, EMPTY_PSET, PCounts, PMap, PSet
@@ -80,6 +81,7 @@ from cruxible_core.service.floor.floor_content import (
 )
 from cruxible_core.service.floor.floor_current import (
     IncomingEdge,
+    NotePointer,
     SubjectPart,
     ValueRenderer,
     index_path,
@@ -121,10 +123,12 @@ SUBJECTS_PREFIX = "subjects/"
 CLAIMS_PREFIX = "claims/"
 CLAIM_TYPES_PREFIX = "claim-types/"
 CAPTURE_CONTRACTS_PREFIX = "capture-contracts/"
+NOTES_PREFIX = "notes/"
 README_PATH = "README.md"
 _INPUT_PREFIXES = (
     SUBJECTS_PREFIX,
     CLAIMS_PREFIX,
+    NOTES_PREFIX,
     CLAIM_TYPES_PREFIX,
     DOCUMENTS_PREFIX,
     CAPTURE_CONTRACTS_PREFIX,
@@ -193,6 +197,16 @@ class FloorInputs:
     definitions: PMap[str, DefinitionRevision] = field(default_factory=PMap)
     # The reverse indexes the ontology files are traced through (``floor_ontology``).
     ontology: OntologyIndex = field(default_factory=OntologyIndex)
+    # Notes (a workspace section linked ``about`` Subjects): every note in the
+    # tree by path, any lifecycle; Subject path -> the live notes about it now;
+    # note path -> every Subject it was ever about, revision by revision (the
+    # shared chain Subject-valued Claims keep); and Subject path -> the latest
+    # sequences of every note ever about it, read for their maximum, so a note
+    # unlinked from a Subject still restamps it.
+    notes: PMap[str, Note] = field(default_factory=PMap)
+    notes_about: PMap[str, PSet[str]] = field(default_factory=PMap)
+    note_targets: PMap[str, _Revisions] = field(default_factory=PMap)
+    noted_latest: PMap[str, PCounts] = field(default_factory=PMap)
 
     @property
     def sources_changed(self) -> int:
@@ -338,12 +352,41 @@ def _parse(path: str, content: bytes) -> tuple[str, Any]:
         return "document", True
     if path.startswith(CAPTURE_CONTRACTS_PREFIX):
         return "contract", parse_capture_contract(content, path=path)
+    if NOTE_PATH_RE.fullmatch(path):
+        return "note", parse_note(content, path=path)
     return "other", None
 
 
 def _object(claim: ClaimArtifact | None) -> str | None:
     obj = None if claim is None else claim.statement.object
     return obj.address.artifact_path if isinstance(obj, SubjectClaimObject) else None
+
+
+def _claim_targets(claim: ClaimArtifact | None) -> tuple[str, ...]:
+    """The Subject a Subject-valued Claim points at, as a one-item tuple; else none."""
+
+    target = _object(claim)
+    return () if target is None else (target,)
+
+
+def _note_targets(note: Note | None) -> tuple[str, ...]:
+    """The Subject paths a note is about (any lifecycle: a retired note keeps them)."""
+
+    return (
+        () if note is None else tuple(f"{SUBJECTS_PREFIX}{item.name}.json" for item in note.about)
+    )
+
+
+def _note_live_targets(note: Note | None) -> tuple[str, ...]:
+    return _note_targets(note) if note is not None and note.lifecycle.state == "live" else ()
+
+
+def _parse_claim(content: bytes, path: str) -> ClaimArtifact:
+    return parse_claim(content, path=path)
+
+
+def _parse_note(content: bytes, path: str) -> Note:
+    return parse_note(content, path=path)
 
 
 class _Revisions:
@@ -453,21 +496,54 @@ def _object_histories(
 ) -> dict[str, _Revisions]:
     """Every Subject each Subject-valued Claim pointed at, revision by revision.
 
-    A Claim touched once is its current object. One revised in place is read
-    back at each generation that touched it; a predicate keeps its object kind,
-    so only Subject-valued Claims are read.
-
-    ``known`` holds each Claim's history at generation ``since``: it is
-    extended by only the sequences in ``(since, at_most]`` (or cut back to
-    ``at_most``), sharing the known chain below them, and a revision it names,
-    or the one at ``at_most`` itself (the current Claim), is not read again.
-    A Claim it does not hold is read whole.
+    A predicate keeps its object kind, so only Subject-valued Claims are read
+    (``_target_histories``).
     """
 
-    wanted = [path for path in paths if _object(claims.get(path)) is not None]
+    return _target_histories(
+        instance,
+        history,
+        claims,
+        paths,
+        at_most=at_most,
+        targets_of=_claim_targets,
+        parse=_parse_claim,
+        known=known,
+        since=since,
+    )
+
+
+def _target_histories(
+    instance: PlaybillInstance,
+    history: HistoryReader,
+    current: Mapping[str, Any],
+    paths: Iterable[str],
+    *,
+    at_most: int,
+    targets_of: Callable[[Any], tuple[str, ...]],
+    parse: Callable[[bytes, str], Any],
+    known: Mapping[str, _Revisions] | None = None,
+    since: int | None = None,
+) -> dict[str, _Revisions]:
+    """Every Subject each artifact pointed at, revision by revision.
+
+    ``targets_of`` names the Subjects one revision points at (a Subject-valued
+    Claim's object; a note's ``about`` Subjects): a revision is one chain node
+    per Subject it names, at its sequence. An artifact touched once is its
+    current targets. One revised in place is read back at each generation that
+    touched it; one naming no Subject now is not read.
+
+    ``known`` holds each artifact's history at generation ``since``: it is
+    extended by only the sequences in ``(since, at_most]`` (or cut back to
+    ``at_most``), sharing the known chain below them, and a revision it names,
+    or the one at ``at_most`` itself (the current artifact), is not read again.
+    An artifact it does not hold is read whole.
+    """
+
+    wanted = [path for path in paths if targets_of(current.get(path))]
     result: dict[str, _Revisions] = {}
-    # The revisions to put on top of each Claim's base chain, by sequence.
-    added: dict[str, dict[int, str]] = {}
+    # The revisions to put on top of each artifact's base chain, by sequence.
+    added: dict[str, dict[int, tuple[str, ...]]] = {}
     base: dict[str, _Revisions | None] = {}
     revisited: dict[int, list[str]] = {}
     whole: list[str] = []
@@ -498,27 +574,25 @@ def _object_histories(
         newer = history.member_sequences_between(extended, since, at_most)
     for path in whole:
         touched = sequences.get(path, ())
-        current = _object(claims[path])
-        assert current is not None
+        now = targets_of(current[path])
         base[path] = None
         if len(touched) <= 1:
-            added[path] = {touched[0] if touched else 0: current}
+            added[path] = {touched[0] if touched else 0: now}
             continue
         added[path] = {}
         for sequence in touched:
             if sequence == at_most:
-                added[path][sequence] = current
+                added[path][sequence] = now
             else:
                 revisited.setdefault(sequence, []).append(path)
     for path in extended:
         assert known is not None
-        current = _object(claims[path])
-        assert current is not None
+        now = targets_of(current[path])
         base[path] = known[path]
         added[path] = {}
         for sequence in newer.get(path, ()):
             if sequence == at_most:
-                added[path][sequence] = current
+                added[path][sequence] = now
             else:
                 revisited.setdefault(sequence, []).append(path)
     for sequence in sorted(revisited):
@@ -526,12 +600,16 @@ def _object_histories(
         blobs = instance.blobs_at(oid, revisited[sequence])
         for path in revisited[sequence]:
             content = blobs.get(path)
-            target = None if content is None else _object(parse_claim(content, path=path))
-            if target is not None:
-                added[path][sequence] = target
+            found = () if content is None else targets_of(parse(content, path))
+            if found:
+                added[path][sequence] = found
     for path, revisions in added.items():
         prior_chain = base[path]
-        top = sorted(revisions.items())
+        top = [
+            (sequence, target)
+            for sequence, targets in sorted(revisions.items())
+            for target in targets
+        ]
         chain = _revisions(top) if prior_chain is None else prior_chain.extended(top)
         if chain is not None:
             result[path] = chain
@@ -682,7 +760,7 @@ def build_floor_inputs(
         paths = (
             *(
                 row.path
-                for kind in ("subject", "claim", *_DEFINITION_KINDS)
+                for kind in ("subject", "claim", "note", *_DEFINITION_KINDS)
                 for row in projection.typed.envelopes(kind=kind)
             ),
             *(path for path in document_paths if is_tracked(path)),
@@ -690,7 +768,8 @@ def build_floor_inputs(
         projection.typed.prefetch_members(paths)
         raw = {path: projection.typed.member_bytes(path) for path in paths}
     held: dict[str, dict[str, Any]] = {
-        name: {} for name in ("subject", "claim", "claim_type", "document", "contract", "other")
+        name: {}
+        for name in ("subject", "claim", "note", "claim_type", "document", "contract", "other")
     }
     for path in document_paths:
         held["document"][path] = True
@@ -723,6 +802,24 @@ def build_floor_inputs(
     for claim_file, revisions in objects.items():
         for target in revisions.targets:
             pointed_latest.setdefault(target, []).append(latest.get(claim_file, 0))
+    notes = held["note"]
+    note_targets = _target_histories(
+        instance,
+        history,
+        notes,
+        notes,
+        at_most=location.sequence,
+        targets_of=_note_targets,
+        parse=_parse_note,
+    )
+    notes_about: dict[str, set[str]] = {}
+    for note_path, note in notes.items():
+        for target in _note_live_targets(note):
+            notes_about.setdefault(target, set()).add(note_path)
+    noted_latest: dict[str, list[int]] = {}
+    for note_path, revisions in note_targets.items():
+        for target in revisions.targets:
+            noted_latest.setdefault(target, []).append(latest.get(note_path, 0))
     source_latest = PCounts(
         sequence for path, sequence in latest.items() if path.startswith(_SOURCE_PREFIXES)
     )
@@ -773,6 +870,10 @@ def build_floor_inputs(
         source_latest=source_latest,
         definitions=PMap(definitions),
         ontology=build_ontology_index(definitions),
+        notes=PMap(notes),
+        notes_about=PMap((key, PSet(found)) for key, found in notes_about.items()),
+        note_targets=PMap(note_targets),
+        noted_latest=PMap((key, PCounts(found)) for key, found in noted_latest.items()),
     )
 
 
@@ -814,6 +915,8 @@ def _patch_floor_inputs(
     blobs = instance.blobs_at(target.git_oid, wanted) if wanted else {}
     subjects = inputs.subjects.evolver()
     claims = inputs.claims.evolver()
+    notes = inputs.notes.evolver()
+    note_moves = _Moves()
     claim_types = inputs.claim_types.evolver()
     documents_added: list[str] = []
     documents_removed: list[str] = []
@@ -862,6 +965,17 @@ def _patch_floor_inputs(
                 edge_target = _object(item)
                 if edge_target is not None:
                     incoming_moves.move(edge_target, path, present=present)
+        elif path.startswith(NOTES_PREFIX):
+            old_note = notes.get(path)
+            new_note = value if kind == "note" else None
+            if new_note is None:
+                notes.discard(path)
+            else:
+                notes[path] = new_note
+            for about_path in _note_live_targets(old_note):
+                note_moves.move(about_path, path, present=False)
+            for about_path in _note_live_targets(new_note):
+                note_moves.move(about_path, path, present=True)
         elif path.startswith(CLAIM_TYPES_PREFIX):
             old_type = claim_types.get(path)
             if old_type is not None:
@@ -933,6 +1047,44 @@ def _patch_floor_inputs(
             pointer_moves.move(item, now, present=True)
     pointed_latest = inputs.pointed_latest.evolver()
     pointer_moves.apply(pointed_latest)
+    notes_now = notes.persistent()
+    notes_about = inputs.notes_about.evolver()
+    note_moves.apply(notes_about)
+    touched_notes = [path for path in wanted if path.startswith(NOTES_PREFIX)]
+    note_targets = inputs.note_targets.evolver()
+    noted_moves = _CountMoves()
+    if touched_notes:
+        notes_before = {path: inputs.note_targets.get(path) for path in touched_notes}
+        note_histories = _target_histories(
+            instance,
+            history,
+            notes_now,
+            touched_notes,
+            at_most=target.sequence,
+            targets_of=_note_targets,
+            parse=_parse_note,
+            known=notes_before,
+            since=inputs.generation,
+        )
+        for path in touched_notes:
+            found_note = note_histories.get(path)
+            if found_note is None:
+                note_targets.discard(path)
+            else:
+                note_targets[path] = found_note
+            was, now = inputs.latest.get(path, 0), latest_now.get(path, 0)
+            if was == now:
+                gained, lost = _target_moves(notes_before[path], found_note)
+            else:
+                # Its latest sequence moved: every Subject it was ever about restamps.
+                lost = set(() if notes_before[path] is None else notes_before[path].targets)
+                gained = set(() if found_note is None else found_note.targets)
+            for item in lost:
+                noted_moves.move(item, was, present=False)
+            for item in gained:
+                noted_moves.move(item, now, present=True)
+    noted_latest = inputs.noted_latest.evolver()
+    noted_moves.apply(noted_latest)
     coordinate = instance.coordinate_for_oid(target.git_oid)
     served = AcceptedCoordinate.from_internal(coordinate)
     contracts_now = contracts_by_digest.persistent()
@@ -992,6 +1144,10 @@ def _patch_floor_inputs(
             source_latest=source_latest,
             definitions=definitions.persistent(),
             ontology=patch_ontology_index(inputs.ontology, moves) if moves else inputs.ontology,
+            notes=notes_now,
+            notes_about=notes_about.persistent(),
+            note_targets=note_targets.persistent(),
+            noted_latest=noted_latest.persistent(),
         ),
         touched,
     )
@@ -1054,6 +1210,17 @@ class _Stamps:
                 best = max(best, self.name(claim.statement.predicate, source.subject_kind))
         return best
 
+    def notes(self, path: str) -> int:
+        """When the notes about a Subject last changed.
+
+        Every note ever about it counts, read as the maximum of their
+        maintained latest sequences, so a note unlinked from it (or retired)
+        still restamps it.
+        """
+
+        counts = self._inputs.noted_latest.get(path)
+        return 0 if counts is None else counts.max(0)
+
     def subject(self, path: str, live: Iterable[ClaimArtifact]) -> int:
         """Its own path, its Claims of any lifecycle (one maintained maximum), its fields' names."""
 
@@ -1110,6 +1277,12 @@ def _affected_subjects(old: FloorInputs, new: FloorInputs, changed: Collection[s
                 if revisions is not None:
                     # Every Subject it ever pointed at stamps with it: affected output.
                     affected.update(revisions.targets)
+        elif path.startswith(NOTES_PREFIX):
+            for inputs in sides:
+                noted = inputs.note_targets.get(path)
+                if noted is not None:
+                    # Every Subject it was ever about stamps with it: affected output.
+                    affected.update(noted.targets)
         elif path.startswith(CLAIM_TYPES_PREFIX):
             if view_changed_at(old.definitions.get(path), CURRENT_VIEW) == view_changed_at(
                 new.definitions.get(path), CURRENT_VIEW
@@ -1287,7 +1460,7 @@ def render_floor(
             in inputs.subjects
         ]
         own = stamps.subject(path, live)
-        changed_at = max(own, stamps.incoming(path, edges))
+        changed_at = max(own, stamps.incoming(path, edges), stamps.notes(path))
         if kept is not None and (kept.changed_at, kept.own_changed_at) == (changed_at, own):
             continue
         part = render_subject(
@@ -1308,6 +1481,15 @@ def render_floor(
                     claim=claim.identity.name,
                 )
                 for claim in edges
+            ],
+            notes=[
+                NotePointer(
+                    locator=f"{note.source_id}#{'/'.join(note.section)}",
+                    note=note.identity.name,
+                )
+                for note in (
+                    inputs.notes[note_path] for note_path in inputs.notes_about.get(path, ())
+                )
             ],
         )
         render = _SubjectRender(changed_at, own, part, stamped(part, changed_at))

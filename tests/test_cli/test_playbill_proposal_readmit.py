@@ -253,11 +253,10 @@ def test_proposal_list_rows_match_the_labelled_columns(
     assert result.exit_code == 0, result.output
     lines = result.stdout.splitlines()
     assert lines[0] == "STATUS  TERMINAL_REASON  PROPOSAL_ID  TARGET_REF  COORDINATE_TIME"
-    assert lines[1].startswith(f"open  -  {SOURCE_ID}  ")
-    assert lines[2].startswith(f"settled  refused  {NEW_ID}  ")
-    assert lines[3] == (
-        "incomplete  missing_admission,missing_evaluation  sha256:" + "9" * 64 + "  -  -"
-    )
+    # Rows name each proposal by its 12-character handle; --full-ids prints it whole.
+    assert lines[1].startswith(f"open  -  {SOURCE_ID[7:19]}  ")
+    assert lines[2].startswith(f"settled  refused  {NEW_ID[7:19]}  ")
+    assert lines[3] == ("incomplete  missing_admission,missing_evaluation  " + "9" * 12 + "  -  -")
 
 
 def _withdraw_result(*, already: bool = False) -> contracts.ProposalWithdrawResult:

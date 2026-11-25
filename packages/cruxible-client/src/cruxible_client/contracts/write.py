@@ -598,6 +598,74 @@ class SlotRef(_StrictWriteModel):
     value: ClaimValue | None = None
 
 
+_CLAIM_ID = re.compile(r"^CLM-[0-9a-f]{32}$")
+
+
+def based_on_slot(name: str) -> tuple[str, str] | None:
+    """``kind/id#field`` as (Subject reference, field); ``None`` for anything else.
+
+    The shorthand names the one live Claim of a Subject's field: the write
+    planner resolves it at the write's base to that Claim's ``CLM-...`` id, so
+    a stored pin never floats. The field follows the last ``#`` (no field name
+    holds one); the Subject is a reference as ``set`` takes it, ``@`` optional.
+    """
+
+    subject, sep, field = name.rpartition("#")
+    if not sep or not field or len(field) > 512:
+        return None
+    subject = cast(str, subject_reference(subject))
+    if not _SUBJECT_REF.fullmatch(subject):
+        return None
+    return subject, field
+
+
+def based_on_created_slot(name: str) -> tuple[str, str] | None:
+    """``label#field`` as (create label, field); ``None`` for anything else.
+
+    The shorthand names the Claim this same write makes in a field of the
+    Subject its ``create`` change labels, before core has assigned that
+    Subject's id. A label holds no ``/``, so it never reads as ``kind/id``.
+    """
+
+    label, sep, field = name.rpartition("#")
+    if not sep or not field or len(field) > 512:
+        return None
+    if not re.fullmatch(NEW_SUBJECT_LABEL_PATTERN, label):
+        return None
+    return label, field
+
+
+def _based_on_ids(value: tuple[str, ...] | None) -> tuple[str, ...] | None:
+    """Sorted and once each: the order a list was typed in carries no meaning.
+
+    A Claim is named by id (``CLM-...``), as ``kind/id#field``, its field's
+    one live Claim (or the one this write makes there), or as ``label#field``,
+    the Claim this write makes in a field of the Subject a create change
+    labels. The write resolves each to an id before it is pinned.
+    """
+
+    if value is None:
+        return None
+    names: set[str] = set()
+    for item in value:
+        name = item.removeprefix("Claim:")
+        if _CLAIM_ID.fullmatch(name):
+            names.add(name)
+            continue
+        created = based_on_created_slot(item)
+        if created is not None:
+            names.add(f"{created[0]}#{created[1]}")
+            continue
+        slot = based_on_slot(item)
+        if slot is None:
+            raise ValueError(
+                "based_on names Claims as CLM-<32 hex> or kind/id#field (label#field for "
+                "a Subject a create change of this write labels)"
+            )
+        names.add(f"{slot[0]}#{slot[1]}")
+    return tuple(sorted(names, key=str.encode))
+
+
 class SetChange(_StrictWriteModel):
     """Replace a single-value field; contend=true contests it instead."""
 
@@ -617,6 +685,9 @@ class SetChange(_StrictWriteModel):
     )
     contend: bool = False
     expect: ExpectedValue | None = Field(default=None, description=_EXPECT_DESCRIPTION)
+    based_on: tuple[str, ...] | None = Field(default=None, exclude_if=_omit_none)
+
+    _based_on = field_validator("based_on")(_based_on_ids)
 
 
 class AddChange(_StrictWriteModel):
@@ -640,6 +711,9 @@ class AddChange(_StrictWriteModel):
         default=False,
         description="Refuse value_already_present if the value is live.",
     )
+    based_on: tuple[str, ...] | None = Field(default=None, exclude_if=_omit_none)
+
+    _based_on = field_validator("based_on")(_based_on_ids)
 
 
 def _with_claims_target(target: object, with_claims: bool) -> None:
@@ -787,8 +861,10 @@ RATIONALE_INVALID = "cruxible.claim.rationale_invalid"
 #: Its repair: where reasoning longer than a rationale goes.
 RATIONALE_REPAIR = (
     f"Shorten because to one line of at most {CLAIM_RATIONALE_MAX} characters, and put the "
-    "longer reasoning in a Document section the Claim cites as its evidence (in a write "
-    "file: a docs op with an id, then evidence {kind: section, ref: ID})."
+    "longer reasoning in a Document section the Claim cites as its evidence, written in the "
+    "same write: SDK evidence=w.section(FILE, heading=..., body=...); CLI --section "
+    "FILE#Heading --section-body TEXT; write file or MCP a docs op with an id, then "
+    "evidence {kind: section, ref: ID}."
 )
 #: The refusal of a change set's rationale (``because`` and its retire notes) over its limit.
 RATIONALE_TOO_LONG = "cruxible.write.rationale_too_long"
@@ -894,6 +970,9 @@ class SetRequest(_WriteRequestBase):
     evidence: Evidence | None = None
     contend: bool = False
     expect: ExpectedValue | None = Field(default=None, description=_EXPECT_DESCRIPTION)
+    based_on: tuple[str, ...] | None = Field(default=None, exclude_if=_omit_none)
+
+    _based_on = field_validator("based_on")(_based_on_ids)
 
     @model_validator(mode="after")
     def _because_states_a_claim(self) -> SetRequest:
@@ -909,6 +988,7 @@ class SetRequest(_WriteRequestBase):
             evidence=self.evidence,
             contend=self.contend,
             expect=self.expect,
+            based_on=self.based_on,
         )
 
 
@@ -1080,6 +1160,12 @@ class ChangeOutcome(_StrictWriteModel):
         default=None,
         exclude_if=_omit_none,
         description="An about change: the Subjects the note links after it ([] = retired).",
+    )
+    role: WriteRole | None = Field(
+        default=None, exclude_if=_omit_none, description="The role the write named."
+    )
+    based_on: tuple[str, ...] = Field(
+        default=(), exclude_if=_omit_empty, description="Claims the value rests on, by ID."
     )
 
 
@@ -1345,5 +1431,7 @@ __all__ = [
     "WriteStatus",
     "WriteValue",
     "as_write_request",
+    "based_on_created_slot",
+    "based_on_slot",
     "capture_handle",
 ]

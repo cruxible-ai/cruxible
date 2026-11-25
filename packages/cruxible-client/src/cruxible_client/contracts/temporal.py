@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 ISO_8601_FORMAT_HINT = "expected ISO 8601 datetime or date, e.g. 2026-08-05T14:30:00Z or 2026-08-05"
 """Self-correcting format guidance echoed by every datetime rejection.
@@ -149,9 +149,39 @@ def format_iso_duration_microseconds(microseconds: int) -> str:
     return f"PT{seconds}{tail}S"
 
 
+VALIDITY_SPAN_HINT = "give a span such as 36h, 90d, 12w, 1y (365 days) or an ISO-8601 P90D"
+_SHORT_SPAN = re.compile(r"^([0-9]{1,9})([hdwy])$", re.IGNORECASE)
+_SHORT_SPAN_SECONDS = {"h": 3_600, "d": 86_400, "w": 604_800, "y": 365 * 86_400}
+
+
+def parse_validity_span(value: str) -> timedelta:
+    """A validity span: ``36h``, ``90d``, ``12w``, ``1y`` (365 days) or ``P90D``.
+
+    The one spelling of a relative expiry, shared by ``line grant --expires``
+    and a ProcedureMandate's ``expires``. Raises ``ValueError`` for any other
+    text and for a span that is not longer than zero.
+    """
+
+    text = value.strip()
+    short = _SHORT_SPAN.fullmatch(text)
+    try:
+        if short is not None:
+            span = timedelta(seconds=int(short.group(1)) * _SHORT_SPAN_SECONDS[short[2].lower()])
+        elif text.startswith("P"):
+            span = timedelta(microseconds=parse_iso_duration_microseconds(text))
+        else:
+            raise ValueError(f"{text!r} is no span; {VALIDITY_SPAN_HINT}")
+    except OverflowError:
+        raise ValueError(f"{text!r} is longer than any instant can reach") from None
+    if span <= timedelta(0):
+        raise ValueError(f"{text!r} is no span longer than zero; {VALIDITY_SPAN_HINT}")
+    return span
+
+
 __all__ = [
     "ISO_8601_DURATION_HINT",
     "ISO_8601_FORMAT_HINT",
+    "VALIDITY_SPAN_HINT",
     "ensure_utc",
     "format_datetime",
     "format_iso_duration_microseconds",
@@ -159,6 +189,7 @@ __all__ = [
     "is_expired",
     "parse_datetime",
     "parse_iso_duration_microseconds",
+    "parse_validity_span",
     "temporal_value_text",
     "utc_now",
 ]

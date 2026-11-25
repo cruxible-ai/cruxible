@@ -39,6 +39,7 @@ from cruxible_core.service.procedures.line_dispatch import (
     LineArmAuthorityLost,
     LineArmSegmentEnded,
     require_active_segment,
+    service_carry_line_arm,
     service_dispatch_line,
     service_stop_line_arm,
 )
@@ -252,6 +253,12 @@ def dispatch_armed_line(
         # Disarmed or rearmed since this drain was scheduled: nothing more runs.
         return None
     except LineArmAuthorityLost as lost:
+        if lost.reason == "line_changed" and service_carry_line_arm(
+            instance, arm, actor=daemon, now=now
+        ):
+            # An observation build move carried the enablement to the Line's
+            # successor; the next drain admits under the new version.
+            return None
         service_stop_line_arm(
             instance,
             arm["session_id"],

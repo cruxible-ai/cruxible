@@ -83,6 +83,8 @@ ORIENT_MAX_LIMIT = 500
 ORIENT_SAMPLE_SUBJECTS = 5
 #: Named queries the default answer lists before pointing at the queries section.
 ORIENT_DEFAULT_QUERIES = 10
+#: Catalogued workspace files the default map names by path; it counts them all.
+ORIENT_WORKSPACE_FILES = 10
 #: Attention lines the default answer carries from the ``next`` queue.
 ORIENT_ATTENTION_TOP = 3
 #: How many of a kind's predicates the default map names by short name.
@@ -435,6 +437,19 @@ class OrientAttention(_StrictOrientModel):
     notes: tuple[str, ...] = Field(default=(), exclude_if=_is_empty)
     # Present when any Line was ever enabled on this instance.
     enablements: OrientEnablements | None = Field(default=None, exclude_if=_is_none)
+
+
+class OrientWorkspaceFiles(_StrictOrientModel):
+    """The workspace's catalogued files (files.yaml), by path: what notes and
+    section citations point into, and what ``cruxible section FILE#Heading`` reads.
+
+    Only a client that sees the workspace (CLI, MCP, SDK) fills this in, on the
+    default map; a daemon answer never carries it. ``paths`` are the first
+    ``ORIENT_WORKSPACE_FILES`` in byte order; ``total`` counts them all.
+    """
+
+    total: int = Field(ge=0)
+    paths: tuple[str, ...]
 
 
 class OrientFloor(_StrictOrientModel):
@@ -840,6 +855,7 @@ class OrientResult(_StrictOrientModel):
     #: (the instance's retention setting); a read at an older one rebuilds it.
     retention_generations: int | None = Field(default=None, ge=1, exclude_if=_is_none)
     floor: OrientFloor | None = Field(default=None, exclude_if=_is_none)
+    workspace_files: OrientWorkspaceFiles | None = Field(default=None, exclude_if=_is_none)
     vocabulary_file: OrientVocabularyFile | None = Field(default=None, exclude_if=_is_none)
     you: OrientYou | None = Field(default=None, exclude_if=_is_none)
     kinds: tuple[OrientKindSummary, ...] | None = Field(default=None, exclude_if=_is_none)
@@ -954,6 +970,8 @@ __all__ = [
     "OrientClaimCounts",
     "OrientDocument",
     "OrientFloor",
+    "OrientWorkspaceFiles",
+    "ORIENT_WORKSPACE_FILES",
     "OrientGeneration",
     "OrientGraph",
     "OrientGraphEdge",

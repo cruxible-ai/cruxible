@@ -681,3 +681,63 @@ def test_a_historical_cut_document_link_list_continues_at_its_own_coordinate(
     ]
     head = _read(instance, "Document:many").card
     assert head.links == () and head.links_total is None
+
+
+def test_a_subject_card_points_to_its_notes_and_detail_notes_pages_them(tmp_path: Path) -> None:
+    """The card carries pointers only; ``detail="notes"`` pages the note rows alone."""
+
+    from cruxible_client.contracts.get_reads import GetRequest, GetSubjectCard
+    from cruxible_core.service.discovery.get import service_playbill_get
+    from cruxible_core.storage.cas import BodyAccessContext
+
+    access = BodyAccessContext(principal_id="reader", can_read_body=True)
+
+    def get(ref: str, detail: str = "summary", **fields):
+        return service_playbill_get(
+            instance, request=GetRequest(ref=ref, detail=detail, **fields), access=access
+        )
+
+    instance, _ = seed_write_surface(tmp_path)
+    write(instance, about(f"{KIND}/wi-1"), cite("wi-1", "ready"))
+    card = get(f"{KIND}/wi-1").card
+    assert isinstance(card, GetSubjectCard)
+    (pointer,) = card.notes
+    assert (pointer.file, pointer.section) == (SOURCE, ("Reason",))
+    assert pointer.cited_digest == section_digest(b"# Reason\nWords\n")
+    # The daemon cannot see the workspace: "unknown" stays off the card.
+    assert pointer.drift is None and card.notes_total is None
+    assert f'cruxible_get(ref="{KIND}/wi-1", detail="notes")' in card.next
+    # The section's prose is never on the card.
+    assert "Words" not in card.model_dump_json()
+
+    whole = get(f"{KIND}/wi-1", "notes")
+    assert whole.detail == "notes" and whole.notes is not None
+    # Notes only: the cited section of its Claim is backlinks' to list.
+    (row,) = whole.notes.notes
+    assert row.note == pointer.note and row.drift == "unknown"
+    assert whole.notes.next == ("cruxible section 'repo.notes#Reason'",)
+
+    # Another section about the same Subject: two notes, paged by cursor.
+    second = about(f"{KIND}/wi-1", text=b"# Other\nMore\n").model_copy(
+        update={"section": ("Other",), "observation": observed(b"# Other\nMore\n", ("Other",))}
+    )
+    write(instance, second)
+    first = get(f"{KIND}/wi-1", "notes", limit=1)
+    assert first.truncated and first.next_cursor is not None
+    rest = get(f"{KIND}/wi-1", "notes", limit=1, cursor=first.next_cursor)
+    assert first.notes is not None and rest.notes is not None
+    assert {first.notes.notes[0].note, rest.notes.notes[0].note} == {
+        link.note for link in get(f"{KIND}/wi-1", "notes").notes.notes
+    }
+    assert first.coordinate == rest.coordinate
+    # A backlinks cursor never continues a notes page.
+    backlinks_page = get(f"{KIND}/wi-1", "backlinks", limit=1)
+    with pytest.raises(ListCursorMismatch):
+        get(f"{KIND}/wi-1", "notes", limit=1, cursor=backlinks_page.next_cursor)
+    # A Subject no note is about keeps its card as it was.
+    other = get(f"{KIND}/wi-2").card
+    assert isinstance(other, GetSubjectCard) and other.notes == ()
+    assert "notes" not in other.model_dump(mode="json")
+    with pytest.raises(ReadRefusalError) as refused:
+        get(STATUS, "notes")
+    assert refused.value.error_code == "cruxible.get.detail_unsupported"

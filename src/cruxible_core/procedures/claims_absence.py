@@ -10,6 +10,7 @@ from cruxible_client.contracts.claim_evidence import (
     CaptureBasis,
     ClaimEvidenceReceipt,
     ClaimsDiagnostic,
+    CompletenessReason,
 )
 from cruxible_client.contracts.claims import NoneClaimObject, claim_artifact_digest
 from cruxible_client.contracts.content_memo import seal
@@ -31,6 +32,41 @@ from cruxible_core.procedures.claims_units import (
     resolve_value,
     unit_key,
 )
+from cruxible_core.procedures.completeness import Completeness, Read
+
+
+def _source_incomplete_reasons(
+    completeness: Completeness,
+    extracting: LayoutExtractNode,
+    *,
+    reference_reads: Sequence[Read],
+    expect_reads: Sequence[Read],
+    local: Sequence[CompletenessReason],
+    listed_complete: bool,
+) -> tuple[CompletenessReason, ...]:
+    """Why an absence's source read as incomplete: its own lineage's reasons only.
+
+    The enumeration's own read comes first, so the enumerating extract's
+    recorded reason (its node's, else its alias's) leads, followed upstream to
+    its Capture; then each incomplete value ``expect`` reads, the control
+    lineage, and the conditions only this sink judges (``local``).
+    """
+
+    # Each read judged as the sink judged it: the enumeration whole, through its records.
+    found = dict.fromkeys(
+        (
+            *completeness.reasons_for(
+                reference_reads,
+                producers={extracting.as_: extracting.node_id},
+                upstream={extracting.as_: (extracting.capture_alias,)},
+                records_kept=True,
+            ),
+            *completeness.reasons_for(expect_reads, extra=local),
+        )
+    )
+    if not found and not listed_complete:
+        found[CompletenessReason(node=extracting.as_, kind="incomplete_input")] = None
+    return tuple(found)[:20]
 
 
 def append_absence(
@@ -144,6 +180,13 @@ def append_absence(
                 target=node.node_id,
                 problem="source_incomplete",
                 source_incomplete=True,
+                incomplete_reasons=(
+                    CompletenessReason(
+                        node=extracting.node_id,
+                        kind="glob_enumeration",
+                        inputs=(extracting.capture_alias,),
+                    ),
+                ),
             )
         )
         return
@@ -185,7 +228,7 @@ def append_absence(
     by_subject: dict[str, list[dict[str, Any]]] = {}
     refused: set[str] = set()
     keys = []
-    invalid_enumeration = False
+    invalid_enumeration = key_unresolved = False
     for arm in enumerated:
         if not isinstance(arm, dict):
             refuse("claims_absence_invalid: malformed enumeration arm")
@@ -207,7 +250,7 @@ def append_absence(
             keys.append(record.get("key") or key)
             subject = context.subject(node.subject.kind, key)
         except (ExecutionError, ValueError, KeyError, TypeError):
-            invalid_enumeration = True
+            invalid_enumeration = key_unresolved = True
             continue  # unknown key taints lineage; it never authorizes a deletion
         if subject is None:
             continue
@@ -252,6 +295,9 @@ def append_absence(
                 allowed.add(subject.artifact_path)
         if not expects.keys() <= allowed:
             refuse("claims_expect_outside_only_keys: expect must be a subset of only_keys")
+    expect_reads = _referenced_reads(expect_template)
+    reference_reads = _referenced_reads(reference)
+    listed_complete = listed.get("complete", True) if isinstance(listed, dict) else True
     complete = (
         (check is None or check.held)
         and not expect_unknown
@@ -259,10 +305,10 @@ def append_absence(
         # A glob names the files that exist now (D-R41): an extract straight over
         # one never judges absence, so a file it no longer matches retires nothing.
         and extracting.capture_alias not in state.glob_lists
-        and (listed.get("complete", True) if isinstance(listed, dict) else True)
+        and listed_complete
         and (
-            state.completeness.at_sink(_referenced_reads(expect_template))
-            and state.completeness.reads_complete(_referenced_reads(reference), records_kept=True)
+            state.completeness.at_sink(expect_reads)
+            and state.completeness.reads_complete(reference_reads, records_kept=True)
         )
     )
     witness = None
@@ -284,12 +330,41 @@ def append_absence(
         )
         seal(witness)
     if not complete:
+        local: list[CompletenessReason] = []
+        if check is not None and not check.held:
+            local.append(CompletenessReason(node=extracting.node_id, kind="count_mismatch"))
+        if key_unresolved:
+            local.append(CompletenessReason(node=extracting.node_id, kind="invalid_record"))
+        if expect_unknown:
+            local.append(
+                CompletenessReason(
+                    node=node.node_id,
+                    kind="expect_unknown",
+                    inputs=tuple(dict.fromkeys(alias for alias, _ in expect_reads))[:20],
+                )
+            )
+        if extracting.capture_alias in state.glob_lists:
+            local.append(
+                CompletenessReason(
+                    node=extracting.node_id,
+                    kind="glob_enumeration",
+                    inputs=(extracting.capture_alias,),
+                )
+            )
         diagnostics.add(
             ClaimsDiagnostic(
                 kind="incomplete_source",
                 target=node.node_id,
                 problem="source_incomplete",
                 source_incomplete=True,
+                incomplete_reasons=_source_incomplete_reasons(
+                    state.completeness,
+                    extracting,
+                    reference_reads=reference_reads,
+                    expect_reads=expect_reads,
+                    local=local,
+                    listed_complete=listed_complete,
+                ),
             )
         )
     seen_findings = state.absence_findings

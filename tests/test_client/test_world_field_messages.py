@@ -88,23 +88,43 @@ def test_a_role_that_is_no_claim_role_refuses_plainly_without_such_a_field(tmp_p
         playbill.world().sec.package.define("click", role="primary")
 
 
-def test_a_list_for_a_many_valued_field_says_add_one_value_each(world: World):
+def test_a_list_for_a_many_valued_field_adds_one_value_per_item_in_order(world: World):
+    draft = world.sec.package.define("click", skills=["a", "b"])
+    assert [(change.op, change.field, change.value) for change in draft._changes] == [
+        ("add", SKILLS, "a"),
+        ("add", SKILLS, "b"),
+    ]
+    # A tuple too, and add() on a draft, an edit or a Subject's edit.
+    grown = draft.add(skills=("c", "d"))
+    assert [change.value for change in grown._changes] == ["a", "b", "c", "d"]
+    edit = world.sec.package["cryptography"].edit().add(skills=["x", "y"], expect_absent=True)
+    assert [(change.value, change.expect_absent) for change in edit._changes] == [
+        ("x", True),
+        ("y", True),
+    ]
+    # A string is one value, never its characters.
+    assert [change.value for change in world.sec.package.define("c", skills="ab")._changes] == [
+        "ab"
+    ]
+
+
+def test_a_collection_no_add_can_order_or_hold_still_refuses(world: World):
     with pytest.raises(WorldFieldValueRefused) as caught:
-        world.sec.package.define("click", skills=["a", "b"])
+        world.sec.package.define("click", skills={"a", "b"})
     message = str(caught.value)
     assert "cruxible.sdk.field_value_refused" in message
-    assert "skills was given a list" in message
-    assert "draft.add(skills=a).add(skills=b)" in message
-
-    draft = world.sec.package.define("click", skills="a").add(skills="b")
-    assert [(change.op, change.value) for change in draft._changes] == [
-        ("add", "a"),
-        ("add", "b"),
-    ]
-    with pytest.raises(WorldFieldValueRefused, match="many-valued"):
-        draft.add(skills=("c", "d"))
+    assert "skills was given a set" in message
+    assert "pass a list or a tuple" in message
+    with pytest.raises(WorldFieldValueRefused, match="empty list"):
+        world.sec.package.define("click", skills=[])
+    with pytest.raises(WorldFieldValueRefused, match="it holds one value"):
+        world.sec.package.define("click", skills=[["a"]])
+    draft = world.sec.package.define("click")
     with pytest.raises(WorldFieldValueRefused, match="it holds one value"):
         draft.set(**{ROLE: ["primary"]})
+    # set() on a many-valued field takes one value; the repair names add().
+    with pytest.raises(WorldFieldValueRefused, match=r"\.add\(skills=\[a, b\]\)"):
+        draft.set(skills=["a", "b"])
 
 
 def test_a_positional_field_names_the_keyword_form(world: World):

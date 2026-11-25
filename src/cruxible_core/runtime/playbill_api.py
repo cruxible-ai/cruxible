@@ -932,8 +932,9 @@ def playbill_provider_move(instance_id: str, request: ProviderMoveRequest) -> Pr
 
 def playbill_kit_build(instance_id: str, request: KitBuildRequest) -> KitBuildResult:
     check_permission("cruxible_kit_build", instance_id=instance_id)
-    if request.automation_template is not None:
-        # Checking the template is its authoring preview: the preview's own gate.
+    checks_change_sets = request.automation_template is not None or bool(request.recipes)
+    if checks_change_sets:
+        # Checking the template and recipes is their authoring preview: its own gate.
         check_permission("cruxible_authoring_compile", instance_id=instance_id)
     # The manifest records the building principal, so the builder must be one.
     actor_id = _attributed_actor(instance_id, "Kit build").actor_id
@@ -943,16 +944,26 @@ def playbill_kit_build(instance_id: str, request: KitBuildRequest) -> KitBuildRe
             get_playbill_manager().get(instance_id),
             request,
             principal_id=actor_id,
-            template_actor_id=None if request.automation_template is None else actor_id,
+            template_actor_id=actor_id if checks_change_sets else None,
         ),
     )
 
 
-def playbill_kit_status(instance_id: str) -> KitStatus:
+def playbill_kit_status(instance_id: str, kit_id: str | None = None) -> KitStatus:
     check_permission("cruxible_kit_status", instance_id=instance_id)
+    if kit_id is not None:
+        from cruxible_client.contracts.kits import kit_id_problem
+
+        problem = kit_id_problem(kit_id)
+        if problem is not None:
+            # A typed 400 before any receipt path is built from the id.
+            raise DataValidationError(
+                f"Cruxible kit status: kit_id {kit_id!r} is not a kit id",
+                errors=[f"kit_id: {problem}"],
+            )
     return _proposal_validation_boundary(
         "kit status",
-        lambda: service_kit_status(get_playbill_manager().get(instance_id)),
+        lambda: service_kit_status(get_playbill_manager().get(instance_id), kit_id),
     )
 
 

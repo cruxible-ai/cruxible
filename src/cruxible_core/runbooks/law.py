@@ -9,15 +9,18 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any
 
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.governance import PermissionTier
+from cruxible_client.contracts.procedures.artifacts import ProcedureArtifact
 from cruxible_client.contracts.procedures.line_specs import LineSpec
 from cruxible_client.contracts.runbooks import (
     AcceptedRunbook,
     RunbookFormatError,
     RunbookLineState,
+    RunbookProcedureState,
     evaluate_runbook_law,
     parse_runbook,
     runbook_digest,
@@ -46,14 +49,24 @@ def line_state(accepted: Any) -> RunbookLineState | None:
     )
 
 
+def procedure_state(accepted: Any) -> RunbookProcedureState | None:
+    """The Runbook law's reading of one accepted Procedure, or None when it is not one."""
+
+    procedure = getattr(accepted, "procedure", None)
+    if not isinstance(procedure, ProcedureArtifact):
+        return None
+    return RunbookProcedureState(live=procedure.lifecycle.state == "live")
+
+
 def judge_runbook_member(
     content: bytes,
     *,
     path: str,
     parent_content: bytes | None,
     lines: Mapping[str, Any],
+    procedures: Mapping[str, Any] = MappingProxyType({}),
 ) -> RunbookMemberVerdict:
-    """Parse, then judge one Runbook against the candidate's Lines: one lookup per step."""
+    """Parse, then judge one Runbook against the candidate's Lines and Procedures."""
 
     runbook = parse_runbook(content, path=path)
     predecessor: AcceptedRunbook | None = None
@@ -63,12 +76,19 @@ def judge_runbook_member(
             path=path, runbook=previous, artifact_digest=runbook_digest(previous).tagged
         )
     states: dict[str, RunbookLineState] = {}
+    proc_states: dict[str, RunbookProcedureState] = {}
     if runbook.lifecycle.state == "live":
         for identity in runbook.lines:
             state = line_state(lines.get(identity.qualified))
             if state is not None:
                 states[identity.qualified] = state
-    law = evaluate_runbook_law(runbook, path=path, predecessor=predecessor, lines=states)
+        for identity in runbook.procedures:
+            pstate = procedure_state(procedures.get(identity.qualified))
+            if pstate is not None:
+                proc_states[identity.qualified] = pstate
+    law = evaluate_runbook_law(
+        runbook, path=path, predecessor=predecessor, lines=states, procedures=proc_states
+    )
     return RunbookMemberVerdict(
         verdict=law.verdict,
         diagnostics=law.diagnostics,
@@ -95,4 +115,10 @@ def candidate_runbook_live(tree: Mapping[str, bytes], name: str) -> bool:
         return False
 
 
-__all__ = ["RunbookMemberVerdict", "candidate_runbook_live", "judge_runbook_member", "line_state"]
+__all__ = [
+    "RunbookMemberVerdict",
+    "candidate_runbook_live",
+    "judge_runbook_member",
+    "line_state",
+    "procedure_state",
+]

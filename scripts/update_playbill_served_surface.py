@@ -25,6 +25,7 @@ import argparse
 import ast
 import hashlib
 import inspect
+import io
 import json
 import re
 import textwrap
@@ -306,25 +307,57 @@ def _mcp_surface() -> list[dict[str, object]]:
     return sorted(result, key=lambda row: str(row["name"]))
 
 
-def _cli_client_calls(callback: Callable[..., object]) -> list[str]:
-    from cruxible_client import CruxibleClient
+# Client operations that share their name with a builtin mapping, sequence, text
+# or file method (``get``, ``write``): counted only when called on ``client``, so
+# ``obj.get(...)`` on a dict is no client operation.
+_BUILTIN_METHOD_NAMES = frozenset(
+    name
+    for kind in (dict, list, set, str, bytes, io.TextIOBase, io.BufferedIOBase)
+    for name in dir(kind)
+    if not name.startswith("_")
+)
 
-    public_methods = {
-        name
-        for name, value in vars(CruxibleClient).items()
-        if callable(value) and not name.startswith("_")
-    }
-    source = textwrap.dedent(inspect.getsource(inspect.unwrap(callback)))
+
+def _cli_client_calls(
+    callback: Callable[..., object], *, seen: set[object] | None = None
+) -> list[str]:
+    """The daemon client operations one CLI command reaches, transitively.
+
+    A command reaches an operation when its callback calls ``<client>.<op>``
+    itself (a lambda or nested function included) or calls a module-level
+    helper of its own module that does, followed transitively as the MCP join
+    follows handlers. A builtin-named operation counts only on ``client``.
+    """
+
+    methods = _client_public_methods()
+    visited = set() if seen is None else seen
+    unwrapped = inspect.unwrap(callback)
+    if unwrapped in visited:
+        return []
+    visited.add(unwrapped)
+    try:
+        source = textwrap.dedent(inspect.getsource(unwrapped))
+    except (OSError, TypeError):
+        return []
     tree = ast.parse(source)
-    return sorted(
-        {
-            node.func.attr
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr in public_methods
-        }
-    )
+    reached = {
+        node.func.attr
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr in methods
+        and (
+            node.func.attr not in _BUILTIN_METHOD_NAMES
+            or (isinstance(node.func.value, ast.Name) and node.func.value.id == "client")
+        )
+    }
+    module = getattr(unwrapped, "__module__", None)
+    namespace = getattr(unwrapped, "__globals__", {})
+    for name in sorted({node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}):
+        target = namespace.get(name)
+        if inspect.isfunction(target) and target.__module__ == module:
+            reached.update(_cli_client_calls(target, seen=visited))
+    return sorted(reached)
 
 
 def _cli_surface() -> list[dict[str, object]]:

@@ -39,7 +39,12 @@ from cruxible_client.authoring.world import (
     vocabulary_world,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
-from cruxible_client.contracts.shapes import claim_value_kind, subject_value_kinds, value_type_name
+from cruxible_client.contracts.shapes import (
+    claim_value_kind,
+    ordered_enum,
+    subject_value_kinds,
+    value_type_name,
+)
 from cruxible_client.contracts.workspace_layout import (
     WORLD_STUB_PATH,
     ensure_workspace_directory,
@@ -60,8 +65,10 @@ _WORLD_MEMBERS = frozenset(
         "describe",
         "kind",
         "kinds",
+        "note",
         "predicates",
         "prefetch",
+        "section",
         "stub",
         "unstructured_predicates",
         "write",
@@ -70,6 +77,55 @@ _WORLD_MEMBERS = frozenset(
 #: ``define()`` keywords that are not fields: a field leaf spelled like one is
 #: set with ``draft.set(...)`` instead.
 _DEFINE_OPTIONS = frozenset({"create_new", "expect_new", "evidence", "role"})
+#: ``edit()`` keywords that are not fields, as for ``define()``.
+_EDIT_OPTIONS = frozenset({"based_on", "contend", "evidence", "role"})
+
+#: ``based_on=`` on a write member: the Claims each value was judged from.
+_BASED_ON_PARAMETER = (
+    "    based_on: str | ClaimRef | ClaimView | WorldDraftPin"
+    " | Sequence[str | ClaimRef | ClaimView | WorldDraftPin] | None = ...,"
+)
+
+
+def _pin_member(world: World, kind: str, returns: str) -> list[str]:
+    """Type ``pin(field)`` over every field of this kind, its keys included, as runtime takes it.
+
+    Each predicate in full, and an unambiguous leaf as it stands and as its
+    escaped keyword (``keyword_name``: ``class_``, ``import_``). A leaf already
+    ending in ``_`` is offered only escaped: runtime reads one trailing
+    underscore as the escape (``World._write_field``).
+    """
+
+    names: set[str] = set()
+    for leaf, predicates in world._leaf_map(kind).items():
+        names.update(predicates)
+        if len(predicates) != 1:
+            continue
+        if not leaf.endswith("_"):
+            names.add(leaf)
+        spelled = keyword_name(leaf)
+        if spelled is not None:
+            names.add(spelled)
+    if not names:
+        return []
+    spelled = ", ".join(repr(name) for name in _sorted(names))
+    return [
+        "def pin(  # type: ignore[override]",
+        f"    self, field: Literal[{spelled}] | ClaimTypeRef, /",
+        f") -> {returns}: ...",
+    ]
+
+
+def _fields_beside(lines: Iterable[str], options: Iterable[str]) -> list[str]:
+    """Field parameter lines less any a member's own keyword already spells.
+
+    A field whose leaf is a write keyword (``role``, ``based_on``) is reached by
+    its full predicate name; listing it again would repeat the parameter.
+    """
+
+    names = {option.strip().split(":", 1)[0] for option in options}
+    return [line for line in lines if line.strip().split(":", 1)[0] not in names]
+
 
 _STUB_IMPORTS = (
     "from collections.abc import Sequence",
@@ -81,6 +137,7 @@ _STUB_IMPORTS = (
     "from cruxible_client.authoring.sdk import ClaimView",
     "from cruxible_client.authoring.sdk_types import (",
     "    Cardinality,",
+    "    ClaimRef,",
     "    ClaimRole,",
     "    ClaimTypeRef,",
     "    LiteralValue,",
@@ -93,6 +150,7 @@ _STUB_IMPORTS = (
     "    KindNamespace,",
     "    Names,",
     "    WorldClaimType,",
+    "    WorldDraftPin,",
     "    WorldNewSubject,",
     "    WorldSubjectEdit,",
     "    WorldWritable,",
@@ -288,7 +346,25 @@ def _subject_block(world: World, node: _Node) -> list[str]:
         if doc:
             body.declare_lines(doc)
     _write_members(world, node.path, body)
-    body.declare(f"def edit(self) -> {_edit_class_name(node.path)}: ...")
+    # edit() alone starts an empty edit; field keywords are set on it at once.
+    body.declare_lines(
+        [
+            "def edit(",
+            "    self,",
+            "    /,",
+            "    *,",
+            "    evidence: Evidence | AuthoredSection | None = ...,",
+            "    role: WriteRole | None = ...,",
+            "    contend: bool = ...,",
+            _BASED_ON_PARAMETER,
+            *(
+                line
+                for line in _field_parameters(world, node.path)["one"]
+                if line.strip().split(":", 1)[0] not in _EDIT_OPTIONS
+            ),
+            f") -> {_edit_class_name(node.path)}: ...",
+        ]
+    )
     for leaf, predicates in sorted(world._leaf_map(node.path).items()):
         if leaf in reachable or len(predicates) != 1:
             continue
@@ -324,7 +400,11 @@ def _write_annotation(claim_type: WorldClaimType) -> str:
 def _field_parameters(
     world: World, kind: str, *, skip: frozenset[str] = frozenset()
 ) -> dict[str, list[str]]:
-    """Each write keyword of a kind, as a parameter line, by the cardinality it holds."""
+    """Each write keyword of a kind, as a parameter line, by the cardinality it holds.
+
+    A many-valued field takes one value or a sequence of them (``define()`` and
+    ``add()`` add each item, in order), so its annotation admits both.
+    """
 
     by_cardinality: dict[str, list[str]] = {"one": [], "many": []}
     for leaf, predicates in sorted(world._leaf_map(kind).items()):
@@ -332,9 +412,10 @@ def _field_parameters(
         if len(predicates) != 1 or spelled is None or predicates[0] in skip:
             continue
         claim_type = world.claim_type(predicates[0])
-        by_cardinality[claim_type.cardinality.value].append(
-            f"    {spelled}: {_write_annotation(claim_type)} = ...,"
-        )
+        annotation = _write_annotation(claim_type)
+        if claim_type.cardinality.value == "many":
+            annotation = f"{annotation} | Sequence[{annotation}]"
+        by_cardinality[claim_type.cardinality.value].append(f"    {spelled}: {annotation} = ...,")
     return by_cardinality
 
 
@@ -348,22 +429,16 @@ def _write_members(world: World, kind: str, body: _Body) -> None:
         "    role: WriteRole | None = ...,",
     ]
     tail = ["    dry_run: bool = ...,", "    accept: WriteAccept = ...,"]
+    set_options = [*common, "    contend: bool = ...,", _BASED_ON_PARAMETER, *tail]
     body.declare_lines(
-        ["def set(", "    self,", "    /,", "    *,", *common, "    contend: bool = ...,", *tail]
-        + by_cardinality["one"]
+        ["def set(", "    self,", "    /,", "    *,", *set_options]
+        + _fields_beside(by_cardinality["one"], set_options)
         + [") -> WriteOutcome: ..."]
     )
+    add_options = [*common, "    expect_absent: bool = ...,", _BASED_ON_PARAMETER, *tail]
     body.declare_lines(
-        [
-            "def add(",
-            "    self,",
-            "    /,",
-            "    *,",
-            *common,
-            "    expect_absent: bool = ...,",
-            *tail,
-        ]
-        + by_cardinality["many"]
+        ["def add(", "    self,", "    /,", "    *,", *add_options]
+        + _fields_beside(by_cardinality["many"], add_options)
         + [") -> WriteOutcome: ..."]
     )
     body.declare_lines(
@@ -402,13 +477,15 @@ def _edit_block(world: World, node: _Node) -> list[str]:
         "    role: WriteRole | None = ...,",
     ]
     # ``address`` is the runtime edit's own.
+    set_options = [*common, "    contend: bool = ...,", _BASED_ON_PARAMETER]
     body.declare_lines(
-        ["def set(  # type: ignore[override]", "    self,", "    /,", "    *,", *common]
-        + ["    contend: bool = ...,", *by_cardinality["one"], f") -> {edit}: ..."]
+        ["def set(  # type: ignore[override]", "    self,", "    /,", "    *,", *set_options]
+        + [*_fields_beside(by_cardinality["one"], set_options), f") -> {edit}: ..."]
     )
+    add_options = [*common, "    expect_absent: bool = ...,", _BASED_ON_PARAMETER]
     body.declare_lines(
-        ["def add(  # type: ignore[override]", "    self,", "    /,", "    *,", *common]
-        + ["    expect_absent: bool = ...,", *by_cardinality["many"], f") -> {edit}: ..."]
+        ["def add(  # type: ignore[override]", "    self,", "    /,", "    *,", *add_options]
+        + [*_fields_beside(by_cardinality["many"], add_options), f") -> {edit}: ..."]
     )
     body.declare_lines(
         [
@@ -417,6 +494,9 @@ def _edit_block(world: World, node: _Node) -> list[str]:
             f") -> {edit}: ...",
         ]
     )
+    pin = _pin_member(world, node.path, "str")
+    if pin:
+        body.declare_lines(pin)
     body.declare_lines(_SEND_MEMBER)
     lines.extend(body.rendered())
     return lines
@@ -438,14 +518,18 @@ def _new_block(world: World, node: _Node) -> list[str]:
         "    role: WriteRole | None = ...,",
     ]
     # ``subject_kind`` and ``address`` are the runtime draft's own.
+    options = [*common, _BASED_ON_PARAMETER]
     body.declare_lines(
-        ["def set(  # type: ignore[override]", "    self,", "    /,", "    *,", *common]
-        + [*by_cardinality["one"], f") -> {draft}: ..."]
+        ["def set(  # type: ignore[override]", "    self,", "    /,", "    *,", *options]
+        + [*_fields_beside(by_cardinality["one"], options), f") -> {draft}: ..."]
     )
     body.declare_lines(
-        ["def add(  # type: ignore[override]", "    self,", "    /,", "    *,", *common]
-        + [*by_cardinality["many"], f") -> {draft}: ..."]
+        ["def add(  # type: ignore[override]", "    self,", "    /,", "    *,", *options]
+        + [*_fields_beside(by_cardinality["many"], options), f") -> {draft}: ..."]
     )
+    pin = _pin_member(world, node.path, "WorldDraftPin")
+    if pin:
+        body.declare_lines(pin)
     body.declare_lines(_SEND_MEMBER)
     lines.extend(body.rendered())
     return lines
@@ -541,6 +625,16 @@ def _value_annotation(claim_type: WorldClaimType) -> tuple[str, tuple[str, ...]]
     members = claim_type.members
     if members:
         spelled = ", ".join(repr(member) for member in members)
+        if ordered_enum(claim_type.value_type) is not None:
+            # An ordered enum also compares by declared rank.
+            return f"Literal[{spelled}]", (
+                "eq",
+                "ne",
+                *_ORDERED_OPERATORS,
+                "in",
+                "exists",
+                "contains",
+            )
         return f"Literal[{spelled}]", ("eq", "ne", "in", "exists", "contains")
     declared = value_type_name(claim_type.value_type)
     if declared == "string":
@@ -641,6 +735,8 @@ def _predicate_block(world: World, node: _Node) -> list[str]:
         "    # permitted_roles=" + ",".join(role.value for role in claim_type.permitted_roles)
     )
     lines.append("    # allowed_subject_kinds=" + ",".join(claim_type.allowed_subject_kinds))
+    if ordered_enum(claim_type.value_type) is not None:
+        lines.append("    # ordered=true (members in ascending rank)")
     if subject_value_kinds(claim_type.value_type):
         lines.append(
             "    # subject_value_kinds=" + ",".join(subject_value_kinds(claim_type.value_type))
@@ -740,6 +836,38 @@ def render_world_stub(world: World) -> str:
             "    self,",
             "    *items: WorldWritable,",
             "    because: str,",
+            "    dry_run: bool = ...,",
+            "    accept: WriteAccept = ...,",
+            ") -> WriteOutcome: ...",
+        ]
+    )
+    body.declare_lines(
+        [
+            "def section(",
+            "    self,",
+            "    file: str,",
+            "    heading_path: tuple[str, ...] | None = ...,",
+            "    *,",
+            "    text: str | None = ...,",
+            "    heading: str | None = ...,",
+            "    body: str = ...,",
+            "    under: tuple[str, ...] = ...,",
+            "    replace: bool = ...,",
+            "    expect: str | None = ...,",
+            ") -> AuthoredSection: ...",
+        ]
+    )
+    body.declare_lines(
+        [
+            "def note(",
+            "    self,",
+            "    file: str,",
+            "    *,",
+            "    text: str,",
+            "    about: Sequence[str | SubjectRef],",
+            "    because: str,",
+            "    under: tuple[str, ...] = ...,",
+            "    heading: str | None = ...,",
             "    dry_run: bool = ...,",
             "    accept: WriteAccept = ...,",
             ") -> WriteOutcome: ...",

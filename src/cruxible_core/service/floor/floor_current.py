@@ -29,7 +29,11 @@ The layout:
 - then ``flags:``, the one structural flag: ``contested``, a single-valued field
   with more than one distinct live value;
 - then ``incoming:``, one ``<field> <- <ref>`` line per live Subject-valued
-  Claim of another Subject that points at this one.
+  Claim of another Subject that points at this one;
+- then ``notes:``, one ``<file>#<Heading/Path>`` locator per live note about
+  this Subject (a workspace section linked ``about`` it), its handle as a
+  comment: a pointer, never the prose (``cruxible section`` reads it). A
+  Subject no note is about has no ``notes:`` key.
 
 The floor is a pure function of the accepted coordinate, so it shows every
 live Claim of a slot and no verdict: a verdict also moves with time, evidence
@@ -174,6 +178,7 @@ class _Shown:
 
 
 INCOMING_KEY = "incoming"
+NOTES_KEY = "notes"
 
 
 @dataclass(frozen=True)
@@ -187,6 +192,18 @@ class IncomingEdge:
     field: str
     source: str
     claim: str
+
+
+@dataclass(frozen=True)
+class NotePointer:
+    """One live note about a Subject: its section locator and its handle.
+
+    ``locator`` is ``<catalog name>#<Heading/Path>``: the floor is rendered from
+    accepted state, which names a workspace file by its catalog name.
+    """
+
+    locator: str
+    note: str
 
 
 @dataclass(frozen=True)
@@ -385,8 +402,9 @@ def render_subject(
     accepted_predicates: frozenset[str],
     values: ValueRenderer,
     incoming: Sequence[IncomingEdge] = (),
+    notes: Sequence[NotePointer] = (),
 ) -> SubjectPart:
-    """Render one Subject's values-first body, then the live edges that point at it."""
+    """Render one Subject's values-first body, the live edges that point at it, its notes."""
 
     ref = subject_ref(path)
     kind = shell.subject_kind
@@ -455,6 +473,14 @@ def render_subject(
                 key=lambda edge: (edge.field.encode(), edge.source.encode(), edge.claim.encode()),
             )
         )
+    if notes:
+        lines.append(f"{NOTES_KEY}:")
+        lines.extend(
+            f"  - {yaml_scalar(pointer.locator)}  # {pointer.note}"
+            for pointer in sorted(
+                notes, key=lambda pointer: (pointer.locator.encode(), pointer.note.encode())
+            )
+        )
     body = "".join(f"{line}\n" for line in lines)
     return SubjectPart(
         ref=ref,
@@ -487,6 +513,8 @@ def stamped(part: SubjectPart, changed_at: int) -> dict[str, bytes]:
 __all__ = [
     "INCOMING_KEY",
     "IncomingEdge",
+    "NOTES_KEY",
+    "NotePointer",
     "CURRENT_PREFIX",
     "CURRENT_SUFFIX",
     "FLOOR_FLAG_ORDER",

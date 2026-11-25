@@ -94,6 +94,7 @@ from cruxible_client.authoring.workspace import (
     observe_next_workspace,
     observe_next_workspace_with_coverage,
     refresh_workspace_floor,
+    workspace_catalog_files,
     workspace_floor_freshness,
     workspace_vocabulary_at,
     workspace_vocabulary_freshness,
@@ -209,6 +210,7 @@ from cruxible_client.contracts.get_reads import (
     GetProcedureTrackRecord,
     GetRequest,
     GetResult,
+    GetSubjectCard,
     GetSubjectHistory,
 )
 from cruxible_client.contracts.identity_normalizers import KeyNormalizer
@@ -1910,6 +1912,20 @@ def _write_expect(expect: WriteExpect | None) -> ExpectedValue | None:
     return tuple(_expected_value(item) for item in expect)
 
 
+def _based_on(claims: Sequence[str | ClaimRef] | None) -> tuple[str, ...] | None:
+    """Claims for ``based_on`` (``CLM-...``, or ``kind/id#field`` for that field's one
+    live Claim, resolved by the write); ``None`` keeps a revision's pins as they are."""
+
+    if claims is None:
+        return None
+    if isinstance(claims, str | ClaimRef):
+        claims = (claims,)
+    return tuple(
+        item.address if isinstance(item, ClaimRef) else item.removeprefix("Claim:")
+        for item in claims
+    )
+
+
 def _write_target(target: str | ClaimRef | SubjectRef | SlotRef) -> str | SlotRef:
     if isinstance(target, ClaimRef):
         return target.address
@@ -2152,6 +2168,7 @@ class WriteBatch:
         role: WriteRole | None = None,
         contend: bool = False,
         expect: WriteExpect | None = None,
+        based_on: Sequence[str | ClaimRef] | None = None,
     ) -> WriteBatch: ...
 
     @overload
@@ -2167,6 +2184,7 @@ class WriteBatch:
         role: WriteRole | None = None,
         contend: bool = False,
         expect: WriteExpect | None = None,
+        based_on: Sequence[str | ClaimRef] | None = None,
     ) -> WriteBatch: ...
 
     def set(
@@ -2178,11 +2196,14 @@ class WriteBatch:
         role: WriteRole | None = None,
         contend: bool = False,
         expect: WriteExpect | None = None,
+        based_on: Sequence[str | ClaimRef] | None = None,
     ) -> WriteBatch:
         """Replace the live value of one single-value field.
 
         Spelled ``set(field, value)`` or ``set(subject, field, value)``. ``expect`` refuses
-        unless the field holds that value now. Next: more changes, then ``.write()``.
+        unless the field holds that value now. ``based_on`` names the Claims the value was
+        judged from (each pinned at its current version; ``[]`` drops the pins a revision
+        would keep). Next: more changes, then ``.write()``.
         """
 
         if supported_by is not None:
@@ -2199,6 +2220,7 @@ class WriteBatch:
                 role=role,
                 contend=contend,
                 expect=_write_expect(expect),
+                based_on=_based_on(based_on),
             )
         )
         return self
@@ -2215,6 +2237,7 @@ class WriteBatch:
         supported_by: SectionEvidence | None = None,
         role: WriteRole | None = None,
         expect_absent: bool = False,
+        based_on: Sequence[str | ClaimRef] | None = None,
     ) -> WriteBatch: ...
 
     @overload
@@ -2229,6 +2252,7 @@ class WriteBatch:
         supported_by: SectionEvidence | None = None,
         role: WriteRole | None = None,
         expect_absent: bool = False,
+        based_on: Sequence[str | ClaimRef] | None = None,
     ) -> WriteBatch: ...
 
     def add(
@@ -2239,6 +2263,7 @@ class WriteBatch:
         supported_by: SectionEvidence | None = None,
         role: WriteRole | None = None,
         expect_absent: bool = False,
+        based_on: Sequence[str | ClaimRef] | None = None,
     ) -> WriteBatch:
         """Add one more value to a many-valued field.
 
@@ -2260,6 +2285,7 @@ class WriteBatch:
                 evidence=evidence,
                 role=role,
                 expect_absent=expect_absent,
+                based_on=_based_on(based_on),
             )
         )
         return self
@@ -4088,6 +4114,7 @@ class Cruxible:
         role: WriteRole | None = None,
         contend: bool = False,
         expect: WriteExpect | None = None,
+        based_on: Sequence[str | ClaimRef] | None = None,
         dry_run: bool = False,
         accept: WriteAccept = "if_allowed",
         at: WriteAt | _Unset = _UNSET,
@@ -4103,7 +4130,11 @@ class Cruxible:
         none). ``value=NoneValue(none=None)`` states that the field holds
         nothing (a none, on a ClaimType that declares an inverse; cite evidence
         its inverse rules admit). A refusal raises ``WriteRefusalError``; check
-        ``outcome.warnings`` for a verdict that is not supported.
+        ``outcome.warnings`` for a verdict that is not supported. ``based_on``
+        names the Claims the value was judged from: each is pinned at its current
+        version, and a later revision or retirement of one flags this value in
+        ``next`` (``claim_dependency_stale``) without retiring it. Omitted, a
+        revision keeps its pins; ``[]`` drops them.
 
         Next: ``outcome.next`` names what is still needed; ``cx.get(f"{subject}")`` reads
         the value back with its verdict.
@@ -4123,6 +4154,7 @@ class Cruxible:
                             role=role,
                             contend=contend,
                             expect=_write_expect(expect),
+                            based_on=_based_on(based_on),
                         ),
                     ),
                     dry_run=dry_run,
@@ -4141,6 +4173,7 @@ class Cruxible:
             role=role,
             contend=contend,
             expect=_write_expect(expect),
+            based_on=_based_on(based_on),
             dry_run=dry_run,
             accept=write_accept(accept),
             at=self._write_at(at),
@@ -4163,6 +4196,7 @@ class Cruxible:
         evidence: Evidence | AuthoredSection | None = None,
         role: WriteRole | None = None,
         expect_absent: bool = False,
+        based_on: Sequence[str | ClaimRef] | None = None,
         dry_run: bool = False,
         accept: WriteAccept = "if_allowed",
         at: WriteAt | _Unset = _UNSET,
@@ -4194,6 +4228,7 @@ class Cruxible:
                     evidence=evidence,
                     role=role,
                     expect_absent=expect_absent,
+                    based_on=_based_on(based_on),
                 ),
             ),
             dry_run=dry_run,
@@ -5145,6 +5180,10 @@ class Cruxible:
         what points into it (``GetBacklinks``), every page read: notes and
         Documents ``about`` a Subject and the sections its live Claims cite,
         or the Documents that ``guides`` a definition.
+        ``detail="notes"`` on a Subject answers the notes about it as section
+        pointers (``GetNotes``), every page read, with each section's read
+        (``cruxible section FILE#Heading/Path``); a Subject card lists the
+        first few.
 
         Next: ``detail="evidence"`` for what backs a Claim, ``detail="history"`` for its
         revisions, ``detail="proof"`` for the full envelope; ``card.ref`` passes the thing
@@ -5511,6 +5550,38 @@ class Cruxible:
                 # None (a connection without a workspace) leaves the daemon's answer.
                 self._workspace,
             )
+        if result.notes is not None:
+            # Every page of the notes, pinned by the cursor, each checked for drift.
+            notes = list(result.notes.notes)
+            nexts = list(result.notes.next)
+            page = result
+            while page.truncated and page.next_cursor is not None:
+                page = self._client.get(
+                    self._instance_id,
+                    request=request.model_copy(update={"at": None, "cursor": page.next_cursor}),
+                )
+                assert page.notes is not None
+                notes.extend(page.notes.notes)
+                nexts.extend(page.notes.next)
+            from cruxible_client.authoring.backlink_sections import observe_get_drift
+
+            result = observe_get_drift(
+                result.model_copy(
+                    update={
+                        "notes": result.notes.model_copy(
+                            update={"notes": tuple(notes), "next": tuple(nexts)}
+                        ),
+                        "truncated": False,
+                        "next_cursor": None,
+                    }
+                ),
+                self._workspace,
+            )
+        elif isinstance(result.card, GetSubjectCard) and result.card.notes:
+            from cruxible_client.authoring.backlink_sections import observe_get_drift
+
+            # A card's note pointers say whether each section moved, as backlinks do.
+            result = observe_get_drift(result, self._workspace)
         return result
 
     def _source_card(self, ref: SourceRef) -> KnowledgeCard:
@@ -5598,8 +5669,11 @@ class Cruxible:
         if self._workspace is None:
             # No workspace, no floor to compare: the floor is unknown, not stale.
             return result
-        return workspace_vocabulary_freshness(
-            self._workspace, workspace_floor_freshness(self._workspace, result)
+        return workspace_catalog_files(
+            self._workspace,
+            workspace_vocabulary_freshness(
+                self._workspace, workspace_floor_freshness(self._workspace, result)
+            ),
         )
 
     def attest(

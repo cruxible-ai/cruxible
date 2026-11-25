@@ -1,4 +1,4 @@
-"""One installed compiler: no upgrade edge exists, and every other coordinate refuses typed."""
+"""Revision 73 upgrades to revision 74 along one explicit edge; every other coordinate refuses."""
 
 import json
 from dataclasses import dataclass
@@ -18,7 +18,11 @@ from cruxible_client.contracts.errors import (
     SettlementIntegrityError,
 )
 from cruxible_client.contracts.types import CompilerCoordinate
-from cruxible_core.compiler.compiler import CURRENT_COMPILER, require_current_compiler
+from cruxible_core.compiler.compiler import (
+    COMPILER_REVISION_73,
+    CURRENT_COMPILER,
+    require_installed_compiler,
+)
 from cruxible_core.compiler.upgrades import (
     compiler_after_record,
     supported_upgrade_targets,
@@ -29,9 +33,11 @@ from cruxible_core.proposals.proposals import evaluate_proposal_tree
 from cruxible_core.runtime.instance import DESCRIPTOR_FILE, PlaybillInstance
 from cruxible_core.service.authoring.documents import (
     AcceptedCoordinate,
+    service_activate_playbill_proposal,
     service_propose_compiler_upgrade,
+    service_submit_playbill_approval,
 )
-from tests.test_ledger.test_activation import TIMESTAMP, _candidate, _instance
+from tests.test_ledger.test_activation import TIMESTAMP, _candidate, _instance, _sign
 
 #: The coordinate an earlier, unshipped build recorded (revision 35, claim-rebind-v1).
 EARLIER_COMPILER = CompilerCoordinate(
@@ -51,15 +57,77 @@ def _propose(instance, target=None):
     )
 
 
-def test_no_upgrade_edge_leaves_the_current_compiler() -> None:
+def test_one_edge_leads_from_revision_73_to_the_current_compiler() -> None:
+    assert COMPILER_REVISION_73.rule_digest == (
+        "sha256:5b1e93a005c680b1709f9c58c6fba03ef8ff87f9ec4b38b1b7fab6fb04891be8"
+    )
+    assert supported_upgrade_targets(COMPILER_REVISION_73) == (CURRENT_COMPILER.rule_digest,)
     assert supported_upgrade_targets(CURRENT_COMPILER) == ()
+    assert upgrade_law(COMPILER_REVISION_73, CURRENT_COMPILER).artifact_kind == "compiler-upgrade"
     for source, target in (
         (CURRENT_COMPILER, UNKNOWN_COMPILER),
         (EARLIER_COMPILER, CURRENT_COMPILER),
         (CURRENT_COMPILER, CURRENT_COMPILER),
+        (CURRENT_COMPILER, COMPILER_REVISION_73),
+        (COMPILER_REVISION_73, COMPILER_REVISION_73),
     ):
         with pytest.raises(ValueError, match="unsupported compiler transition"):
             upgrade_law(source, target)
+
+
+def revision_73_instance(tmp_path, monkeypatch):
+    """An instance created as a 0.5.x daemon creates it: genesis on revision 73."""
+
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            "cruxible_core.runtime.instance.current_compiler_coordinate",
+            lambda: COMPILER_REVISION_73,
+        )
+        return _instance(tmp_path)
+
+
+def _approve_and_activate(instance, inspection, reviewer):
+    proposal = inspection.proposal
+    assert proposal.candidate is not None, proposal.evaluation.diagnostics
+    candidate = proposal.candidate
+    signature = _sign(
+        reviewer, candidate.candidate_digest, candidate.candidate.parent_semantic_root
+    )
+    service_submit_playbill_approval(
+        instance,
+        proposal_id=proposal.admission.proposal_id,
+        attestation=signature.attestation,
+        authenticated_submitter="reviewer",
+    )
+    return service_activate_playbill_proposal(
+        instance, proposal_id=proposal.admission.proposal_id, activated_by="owner"
+    )
+
+
+def test_a_revision_73_instance_opens_upgrades_and_replays(tmp_path, monkeypatch):
+    instance, _, reviewer = revision_73_instance(tmp_path, monkeypatch)
+    before = instance.accepted_coordinate()
+    assert before.compiler == COMPILER_REVISION_73
+    assert instance.descriptor.compiler == COMPILER_REVISION_73
+    inspection = _propose(instance)
+    assert inspection.compiler_upgrade is not None
+    assert inspection.compiler_upgrade.source_revision == "retiring-query-traversal"
+    assert inspection.compiler_upgrade.target_revision == "based-on-observation-carry"
+    receipt = _approve_and_activate(instance, inspection, reviewer)
+    assert receipt.status == "accepted"
+    assert instance.accepted_coordinate().compiler == CURRENT_COMPILER
+    assert instance.coordinate_for_oid(before.git_oid) == before
+    # The descriptor keeps its genesis compiler; the head names the new one.
+    assert instance.descriptor.compiler == COMPILER_REVISION_73
+    reopened = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
+    assert reopened.accepted_coordinate() == instance.accepted_coordinate()
+    assert reopened.coordinate_for_oid(before.git_oid) == before
+    assert reopened.inspect().compiler == CURRENT_COMPILER
+    # Ordinary authoring lands under the new compiler and replays on reopen.
+    base, tree, candidate = _candidate(reopened)
+    assert base.compiler == CURRENT_COMPILER
+    with pytest.raises(RequestRefusedError, match="already_current"):
+        _propose(reopened)
 
 
 @pytest.mark.parametrize(
@@ -159,5 +227,5 @@ def test_an_instance_recorded_under_an_earlier_compiler_refuses_to_open(tmp_path
         PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
     assert refused.value.compiler_digest == EARLIER_COMPILER.rule_digest
     with pytest.raises(ReseedRequired):
-        require_current_compiler(EARLIER_COMPILER)
-    require_current_compiler(CURRENT_COMPILER)
+        require_installed_compiler(EARLIER_COMPILER)
+    require_installed_compiler(CURRENT_COMPILER)

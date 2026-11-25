@@ -840,8 +840,11 @@ class CruxibleClient:
         )
         return self._parse_model(response, KitBuildResult)
 
-    def kit_status(self, instance_id: str) -> KitStatus:
-        response = self._client.get(f"/api/v1/{instance_id}/kits")
+    def kit_status(self, instance_id: str, *, kit_id: str | None = None) -> KitStatus:
+        """Installed kits; with ``kit_id``, only that kit (its receipt read directly)."""
+
+        params = None if kit_id is None else {"kit_id": kit_id}
+        response = self._client.get(f"/api/v1/{instance_id}/kits", params=params)
         return self._parse_model(response, KitStatus)
 
     def add_kit(self, instance_id: str, request: KitAddRequest) -> KitChangeResult:

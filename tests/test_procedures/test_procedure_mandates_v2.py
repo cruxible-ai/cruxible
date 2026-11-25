@@ -746,7 +746,10 @@ def test_settle_authoring_names_its_scope_and_condition_and_lowering_pins_them(t
             fallback="propose",
         ),
     )
-    path, content, _digest = _render_procedure_mandate_member(payload, tree=grown)
+    # The payload names its window, so the intent's time is only the unused default.
+    path, content, _digest = _render_procedure_mandate_member(
+        payload, tree=grown, intent_time=mandate.valid_from
+    )
     authored = parse_procedure_mandate_any(content, path=path)
     # Author order does not matter; lowering canonicalizes and pins exact digests.
     assert authored == mandate
@@ -755,7 +758,7 @@ def test_settle_authoring_names_its_scope_and_condition_and_lowering_pins_them(t
         update={"condition": payload.condition.model_copy(update={"query_name": "project.absent"})}
     )
     with pytest.raises(AuthoringLoweringError) as refused:
-        _render_procedure_mandate_member(missing, tree=grown)
+        _render_procedure_mandate_member(missing, tree=grown, intent_time=mandate.valid_from)
     assert refused.value.code == "cruxible.authoring.procedure_mandate_condition_query_missing"
 
 

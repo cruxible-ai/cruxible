@@ -170,9 +170,12 @@ environment variables above override the record in every case. `whoami`'s `ident
 So an MCP server started in an initialized project acts as its owner by
 default. A reviewer's server is a second server whose `env` block sets
 `CRUXIBLE_PRINCIPAL_ID=reviewer` (or `CRUXIBLE_ENV_FILE=/path/to/reviewer/cruxible.env`);
-nothing else is needed on the machine where `cruxible init --reviewer-key-dir`
-or `cruxible principal add` made the reviewer, because its key is found from its
-remembered settings. Cosign between agents on one machine is a convention, not a
+nothing else is needed on the machine where `cruxible init
+--require-independent-approval` or `cruxible principal add` made the reviewer,
+because its key is found from its remembered settings (init keeps it in
+`$XDG_CONFIG_HOME/cruxible/keys/INSTANCE/reviewer`, by default
+`~/.config/cruxible/keys/INSTANCE/reviewer`, or the `--reviewer-key-dir DIR`
+given). Cosign between agents on one machine is a convention, not a
 security boundary: any process of the OS user can read both keys.
 
 `CRUXIBLE_MCP_WORKSPACE_ROOT` selects the client-owned workspace for tools that
@@ -237,9 +240,11 @@ approval policy (`cruxible authoring example approval-policy > policy.json`,
 `cruxible authoring submit policy.json`; its mode is
 `independent_approval_required`). Add the reviewer first: once the policy
 lands, the owner can no longer land a change alone. A new instance gets both
-at creation with `cruxible init --reviewer-key-dir DIR
---require-independent-approval`; on an initialized instance that command
-answers "already initialized" and adds nothing.
+at creation with `cruxible init --require-independent-approval`, which
+creates the reviewer's key and settings beside the owner's
+(`$XDG_CONFIG_HOME/cruxible/keys/INSTANCE/reviewer`; `--reviewer-key-dir DIR`
+puts them elsewhere); on an initialized instance that command answers
+"already initialized" and adds nothing.
 Set `CRUXIBLE_PRINCIPAL_ID` beside it: the key directory makes the
 environment the identity source, so with no principal ID the server's
 requests name no principal, and submitting the approval refuses
@@ -297,7 +302,7 @@ or runs it in a shell.
 | Tool | Purpose | Permission |
 |---|---|---|
 | `cruxible_provider_list` | List installed Provider builds (each with its package, version and operations), then the packages a configured daemon repository offers | `READ_ONLY` |
-| `cruxible_provider_install` | Install a provider package by name (from the configured repository, else the provider index) or from staged wheel and lock digests, and register its Provider build and operations (each declaring the capabilities it serves, with its own carried shapes); lands at once when the approval policy requires no approval, otherwise stops at `awaiting_approval`; grants no execution permission | `ADMIN` |
+| `cruxible_provider_install` | Install a provider package by name (from the configured repository, else the provider index) or from staged wheel and lock digests, and register its Provider build and operations (each declaring the capabilities it serves, with its own carried shapes); lands at once when the approval policy requires no approval, otherwise stops at `awaiting_approval`; grants no execution permission. `request.move: true` also moves every live Line bound to another build of the provider onto this build in the same proposal (`move_only` narrows it to `Line:NAME`s), reporting `moved`, `automation_carries` and `stops` | `ADMIN` |
 | `cruxible_provider_move` | Move Procedures to an exact build or the most recently registered live build; preview re-pins, carried disabled Lines and propose-only Mandates | `GOVERNED_WRITE` |
 | `cruxible_provider_retire` | Retire an exact build with no live pinners, retaining its runtime environment | `ADMIN` |
 
@@ -401,15 +406,32 @@ The principal registry is `orient(section="principals")`; one record is
 | `cruxible_capture_contract_propose` | Propose authored evidence: `input: {name, shape}` with optional grade, replay, retention, erasable, max_bytes, selector_privacy and body_access (`open` or `restricted`, fixed with the name); omitted edit fields keep accepted values; lands when allowed (`accept: never` keeps the proposal) | `GOVERNED_WRITE` |
 | `cruxible_claim_type_migrate` | Compose a ClaimType successor with dependent dispositions | `GOVERNED_WRITE` |
 | `cruxible_claim_attest` | Sign and append a support, contradict, or unsure observation of the current exact Claim; `because` cites your own words and `evidence` takes one of write's evidence options (self, section with `own_words`, file, capture, contract), made into Captures before signing; with neither, it cites the Claim's own evidence. Never a proposal | `GOVERNED_WRITE` |
-| `cruxible_set` | Put one value in one field of one Subject (`kind/id`), replacing the live value without its Claim ID; a missing Subject of a known kind is added; `evidence` defaults to `because` as self evidence (an exact-content value is its own evidence); accepts in the same call when policy and tier allow it, else answers `awaiting_approval` with the eligible approvers and the approve call; `dry_run` writes nothing; `at` refuses `cruxible.write.slot_changed` if the field moved since; each change carries its `verdict`, and a verdict other than `supported` comes with a warning and its repair | `GOVERNED_WRITE` |
+| `cruxible_set` | Put one value in one field of one Subject (`kind/id`), replacing the live value without its Claim ID; a missing Subject of a known kind is added; `evidence` defaults to `because` as self evidence (an exact-content value is its own evidence); accepts in the same call when policy and tier allow it, else answers `awaiting_approval` with the eligible approvers and the approve call; `dry_run` writes nothing; `at` refuses `cruxible.write.slot_changed` if the field moved since; `based_on` names the Claims the value was judged from (`CLM-...`, or `kind/id#field` for that field's one live Claim, resolved at the write's base to its `CLM-...` id) and pins each at its current version; each change carries its `verdict`, and a verdict other than `supported` comes with a warning and its repair | `GOVERNED_WRITE` |
 | `cruxible_retire` | End one live Claim, by Claim ID or by Subject and single-value field, with its dependent Claims, in one change set | `GOVERNED_WRITE` |
-| `cruxible_write` | Apply `create`, `set`, `add` (one more value in a many-valued field), `retire`, `rebind` and `about` (a note: link a section about Subjects) changes as one change set, accepted or refused together. A `create` (`label`, `subject_kind`, `key`: a one-key value, `{field: value}` for each key field, the full `[{predicate, value}]` form, or none for a minted kind) makes a Subject the other changes name `{"created": label}` in any order; a key one live Subject holds lands on it (`resolved: existing`) unless `expect_new`. File or section evidence cites a workspace file by path; one the catalog does not name is catalogued once the write is admitted (`catalogued` in the outcome) | `GOVERNED_WRITE` |
+| `cruxible_write` | Apply `create`, `set`, `add` (one more value in a many-valued field), `retire`, `rebind` and `about` (a note: link a section about Subjects) changes as one change set, accepted or refused together. A `create` (`label`, `subject_kind`, `key`: a one-key value, `{field: value}` for each key field, the full `[{predicate, value}]` form, or none for a minted kind) makes a Subject the other changes name `{"created": label}` in any order; a key one live Subject holds lands on it (`resolved: existing`) unless `expect_new`. File or section evidence cites a workspace file by path; one the catalog does not name is catalogued once the write is admitted (`catalogued` in the outcome). A `set` or `add` change takes `based_on` as `cruxible_set` does | `GOVERNED_WRITE` |
 | `cruxible_link` | Link a section (`source` `FILE#Heading/Path`) `about` Subjects with `because` (a note, one write), or a whole registered page (`source` `FILE`) `guides` a ClaimType or Procedure (recorded on its catalog entry and proposed as its Document's next revision); `unlink` removes the named links. FILE is a path or a catalog name and must be in the file catalog: a page that is not refuses `cruxible.link.file_unregistered` (a section, `cruxible.doc.file_uncatalogued`) with the CLI repair `cruxible files add PATH`. Mismatched arguments refuse `cruxible.link.*`, saying which link is which | `GOVERNED_WRITE` |
 | `cruxible_backlinks` | What points into one target: `ref` a Subject (`kind/id`) for the notes and Documents linked `about` it and the workspace sections its live Claims cite; a ClaimType or Procedure for the Documents linked `guides` it (review guidance); `file` and `section` for the live Claims resting on that section. Keyset pages (`limit`, `cursor`); each section row carries `drift` (`changed_since_cited`, `unchanged`, `unknown`) checked against the MCP workspace. Notes are written with `cruxible_link` or a `cruxible_write` `about` change, and read by handle with `cruxible_get(ref="NOTE-...")` | `READ_ONLY` |
 | `cruxible_get` | Read one thing by any reference (Claim id or prefix, `kind/id` or `Subject:kind/id`, predicate (a dotted tail like `work_item.status` matches live predicates only; an exact predicate reads any lifecycle), `ClaimType:`/`Document:`/`Procedure:`/`Capability:NAME@N`/`Contract:NAME@N`/`query:`/`CaptureContract:`/`Trigger:`/`Principal:`/`Provider:NAME[/BUILD]`, `ApprovalPolicy:instance`, `ProcedureRuntimePolicy:instance`, artifact path, proposal id or 8+ hex prefix (with or without `sha256:`), a note handle `NOTE-...`, or an operational reference: `ProcedureRun:RUN-...`, `Line:<name>` or the Line identity digest `next` names, `CAP-<12+ hex>`/`Capture:<digest>`, `ResolutionContract:<name>`, `Mandate:<name>`; their operational parts are read live at the head whatever `at` names, and the answer marks them with `live: {as_of, fields}`); `detail` is `summary` (values-first card with verdict flags; a string value over 500 characters is a TruncatedText preview `{truncated: true, preview, length, read_whole}`, never the value, and an object value is shown whole as `{object: {...}}`, where `read_whole` is the exact `cruxible_get` call `{ref, detail, at}` that returns it whole at the generation it was previewed at, and Subject rows name each value's `claim`), `evidence` (with the whole value), `why` (a Claim's verdict and law evidence, or a Subject's or Document's governance and provenance), `history` (newest first, paged by `limit` and `cursor`: a Claim's revisions each with `change` -- `stated`, `changed`, `reobserved` or `retired` with its `retirement` -- and `reason`, its Procedure item's reason or its change set's rationale; a Subject's `{kind: "subject", revisions, events}`, each event one field change with `before` for a changed value and `contended` for a competing one, `field` narrowing to one field), `incoming` (a Subject's pointing edges: one page, by `limit` and `cursor`, of the live Claims whose subject-valued object it is, each `{claim, subject, predicate, qualifier}` naming the asserting Subject), `pairs` (the pair Subjects a Subject is an end of: one page, by `limit` and `cursor`, of `groups`, each `{kind, part, pairs, hidden}` in pair kind, part and id order, listing only pairs holding a visible (supported, current, positive) fact and counting the rest as `hidden`; a page examines at most `2 * limit + 8` candidates, so it may hold fewer rows than `limit` while `truncated`; a summary card lists at most five per group with `more`, and a pair's card lists its `ends`), `runs` (a Line's Procedure runs, newest admission first, paged by `limit` and `cursor` over the run journal's per-Line index, read live), `backlinks` (what points at a Subject, ClaimType or Procedure, as `cruxible_backlinks`), `proof` (the full accepted envelope and facts, with the full `accepted_coordinate`; on a Claim a summary `{verdict, captures, full}`, each cited Capture on one line), `proof_full` (a Claim's whole envelope and facts), or `body` with a byte `range` and the whole `body_digest`; other answers carry a compact `coordinate` (12-hex git oid prefix and `generation`), either of which `at` accepts back (a history row carries both; an all-digit `at` of 11 or fewer characters is always a generation); evidence names Captures by `CAP-<12 hex>` handles; a wrong name refuses with the nearest names | `READ_ONLY` |
 
 A proposal is not accepted state. A Claim's verdict is computed at read time
 from accepted law evidence, never carried forward from acceptance.
+
+`based_on` (compiler revision 74) records what a judgment rests on: each named
+Claim is pinned at its exact version as a `based-on` pin. It is provenance, not
+evidence, and never affects the verdict. Revising, retiring or contradicting a
+pinned Claim leaves the judgment live; `cruxible_next` lists it as
+`claim_dependency_stale` until it is set again with `based_on` (re-pinning the
+current version), set with `based_on: []` (dropping the pins), or retired.
+Leaving `based_on` out of a revision keeps the pins it had. A pinned Claim must
+be live and not the one written (`cruxible.authoring.based_on_not_found`,
+`based_on_retired`, `based_on_self`); `kind/id#field` naming a field with no
+live Claim refuses `cruxible.write.based_on_not_found`, and one with several
+`cruxible.write.based_on_ambiguous`, listing their ids. In `cruxible_write` the
+field is read as the whole write leaves it, so a set or add of the same write is
+the Claim pinned, and `label#field` names a field of a Subject a create change
+labels; changes resting on each other refuse `cruxible.write.based_on_cycle`. An instance still on
+revision 73 refuses `based_on` with
+`cruxible.authoring.based_on_requires_compiler_upgrade`.
 
 ## Authoring intents
 
@@ -523,7 +545,7 @@ authority plane beside accepted state.
 Settlement reads the observation Claim version's acceptance and that
 version's own per-Claim re-checks; the identical bytes and row sets that keep
 a Claim fresh do not settle a prediction. Freshness and settlement have known
-limits in 0.5.0: see [what freshness does and does not do](evidence-and-admission.md#what-freshness-does-and-does-not-do-in-050).
+limits in 0.6.0: see [what freshness does and does not do](evidence-and-admission.md#what-freshness-does-and-does-not-do-in-060).
 
 ## Queries, orient and get
 
@@ -550,7 +572,9 @@ them that require a Capture), `ProcedureMandate` (`name`, `procedure`,
 Triggers, Lines, SubjectKinds, mandates and QueryDefinitions. Their columns filter by type (integers
 and `expires_at` also compare with `lt` .. `gte`) and order typed, nulls last. Each `where` filter is `{field, <operator>: value}` with one of `eq`,
 `ne`, `lt`, `lte`, `gt`, `gte`, `in` (a list), `exists` (a boolean) or
-`contains` (case-insensitive text); filters combine as all-of. `exists: true`
+`contains` (case-insensitive text); filters combine as all-of. An ordered enum
+(`ordered_enum[...]`) compares and orders by declared rank; `lt` .. `gte` refuse
+on an unordered one. `exists: true`
 matches a field holding any live Claim, an explicit none included; `exists:
 false` only a field with no Claim. Filter on a value (`eq`) to match real
 values. A field is a
@@ -676,7 +700,9 @@ CaptureContract input uses the closed shapes `http_response`, `procedure_output`
 `foreign_span`, `database_snapshot`. Defaults: `grade: observed`, `replay: attested`
 for HTTP and `exact` otherwise, `retention: P30D`, `erasable: false`,
 `max_bytes: 16777216`, `selector_privacy: direct_allowed`. Derived grade (a
-provider derive's output) is declared on `http_response`. The engine supplies components; clients author this compact
+provider derive's output) is declared on `procedure_output`, `http_response` or
+`foreign_span`, with `json` or `csv` decoding. A `procedure_output` kind takes
+only a pure operation's output, committed with its bytes as its source. The engine supplies components; clients author this compact
 form. A rule's `capture_contracts` accepts names or
 `{contract: NAME, logical_sources: [SOURCE]}`. Empty sources means any; a
 restricted entry matches the external Capture's recorded source and cannot

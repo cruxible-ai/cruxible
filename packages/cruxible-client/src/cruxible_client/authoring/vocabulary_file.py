@@ -136,6 +136,7 @@ _DROP_ORDER = (
 _FIELD_ORDER = (
     "key",
     "enum",
+    "ordered",
     "link",
     "value",
     "many",
@@ -296,7 +297,21 @@ def entry_input(
     stated = dict(entry.stated)
     if entry.enum is not None:
         kept = _kept_members(entry)
-        stated["value"] = {"kind": "enum", "members": [member for member, _ in kept]}
+        # ``ordered`` left out keeps the accepted enum's ordering (merge-patch).
+        ordered = (
+            entry.ordered
+            if entry.ordered is not None
+            else predecessor is not None
+            and isinstance(predecessor.value, EnumType)
+            and predecessor.value.ordered
+        )
+        enum_value: dict[str, object] = {
+            "kind": "enum",
+            "members": [member for member, _ in kept],
+        }
+        if ordered:
+            enum_value["ordered"] = True
+        stated["value"] = enum_value
         stated["member_descriptions"] = [
             {"member": member, "description": meaning}
             for member, meaning in kept
@@ -476,6 +491,8 @@ def _field_entry(claim_type: ClaimType, *, key: bool) -> dict[str, object]:
                 if meanings
                 else list(field_type.members)
             )
+            if field_type.ordered:
+                entry["ordered"] = True
         elif isinstance(field_type, SubjectType):
             kinds = list(field_type.subject_kinds)
             entry["link"] = kinds[0] if len(kinds) == 1 else kinds

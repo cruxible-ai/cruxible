@@ -631,3 +631,41 @@ def test_kept_discovery_cards_agree_with_cold_ones_after_a_capture_is_erased(
 
     warm = _outcome(lambda: service_export_playbill_floor(instance, **options))
     assert warm == _outcome(lambda: _cold(instance, **options))
+
+
+def test_orient_names_the_workspace_catalog_files_on_the_default_map(tmp_path: Any) -> None:
+    from cruxible_client.authoring.workspace import workspace_catalog_files
+    from cruxible_client.contracts.orient import ORIENT_WORKSPACE_FILES
+    from cruxible_client.contracts.text_display import render_orient
+    from cruxible_core.service.discovery.orient import service_playbill_orient
+
+    (tmp_path / "instance").mkdir()
+    instance, _owner = seed_write_surface(tmp_path / "instance")
+    workspace = tmp_path / "files-workspace"
+    (workspace / ".cruxible").mkdir(parents=True)
+    # No catalog: nothing to name.
+    assert (
+        workspace_catalog_files(workspace, service_playbill_orient(instance)).workspace_files
+        is None
+    )
+
+    count = ORIENT_WORKSPACE_FILES + 2
+    entries = "".join(
+        f"  - name: doc-{index:02d}\n    locator: docs/{index:02d}.md\n" for index in range(count)
+    )
+    (workspace / ".cruxible" / "files.yaml").write_text(
+        f"tag: playbill-source-catalog-v1\ncatalog_kind: portable\nentries:\n{entries}",
+        encoding="utf-8",
+    )
+    mapped = workspace_catalog_files(workspace, service_playbill_orient(instance))
+    assert mapped.workspace_files is not None
+    assert mapped.workspace_files.total == count
+    assert mapped.workspace_files.paths == tuple(
+        f"docs/{index:02d}.md" for index in range(ORIENT_WORKSPACE_FILES)
+    )
+    text = render_orient(mapped.model_dump(mode="json"))
+    assert f"Files ({count}): docs/00.md, docs/01.md" in text
+    assert "+2 more; read one: cruxible section FILE#Heading" in text
+    # A section read is about one family; the map's file line stays off it.
+    paged = service_playbill_orient(instance, section="documents")
+    assert workspace_catalog_files(workspace, paged).workspace_files is None

@@ -278,3 +278,45 @@ def test_a_compact_row_titles_its_payload_in_one_bounded_line() -> None:
     assert third.title == "component=pkg:pypi/django@4.2 cve_id=CVE-2024-39614"
     assert fourth.title == "Big notice"
     assert fifth.title.startswith("count=10 matches=sha256:888") and "{" not in fifth.title
+
+
+def test_a_finding_row_titles_without_null_fields() -> None:
+    from cruxible_client.contracts.claim_evidence import ClaimsDiagnostic, CompletenessReason
+    from cruxible_client.contracts.line_inbox import (
+        InboxList,
+        InboxListEntry,
+        compact_inbox_list,
+    )
+
+    payload = ClaimsDiagnostic(
+        kind="incomplete_source",
+        target="write",
+        problem="source_incomplete",
+        source_incomplete=True,
+        incomplete_reasons=(CompletenessReason(node="entries", kind="count_mismatch"),),
+    ).model_dump(mode="json")
+    digest = "sha256:" + "1" * 64
+    sighting = {"run_id": "run-1", "posted_at": "2026-10-01T00:00:00Z"}
+    entry = InboxListEntry.model_validate(
+        {
+            "item": {
+                "item_id": "INB-" + "1" * 64,
+                "status": "unread",
+                "line": "Line:triage",
+                "procedure": "Procedure:triage",
+                "procedure_artifact_digest": digest,
+                "node_id": "write",
+                "occurrences": 1,
+                "first_sighting": sighting,
+                "recent_sightings": [sighting],
+                "dedupe_key": digest,
+                "payload_digest": digest,
+                "payload_bytes": 10,
+            },
+            "payload_preview": payload_preview(payload),
+        }
+    )
+    (row,) = compact_inbox_list(InboxList(entries=(entry,))).rows
+    # Before nulls were left out, the cut title spent itself on ``field=null`` pairs.
+    assert row.title.startswith("kind=incomplete_source target=write problem=source_incomplete")
+    assert "null" not in row.title

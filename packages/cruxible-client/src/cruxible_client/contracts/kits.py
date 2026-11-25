@@ -20,6 +20,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
+from ._linear_regex import LinearPatternError, compile_linear, linear_fullmatch
 from .canonical import Sha256Value, canonical_digest
 from .change_control import DryRun, PreviewAt
 from .get_reads import GetCoordinate
@@ -97,9 +98,18 @@ def kit_receipt_document_id(kit_id: str) -> str:
     return f"kit-{kit_id}"
 
 
-def _kit_id(value: str) -> str:
+def kit_id_problem(value: str) -> str | None:
+    """Why ``value`` is not a kit id, or ``None``."""
+
     if not _KIT_ID_RE.fullmatch(value):
-        raise ValueError("kit id must be lowercase letters, digits and hyphens")
+        return "kit id must be lowercase letters, digits and hyphens"
+    return None
+
+
+def _kit_id(value: str) -> str:
+    problem = kit_id_problem(value)
+    if problem is not None:
+        raise ValueError(problem)
     return value
 
 
@@ -317,8 +327,10 @@ class KitProviderFileBytes(_Strict):
 
 #: What an inert kit file is for: ``readme`` (a top-level README), ``reference``
 #: (other documentation), ``example`` (under ``examples/``), ``skill`` (a file of
-#: one agent skill, under ``skills/<name>/``).
-KitFileRole = Literal["readme", "reference", "example", "skill"]
+#: one agent skill, under ``skills/<name>/``), ``recipe`` (a parameterized change
+#: set ``kit adopt`` renders, under ``recipes/``), ``script`` (a read-only script
+#: ``kit run`` executes client-side, under ``scripts/``).
+KitFileRole = Literal["readme", "reference", "example", "skill", "recipe", "script"]
 
 #: The names a kit directory gives its definition and provider content: an
 #: inert file never sits under them.
@@ -345,6 +357,10 @@ def kit_file_role_of(path: str) -> KitFileRole:
     parts = path.split("/")
     if parts[0] == "skills" and len(parts) >= 3:
         return "skill"
+    if parts[0] == "recipes" and len(parts) >= 2:
+        return "recipe"
+    if parts[0] == "scripts" and len(parts) >= 2:
+        return "script"
     if parts[0] == "examples" and len(parts) >= 2:
         return "example"
     if len(parts) == 1 and parts[0].casefold().startswith("readme"):
@@ -378,7 +394,13 @@ class KitFile(_Strict):
 
     @model_validator(mode="after")
     def _role_matches_path(self) -> KitFile:
-        if self.role != kit_file_role_of(self.path):
+        implied = kit_file_role_of(self.path)
+        if implied in {"recipe", "script"} and self.role == "reference":
+            # A manifest built before recipes and scripts (0.6.0) listed a file
+            # under recipes/ or scripts/ as reference; it stays one unless a
+            # recipe or script declaration names it (checked by the manifest).
+            return self
+        if self.role != implied:
             raise ValueError(
                 f"kit file {self.path} is a {kit_file_role_of(self.path)}, not a {self.role}"
             )
@@ -462,6 +484,282 @@ class KitAutomationTemplate(_Strict):
         return value
 
 
+#: The largest recipe or script file a build carries (the security kit's are a
+#: few KiB each).
+KIT_RECIPE_MAX_BYTES = 1024 * 1024
+KIT_SCRIPT_MAX_BYTES = 1024 * 1024
+
+_RECIPE_NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
+#: A recipe parameter's name: what ``{{name}}`` names inside the recipe file and
+#: what ``kit adopt --param name=VALUE`` sets.
+KIT_RECIPE_PARAM_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+_RECIPE_TEXT_MAX = 2000
+#: The longest ``pattern`` a string parameter may declare, and the longest string
+#: value (default, example or ``--param``) a recipe parameter takes.
+KIT_RECIPE_PATTERN_MAX = 256
+KIT_RECIPE_STRING_VALUE_MAX = 4096
+
+#: A recipe parameter's type: ``string`` (optionally constrained by
+#: ``pattern``), ``integer``, ``boolean``, or ``enum`` (one of ``values``).
+KitRecipeParamType = Literal["string", "integer", "boolean", "enum"]
+KitRecipeParamValue = str | int | bool
+
+
+def _recipe_text(value: str, *, label: str) -> str:
+    if not value.strip() or len(value) > _RECIPE_TEXT_MAX:
+        raise ValueError(f"{label} must be non-empty text of at most {_RECIPE_TEXT_MAX} characters")
+    return value
+
+
+class KitRecipeParamSpec(_Strict):
+    """One parameter of a kit recipe: its type, whether it is required, its default.
+
+    ``kit adopt --param NAME=VALUE`` sets it; the recipe file names it as
+    ``{{NAME}}`` inside a JSON string value. A string that is exactly
+    ``"{{NAME}}"`` takes the typed value (an integer or boolean stays one);
+    embedded in a longer string it is spelled as text (``true``/``false``).
+    """
+
+    type: KitRecipeParamType = "string"
+    description: str
+    #: Required parameters have no default: the adopter names each one.
+    required: bool = False
+    default: KitRecipeParamValue | None = None
+    #: A regular expression a ``string`` value must match in full.
+    pattern: str | None = None
+    #: The allowed values of an ``enum`` parameter, in display order.
+    values: tuple[str, ...] = ()
+    #: A valid value shown in usage and used when ``kit build`` checks the recipe.
+    example: KitRecipeParamValue | None = None
+
+    @field_validator("description")
+    @classmethod
+    def _description(cls, value: str) -> str:
+        return _recipe_text(value, label="a recipe parameter's description")
+
+    @model_validator(mode="after")
+    def _consistent(self) -> KitRecipeParamSpec:
+        if self.type == "enum":
+            if not self.values:
+                raise ValueError("an enum parameter lists its allowed values")
+            if len(set(self.values)) != len(self.values):
+                raise ValueError("an enum parameter's values must be unique")
+        elif self.values:
+            raise ValueError(f"only an enum parameter lists values, not a {self.type} one")
+        if self.pattern is not None:
+            if self.type != "string":
+                raise ValueError(f"only a string parameter takes a pattern, not a {self.type} one")
+            problem = kit_recipe_pattern_problem(self.pattern)
+            if problem is not None:
+                raise ValueError(problem)
+        if self.required and self.default is not None:
+            raise ValueError("a required parameter takes no default; drop one of them")
+        for label, value in (("default", self.default), ("example", self.example)):
+            if value is not None:
+                problem = kit_recipe_value_problem(self, value)
+                if problem is not None:
+                    raise ValueError(f"the {label} {value!r} {problem}")
+        return self
+
+
+def kit_recipe_pattern_problem(pattern: str) -> str | None:
+    """Why a publisher's ``pattern`` is refused, or ``None``.
+
+    A pattern runs in the daemon (``kit build``) and the CLI (``kit adopt``) over
+    values a caller supplies, so it is matched by a Thompson NFA
+    (:mod:`cruxible_client.contracts._linear_regex`) in time linear in the value,
+    never by a backtracking matcher. It must be bounded in length, compile within
+    the matcher's state budget, and use only what that matcher supports: no
+    backreferences, conditionals, lookarounds, atomic groups, possessive repeats
+    or matching flags.
+    """
+
+    if len(pattern) > KIT_RECIPE_PATTERN_MAX:
+        return f"a pattern is at most {KIT_RECIPE_PATTERN_MAX} characters"
+    try:
+        compile_linear(pattern)
+    except LinearPatternError as exc:
+        return (
+            f"pattern {pattern!r} uses {exc}, which a recipe pattern may not; write a plain pattern"
+        )
+    except (re.error, OverflowError, RecursionError) as exc:
+        return f"pattern {pattern!r} is not a regular expression: {exc}"
+    return None
+
+
+def kit_recipe_value_problem(spec: KitRecipeParamSpec, value: object) -> str | None:
+    """Why ``value`` does not fit ``spec`` (its type, values and pattern), or ``None``."""
+
+    if spec.type == "boolean":
+        return None if isinstance(value, bool) else "is not a boolean"
+    if spec.type == "integer":
+        ok = isinstance(value, int) and not isinstance(value, bool)
+        return None if ok else "is not an integer"
+    if not isinstance(value, str):
+        return "is not a string"
+    if len(value) > KIT_RECIPE_STRING_VALUE_MAX:
+        return f"is longer than {KIT_RECIPE_STRING_VALUE_MAX} characters"
+    if spec.type == "enum":
+        return None if value in spec.values else f"is not one of {', '.join(spec.values)}"
+    if spec.pattern is not None and not linear_fullmatch(spec.pattern, value):
+        return f"does not match {spec.pattern}"
+    return None
+
+
+class KitRecipeSpec(_Strict):
+    """One recipe a kit declares: a parameterized change set at ``path`` (a
+    ``recipe`` file of the kit) that ``kit adopt KIT:NAME`` renders and submits
+    as the adopter's own governed change. ``default`` is what ``kit adopt KIT``
+    selects. Inert, like every kit file: never installed by ``kit add``.
+    """
+
+    name: str
+    path: str
+    description: str
+    params: dict[str, KitRecipeParamSpec] = Field(default_factory=dict)
+    #: Other recipes of this kit an adopter adopts first: ``kit build`` checks
+    #: this recipe together with them (in this order, each after its own).
+    depends_on: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
+
+    @field_validator("name")
+    @classmethod
+    def _name(cls, value: str) -> str:
+        if not _RECIPE_NAME_RE.fullmatch(value):
+            raise ValueError("a recipe name is lowercase letters, digits, '_' and '-'")
+        return value
+
+    @field_validator("path")
+    @classmethod
+    def _path(cls, value: str) -> str:
+        if not kit_file_path_allowed(value) or kit_file_role_of(value) != "recipe":
+            raise ValueError(f"a recipe file sits under recipes/, not at {value!r}")
+        if not value.endswith(".json"):
+            raise ValueError(f"a recipe file is JSON (.json), not {value!r}")
+        return value
+
+    @field_validator("description")
+    @classmethod
+    def _description(cls, value: str) -> str:
+        return _recipe_text(value, label="a recipe's description")
+
+    @field_validator("params")
+    @classmethod
+    def _params(cls, value: dict[str, KitRecipeParamSpec]) -> dict[str, KitRecipeParamSpec]:
+        for name in value:
+            if not KIT_RECIPE_PARAM_NAME_RE.fullmatch(name):
+                raise ValueError(
+                    f"recipe parameter {name!r} must be lowercase letters, digits and '_'"
+                )
+        return value
+
+    @model_validator(mode="after")
+    def _depends_on(self) -> KitRecipeSpec:
+        if self.name in self.depends_on:
+            raise ValueError(f"recipe {self.name} cannot depend on itself")
+        if len(set(self.depends_on)) != len(self.depends_on):
+            raise ValueError(f"recipe {self.name} names a dependency twice")
+        return self
+
+
+class KitScriptSpec(_Strict):
+    """One script a kit declares: Python at ``path`` (a ``script`` file of the
+    kit) that ``kit run KIT:NAME`` verifies against the installed release and runs
+    client-side with the ``cruxible python`` environment, never in the daemon.
+    """
+
+    name: str
+    path: str
+    description: str
+    #: What the publisher declares the script does to accepted state; required.
+    #: ``read_only`` (the only mode in 0.6.0) is the publisher's declaration, not
+    #: a sandbox: the script runs client-side as a local Python process with the
+    #: caller's CLI session and environment, and Cruxible enforces governance and
+    #: approval on any proposal it submits to the daemon.
+    mode: Literal["read_only"]
+
+    @field_validator("name")
+    @classmethod
+    def _name(cls, value: str) -> str:
+        if not _RECIPE_NAME_RE.fullmatch(value):
+            raise ValueError("a script name is lowercase letters, digits, '_' and '-'")
+        return value
+
+    @field_validator("path")
+    @classmethod
+    def _path(cls, value: str) -> str:
+        if not kit_file_path_allowed(value) or kit_file_role_of(value) != "script":
+            raise ValueError(f"a script file sits under scripts/, not at {value!r}")
+        if not value.endswith(".py"):
+            raise ValueError(f"a script file is Python (.py), not {value!r}")
+        return value
+
+    @field_validator("description")
+    @classmethod
+    def _description(cls, value: str) -> str:
+        return _recipe_text(value, label="a script's description")
+
+
+def _check_recipes_and_scripts(
+    files: tuple[KitFile, ...],
+    recipes: tuple[KitRecipeSpec, ...],
+    scripts: tuple[KitScriptSpec, ...],
+) -> None:
+    """Unique names; each path one of ``files`` with the right role; dependencies known
+    and acyclic."""
+
+    roles = {item.path: item.role for item in files}
+    for label, specs, role in (("recipe", recipes, "recipe"), ("script", scripts, "script")):
+        names = [item.name for item in specs]
+        duplicate = sorted({name for name in names if names.count(name) > 1})
+        if duplicate:
+            raise ValueError(f"{label} {duplicate[0]} is declared twice")
+        paths = [item.path for item in specs]
+        shared = sorted({path for path in paths if paths.count(path) > 1})
+        if shared:
+            raise ValueError(f"two {label}s name the file {shared[0]}")
+        for item in specs:
+            if item.path not in roles:
+                raise ValueError(
+                    f"{label} {item.name} names {item.path}, which is not one of the kit's files"
+                )
+            if roles[item.path] != role:
+                raise ValueError(
+                    f"{label} {item.name} names {item.path}, a {roles[item.path]} file, "
+                    f"not a {role} file"
+                )
+    by_name = {item.name: item for item in recipes}
+    for item in recipes:
+        for dependency in item.depends_on:
+            if dependency not in by_name:
+                raise ValueError(f"recipe {item.name} depends on unknown recipe {dependency}")
+    kit_recipe_order(recipes)
+
+
+def kit_recipe_order(recipes: tuple[KitRecipeSpec, ...], name: str | None = None) -> list[str]:
+    """Recipe names, each after the recipes it depends on (only ``name`` and its
+    dependencies when given); refuses a dependency cycle."""
+
+    by_name = {item.name: item for item in recipes}
+    ordered: list[str] = []
+    visiting: set[str] = set()
+
+    def visit(current: str) -> None:
+        if current in ordered:
+            return
+        if current in visiting:
+            raise ValueError(f"recipe {current} depends on itself through its dependencies")
+        visiting.add(current)
+        for dependency in by_name[current].depends_on:
+            if dependency in by_name:
+                visit(dependency)
+        visiting.discard(current)
+        ordered.append(current)
+
+    for current in [name] if name is not None else sorted(by_name):
+        visit(current)
+    return ordered
+
+
 class KitManifest(_Strict):
     tag: Literal["playbill-kit-manifest-v1"] = "playbill-kit-manifest-v1"
     kit_id: str
@@ -485,6 +783,13 @@ class KitManifest(_Strict):
     #: change set the adopter tailors and submits. Never installed or submitted by
     #: ``kit add``; like ``files``, not part of ``content_digest``.
     automation_template: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    #: Recipes ``kit adopt`` renders, each naming a ``recipe`` file of ``files``:
+    #: inert like them, never installed, not part of ``content_digest``; omitted
+    #: when empty, so a kit without recipes keeps its bytes.
+    recipes: tuple[KitRecipeSpec, ...] = Field(default=(), exclude_if=lambda value: not value)
+    #: Read-only scripts ``kit run`` executes client-side, each naming a
+    #: ``script`` file of ``files``: inert, not part of ``content_digest``.
+    scripts: tuple[KitScriptSpec, ...] = Field(default=(), exclude_if=lambda value: not value)
 
     @field_validator("kit_id")
     @classmethod
@@ -495,6 +800,17 @@ class KitManifest(_Strict):
     @classmethod
     def _version(cls, value: str) -> str:
         return _version(value)
+
+    @model_validator(mode="after")
+    def _recipes_and_scripts_are_files(self) -> KitManifest:
+        _check_recipes_and_scripts(self.files, self.recipes, self.scripts)
+        return self
+
+    def recipe(self, name: str) -> KitRecipeSpec | None:
+        return next((item for item in self.recipes if item.name == name), None)
+
+    def script(self, name: str) -> KitScriptSpec | None:
+        return next((item for item in self.scripts if item.name == name), None)
 
     @model_validator(mode="after")
     def _requires_another(self) -> KitManifest:
@@ -540,17 +856,57 @@ class KitManifest(_Strict):
     @property
     def content_digest(self) -> str:
         """The release identity: every manifest field, including each artifact digest,
-        apart from where it was built and its inert files (the automation template
-        among them)."""
+        apart from where it was built and its inert files (the automation template,
+        recipes and scripts among them)."""
 
         return Sha256Value(
             canonical_digest(
                 "playbill-kit-content-v1",
                 self.model_dump(
-                    mode="json", exclude={"tag", "provenance", "files", "automation_template"}
+                    mode="json",
+                    exclude={
+                        "tag",
+                        "provenance",
+                        "files",
+                        "automation_template",
+                        "recipes",
+                        "scripts",
+                    },
                 ),
             )
         ).tagged
+
+    @property
+    def bundle_digest(self) -> str:
+        """What the release executes and renders, pinned: ``content_digest`` plus
+        the recipes, scripts, automation template and every inert file's path,
+        role and sha256.
+
+        Two builds with the same definitions share ``content_digest`` but may
+        carry other recipes or scripts; this tells them apart, so a receipt that
+        records it pins exactly the bytes ``kit adopt`` and ``kit run`` may use.
+        """
+
+        return Sha256Value(
+            canonical_digest(
+                "playbill-kit-bundle-v1",
+                {
+                    "content_digest": self.content_digest,
+                    "automation_template": self.automation_template,
+                    "recipes": [item.model_dump(mode="json") for item in self.recipes],
+                    "scripts": [item.model_dump(mode="json") for item in self.scripts],
+                    "files": [item.model_dump(mode="json") for item in self.files],
+                },
+            )
+        ).tagged
+
+    @property
+    def pinned_bundle_digest(self) -> str | None:
+        """The ``bundle_digest`` a kit receipt records: set when the release declares
+        recipes or scripts (what ``kit adopt`` and ``kit run`` execute), else
+        ``None``, so a kit without them keeps its receipt bytes."""
+
+        return self.bundle_digest if self.recipes or self.scripts else None
 
     def kit_files(self) -> dict[str, str]:
         """Every inert kit file path -> its sha256."""
@@ -871,6 +1227,10 @@ class KitReceipt(_Strict):
     #: The kits the installed release requires, as its manifest names them;
     #: ``kit remove`` refuses to remove one of them while this kit is installed.
     requires: KitRequires = Field(default=(), exclude_if=lambda value: not value)
+    #: The installed release's ``bundle_digest`` when it declares recipes or
+    #: scripts: ``kit adopt`` and ``kit run`` use only a copy that has it.
+    #: Omitted otherwise (and on receipts written before it), keeping their bytes.
+    bundle_digest: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @field_validator("kit_id")
     @classmethod
@@ -886,6 +1246,11 @@ class KitReceipt(_Strict):
     @classmethod
     def _content_digest(cls, value: str) -> str:
         return _digest(value)
+
+    @field_validator("bundle_digest")
+    @classmethod
+    def _bundle_digest(cls, value: str | None) -> str | None:
+        return None if value is None else _digest(value)
 
     def digests(self) -> dict[str, str]:
         """The digest this instance accepted for each owned path."""
@@ -933,6 +1298,15 @@ class KitBuildRequest(_Strict):
     automation_template: KitAutomationTemplate | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    #: Recipes the release declares: the build renders each with its defaults
+    #: and examples (or synthetic values for its required parameters) and checks
+    #: it authors cleanly against this build's exported definitions, exactly as
+    #: it checks the automation template.
+    recipes: tuple[KitRecipeSpec, ...] = Field(default=(), exclude_if=lambda value: not value)
+    #: Read-only scripts the release declares (carried, never run by the daemon).
+    scripts: tuple[KitScriptSpec, ...] = Field(default=(), exclude_if=lambda value: not value)
+    #: The bytes of every recipe and script named above, and nothing else.
+    files: tuple[KitFileBytes, ...] = Field(default=(), exclude_if=lambda value: not value)
 
     @field_validator("kit_id")
     @classmethod
@@ -948,6 +1322,35 @@ class KitBuildRequest(_Strict):
     @classmethod
     def _owns(cls, value: tuple[str, ...]) -> tuple[str, ...]:
         return _owns(value)
+
+    @model_validator(mode="after")
+    def _recipe_and_script_files(self) -> KitBuildRequest:
+        named = {item.path for item in self.recipes} | {item.path for item in self.scripts}
+        carried = [item.path for item in self.files]
+        if len(set(carried)) != len(carried):
+            raise ValueError("a recipe or script file is carried twice")
+        if set(carried) != named:
+            extra = sorted(set(carried) - named)
+            missing = sorted(named - set(carried))
+            raise ValueError(
+                "files must carry exactly the recipes' and scripts' files "
+                f"(unnamed: {extra or 'none'}; missing: {missing or 'none'})"
+            )
+        if self.automation_template is not None and self.automation_template.path in named:
+            raise ValueError("the automation template cannot also be a recipe or script file")
+        caps = {item.path: KIT_RECIPE_MAX_BYTES for item in self.recipes}
+        caps.update({item.path: KIT_SCRIPT_MAX_BYTES for item in self.scripts})
+        for item in self.files:
+            if len(item.content) > caps[item.path]:
+                raise ValueError(f"{item.path} is over {caps[item.path]} bytes")
+        entries = tuple(
+            sorted(
+                (kit_file_entry(item.path, item.content) for item in self.files),
+                key=lambda entry: entry.path,
+            )
+        )
+        _check_recipes_and_scripts(entries, self.recipes, self.scripts)
+        return self
 
 
 class KitBuildResult(_Strict):
@@ -1226,6 +1629,8 @@ class InstalledKit(_Strict):
     version: str
     content_digest: str
     source: str | None = None
+    #: The receipt's ``bundle_digest``: the recipes and scripts it pins, if any.
+    bundle_digest: str | None = Field(default=None, exclude_if=lambda value: value is None)
     #: The kits this kit requires, each with the version here and whether it is met.
     requires: tuple[KitRequirementStatus, ...] = ()
     # Kit paths whose accepted content no longer matches the receipt: local edits.

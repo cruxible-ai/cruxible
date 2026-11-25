@@ -15,7 +15,11 @@ from pydantic import ValidationError
 
 from cruxible_client._error_base import CoreError
 from cruxible_client._safe_files import read_regular_file
-from cruxible_client.authoring.sdk_types import SourceSelectionError
+from cruxible_client.authoring.sdk_types import (
+    SourceAnchorNotFound,
+    SourceAnchorNotUnique,
+    SourceSelectionError,
+)
 from cruxible_client.contracts.authoring.models import (
     WorkingAnchorWindow,
     WorkingDigestCoordinate,
@@ -67,16 +71,32 @@ def _offsets(content: bytes, needle: bytes) -> tuple[int, ...]:
     return tuple(found)
 
 
+def working_anchor(text: str) -> str:
+    """An anchor as it is searched for and kept: leading indentation stays.
+
+    A quoted code line keeps its indentation, so two equal lines at different
+    nesting depths stay apart. A trailing line break (LF or CRLF) or trailing
+    spaces, and a leading line break, are dropped; a blank anchor refuses.
+    """
+
+    anchor = text.rstrip().lstrip("\r\n")
+    if not anchor.strip():
+        raise SourceSelectionError(
+            "an anchor must not be blank; repair: quote text of the file after the #"
+        )
+    return anchor
+
+
 def _unique_window(content: bytes, anchor: str) -> tuple[int, int]:
     encoded = anchor.encode("utf-8")
     found = _offsets(content, encoded)
     if not found:
-        raise SourceSelectionError(
+        raise SourceAnchorNotFound(
             f"anchor {anchor!r} does not occur in the file; repair: copy one line of the "
             "file as it reads now (after the #) as the anchor"
         )
     if len(found) > 1:
-        raise SourceSelectionError(
+        raise SourceAnchorNotUnique(
             f"anchor {anchor!r} occurs {len(found)} times (byte offsets {list(found)}); "
             "repair: quote more of the line, so the anchor occurs once"
         )
@@ -177,12 +197,15 @@ class FileSelector:
         )
 
     def anchor(self, text: str) -> EvidenceSelection:
-        start, end = _unique_window(self.content, text)
+        """Select the one occurrence of ``text``; leading indentation is matched as given."""
+
+        anchor = working_anchor(text)
+        start, end = _unique_window(self.content, anchor)
         return EvidenceSelection(
             path=self.path,
             source_id=self.source_id,
             content=self.content,
-            anchor_text=text,
+            anchor_text=anchor,
             start_byte=start,
             end_byte=end,
         )

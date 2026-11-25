@@ -325,12 +325,11 @@ Runbook security.start (preview: definitions, and whether each workspace file is
 A Line starts disabled. Enable the seven before the first run:
 
 ~~~bash
-for l in sbom-import.app osv-query osv-unkeyed kev-triage epss-triage exposure-attention.unjudged exposure-attention.contested; do
-  cruxible line enable security.$l
-done
+cruxible line enable security.osv-unkeyed --runbook security.start
 ~~~
 
-The seventh, `security.osv-unkeyed`, is not a Runbook step: its own Trigger
+`--runbook security.start` enables the six Lines its steps name, after the
+Lines named first. The seventh, `security.osv-unkeyed`, is not a Runbook step: its own Trigger
 runs it whenever the OSV step lands a result, and only while it is enabled,
 so enable it first or the first result posts nothing. Then run the Runbook.
 The calls are real: OSV, CISA and FIRST answer over the network, and the run

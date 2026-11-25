@@ -1,7 +1,12 @@
 # Cruxible Python SDK reference
 
 `cruxible-client` is the Python client for a Cruxible daemon; `pip install
-cruxible` installs it together with the daemon, CLI and MCP server. This is an
+cruxible` installs it together with the daemon, CLI and MCP server. It is the
+primary authoring surface for any agent that can run code (MCP serves agents
+without one; the CLI serves the shell and people): `cruxible python script.py`
+(or `-c CODE`, or `- <<'PY'`) runs a script with the CLI's own interpreter and
+this SDK from any repository, and `.cruxible/world.pyi` types the instance's
+vocabulary. This is an
 API reference. A Procedure is authored in one typed form, the `ProcedureSpec`;
 `Sequence` is a thin typed builder over it. The reference also covers
 contract-derived records, typed query and run results, and child calls. Names and typed handles are authoring inputs; exact versions and
@@ -2961,8 +2966,9 @@ Python keyword and member collisions.
 | `world.claim_type("security.asset.status")` | WorldClaimType |
 | `claim_type("active")` or `claim_type.active` | Predicate-bound LiteralValue, validated locally |
 | `claim_type.as_kind` | KindNamespace when a predicate name is also a Subject kind |
-| `kind.define(<key>, <field>=...)` | WorldNewSubject: a frozen draft of a new Subject by its key (as the kind's SubjectKind names it: one value, each composite part by leaf, or none when minted); `.set`/`.add` return a new draft; nothing is sent until `world.write(...)` or `draft.write(...)` |
-| `subject.edit().set(...)` | WorldSubjectEdit: `set`/`add`/`retire` changes to an accepted Subject, sent later |
+| `kind.define(<key>, <field>=...)` | WorldNewSubject: a draft of a new Subject by its key (as the kind's SubjectKind names it: one value, each composite part by leaf, or none when minted); `.set`/`.add` record on the draft and return it (both `d.set(...)` and `d = d.set(...)` keep every change; `based_on=` pins Claims); nothing is sent until `world.write(...)` or `draft.write(...)` |
+| `subject.edit().set(...)` | WorldSubjectEdit: `set`/`add`/`retire` changes to an accepted Subject, sent later; `subject.edit(field=...)` sets at once |
+| `world.section(file, heading=..., body=...)` | A section authored and cited by one write (`evidence=`) |
 | `world.write(*drafts, *edits, because=...)` | One change set: each draft is a `create` change, named by a label from the others, in any order; after acceptance `draft.address` is the id core assigned |
 | `kind.where(state="open", count__gt=3)` | CompactQuery; `.select(...)`, `.order_by(...)`, `.limit(n)`, `.run()` or iterate every page |
 | `world.stub()` | Generated type-stub source for this vocabulary |
@@ -3033,6 +3039,34 @@ draft is one `create` change, sent first; a draft may be the value of another
 in any order, and a draft named only as a value is created too. Checked from
 this World's write basis. Once accepted, each draft's `address` is the id the
 outcome reports.
+
+<a id="api-world-section"></a>
+
+### `World.section`
+
+[Source](src/cruxible_client/authoring/world.py)
+
+```text
+section(file: str, heading_path: tuple[str, ...] | None = None, *, text: str | None = None, heading: str | None = None, body: str = '', under: tuple[str, ...] = (), replace: bool = False, expect: str | None = None) -> AuthoredSection
+```
+
+`cx.section(...)` beside `write`: a new section's text carried as the evidence
+of one write (`evidence=w.section(file, heading="slug", body="...")` on `set`,
+`add`, `define` or `edit`), appended and cited when the write is admitted.
+
+<a id="api-world-note"></a>
+
+### `World.note`
+
+[Source](src/cruxible_client/authoring/world.py)
+
+```text
+note(file: str, *, text: str, about: Sequence[str | SubjectRef], because: str, under: tuple[str, ...] = (), heading: str | None = None, dry_run: bool = False, accept: Literal['if_allowed', 'never'] = 'if_allowed') -> WriteOutcome
+```
+
+`cx.note(...)` checked from this World's write basis: appends a section and
+links it `about` Subjects, a note and never a Claim. A Subject's `get` card then
+points to it, and `cruxible section FILE#Heading/Path` reads it.
 
 <a id="api-world-kinds"></a>
 
@@ -3172,15 +3206,18 @@ checked from its coordinate advanced past its own accepted writes, so its
 references stay valid after them; only a field someone else moved refuses. The
 generated stub types `set` and `add` per kind, enum members as `Literal`s.
 `subject.edit()` returns the same changes unsent, for `world.write(...)` beside
-new Subjects' drafts.
+new Subjects' drafts; `subject.edit(status="done")` sets the fields it is given
+(with `evidence=`, `role=`, `contend=`) and still chains `.add(...)` and
+`.retire(...)`.
 
 New Subjects come from `world.<kind>.define(...)`, typed per kind by its
 SubjectKind: a one-key kind takes its key positionally or by its leaf, a
 composite kind each key part by its leaf, a minted kind none; every other
-keyword is a field with one value: set when the field holds one value, added
-when it holds many. A list is not a value: give a many-valued field each
-further value with its own `.add(field=value)`
-(`cruxible.sdk.field_value_refused` otherwise). A field whose leaf is a write
+keyword is a field: set when the field holds one value, added when it holds
+many. A many-valued field takes one value or a list (or tuple) of them in
+`define(...)` and `add(...)`, one added value per item in order; a string is one
+value, and a set, an empty list or a list on a single-value field refuses
+(`cruxible.sdk.field_value_refused`). A field whose leaf is a write
 keyword (`role`, `evidence`) is written by its full predicate name,
 `define(**{"oncall.shift.role": "primary"})`; `role=` itself is the Claim role
 (`cruxible.sdk.reserved_keyword` when it is given a field value). A full
@@ -5115,10 +5152,11 @@ Import: `cruxible_client.contracts.authoring.inputs.ProcedureMandateInput`. [Sou
 | `name` | `str` | `Required` |
 | `line_name` | `str` | `Required` |
 | `grants` | `Literal['propose', 'settle']` | `Required` |
-| `namespace` | `tuple[str, ...]` | `Required` |
+| `namespace` | `tuple[str, ...]` | `()`; required except with `scope: observations`, which defaults it to `claims` |
 | `valid_from` | `datetime` | `Required` |
 | `expires_at` | `datetime` | `Required` |
-| `scope` | `tuple[MandateScopeAuthoring, ...]` | `()`; for a settle grant, the ClaimTypes it may settle and, per change kind, the evidence bases (`extracted`, `measured`, `derived`, `absence`) that settle; `value: {from, to}` for enum and bool types |
+| `scope` | `tuple[MandateScopeAuthoring, ...] \| Literal['observations']` | `()`; for a settle grant, the ClaimTypes it may settle and, per change kind, the evidence bases (`extracted`, `measured`, `derived`, `absence`) that settle; `value: {from, to}` for enum and bool types. `observations`: every observation-only ClaimType the Line's Procedure writes, lowered to that exact per-ClaimType scope |
+| `include_derived` | `bool` | `False`; `scope: observations` only: also settle values on basis `derived` |
 | `subject_scope` | `tuple[SemanticAddress, ...] \| None` | `None` |
 | `subjects` | `Optional[Literal['expected']]` | `None` |
 | `condition` | `MandateConditionAuthoring \| None` | `None`; a settle grant's condition query, with its fallback (`refuse` or `propose`) |

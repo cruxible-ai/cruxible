@@ -57,6 +57,7 @@ def test_get_is_a_read_only_default_tool_with_only_declared_parameters(
         "pairs",
         "runs",
         "backlinks",
+        "notes",
         "proof",
         "proof_full",
         "body",

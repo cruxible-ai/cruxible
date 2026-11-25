@@ -54,9 +54,11 @@ from cruxible_client.contracts.identity_normalizers import (
 )
 from cruxible_client.contracts.procedures.reads import ProcedureReadCeiling
 from cruxible_client.contracts.query.definitions import (
+    QUERY_ORDERING_OPERATORS,
     AcceptedQueryDefinition,
     QueryDefinition,
     QueryEvaluationPolicy,
+    query_enum_comparison_problem,
 )
 from cruxible_client.contracts.query.grammar import (
     QueryArtifactsEntry,
@@ -104,6 +106,7 @@ from cruxible_client.contracts.query.results import (
     QueryVerdictVisibility,
 )
 from cruxible_client.contracts.query.values import QueryTypedValue, coerce_query_value
+from cruxible_client.contracts.shapes import EnumType
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.indexes.subject_aliases import (
     SubjectReferenceAmbiguous,
@@ -216,6 +219,17 @@ def _compare(left: object, right: object, value_type: QueryValueType) -> int:
     if first == second:
         return 0
     return -1 if first < second else 1
+
+
+def _rank(ranked: EnumType, value: object) -> int | None:
+    """A coerced string's declared rank: ``string`` values compare as their UTF-8 bytes."""
+
+    if isinstance(value, bytes):
+        try:
+            value = value.decode("utf-8")
+        except UnicodeDecodeError:
+            return None
+    return ranked.rank(value)
 
 
 def _render_time(value: datetime) -> str:
@@ -451,6 +465,7 @@ class _Evaluator:
         canonical_forms: Mapping[str, tuple[str, ...]] | None = None,
         resolve_reference: SubjectReferenceResolver | None = None,
         key_normalizers: Mapping[str, KeyNormalizer] | None = None,
+        enum_types: Mapping[str, EnumType] | None = None,
     ) -> None:
         self._definition = definition
         self._backend = backend
@@ -459,6 +474,7 @@ class _Evaluator:
         self._canonical_forms = canonical_forms or {}
         self._resolve_reference = resolve_reference
         self._key_normalizers = key_normalizers or {}
+        self._enum_types = enum_types or {}
 
     def _form(self, ref: QueryValueRef) -> tuple[str, ...]:
         """The canonical form of the predicate a Claim-value reference reads, if any."""
@@ -501,21 +517,43 @@ class _Evaluator:
                     return rule
         return None
 
-    @staticmethod
-    def _operand_vocabulary(ref: QueryValueRef, *others: QueryValueRef) -> tuple[str, ...]:
+    def _operand_vocabulary(
+        self, ref: QueryValueRef, *others: QueryValueRef, operator: str | None = None
+    ) -> tuple[str, ...]:
         """The closed value set a caller parameter compared with a Claim field must be in.
 
         A literal is checked when the definition is declared; a parameter only
         has its value here, and a role or verdict outside the field's set is a
-        type mismatch, never a filter that silently matches nothing.
+        type mismatch, never a filter that silently matches nothing. Ordered
+        by rank (``operator`` lt/lte/gt/gte) against an ordered enum's values,
+        it must be one of that enum's members: a non-member has no rank.
         """
 
-        if not isinstance(ref, QueryParameterRef):
+        if not isinstance(ref, QueryParameterRef | QueryLiteralRef):
             return ()
         for other in others:
-            if isinstance(other, QueryClaimFieldRef):
+            if isinstance(other, QueryClaimFieldRef) and isinstance(ref, QueryParameterRef):
                 return other.vocabulary
+            if operator in QUERY_ORDERING_OPERATORS:
+                ranked = self._ranked(other)
+                if ranked is not None:
+                    return ranked.members
         return ()
+
+    def _ranked(self, ref: QueryValueRef) -> EnumType | None:
+        """The ordered enum whose declared rank orders ``ref``'s values, if any."""
+
+        if not isinstance(ref, QueryClaimValueRef):
+            return None
+        found = self._enum_types.get(ref.predicate)
+        return found if found is not None and found.ordered else None
+
+    def _comparison_rank(self, *refs: QueryValueRef) -> EnumType | None:
+        for ref in refs:
+            ranked = self._ranked(ref)
+            if ranked is not None:
+                return ranked
+        return None
 
     def _claim_value(self, row: _Row, binding: str, predicate: str) -> _Value:
         subject_path = row.bindings.get(binding)
@@ -797,12 +835,13 @@ class _Evaluator:
                 present = bool(claims)
             return present != filter_.negated
         if isinstance(filter_, QueryComparisonFilter):
+            operator = filter_.operator
             left = self.typed_values(
                 row,
                 filter_.left,
                 filter_.value_type,
                 form=self._operand_form(filter_.left, filter_.right),
-                vocabulary=self._operand_vocabulary(filter_.left, filter_.right),
+                vocabulary=self._operand_vocabulary(filter_.left, filter_.right, operator=operator),
                 key_rule=self._operand_key_rule(filter_.left, filter_.right),
             )
             right = self.typed_values(
@@ -810,11 +849,30 @@ class _Evaluator:
                 filter_.right,
                 filter_.value_type,
                 form=self._operand_form(filter_.right, filter_.left),
-                vocabulary=self._operand_vocabulary(filter_.right, filter_.left),
+                vocabulary=self._operand_vocabulary(filter_.right, filter_.left, operator=operator),
                 key_rule=self._operand_key_rule(filter_.right, filter_.left),
             )
             if left is None or right is None:
                 return False
+            ranked = (
+                self._comparison_rank(filter_.left, filter_.right)
+                if operator in QUERY_ORDERING_OPERATORS
+                else None
+            )
+            if ranked is not None:
+                # Declared rank, never text order: a stored value outside the
+                # members (none should exist) has no rank and matches nothing.
+                left_ranks = [
+                    rank for one in left if (rank := _rank(ranked, one.value)) is not None
+                ]
+                right_ranks = [
+                    rank for one in right if (rank := _rank(ranked, one.value)) is not None
+                ]
+                return any(
+                    _OPERATORS[operator](_compare(one, other, "integer"))
+                    for one in left_ranks
+                    for other in right_ranks
+                )
             orders = (
                 _compare(one.value, other.value, filter_.value_type)
                 for one in left
@@ -870,6 +928,16 @@ class _Evaluator:
         """
 
         keys = [[self.typed(row, item.key, item.value_type) for item in orderings] for row in rows]
+        for index, item in enumerate(orderings):
+            ranked = self._ranked(item.key)
+            if ranked is None:
+                continue
+            # An ordered enum orders by declared rank (index 0 lowest); a value
+            # with no rank sorts with the absent ones, last.
+            for row_keys in keys:
+                value = row_keys[index]
+                rank = None if value is None else _rank(ranked, value.value)
+                row_keys[index] = None if rank is None else QueryTypedValue(ok=True, value=rank)
         identities = [
             row.identity() if tiebreaks is None else row.identity() + tiebreaks[index]
             for index, row in enumerate(rows)
@@ -913,6 +981,7 @@ class OperandProbe:
         canonical_forms: Mapping[str, tuple[str, ...]],
         key_normalizers: Mapping[str, KeyNormalizer],
         resolve_reference: SubjectReferenceResolver | None,
+        enum_types: Mapping[str, EnumType] | None = None,
     ) -> None:
         self._evaluator = _Evaluator(
             definition,
@@ -922,10 +991,15 @@ class OperandProbe:
             canonical_forms=canonical_forms,
             resolve_reference=resolve_reference,
             key_normalizers=key_normalizers,
+            enum_types=enum_types,
         )
 
     def values(
-        self, ref: QueryValueRef, value_type: QueryValueType, *others: QueryValueRef
+        self,
+        ref: QueryValueRef,
+        value_type: QueryValueType,
+        *others: QueryValueRef,
+        operator: str | None = None,
     ) -> tuple[QueryTypedValue, ...] | None:
         """What a literal or parameter compares as against ``others``; raises its refusal."""
 
@@ -936,36 +1010,36 @@ class OperandProbe:
             ref,
             value_type,
             form=evaluator._operand_form(ref, *others),
-            vocabulary=evaluator._operand_vocabulary(ref, *others),
+            vocabulary=evaluator._operand_vocabulary(ref, *others, operator=operator),
             key_rule=evaluator._operand_key_rule(ref, *others),
         )
 
     def refuses(self, filter_: QueryFilter) -> bool:
         """Whether coercing any literal or parameter operand of ``filter_`` refuses."""
 
-        def pairs(
-            item: QueryFilter,
-        ) -> list[tuple[QueryValueRef, QueryValueType, tuple[QueryValueRef, ...]]]:
+        Pair = tuple[QueryValueRef, QueryValueType, tuple[QueryValueRef, ...], str | None]
+
+        def pairs(item: QueryFilter) -> list[Pair]:
             if isinstance(item, QueryConjunctionFilter | QueryDisjunctionFilter):
                 return [pair for child in item.filters for pair in pairs(child)]
             if isinstance(item, QueryNegationFilter):
                 return pairs(item.operand)
             if isinstance(item, QueryComparisonFilter):
                 return [
-                    (item.left, item.value_type, (item.right,)),
-                    (item.right, item.value_type, (item.left,)),
+                    (item.left, item.value_type, (item.right,), item.operator),
+                    (item.right, item.value_type, (item.left,), item.operator),
                 ]
             if isinstance(item, QueryMembershipFilter):
                 return [
-                    (item.left, item.value_type, item.values),
-                    *((value, item.value_type, (item.left,)) for value in item.values),
+                    (item.left, item.value_type, item.values, None),
+                    *((value, item.value_type, (item.left,), None) for value in item.values),
                 ]
             return []
 
         try:
-            for ref, value_type, others in pairs(filter_):
+            for ref, value_type, others, operator in pairs(filter_):
                 if isinstance(ref, QueryLiteralRef | QueryParameterRef):
-                    self.values(ref, value_type, *others)
+                    self.values(ref, value_type, *others, operator=operator)
         except _RefusalSignal:
             return True
         return False
@@ -1233,6 +1307,7 @@ def evaluate_claim_query(
     canonical_forms: Mapping[str, tuple[str, ...]] | None = None,
     procedure_read: ProcedureReadCeiling | None = None,
     key_normalizers: Mapping[str, KeyNormalizer] | None = None,
+    enum_types: Mapping[str, EnumType] | None = None,
 ) -> ClaimQueryResult:
     """Evaluate one accepted QueryDefinition against accepted Claim facts.
 
@@ -1279,6 +1354,7 @@ def evaluate_claim_query(
             entry_candidate_count=entry_candidate_count,
             canonical_forms=canonical_forms,
             key_normalizers=key_normalizers,
+            enum_types=enum_types,
         )
     except _RefusalSignal as signal:
         return ClaimQueryResult(
@@ -1539,8 +1615,20 @@ def _evaluate(
     entry_candidate_count: int | None = None,
     canonical_forms: Mapping[str, tuple[str, ...]] | None = None,
     key_normalizers: Mapping[str, KeyNormalizer] | None = None,
+    enum_types: Mapping[str, EnumType] | None = None,
 ) -> ClaimQueryResult:
     query = definition.query
+    if enum_types is None:
+        enum_types = {
+            row.accepted.claim.statement.predicate: row.value_enum
+            for row in facts.claims
+            if row.value_enum is not None
+        }
+    # Before any row: an ordering comparison over an enum that has no declared
+    # rank, or across two enums, refuses whatever the rows hold.
+    enum_problem = query_enum_comparison_problem(query, enum_types.get)
+    if enum_problem is not None:
+        raise _refuse(VALUE_TYPE_MISMATCH, enum_problem)
     backend = backend_factory(facts, definition=query, evaluation_time=evaluation_time)
     if not canonical_equal(
         backend.coordinate.model_dump(mode="json"), coordinate.model_dump(mode="json")
@@ -1570,6 +1658,7 @@ def _evaluate(
             for row in facts.claims
             if row.key_normalizer is not None
         },
+        enum_types=enum_types,
     )
     clipped: set[QueryClippedBudget] = set()
 

@@ -22,12 +22,18 @@ from cruxible_client.contracts.authoring.models import (
     RunbookAuthoringPayload,
     TriggerAuthoringPayload,
 )
+from cruxible_client.contracts.procedures.artifacts import (
+    ProcedureFormatError,
+    parse_procedure,
+    procedure_path,
+)
 from cruxible_client.contracts.procedures.line_specs import (
     LineSpecFormatError,
     line_spec_path,
     parse_line_spec,
 )
 from cruxible_client.contracts.runbooks import (
+    ProcedureTarget,
     Runbook,
     RunbookFormatError,
     RunbookStep,
@@ -64,7 +70,11 @@ if TYPE_CHECKING:
 
 
 def _step(
-    index: int, line: str | None, action: str | None, tree: Mapping[str, bytes]
+    index: int,
+    line: str | None,
+    action: str | None,
+    procedure: str | None,
+    tree: Mapping[str, bytes],
 ) -> RunbookStep:
     if action is not None:
         if action not in INTERNAL_ACTIONS:
@@ -80,6 +90,28 @@ def _step(
 
         _refuse_unserved_action(action, f"steps[{index}].action")
         return ActionTarget(action=action)
+    if procedure is not None:
+        proc_path = procedure_path(procedure)
+        proc_content = tree.get(proc_path)
+        accepted_proc = None
+        if proc_content is not None:
+            try:
+                accepted_proc = parse_procedure(proc_content, path=proc_path)
+            except ProcedureFormatError:
+                accepted_proc = None
+        if accepted_proc is None or accepted_proc.lifecycle.state != "live":
+            _refuse(
+                "cruxible.authoring.runbook_procedure_missing",
+                f"steps[{index}].procedure",
+                f"Procedure {procedure!r} is not a live accepted Procedure at this base.",
+                repair_kind="replace_input",
+                repair_description=(
+                    "Accept the Procedure first, or name an accepted live Procedure."
+                ),
+            )
+        return ProcedureTarget(
+            procedure=ArtifactNameRef(target=ArtifactIdentity(kind="Procedure", name=procedure))
+        )
     assert line is not None
     path = line_spec_path(line)
     content = tree.get(path)
@@ -157,7 +189,8 @@ def render_runbook_member(
         identity=ArtifactIdentity(kind="Runbook", name=payload.name),
         description=payload.description,
         steps=tuple(
-            _step(index, step.line, step.action, tree) for index, step in enumerate(payload.steps)
+            _step(index, step.line, step.action, step.procedure, tree)
+            for index, step in enumerate(payload.steps)
         ),
         lifecycle=ArtifactLifecycle(
             predecessor_digest=None if previous is None else runbook_digest(previous).tagged
@@ -176,6 +209,21 @@ def lower_runbook(
     base: AcceptedProjectionCoordinate,
     base_tree: Mapping[str, bytes],
 ) -> LoweredAuthoring:
+    from cruxible_core.compiler.compiler import admits_revision_74
+
+    if (
+        not payload.retire
+        and any(step.procedure is not None for step in payload.steps)
+        and not admits_revision_74(base.compiler)
+    ):
+        _refuse(
+            "cruxible.authoring.runbook_procedure_requires_compiler_upgrade",
+            "steps",
+            "A Procedure fan-out Runbook step needs compiler revision 74; this instance is "
+            "on an earlier revision.",
+            repair_kind="upgrade_compiler",
+            repair_description="Back up the instance, then run `cruxible compiler upgrade`.",
+        )
     path, content, digest = render_runbook_member(payload, tree=base_tree)
     candidate_tree = fork_tree(base_tree)
     candidate_tree[path] = content

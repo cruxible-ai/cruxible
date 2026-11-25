@@ -190,15 +190,23 @@ from cruxible_client.contracts.write import (
     WriteRequest,
     WriteStatus,
     WriteWarning,
+    based_on_created_slot,
+    based_on_slot,
     capture_handle,
     change_set_rationale,
     change_set_rationale_too_long,
     subject_reference,
 )
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
-from cruxible_core.authoring.lowering import AuthoringLoweringError, subject_creation_paths
+from cruxible_core.authoring.lowering import (
+    AuthoringLoweringError,
+    claim_staging_order,
+    subject_creation_paths,
+    subject_key_claim_id,
+)
 from cruxible_core.authoring.preflight import ComputedPreflight
 from cruxible_core.claims.claim_retirement import ClaimRetireError, claim_retirement_inventory
+from cruxible_core.derived.derived_state import SnapshotTree
 from cruxible_core.errors import RequestRefusedError
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.indexes.subject_aliases import (
@@ -340,7 +348,7 @@ def _render_proposal_call(
         if verb == "approve":
             # No key: the signer's client finds it (remembered settings) or
             # refuses with the repair.
-            who = signer or "'<SIGNER_ID>'"
+            who = shlex.quote(signer or placeholder("SIGNER_ID"))
             return f"cruxible proposal approve {proposal_id} --signer-id {who}"
         return f"cruxible proposal activate {proposal_id}"
     if surface == "sdk":
@@ -637,6 +645,27 @@ class _Bound:
         return self.path if self.path is not None else f"pending:{self.member}"
 
 
+@dataclass(frozen=True, order=True)
+class _KeyPin:
+    """A key Claim a creation of this write states: its member and key predicate.
+
+    Its id derives from the operation lowering runs under
+    (``subject_key_claim_id``), so lowering names it once that is known.
+    """
+
+    member: str
+    predicate: str
+
+
+#: What one ``based_on`` name resolves to: a Claim id, the index of the change
+#: of this write whose new Claim it names, or a key Claim a creation states.
+_PinTarget = str | int | _KeyPin
+
+#: The operation a planning-time assignment runs under: only the paths no
+#: operation decides (``include_operation_dependent=False``) are read from it.
+_UNASSIGNED_OPERATION = "AIT-" + "0" * 32
+
+
 @dataclass
 class _Planned:
     """One change resolved against accepted state, before its member is built."""
@@ -673,6 +702,11 @@ class _Planned:
     # retirement members beside the Subject's own.
     retires_also: tuple[str, ...] = ()
     extra_members: tuple[AuthoringChangeSetMember, ...] = ()
+    # What ``based_on`` resolved to: a Claim id, the index of the change of
+    # this write whose new Claim it names (its id is minted at lowering), or a
+    # key Claim a creation of this write states (its id derives from the
+    # operation lowering runs under).
+    based_on_targets: tuple[_PinTarget, ...] | None = None
 
 
 @dataclass
@@ -715,6 +749,8 @@ class _Planner:
         self._kinds: dict[str, SubjectKind | None] = {}
         self._planned_keys: dict[tuple[str, str], _Bound] = {}
         self._pending_paths: dict[str, _Bound] = {}
+        # The Subjects this write creates by key-determined path, once a pin needs them.
+        self._assigned: dict[str, _Bound] | None = None
         self._retired_here: dict[str, bool] | None = None
         self._pending_members: set[str] = set()
         self._key_reader: KeyReader | None = None
@@ -722,8 +758,28 @@ class _Planner:
         # Each re-bind a ``from_capture`` expanded into, by its position in the
         # expanded changes: the Capture whose citation it replaces.
         self._rebind_from: dict[int, str] = {}
+        # The Claims the changes planned so far retire and revise, kept as each
+        # is planned (``_add_planned``): one set update per change, never a walk
+        # of every earlier change.
+        self._retiring_claims: set[str] = set()
+        self._revising_claims: set[str] = set()
+        # The shared resolver's overlay, kept across this write's resolutions:
+        # each retired Claim is laid over it once (``identity_view``), from the
+        # queue of those not yet laid.
+        self._identity: IdentityView | None = None
+        self._unoverlaid: list[str] = []
+        # The paths of live Subjects a create change landed on, by label.
+        self._landed_paths: set[str] = set()
+        self._head_tree: SnapshotTree | None = None
 
     # -- accepted state ----------------------------------------------------------
+
+    def head_tree(self) -> SnapshotTree:
+        """The head's accepted tree, verified once for the whole write."""
+
+        if self._head_tree is None:
+            self._head_tree = self.instance.immutable_tree_at(self.head.git_oid)
+        return self._head_tree
 
     def subject_exists(self, path: str) -> bool:
         if path not in self._subject_exists:
@@ -1008,12 +1064,19 @@ class _Planner:
         """
 
         if self._key_reader is None:
-            self._key_reader = tree_key_reader(self.instance.immutable_tree_at(self.head.git_oid))
-        overlay = IdentityOverlay()
-        retiring = self._retiring()
+            self._key_reader = tree_key_reader(self.head_tree())
         with self.instance.bind_accepted_projection(self.head) as projection:
             connection = projection.typed.connection
-            for claim_id in sorted(retiring):
+            view = self._identity
+            if view is None:
+                view = IdentityView(connection, IdentityOverlay(), key_reader=self._key_reader)
+                self._identity = view
+            view.connection = connection
+            # Only the Claims retired since the last resolution are read and
+            # laid: what each lays (an alias row ended, a key freed) is a set
+            # member or a None key, so the overlay is the same in any order.
+            while self._unoverlaid:
+                claim_id = self._unoverlaid.pop()
                 row = connection.execute(
                     "SELECT subject_path, predicate FROM claims WHERE identity=?",
                     (f"Claim:{claim_id}",),
@@ -1025,11 +1088,11 @@ class _Planner:
                     "SELECT term FROM vocabulary_terms WHERE source_identity=? AND basis='alias'",
                     (f"Claim:{claim_id}",),
                 ):
-                    overlay.aliases_removed.add((subject, str(term[0])))
+                    view.overlay.aliases_removed.add((subject, str(term[0])))
                 declared = self.declared_kind(subject_kind_of(subject)[0])
                 if declared is not None and predicate in declared.keys:
-                    overlay.keys[subject] = None
-            yield IdentityView(connection, overlay, key_reader=self._key_reader)
+                    view.free_key(subject)
+            yield view
 
     def resolve_ref(
         self, kind: str, subject_id: str, *, index: int, path: str
@@ -1475,6 +1538,8 @@ class _Planner:
         else:
             bound = self._keyed_creation(index, change, declared, backing=backing)
         self.plan.labels[label] = bound
+        if bound.path is not None:
+            self._landed_paths.add(bound.path)
         if bound.member is not None:
             self.plan.creation_changes.setdefault(bound.member, index)
         return _Planned(
@@ -1685,6 +1750,239 @@ class _Planner:
 
     def field_name(self, info: PredicateInfo, kind: str) -> str:
         return self.vocabulary.field_name(info, (kind,))
+
+    def based_on(
+        self,
+        names: tuple[str, ...],
+        *,
+        index: int,
+        writers: Mapping[tuple[str, str], Sequence[_Planned]],
+    ) -> tuple[_PinTarget, ...]:
+        """``based_on`` as what it pins: Claim ids, changes of this write, and key Claims.
+
+        A shorthand (``kind/id#field``, or ``label#field`` for a Subject a
+        create change labels) names its slot's one Claim as this write leaves
+        it: the live Claims at the head, less any this write retires or revises,
+        plus the Claim each set or add of this write puts there (a revision
+        keeps its id; a new Claim is named by its change until lowering mints
+        its id), plus the key Claim a creation of this write states (named by
+        its creation member and predicate until the operation names its id). A
+        Subject this write creates is named by its label or by the id its key
+        determines. None refuses ``based_on_not_found`` and several refuse
+        ``based_on_ambiguous`` naming each, so a pin never guesses; the slot the
+        change itself writes refuses ``based_on_self``. A Claim named several
+        ways is pinned once. Cost: one slot read per shorthand.
+        """
+
+        path = f"changes[{index}].based_on"
+        resolved: set[str] = set()
+        siblings: set[int] = set()
+        keys: set[_KeyPin] = set()
+        for name in names:
+            created = based_on_created_slot(name)
+            slot = None if created is not None else based_on_slot(name)
+            if created is None and slot is None:
+                resolved.add(name)
+                continue
+            landing: _Bound | None
+            if created is not None:
+                label, written_field = created
+                landing = self.bound(label, index=index, path=path)
+                kind, subject_path_value = landing.kind, landing.slot_path
+                owner = landing.ref or f"{{created: {label}}}"
+            else:
+                assert slot is not None
+                owner, written_field = slot
+                kind, _subject_id, subject_path_value = self.resolve_subject(
+                    owner, index=index, path=path
+                )
+                landing = self._pending_paths.get(subject_path_value)
+                if landing is None and not self.subject_exists(subject_path_value):
+                    # A Subject this write creates, named by the id its key
+                    # determines (a pair of live ends, say).
+                    landing = self._assigned_pending().get(subject_path_value)
+                    if landing is None:
+                        raise _refuse(
+                            "cruxible.write.subject_not_found",
+                            f"{owner} names no accepted Subject and none this write creates, "
+                            f"so {name} names no Claim",
+                            change=index,
+                            repair="Name a Subject as kind/id; orient and query list them",
+                            field_path=path,
+                        )
+                    subject_path_value = landing.slot_path
+            pending = landing is not None and landing.path is None
+            info = self.resolve_field(kind, written_field, index=index, path=path)
+            field_name = self.field_name(info, kind)
+            shown = (
+                f"{owner} {field_name}"
+                if pending
+                else (
+                    f"{subject_path_value.removeprefix('subjects/').removesuffix('.json')} "
+                    f"{field_name}"
+                )
+            )
+            here = tuple(writers.get((subject_path_value, info.predicate), ()))
+            if any(item.index == index for item in here):
+                raise _refuse(
+                    "cruxible.authoring.based_on_self",
+                    f"{name} names {shown}, which change {index} itself writes; a Claim "
+                    "cannot rest on itself",
+                    change=index,
+                    repair="Name the Claims this value was judged from, not the one it writes",
+                    field_path=path,
+                )
+            revised = {item.revises for item in here if item.revises is not None}
+            retiring = self._retiring()
+            at_head = (
+                ()
+                if pending
+                else tuple(
+                    claim
+                    for claim in self.slot_pin(subject_path_value, info.predicate).live
+                    if claim not in retiring and claim not in revised
+                )
+            )
+            # Creating a keyed Subject writes one key Claim per key part; a
+            # change restating that key is subsumed by the creation, so it adds
+            # no second Claim to the slot.
+            stated: tuple[_KeyPin, ...] = (
+                (_KeyPin(landing.member, info.predicate),)
+                if pending
+                and landing is not None
+                and landing.member is not None
+                and info.predicate in {predicate for predicate, _value in landing.key}
+                else ()
+            )
+            found: list[_PinTarget] = [
+                *at_head,
+                *stated,
+                *(item.revises if item.revises is not None else item.index for item in here),
+            ]
+            if not found:
+                raise _refuse(
+                    "cruxible.write.based_on_not_found",
+                    f"{shown} holds no live Claim to rest on (at the write's base, "
+                    "less any this write retires, plus any it writes)",
+                    change=index,
+                    repair=(
+                        f"Name a field that holds a value, or set {field_name} in this write"
+                        if pending
+                        else "Name a field that holds a value; "
+                        f"{_render_get(self.request.surface, owner)} lists its Claims"
+                    ),
+                    field_path=path,
+                )
+            if len(found) > 1:
+                raise _refuse(
+                    "cruxible.write.based_on_ambiguous",
+                    f"{shown} holds {len(found)} live Claims after this write; based_on names one",
+                    change=index,
+                    candidates=tuple(
+                        item
+                        if isinstance(item, str)
+                        else f"changes[{item}]"
+                        if isinstance(item, int)
+                        else f"{owner}#{field_name}"
+                        for item in found
+                    ),
+                    repair=(
+                        "Name the Claim it rests on by ID (one of the listed CLM-...), "
+                        "or leave one value in that field"
+                    ),
+                    field_path=path,
+                )
+            target = found[0]
+            if isinstance(target, str):
+                resolved.add(target)
+            elif isinstance(target, int):
+                siblings.add(target)
+            else:
+                keys.add(target)
+        return (*sorted(resolved, key=str.encode), *sorted(siblings), *sorted(keys))
+
+    def _assigned_pending(self) -> dict[str, _Bound]:
+        """The Subjects this write creates, by the path their key alone determines.
+
+        Computed once per write, and only when a ``based_on`` names a Subject
+        neither accepted nor planned by that spelling: the shared assignment
+        over this write's creations, less the ids its operation assigns
+        (minted ones and further holders), which no writer can spell yet.
+        Cost: one assignment over this write's creations.
+        """
+
+        if self._assigned is None:
+            self._assigned = {}
+            if self.plan.pending:
+                try:
+                    paths = subject_creation_paths(
+                        self.instance,
+                        operation=_UNASSIGNED_OPERATION,
+                        base=self.head,
+                        base_tree=self.head_tree(),
+                        members=tuple(self.plan.pending.values()),
+                        include_operation_dependent=False,
+                    )
+                except AuthoringLoweringError:
+                    # Lowering reports the creation's own refusal; no pin resolves here.
+                    paths = {}
+                for member, (assigned, reused) in paths.items():
+                    bound = self._pending_paths.get(f"pending:{member}")
+                    if bound is not None and not reused:
+                        self._assigned[assigned] = bound
+        return self._assigned
+
+    def resolve_based_on(self) -> None:
+        """Resolve every change's ``based_on`` once all of this write's changes are planned.
+
+        A shorthand may name a slot a later change of this write fills, so pins
+        resolve after planning, against what the whole write leaves. A cycle of
+        pins among this write's own Claims refuses ``based_on_cycle``: each would
+        have to be staged before the other. Cost: linear in this write's changes.
+        """
+
+        claims = [
+            item
+            for item in self.plan.changes
+            if isinstance(item.member, ClaimAuthoringPayload) and item.slot is not None
+        ]
+        writers: dict[tuple[str, str], list[_Planned]] = {}
+        revised_by: dict[str, int] = {}
+        for item in claims:
+            if item.op in ("set", "add"):
+                assert item.slot is not None
+                writers.setdefault(item.slot, []).append(item)
+            if item.revises is not None:
+                revised_by[item.revises] = item.index
+        edges: dict[int, set[int]] = {}
+        for item in claims:
+            change = item.change
+            if change is None or change.based_on is None:
+                continue
+            targets = self.based_on(change.based_on, index=item.index, writers=writers)
+            item.based_on_targets = targets
+            ids = tuple(target for target in targets if isinstance(target, str))
+            assert isinstance(item.member, ClaimAuthoringPayload)
+            item.member = item.member.model_copy(update={"based_on": ids})
+            item.outcome["based_on"] = ids
+            edges[item.index] = {target for target in targets if isinstance(target, int)} | {
+                revised_by[target]
+                for target in targets
+                if isinstance(target, str) and target in revised_by
+            }
+            edges[item.index].discard(item.index)
+        cycle = _first_cycle(edges)
+        if cycle:
+            raise _refuse(
+                "cruxible.write.based_on_cycle",
+                "changes "
+                + ", ".join(str(index) for index in cycle)
+                + " rest on each other's Claims in a cycle (based_on)",
+                change=cycle[0],
+                candidates=tuple(f"changes[{index}]" for index in cycle),
+                repair="Drop one of these based_on pins so the Claims rest on each other one way",
+                field_path=f"changes[{cycle[0]}].based_on",
+            )
 
     def role(
         self,
@@ -2772,6 +3070,7 @@ class _Planner:
         }
         if isinstance(change.evidence, SectionEvidence) and change.evidence.own_words:
             values["located_at"] = change.evidence.observation
+        # ``based_on`` resolves once the whole write is planned (resolve_based_on).
         member = ClaimAuthoringPayload(**values)
         used_contract = (
             COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity.name
@@ -2802,6 +3101,9 @@ class _Planner:
                 "revises": revises,
                 "contenders_created": contenders,
                 "capture": None if capture is None else capture_handle(capture),
+                # Shown when the writer named it; a default role says nothing new.
+                "role": change.role,
+                "based_on": (),
             },
             member=member,
             capture=capture,
@@ -2921,13 +3223,26 @@ class _Planner:
         info = self.vocabulary.predicates.get(predicate)
         return info is not None and claim_value_kind(info.claim_type.value) == "subject"
 
+    def _add_planned(self, planned: _Planned) -> None:
+        """Keep one planned change, with the Claims it retires and revises."""
+
+        self.plan.changes.append(planned)
+        if planned.revises is not None:
+            self._revising_claims.add(planned.revises)
+        for claim in (planned.retires, *planned.retires_also):
+            if claim is not None and claim not in self._retiring_claims:
+                self._retiring_claims.add(claim)
+                self._unoverlaid.append(claim)
+
     def _retiring(self) -> set[str]:
-        retiring = {item.retires for item in self.plan.changes if item.retires is not None}
-        retiring.update(claim for item in self.plan.changes for claim in item.retires_also)
-        return retiring
+        """The Claims the changes planned so far retire (read-only: kept by ``_add_planned``)."""
+
+        return self._retiring_claims
 
     def _revising(self) -> set[str]:
-        return {item.revises for item in self.plan.changes if item.revises is not None}
+        """The Claims the changes planned so far revise (read-only: kept by ``_add_planned``)."""
+
+        return self._revising_claims
 
     def _live_claim(self, index: int, claim_id: str, *, path: str) -> ClaimArtifact:
         """One live Claim by ID at the head, refusing when it moved since the read."""
@@ -3383,7 +3698,7 @@ class _Planner:
         def identity_of(ref: str, position: int, field: str) -> str:
             element = f"{path}.{field}[{position}]"
             _kind, _id, subject_file = self.resolve_subject(ref, index=index, path=element)
-            created = any(bound.path == subject_file for bound in self.plan.labels.values())
+            created = subject_file in self._landed_paths
             # An unlink names a Subject the note holds, live or since retired.
             if subject_file.startswith("pending:") or not (
                 field == "unlink" or created or self.subject_exists(subject_file)
@@ -3489,7 +3804,7 @@ class _Planner:
             )
         declared = self.declared_kind(kind)
         keys = frozenset(() if declared is None else declared.keys)
-        changing = self._retiring() | self._revising()
+        retiring, revising = self._retiring(), self._revising()
         with self.instance.bind_accepted_projection(self.head) as projection:
             connection = projection.typed.connection
             own = [
@@ -3499,7 +3814,7 @@ class _Planner:
                     "AND +lifecycle='live' ORDER BY identity",
                     (path,),
                 )
-                if _bare(str(row[0])) not in changing
+                if _bare(str(row[0])) not in retiring and _bare(str(row[0])) not in revising
             ]
             incoming = [
                 (str(row[0]), str(row[1]), str(row[2]))
@@ -3509,7 +3824,7 @@ class _Planner:
                     "AND +lifecycle='live' ORDER BY identity",
                     (path, path),
                 )
-                if _bare(str(row[0])) not in changing
+                if _bare(str(row[0])) not in retiring and _bare(str(row[0])) not in revising
             ]
         retired_here = self._subjects_retired_here()
         pairs: list[tuple[str, str, str]] = []
@@ -3606,7 +3921,7 @@ class _Planner:
                 repair=_render_subject_retire(self.request.surface, named),
                 field_path=prefix,
             )
-        tree = self.instance.immutable_tree_at(self.head.git_oid)
+        tree = self.head_tree()
         members: list[AuthoringChangeSetMember] = []
         covered: set[str] = set()
         for identity, _predicate in stated:
@@ -3820,7 +4135,7 @@ class _Planner:
         content = self.instance.blob_at(self.head.git_oid, claim_path(claim_id))
         assert content is not None
         claim = parse_claim(content, path=claim_path(claim_id))
-        tree = self.instance.immutable_tree_at(self.head.git_oid)
+        tree = self.head_tree()
         try:
             inventory = claim_retirement_inventory(
                 self.instance,
@@ -3900,7 +4215,7 @@ class _Planner:
         slots: dict[tuple[str, str], int] = {}
         for index, change in order:
             if isinstance(change, CreateChange):
-                self.plan.changes.append(self.create_change(index, change))
+                self._add_planned(self.create_change(index, change))
                 continue
             if isinstance(change, RetireChange):
                 planned = self.retire_change(index, change)
@@ -3938,9 +4253,38 @@ class _Planner:
                         repair="Keep one set per field in a write",
                     )
                 slots[planned.slot] = index
-            self.plan.changes.append(planned)
+            self._add_planned(planned)
         self.plan.changes.sort(key=lambda item: item.index)
+        self.resolve_based_on()
         return self.plan
+
+
+def _first_cycle(edges: Mapping[int, set[int]]) -> tuple[int, ...]:
+    """The first cycle in ``edges`` (change index to the changes it rests on), else empty."""
+
+    state: dict[int, int] = {}
+    stack: list[int] = []
+
+    def visit(node: int) -> tuple[int, ...]:
+        state[node] = 1
+        stack.append(node)
+        for nxt in sorted(edges.get(node, ())):
+            if state.get(nxt) == 1:
+                return tuple(sorted(stack[stack.index(nxt) :]))
+            if nxt not in state:
+                found = visit(nxt)
+                if found:
+                    return found
+        stack.pop()
+        state[node] = 2
+        return ()
+
+    for node in sorted(edges):
+        if node not in state:
+            found = visit(node)
+            if found:
+                return found
+    return ()
 
 
 # -- lowering the plan onto one change set ----------------------------------------
@@ -3970,7 +4314,13 @@ def _with_dispositions(
 
 
 @timed_phase("lower")
-def _lower(plan: _Plan, *, because: str, planned_at: AcceptedProjectionCoordinate) -> _Lowered:
+def _lower(
+    plan: _Plan,
+    *,
+    because: str,
+    planned_at: AcceptedProjectionCoordinate,
+    operation: str,
+) -> _Lowered:
     """Fold the plan into one change set, filling every disposition the slot law demands.
 
     A new Claim must disposition every live Claim of its slot when it is staged.
@@ -3978,7 +4328,9 @@ def _lower(plan: _Plan, *, because: str, planned_at: AcceptedProjectionCoordinat
     sibling added earlier in the same set is live by then: two ``add`` changes
     on one many-valued field need the second to disposition the first. The
     sibling has no ID until the coordinator mints it, so the IDs are minted
-    here, in the coordinator's own order, and handed to it.
+    here, in the coordinator's own order, and handed to it. ``operation`` is
+    the intent id the change set is submitted (or previewed) under: a key
+    Claim a creation states takes its id from it (``subject_key_claim_id``).
     """
 
     drafts: list[tuple[int | None, AuthoringChangeSetMember]] = [
@@ -4010,25 +4362,67 @@ def _lower(plan: _Plan, *, because: str, planned_at: AcceptedProjectionCoordinat
         if isinstance(member, ClaimAuthoringPayload) and member.revises is None:
             minted[identity] = new_claim_id()
             claim_ids.append(minted[identity])
-    siblings: dict[tuple[str, str], list[str]] = {}
+    identity_by_change = {
+        index: identity for identity, (index, _member) in by_identity.items() if index is not None
+    }
     members: list[AuthoringChangeSetMember] = []
-    identity_by_change: dict[int, str] = {}
     pins: dict[int, _SlotPin] = {}
     for identity in ordered:
         index, member = by_identity[identity]
         if index is not None:
-            identity_by_change[index] = identity
-            pin = planned_by_index[index].pin
-            if pin is not None:
-                pins[len(members)] = pin
-        if isinstance(member, ClaimAuthoringPayload) and index is not None:
             planned = planned_by_index[index]
-            assert planned.slot is not None
-            earlier = siblings.setdefault(planned.slot, [])
-            member = _with_dispositions(member, (*planned.existing, *earlier))
-            if identity in minted:
-                earlier.append(minted[identity])
+            if planned.pin is not None:
+                pins[len(members)] = planned.pin
+            if isinstance(member, ClaimAuthoringPayload) and any(
+                not isinstance(target, str) for target in planned.based_on_targets or ()
+            ):
+                # A pin on a Claim this same write makes names the id minted
+                # above, or the key Claim's id under this operation.
+                ids = tuple(
+                    sorted(
+                        {
+                            target
+                            if isinstance(target, str)
+                            else minted[identity_by_change[target]]
+                            if isinstance(target, int)
+                            else subject_key_claim_id(
+                                operation=operation,
+                                member=target.member,
+                                predicate=target.predicate,
+                            )
+                            for target in planned.based_on_targets or ()
+                        },
+                        key=lambda item: item.encode("ascii"),
+                    )
+                )
+                member = member.model_copy(update={"based_on": ids})
+                planned.member = member
+                planned.outcome["based_on"] = ids
         members.append(member)
+    # Dispositions follow the order lowering stages Claims in (canonical, with a
+    # Claim resting on a sibling's staged after it), so each new Claim names the
+    # siblings already live in its slot when it is staged.
+    change_of_position = {
+        position: by_identity[identity][0] for position, identity in enumerate(ordered)
+    }
+    claim_id_of = {
+        identity: minted.get(identity) or member.revises or ""
+        for identity, (_index, member) in by_identity.items()
+        if isinstance(member, ClaimAuthoringPayload)
+    }
+    siblings: dict[tuple[str, str], list[str]] = {}
+    for position in claim_staging_order(members, range(len(members)), claim_id_of):
+        member = members[position]
+        index = change_of_position[position]
+        if not isinstance(member, ClaimAuthoringPayload) or index is None:
+            continue
+        planned = planned_by_index[index]
+        assert planned.slot is not None
+        earlier = siblings.setdefault(planned.slot, [])
+        members[position] = _with_dispositions(member, (*planned.existing, *earlier))
+        identity = ordered[position]
+        if identity in minted:
+            earlier.append(minted[identity])
     rationale = change_set_rationale(because, tuple(plan.retire_notes))
     # The request held because alone to the limit; the retire notes resolved
     # here can carry the whole over it.
@@ -4698,7 +5092,7 @@ def _approval(
                     surface,
                     "approve",
                     proposal_id,
-                    signer=approvers[0] if approvers else None,
+                    signer=_independent_signer(approvers, author=caller.actor.actor_id),
                 ),
                 permitted=caller.may_approve,
             )
@@ -4710,6 +5104,21 @@ def _approval(
             permitted=caller.may_activate,
         ),
     )
+
+
+def _independent_signer(approvers: Sequence[str], *, author: str) -> str:
+    """Who a reviewed write's approve call names: never its author, never the caller.
+
+    The one eligible approver when exactly one is registered; otherwise a
+    placeholder the caller fills with an independent reviewer. Leaving the
+    signer out would name the caller's own key (``cx.signer()``, the MCP
+    server's configured signer), which cannot count toward the approval.
+    """
+
+    others = [item for item in approvers if item != author]
+    if len(others) == 1:
+        return others[0]
+    return placeholder("INDEPENDENT_REVIEWER")
 
 
 def _for_caller(call: str, *, permitted: bool) -> str:
@@ -4934,7 +5343,10 @@ def _service_write(
         plan = _Planner(instance, head=head, read_at=read_at, request=request).build()
         if all(item.member is None for item in plan.changes) and not plan.pending:
             return _already_done(instance, head=head, plan=plan, request=request)
-        lowered = _lower(plan, because=request.because, planned_at=head)
+        # Minted before lowering: a pin on a key Claim this write's creation
+        # states names that Claim's id, which derives from the operation.
+        operation = AuthoringIntentCoordinator.for_instance(instance).store.mint_intent_id()
+        lowered = _lower(plan, because=request.because, planned_at=head, operation=operation)
     except (WriteRefusalError, ReadRefusalError) as error:
         return refuse(_refusal(error))
     # The candidate admission evaluated, kept so an accepted write reports the
@@ -4943,7 +5355,7 @@ def _service_write(
     coordinator = _coordinator(instance, lowered.claim_ids, admitted=admitted)
     timestamp = canonical_candidate_timestamp(utc_now())
     if _restates_only(plan, request) and _previews_unchanged(
-        coordinator, caller=caller, lowered=lowered, timestamp=timestamp
+        coordinator, caller=caller, lowered=lowered, timestamp=timestamp, operation=operation
     ):
         # S2: every change restates a live value on the evidence it already
         # cites: answer unchanged and write nothing (no intent, no proposal).
@@ -4960,12 +5372,14 @@ def _service_write(
             plan=plan,
             lowered=lowered,
             timestamp=timestamp,
+            operation=operation,
         )
     view = coordinator.create(
         actor=caller.actor,
         payload=lowered.payload,
         canonical_timestamp=timestamp,
         reference_expectations=lowered.expectations or None,
+        intent_id=operation,
     )
     # This write activates what it admits, in this request: its submission is
     # handed to that activation instead of read back.
@@ -5232,6 +5646,7 @@ def _previews_unchanged(
     caller: WriteCaller,
     lowered: _Lowered,
     timestamp: str,
+    operation: str,
 ) -> bool:
     """Whether the write lowers to nothing: no member changes (S2).
 
@@ -5244,6 +5659,7 @@ def _previews_unchanged(
         payload=lowered.payload,
         canonical_timestamp=timestamp,
         reference_expectations=lowered.expectations or None,
+        intent_id=operation,
     )
     if computed.result.verdict != "passed" or computed.lowered is None:
         return False
@@ -5378,11 +5794,15 @@ def _dry_run(
     plan: _Plan,
     lowered: _Lowered,
     timestamp: str,
+    operation: str,
 ) -> WriteOutcome:
     """Preview the write on its own path: preflight and evaluation, then stop (R12)."""
 
     intent, computed = coordinator.preview(
-        actor=caller.actor, payload=lowered.payload, canonical_timestamp=timestamp
+        actor=caller.actor,
+        payload=lowered.payload,
+        canonical_timestamp=timestamp,
+        intent_id=operation,
     )
     if computed.lowered is not None:
         _bind_pending(instance, plan, lowered, head=head, operation=intent.intent_id, preview=True)

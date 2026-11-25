@@ -130,7 +130,7 @@ def test_default_submit_names_the_approve_command_in_brief_when_it_stops(
 
     assert result.exit_code == 0, result.output
     assert client.activations == []
-    assert f"cruxible proposal approve {PROPOSAL_ID}" in result.output
+    assert f"cruxible proposal approve {PROPOSAL_ID[7:19]}" in result.output
 
 
 def test_refused_brief_prints_the_typed_reason_on_one_line(
@@ -194,14 +194,17 @@ def test_default_submit_brief_prints_the_accepted_coordinate_and_proposal(
     assert client.activations == []
     assert "outcome: accepted" in result.output
     assert f"coordinate: {COORDINATE.git_oid}" in result.output
-    assert f"proposal: {PROPOSAL_ID}" in result.output
+    assert f"proposal: {PROPOSAL_ID[7:19]}" in result.output
 
 
 @pytest.mark.parametrize(
     ("status", "expected"),
     [
         ("accepted", ["accepted (111111111111) by owner", "next: cruxible next"]),
-        ("lost_cas", ["not accepted (lost_cas)", f"next: cruxible proposal readmit {PROPOSAL_ID}"]),
+        (
+            "lost_cas",
+            ["not accepted (lost_cas)", f"next: cruxible proposal readmit {PROPOSAL_ID[7:19]}"],
+        ),
     ],
 )
 def test_proposal_activate_prints_the_outcome_and_next_step_as_text(

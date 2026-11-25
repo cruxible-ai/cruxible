@@ -1,4 +1,4 @@
-<!-- Bundled from cruxible 0.5.1 docs/kits.md. -->
+<!-- Bundled from cruxible 0.6.0 docs/kits.md. -->
 
 # Kits
 
@@ -334,9 +334,9 @@ kit.
   stops at a proposal:
 
   ~~~text
-  $ cruxible provider install ./cruxible_provider_web-0.7.0-py3-none-any.whl \
-      --lock ./cruxible-provider-web-0.7.0.uv.lock \
-      --dependency ./cruxible_provider_runtime-0.5.0-py3-none-any.whl --commit
+  $ cruxible provider install ./cruxible_provider_web-0.7.1-py3-none-any.whl \
+      --lock ./cruxible-provider-web-0.7.1.uv.lock \
+      --dependency ./cruxible_provider_runtime-0.6.0-py3-none-any.whl --commit
   cruxible-provider-web/f3543a2990f61a7aaab8bfcd7263fc0334577142e7ef1ee40de389ab68373e93: awaiting_approval
   Installation and registration grant no execution permissions. Runtime resources require verification.
   Proposal: sha256:7e748e91dc8d94ddbbe867c1d906e536a4fd41c356342ac4f20064734cd4d624
@@ -344,6 +344,13 @@ kit.
   ~~~
 
   `--dry-run` previews an install by name only; a local wheel refuses it.
+- **From one Python file.** A provider whose operations are all `@derive`
+  functions needs no package of its own: `cruxible provider publish FILE`
+  builds the wheel and its lock on the client (`cruxible-provider-runtime`
+  0.6.0 or later) and installs it as above, and after an edit `cruxible
+  provider publish FILE --move` registers the new build and moves your Lines
+  to it in one proposal ([Lines and
+  automation](lines-and-automation.md#a-pure-provider-in-one-file)).
 - **From a kit.** A kit's own domain provider arrives bundled in the kit; a
   kit's default provider is installed by name when the kit is added and the
   kit's slots are not already served here.
@@ -605,10 +612,16 @@ Procedures, to the release's exact builds in the definitions change set. A
 Procedure names no build, so only Lines move. The preview lists each re-pin and
 every carried Line (disabled) and every Mandate losing settle. A build change
 or Procedure-definition change carries same-identity Lines to the final Procedure
-version and same-name Mandates to propose-only grants, with settle fields cleared.
-Triggers stay byte-identical. `next` names each disabled upgrade; use the existing
-`line enable` to resume its cadence or events, then explicitly author and approve
-a settle re-grant if needed. Normal kit approval policy applies. Subject-creating
+version and same-name Mandates to propose-only grants, with settle fields cleared:
+a kit add or upgrade never keeps settle, even for an observation-only grant
+across a pure build (only a `provider move`, `provider install --move` or
+`provider publish --move` of a build you install keeps it;
+Upgrading).
+Triggers stay byte-identical. `next` names each disabled upgrade; `line enable`
+resumes its cadence or events (`line enable --runbook RUNBOOK` enables every
+Line a Runbook names at once), then explicitly author and approve a settle
+re-grant if needed (`cruxible line grant LINE --settle-observations` for a Line
+whose writes are all observations). Normal kit approval policy applies. Subject-creating
 settle workflows retain their namespace: proposing Subjects needs explicit
 namespace authoring. Retiring a Procedure still retires its automation. To keep a Line on its current builds,
 pass `--keep-build Line:NAME` (repeatable). Lines bound to other providers
@@ -807,7 +820,13 @@ The standard start:
 
 1. **Tailor** the template: the Line names (and the start Runbook's steps with
    them), the sources each Line reads, the cron times (UTC), and each
-   mandate's `valid_from` and `expires_at`.
+   mandate's validity. A template can state it as a span, `expires: 90d`
+   (`36h`, `12w`, `1y` and `P90D` also work), with no `valid_from`: the window
+   starts when you submit, so the template needs no hand-edited dates. An
+   `expires_at` instant also works. A Line whose writes are all observations
+   can take one grant, `scope: observations`, instead of a per-ClaimType
+   scope ([Lines and
+   automation](lines-and-automation.md#one-grant-for-a-line-that-observes)).
 2. **Submit** it (`cruxible authoring submit automation.json`) and **approve**
    the proposal under your approval policy. A Runbook may name Lines the same
    change set adds, and a Trigger may aim at a Runbook it adds.
@@ -819,8 +838,10 @@ The standard start:
    whose writes go to review stops the run, so approve that proposal and run it
    again.
 
-Then enable each Line you want running on its schedule (`cruxible line enable
-NAME`). The kit's README says which Lines settle what and why
+Then enable the Lines you want running on their schedules: `cruxible line
+enable NAME...`, or `cruxible line enable --runbook security.start` for every
+Line the start Runbook names, each reported enabled, already enabled, or
+refused with its repair. The kit's README says which Lines settle what and why
 ([Lines and automation](lines-and-automation.md#earning-settle)).
 
 A Line in a kit's template that posts to the inbox follows the inbox rule
@@ -830,6 +851,67 @@ or a Capture gets one summary item (the count, a short sample, the Query or
 Capture to read) deduped by a digest of the set, so an unchanged set is seen
 again and a changed set is a new item; one item per element only when each
 needs its own decision recorded nowhere else.
+
+### Recipes and scripts
+
+A kit can also declare **recipes**: parameterized change sets under
+`recipes/`, listed in `cruxible-kit.json`'s `recipes` with a name, a
+description and typed parameters (`string`, optionally with a `pattern`;
+`integer`; `boolean`; `enum` with its `values`; each `required` or with a
+`default`, and an optional `example`). A recipe names a parameter as
+`{{name}}` inside a JSON string value, and nothing else is evaluated: a string
+that is exactly `"{{limit}}"` takes the typed value, a longer string spells it
+as text. A stray `{{` or `}}` refuses, and an optional parameter the recipe
+names must declare a `default`. A `pattern` is at most 256 characters and must
+match in linear time: a quantifier inside a repeated group (`(a+)+`), an
+alternation inside one, backreferences and lookarounds refuse; a string value
+is at most 4096 characters. `default` is the recipe `kit adopt KIT` picks.
+
+~~~bash
+cruxible kit adopt security --list
+cruxible kit adopt security --dry-run
+cruxible kit adopt security:sbom --param name=app --param relative_path=sbom.cdx.json --yes
+cruxible kit adopt security:sbom --param name=image --param relative_path=sboms/debian.spdx.json --yes
+cruxible kit adopt security:sbom --param name=app --param relative_path=sbom.cdx.json --render
+~~~
+
+Each adopt is your own governed change: one proposal, under your approval
+policy. Adopting the same recipe again with other values adds another instance.
+Each rendered recipe is checked on its own as one `change_set` (a recipe that
+`depends_on` another still needs its own members), at `kit build` and again at
+`kit adopt`. Before it asks, the preview names the target instance and daemon,
+each Mandate's grant, scope and expiry, each Line's providers and network
+origins, each Trigger's schedule and each Runbook's steps; the `--yes` rerun
+line it prints keeps the `--server-url`, `--instance-id`, `--principal-id` and
+`--from` you gave.
+
+**Scripts** are Python files under `scripts/`, listed in `scripts` with a
+required `mode` (`read_only`, the only mode in 0.6.0). `cruxible kit run
+KIT:SCRIPT -- ARGS` runs one with the `cruxible python` environment, on your
+machine, never in the daemon; the script's exit status is the command's.
+`CRUXIBLE_KIT_ID`, `CRUXIBLE_KIT_VERSION` and `CRUXIBLE_KIT_FILES` (a private,
+verified snapshot of the kit files, removed when the script exits) are set.
+`mode: read_only` is the publisher's declaration, not a sandbox: the script is a
+local Python process with your CLI session and environment, so it can do what
+you can. Cruxible enforces governance and approval on any proposal it submits
+to the daemon. `kit run --list` and `kit status` say so wherever scripts appear.
+
+Recipes and scripts are inert files like the template: not part of the release
+identity (`content_digest`), never installed. Two builds with the same
+definitions share a `content_digest` but can carry other recipes or scripts, so
+`kit add --commit` records the release's `bundle_digest` (its content digest
+plus every recipe, script and file entry) on the kit receipt when it declares
+recipes or scripts. Before using one, `adopt` and `run` look up that kit's
+receipt, check that the client's cached copy is that release (its
+`content_digest` and the receipt's `bundle_digest`), and verify every file of
+the copy against the manifest's sha256 without following a symbolic link. `kit
+add --commit` and `kit pull` write the copy under
+`<state-root>/kit-files/<kit>/sha256-<bundle or content digest>/`, so pulling a
+rebuild never changes what the installed kit runs. A missing copy is fetched
+again from the recorded source (a recorded local directory that is gone asks
+for `--from KIT`) or `--from KIT`; `--from` and `kit pull` replace a damaged
+copy, under a per-copy lock. These checks catch a stale or damaged copy; they
+are not a boundary against a process running as your user.
 
 ## Build a kit
 
@@ -877,6 +959,15 @@ cruxible kit build --id car-parts --version 1.0.0 --owns catalog. --out ./car-pa
   `skills/<name>/...` a `skill`, anything else a `reference`). Like the
   template it is outside the content digest. A missing file or one outside the
   workspace refuses `cruxible.kit.file_refused` with its repair.
+- `--recipes FILE` and `--scripts FILE` (new in 0.6.0; `-` reads stdin) each
+  name a JSON list of recipe or script declarations, as the manifest spells
+  them; each `path` is the file's path in the kit, read relative to the
+  workspace root whatever the current directory (`recipes/NAME.json`,
+  `scripts/NAME.py`), and carried as a `recipe` or `script` file. The build renders every recipe
+  with its defaults and examples (a synthetic value for a required parameter
+  with neither), after the recipes its `depends_on` names, and refuses
+  `cruxible.kit.recipe_invalid` unless each authors cleanly, on the same
+  preview the template gets ([Recipes and scripts](#recipes-and-scripts)).
 
 ~~~text
 $ cruxible kit build --id car-parts --version 1.0.0 --owns catalog. --out ../car-parts-1.0.0 \

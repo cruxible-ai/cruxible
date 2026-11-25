@@ -33,9 +33,16 @@ def install_provider_wheel(
     extras: tuple[str, ...] = (),
     control_domain: str = "operator",
     reverify: bool = False,
+    move: bool = False,
+    move_only: tuple[str, ...] = (),
+    dry_run: bool | None = None,
     at: str | None = None,
 ) -> ProviderInstallResult:
-    """Paths are consumed here on the client; the daemon receives only CAS references."""
+    """Paths are consumed here on the client; the daemon receives only CAS references.
+
+    ``move`` also moves the live Lines binding other builds of the provider to the
+    installed build, in the same proposal (``move_only`` narrows them).
+    """
 
     def transfer(path: Path) -> ProviderWheelObject:
         # Validate the filename before uploading any bytes.
@@ -55,6 +62,9 @@ def install_provider_wheel(
             extras=tuple(sorted(set(extras))),
             control_domain=control_domain,
             reverify=reverify,
+            move=move,
+            move_only=tuple(sorted(set(move_only))),
+            dry_run=dry_run,
             at=at,
         ),
     )

@@ -42,6 +42,7 @@ EXPECTED_MUTATING_COMMAND_TARGETS = {
     ("body", "store"): "active",
     ("provider", "install"): "active",
     ("provider", "move"): "active",
+    ("provider", "publish"): "active",
     ("provider", "retire"): "active",
     ("kit", "add"): "active",
     ("kit", "remove"): "active",

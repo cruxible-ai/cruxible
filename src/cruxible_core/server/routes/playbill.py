@@ -265,8 +265,15 @@ def kit_build(instance_id: str, request: KitBuildRequest) -> KitBuildResult:
 
 
 @router.get("/{instance_id}/kits", response_model=KitStatus)
-def kit_status(instance_id: str) -> KitStatus:
-    return playbill_api.playbill_kit_status(resolve_server_instance_id(instance_id))
+def kit_status(
+    instance_id: str,
+    kit_id: str | None = Query(
+        default=None,
+        max_length=64,
+        description="Only this installed kit, its receipt read directly (no resume rows).",
+    ),
+) -> KitStatus:
+    return playbill_api.playbill_kit_status(resolve_server_instance_id(instance_id), kit_id)
 
 
 @router.post("/{instance_id}/kits", response_model=KitChangeResult)

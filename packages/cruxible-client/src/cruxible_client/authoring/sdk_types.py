@@ -530,6 +530,18 @@ class SourceSelectionError(SdkError):
     code = "cruxible.sdk.source_selection_refused"
 
 
+class SourceAnchorNotFound(SourceSelectionError):
+    """A ``file:`` anchor that occurs nowhere in the cited file."""
+
+    code = "cruxible.doc.anchor_not_found"
+
+
+class SourceAnchorNotUnique(SourceSelectionError):
+    """A ``file:`` anchor that occurs more than once in the cited file."""
+
+    code = "cruxible.doc.anchor_not_unique"
+
+
 class IncompatibleDaemonVersion(SdkError):
     code = "cruxible.sdk.daemon_version_incompatible"
 
@@ -604,6 +616,8 @@ __all__ = [
     "ReferenceKindError",
     "ReferentSensitivity",
     "SourceMapEntry",
+    "SourceAnchorNotFound",
+    "SourceAnchorNotUnique",
     "SourceRef",
     "SourceSelectionError",
     "SubjectRef",

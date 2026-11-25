@@ -211,7 +211,10 @@ from cruxible_client.contracts.shapes import (
     InvalidRecordArm,
     KeyCanonicalizer,
 )
-from cruxible_client.contracts.source_references import ExternalSourceReference
+from cruxible_client.contracts.source_references import (
+    CasSourceReference,
+    ExternalSourceReference,
+)
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime, utc_now
 from cruxible_client.contracts.workspace_file import (
     ExecutedWorkspaceFileSourceRequestV2,
@@ -2593,6 +2596,44 @@ def _provider_failure_cause(
         provider_code=outcome.code or "provider_execution_error",
         kind=kind if isinstance(kind, str) and kind else None,
         message=outcome.message or "",
+    )
+
+
+#: The longest exception text a provider-protocol failure carries in its details.
+_CONVERSION_DETAIL_MAX_CHARS = 512
+
+
+def _capture_conversion_detail(exc: BaseException) -> str:
+    """Why a provider's capture field failed Capture conversion, safe to journal.
+
+    A pydantic error names each failing location and message, never its input
+    value (which may be the Capture's base64 bytes); any other error is its own
+    message on one line. Either is bounded.
+    """
+
+    if isinstance(exc, ValidationError):
+        text = "; ".join(
+            f"{'.'.join(str(part) for part in error['loc']) or '<root>'}: {error['msg']}"
+            for error in exc.errors(include_url=False, include_input=False)
+        )
+    else:
+        text = str(exc)
+    text = " ".join(text.split()) or type(exc).__name__
+    if len(text) > _CONVERSION_DETAIL_MAX_CHARS:
+        text = text[: _CONVERSION_DETAIL_MAX_CHARS - 1] + "\u2026"
+    return text
+
+
+def _capture_conversion_failure(node_id: str, field: str, exc: BaseException) -> "_InternalFailure":
+    return _InternalFailure(
+        "provider_protocol_violation",
+        details={
+            "node_id": node_id,
+            "field": field,
+            "reason": "Capture conversion failed",
+            "error": type(exc).__name__,
+            "detail": _capture_conversion_detail(exc),
+        },
     )
 
 
@@ -5089,10 +5130,7 @@ class ProcedureExecutor:
                     source_read_receipt=source_reads[field],
                 )
             except (CaptureFormatError, ValidationError, ValueError) as exc:
-                raise _InternalFailure(
-                    "provider_protocol_violation",
-                    details={"node_id": node.node_id, "reason": "Capture conversion failed"},
-                ) from exc
+                raise _capture_conversion_failure(node.node_id, field, exc) from exc
         reserved_store = ReservedCaptureStore(
             bodies=self.bodies,
             reservations=self.material_reservations,
@@ -5167,10 +5205,7 @@ class ProcedureExecutor:
                     state.fetched_captures.add(built[field].capture_digest)
                 bodies[field] = base64.b64decode(wire.content_base64, validate=True)
             except (CaptureFormatError, CasError, ValidationError, ValueError) as exc:
-                raise _InternalFailure(
-                    "provider_protocol_violation",
-                    details={"node_id": node.node_id, "reason": "Capture conversion failed"},
-                ) from exc
+                raise _capture_conversion_failure(node.node_id, field, exc) from exc
         digests = {field: item.capture_digest for field, item in built.items()}
         material: CanonicalValue
         if glob_request is not None:
@@ -5209,8 +5244,13 @@ class ProcedureExecutor:
             )
         for field, item in built.items():
             envelope = item.envelope
-            source = envelope.source
-            assert isinstance(source, ExternalSourceReference)
+            # A pure operation's output under a CAS-only contract has a CAS
+            # source: the acquisition receipt then states the provider wire's
+            # own source labels, which its invocation receipt digests.
+            stated = envelope.source
+            if not isinstance(stated, ExternalSourceReference):
+                assert isinstance(stated, CasSourceReference)
+                stated = wires[field]
             results[field] = ProcedureSourceAcquisitionResultV1(
                 node_id=node.node_id,
                 input_name=rules[field].input_name,
@@ -5220,14 +5260,14 @@ class ProcedureExecutor:
                         capture_contract_digest=envelope.capture_contract_digest,
                         producer=envelope.producer,
                         producer_binding_digest=envelope.producer_binding_digest,
-                        source_identity=source.source_identity,
-                        coordinate_type=source.coordinate_type,
-                        coordinate=source.coordinate,
-                        selector_type=source.selector_type,
-                        selector=source.selector,
+                        source_identity=stated.source_identity,
+                        coordinate_type=stated.coordinate_type,
+                        coordinate=stated.coordinate,
+                        selector_type=stated.selector_type,
+                        selector=stated.selector,
                         commitment=envelope.commitment,
                         observed_at=envelope.observed_at,
-                        replayability=source.replayability,
+                        replayability=stated.replayability,
                         source_effective_time=envelope.source_effective_time,
                     ),
                     envelope=envelope,
@@ -9179,7 +9219,8 @@ def _inbox_items(
                 resolved["value"] if tag == "present" and isinstance(resolved, dict) else resolved
             )
             declared = contract.fields.get(name)
-            complete = state.completeness.at_sink(_referenced_reads([node.for_each, template]))
+            field_reads = _referenced_reads([node.for_each, template])
+            complete = state.completeness.at_sink(field_reads)
             if (
                 declared is not None
                 and requires_complete_input(value, declared.requires_complete_input)
@@ -9190,12 +9231,9 @@ def _inbox_items(
                         kind="incomplete_source",
                         target=f"{node.contract.spelling}.{name}",
                         field=name,
-                        input=",".join(
-                            state.completeness.incomplete_inputs(
-                                _referenced_reads([node.for_each, template])
-                            )
-                        )
+                        input=",".join(state.completeness.incomplete_inputs(field_reads))
                         or "control lineage",
+                        incomplete_reasons=state.completeness.reasons_for(field_reads),
                     )
                 )
                 if declared.incomplete_fallback is None:

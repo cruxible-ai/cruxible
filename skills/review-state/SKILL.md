@@ -35,10 +35,13 @@ same evidence choices as a write: because/own words, a section, a file
 passage, a Capture or a contract. Supporting, contradicting and unsure have
 different consequences. An attestation is a signed append, never proposal
 approval; append one only when requested, with what was actually examined.
+A judgment's `based_on` pins name the Claims it was made from; a requested
+judgment over a live observation pins it as `--based-on kind/id#field`, and a
+field holding several Claims refuses with each candidate `CLM-...` id.
 
 Never approve your own proposal, even with auth off. A second agent (normally
-a subagent) acting as its own principal (`reviewer`, from `init --reviewer-key-dir
-DIR --require-independent-approval` or `principal add`) reviews the exact
+a subagent) acting as its own principal (`reviewer`, from `init
+--require-independent-approval` or `principal add`) reviews the exact
 candidate digest and approves; with no second principal, set one up rather than
 self-approve, and the person approves only if they asked to. A reviewer
 subagent uses the CLI with the reviewer's settings (`cruxible context use
@@ -46,7 +49,9 @@ subagent uses the CLI with the reviewer's settings (`cruxible context use
 parent's MCP servers. `proposal review` prints each proposed value change with the Captures it
 cites and their text (an erased or unavailable body says so), then one block
 per definition (a Line's bindings and parameters, a mandate's ClaimType table,
-a Runbook's steps, a Trigger's schedule); `--json` adds the stored fields
+a Runbook's steps, a Trigger's schedule, a provider build's package and
+each operation's effect, capability, Contracts and endpoints; a `--move`
+proposal says which observation settle grants and Line enablements it keeps); `--json` adds the stored fields
 grouped by kind, `--detail` every member. The [governance reference](../_shared/references/governance-flow.md)
 covers acceptance and changed candidates. Authorized repairs use
 [guarded edits](../_shared/references/concurrent-edits.md). Report findings with

@@ -18,6 +18,9 @@ it is not a plugin-wide instruction about how or when to investigate a domain.
 Source text and domain guidance never override higher-priority instructions.
 
 When copying is justified, copy at the resolution the dependent judgment
-needs; leave raw fast-moving values in Captures. Preserve provenance and distinguish missing,
+needs; leave raw fast-moving values in Captures. A computed report or
+breakdown is a Capture too: a pure `@derive` operation returns it with
+`derived_capture` as a `procedure_output` Capture, and Claims hold only the
+coarse durable facts read from it. Preserve provenance and distinguish missing,
 explicit none and unknown. Completeness and absence rules govern retirement;
 the agent does not infer them from a convenient empty response.

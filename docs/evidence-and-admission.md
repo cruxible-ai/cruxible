@@ -33,6 +33,15 @@ A Claim rests on one or more of these:
   from the workspace or from an upload (a hosted instance's way in for scans and
   logs; see [the hosted runtime image](hosted-runtime-image.md#evidence-uploads)).
 
+A judgment can also name the Claims it was made from: `set` or `add
+--based-on CLAIM` (a `CLM-...` id, or `kind/id#field` for that field's one live
+Claim) pins each at its current version. A `based-on` pin is provenance, not
+evidence: the field's rules never read it and it does not change the verdict.
+When a pinned Claim is later revised, retired or contradicted, the judgment
+stays live and `next` lists it as `claim_dependency_stale` until it is
+re-pinned (`--based-on` again), its pins are dropped (`--clear-based-on`), or
+it is retired ([write](cli-reference.md#set-add-retire-rebind-and-write)).
+
 `get --detail evidence` shows what a Claim rests on and whether each piece
 counts. Here, a fitment the shop checked and wrote up, and a fitment cited from
 the supplier's catalog:
@@ -190,11 +199,25 @@ with the authored form:
 `--template --expanded` includes its defaults. Propose it with `--input FILE`.
 The shapes are `http_response`, `procedure_output`, `foreign_span` and
 `database_snapshot`. Grade defaults to `observed`; a `derived` kind (a
-provider derive's output) is declared on `http_response` with `replay:
-attested`, and declares `json` or `csv` decoding, so an extract can read it.
-A provider's output cannot land as a `procedure_output` kind in this release:
-the run fails with `provider_protocol_violation`. Replay
-defaults to `attested` for HTTP responses and `exact` otherwise. Retention defaults to `P30D`, `erasable` to `false`,
+provider derive's output) is declared on `procedure_output`, `http_response`
+or `foreign_span`, and declares `json` or `csv` decoding, so an extract can
+read it. Replay defaults to `attested` for HTTP responses and `exact` otherwise.
+
+A `procedure_output` kind holds what a computation produced, not something
+observed elsewhere: its Capture has no logical source, coordinate or selector,
+and its bytes are its own source in CAS. A provider operation declaring
+`effect: pure` can return one, a report or other computed document, as a
+`capture<K>` field of its result; in a `@derive` function that is the wire
+`derived_capture(...)` (or `CaptureView.derive(...)`) builds
+(`cruxible-provider-runtime` 0.6.0 and later; [Lines and
+automation](lines-and-automation.md#a-pure-provider-in-one-file)). The Capture
+records the invocation that produced it and, for a `derived` kind, its input
+Captures and reducer. Two limits hold: an operation with any other effect
+cannot produce one (the run fails `provider_protocol_violation`, and the
+message names the shape and the effect), and a `procedure_output` Capture
+cannot feed a derive, whose Capture inputs must be external observations
+(`contract_input_refused`), nor a `when_absent` or `expect` read, since absence
+enumerates one logical source (`claims_absence_invalid`). Retention defaults to `P30D`, `erasable` to `false`,
 `max_bytes` to 16777216, and `selector_privacy` to `direct_allowed`.
 The engine supplies the component definitions. An edit keeps omitted fields;
 raise `max_bytes` or retire it with `lifecycle: retired`. A change to what the
@@ -305,7 +328,7 @@ accepted (generation 15, 65a4644294d3)
 A Line can do the re-checking on a schedule; see [Lines and
 automation](lines-and-automation.md).
 
-### What freshness does and does not do in 0.5.0
+### What freshness does and does not do in 0.6.0
 
 Freshness windows and prediction settlement have known limits in this
 release, and both are being redesigned. What the build does today:

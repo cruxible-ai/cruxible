@@ -25,10 +25,11 @@ providers plus the template's members, never the publisher instance.
 
 from __future__ import annotations
 
+import functools
 import json
 import shutil
 import tempfile
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -49,6 +50,7 @@ from cruxible_core.runtime.instance import PlaybillInstance
 
 _log = structlog.get_logger(__name__)
 TEMPLATE_INVALID = "cruxible.kit.automation_template_invalid"
+RECIPE_INVALID = "cruxible.kit.recipe_invalid"
 #: The throwaway instance's control domain for every bundled build it seeds:
 #: fixed and arbitrary -- nothing here depends on what a real adopter picks,
 #: and the instance never holds two builds of the same name to disagree.
@@ -187,20 +189,71 @@ def check_automation_template(
     admits exactly as it would for a fresh adopter.
     """
 
+    check_kit_change_sets(
+        closure,
+        templates=(template,),
+        actor_id=actor_id,
+        providers=providers,
+        document_bodies=document_bodies,
+    )
+
+
+def _recipe_refusal(name: str, path: str, first: str) -> RequestRefusedError:
+    return RequestRefusedError(
+        RECIPE_INVALID,
+        f"the recipe {name} ({path}), rendered with its defaults and examples, does not "
+        f"author against this kit's exported definitions: {first}; fix the recipe (or the "
+        "definitions it names) and build again",
+        repair=RepairOperation(operation="cruxible.kit.build"),
+    )
+
+
+def check_kit_change_sets(
+    closure: Mapping[str, bytes],
+    *,
+    templates: tuple[KitAutomationTemplate, ...] = (),
+    recipes: tuple[tuple[str, str, Mapping[str, object]], ...] = (),
+    actor_id: str,
+    providers: tuple[InspectedProviderPackage, ...] = (),
+    document_bodies: Mapping[str, bytes] = {},
+) -> None:
+    """Preview the automation template and each rendered recipe against ``closure``.
+
+    ``recipes`` holds (name, path, rendered change set). Every input is parsed
+    before the throwaway instance opens, and all of them preview on that one
+    instance (each preview stores nothing, so none sees another), so the cost
+    is one closure instance for the whole build, not one per recipe.
+    """
+
     from cruxible_client.contracts.candidates import canonical_candidate_timestamp
     from cruxible_client.contracts.temporal import utc_now
     from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
     from cruxible_core.proposals.proposals import AuthenticatedActor
     from cruxible_core.service.change_preview import preview_guards
 
-    try:
-        parsed = _INPUT.validate_python(json.loads(template.content))
-    except json.JSONDecodeError as exc:
-        raise _refuse(template, f"not JSON ({exc.msg} at line {exc.lineno})") from exc
-    except ValidationError as exc:
-        raise _refuse(template, f"cruxible.authoring.input_invalid: {validation_summary(exc)}")
-    if not isinstance(parsed, ChangeSetInput):
-        raise _refuse(template, "a template is one change_set authoring input")
+    checks: list[tuple[ChangeSetInput, Callable[[str], RequestRefusedError]]] = []
+    for template in templates:
+        refuse: Callable[[str], RequestRefusedError] = functools.partial(_refuse, template)
+        try:
+            parsed = _INPUT.validate_python(json.loads(template.content))
+        except json.JSONDecodeError as exc:
+            raise refuse(f"not JSON ({exc.msg} at line {exc.lineno})") from exc
+        except ValidationError as exc:
+            raise refuse(f"cruxible.authoring.input_invalid: {validation_summary(exc)}")
+        if not isinstance(parsed, ChangeSetInput):
+            raise refuse("a template is one change_set authoring input")
+        checks.append((parsed, refuse))
+    for name, path, rendered in recipes:
+        refuse = functools.partial(_recipe_refusal, name, path)
+        try:
+            parsed = _INPUT.validate_python(rendered)
+        except ValidationError as exc:
+            raise refuse(f"cruxible.authoring.input_invalid: {validation_summary(exc)}")
+        if not isinstance(parsed, ChangeSetInput):
+            raise refuse("a recipe is one change_set authoring input")
+        checks.append((parsed, refuse))
+    if not checks:
+        return
     with (
         _closure_instance(
             closure, actor_id=actor_id, providers=providers, document_bodies=document_bodies
@@ -208,25 +261,31 @@ def check_automation_template(
         preview_guards(True),
     ):
         coordinator = AuthoringIntentCoordinator.for_instance(instance)
-        try:
-            _intent, computed = coordinator.preview_input(
-                actor=AuthenticatedActor(actor_id=actor_id),
-                input=parsed,
-                canonical_timestamp=canonical_candidate_timestamp(utc_now()),
-            )
-        except AuthoringInputError as exc:
-            raise _refuse(template, f"{exc.code} at {exc.field_path}: {exc.message}") from exc
-    result = computed.result
-    if result.verdict == "passed":
-        return
-    frontier = result.frontier
-    if frontier.diagnostics:
-        first = frontier.diagnostics[0]
-        raise _refuse(template, f"{first.code} at {first.offending_element}: {first.message}")
-    if frontier.blocked_checks:
-        blocked = frontier.blocked_checks[0]
-        raise _refuse(template, f"check {blocked.check} is blocked: {blocked.reason}")
-    raise _refuse(template, "its preview did not complete")
+        for parsed, refuse in checks:
+            try:
+                _intent, computed = coordinator.preview_input(
+                    actor=AuthenticatedActor(actor_id=actor_id),
+                    input=parsed,
+                    canonical_timestamp=canonical_candidate_timestamp(utc_now()),
+                )
+            except AuthoringInputError as exc:
+                raise refuse(f"{exc.code} at {exc.field_path}: {exc.message}") from exc
+            result = computed.result
+            if result.verdict == "passed":
+                continue
+            frontier = result.frontier
+            if frontier.diagnostics:
+                first = frontier.diagnostics[0]
+                raise refuse(f"{first.code} at {first.offending_element}: {first.message}")
+            if frontier.blocked_checks:
+                blocked = frontier.blocked_checks[0]
+                raise refuse(f"check {blocked.check} is blocked: {blocked.reason}")
+            raise refuse("its preview did not complete")
 
 
-__all__ = ["TEMPLATE_INVALID", "check_automation_template"]
+__all__ = [
+    "RECIPE_INVALID",
+    "TEMPLATE_INVALID",
+    "check_automation_template",
+    "check_kit_change_sets",
+]

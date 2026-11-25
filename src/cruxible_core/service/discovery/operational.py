@@ -352,16 +352,23 @@ def _triggered_runbooks(projection: Any, line: str, *, limit: int) -> list[str]:
     ``runbook_lines_by_line`` index for this Line, each row checked by one key
     seek of the maintained ``trigger_aim_counts`` counters: the work is this
     Line's own Runbook memberships, never the other Runbooks or the Trigger log.
+    A Runbook with a Procedure step runs every live Line of that Procedure, so
+    the Line's Procedure is sought too (one Line read, one more seek).
     """
 
+    spec = projection.typed.source(line)
+    members = [line]
+    if isinstance(spec, LineSpec):
+        members.append(spec.procedure.target.qualified)
     return [
         str(row[0])
         for row in projection.typed.connection.execute(
-            "SELECT runbook.source_identity FROM runbook_lines AS runbook "
-            "WHERE runbook.line=? AND EXISTS (SELECT 1 FROM trigger_aim_counts AS aim "
+            "SELECT DISTINCT runbook.source_identity FROM runbook_lines AS runbook "
+            f"WHERE runbook.line IN ({','.join('?' * len(members))}) "
+            "AND EXISTS (SELECT 1 FROM trigger_aim_counts AS aim "
             "WHERE aim.target_kind='runbook' AND aim.target=runbook.source_identity) "
             "ORDER BY runbook.source_identity LIMIT ?",
-            (line, limit),
+            (*members, limit),
         )
     ]
 

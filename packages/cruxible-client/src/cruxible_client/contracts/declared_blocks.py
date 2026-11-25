@@ -45,7 +45,14 @@ PROJECTION_MARKER_GRAMMAR: Literal["playbill-projection-marker-grammar-v1"] = (
 )
 PROJECTION_QUERY_SEMANTIC_RESULT_DOMAIN = "playbill-projection-query-semantic-result-v1"
 PROJECTION_QUERY_PARAMETER_DOMAIN = "playbill-query-parameters-v1"
-MAX_PROJECTION_CARDS_PER_SOURCE = 256
+# Per-source cap on the coverage cards, scan proofs and citation windows one
+# `next` source observation carries. Each source's scan proofs cover every
+# visible cited commitment in the instance, and its windows every citation
+# homed in it, so the cap must sit well above a real instance's citation count:
+# at 256 an instance past 256 cited commitments, or a document holding more
+# than 256 citations, lost the whole source's evidence. It stays a hard bound
+# on one observation's size.
+MAX_PROJECTION_CARDS_PER_SOURCE = 4096
 MAX_PROJECTION_COVERAGE_BINDINGS = 1024
 
 _BLOCK_ID = rb"[a-z][a-z0-9_.-]{0,63}"

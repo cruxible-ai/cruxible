@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from cruxible_client.contracts import AcceptedCoordinate
@@ -27,9 +28,10 @@ from cruxible_client.contracts.backlinks import (
     BacklinksRequest,
     BacklinksResult,
 )
+from cruxible_client.contracts.capture_reads import BodyRestricted
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.errors import ReadRefusalError
-from cruxible_client.contracts.get_reads import GetCoordinate
+from cruxible_client.contracts.get_reads import GetCoordinate, GetNoteLink
 from cruxible_client.contracts.proposal_summary import ReviewGuidance
 from cruxible_client.contracts.repairs import RepairOperation
 from cruxible_core.indexes.evidence.backlinks import section_target
@@ -254,6 +256,162 @@ def service_subject_backlinks(
             connection=connection,
             access=access,
         )
+
+
+#: The ``about`` rows of notes are the keyset range ``[Note:, Note;)`` of the
+#: primary key under one target: ``;`` sorts right after ``:``.
+_NOTE_LOW = "Note:"
+_NOTE_HIGH = "Note;"
+_NOTE_COLUMNS = "source_identity,link_key,source_id,section,cited_digest,capture_digest"
+
+
+def _note_links(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    connection: sqlite3.Connection,
+    rows: Sequence[sqlite3.Row | tuple[Any, ...]],
+    *,
+    access: BodyAccessContext | None,
+) -> tuple[tuple[GetNoteLink, ...], BodyRestricted | None]:
+    """Section pointers for note rows; a withheld section Capture drops the section (C14).
+
+    One batched access resolution, and one latest-observation probe per row
+    (a note is one section): the rows given, never the Subject's link set.
+    """
+
+    from cruxible_core.service.evidence.body_access import (
+        NO_RESTRICTED_ACCESS,
+        capture_access_resolver,
+    )
+
+    withheld, notice = capture_access_resolver(instance, coordinate).withheld(
+        sorted({str(row[5]) for row in rows if row[5] is not None}),
+        access or NO_RESTRICTED_ACCESS,
+    )
+    links = []
+    for identity, _key, source_id, section, digest, capture in rows:
+        note = str(identity).split(":", 1)[1]
+        if capture is not None and capture in withheld:
+            links.append(GetNoteLink(note=note))
+            continue
+        newest = connection.execute(
+            "SELECT cited_digest FROM backlinks INDEXED BY backlinks_by_section "
+            "WHERE source_id=? AND section=? AND observed_at_us IS NOT NULL "
+            "ORDER BY observed_at_us DESC LIMIT 1",
+            (source_id, section),
+        ).fetchone()
+        links.append(
+            GetNoteLink(
+                note=note,
+                file=source_id,
+                section=tuple(json.loads(section)),
+                cited_digest=digest,
+                drift="changed_since_cited"
+                if newest is not None and str(newest[0]) != digest
+                else "unknown",
+            )
+        )
+    return tuple(links), notice
+
+
+def card_notes(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    connection: sqlite3.Connection,
+    subject: str,
+    *,
+    limit: int,
+    access: BodyAccessContext | None = None,
+) -> tuple[tuple[GetNoteLink, ...], int | None]:
+    """The first ``limit`` live notes about a Subject, as pointers, and the total if cut.
+
+    One keyset range of the backlink primary key (target, relation, the note
+    identities) bounded by ``limit + 1``; only a cut list counts the rest of
+    this one target's note rows.
+    """
+
+    target = f"Subject:{subject}"
+    rows = connection.execute(
+        f"SELECT {_NOTE_COLUMNS} FROM backlinks WHERE target=? AND relation='about' "
+        "AND source_identity>=? AND source_identity<? "
+        "ORDER BY source_identity,link_key LIMIT ?",
+        (target, _NOTE_LOW, _NOTE_HIGH, limit + 1),
+    ).fetchall()
+    total = None
+    if len(rows) > limit:
+        total = int(
+            connection.execute(
+                "SELECT count(*) FROM backlinks WHERE target=? AND relation='about' "
+                "AND source_identity>=? AND source_identity<?",
+                (target, _NOTE_LOW, _NOTE_HIGH),
+            ).fetchone()[0]
+        )
+    links, _notice = _note_links(instance, coordinate, connection, rows[:limit], access=access)
+    return links, total
+
+
+@dataclass(frozen=True)
+class NotesPage:
+    """One page of the notes about a Subject: ``get`` with ``detail="notes"``."""
+
+    target: str
+    notes: tuple[GetNoteLink, ...]
+    withheld: BodyRestricted | None
+    truncated: bool
+    next_cursor: str | None
+    coordinate: GetCoordinate
+
+
+def service_subject_notes(
+    instance: PlaybillInstance,
+    *,
+    subject: str,
+    request: BacklinksRequest,
+    access: BodyAccessContext | None = None,
+) -> NotesPage:
+    """The live notes about a Subject, one keyset page of their ``about`` rows.
+
+    The cursor is the backlinks listing's own, with a selection of its own,
+    so a backlinks cursor never continues a notes page or the other way.
+    """
+
+    selection = {"subject": subject, "notes": True}
+    after, coordinate = _continuation(instance, request, selection)
+    target = f"Subject:{subject}"
+    limit = request.limit
+    with instance.bind_accepted_projection(coordinate) as projection:
+        connection = projection.typed.connection
+        rows = connection.execute(
+            f"SELECT {_NOTE_COLUMNS} FROM backlinks WHERE target=? AND relation='about' "
+            "AND source_identity>=? AND source_identity<? AND (source_identity,link_key)>(?,?) "
+            "ORDER BY source_identity,link_key LIMIT ?",
+            (target, _NOTE_LOW, _NOTE_HIGH, *(after[1:] if after else ("", "")), limit + 1),
+        ).fetchall()
+        truncated = len(rows) > limit
+        page = rows[:limit]
+        links, notice = _note_links(instance, coordinate, connection, page, access=access)
+    served = AcceptedCoordinate.from_internal(coordinate)
+    with instance.accepted_history_reader(at=served) as history:
+        generation = int(history.sequence)
+    next_cursor = (
+        encode_list_cursor(
+            list_name=_LIST,
+            coordinate=served.model_dump(mode="json"),
+            selection=selection,
+            snapshot=_KEYSET,
+            last_key=("about", str(page[-1][0]), str(page[-1][1])),
+        )
+        if truncated and page
+        else None
+    )
+    return NotesPage(
+        target=subject,
+        notes=links,
+        withheld=notice,
+        truncated=truncated,
+        next_cursor=next_cursor,
+        coordinate=GetCoordinate(git_oid=served.git_oid[:12], generation=generation),
+    )
 
 
 def subject_has_backlinks(connection: Any, subject: str) -> bool:
@@ -532,8 +690,10 @@ def service_playbill_backlinks(
 
 
 __all__ = [
+    "NotesPage",
     "backlinks_of_resolved",
     "card_guidance",
+    "card_notes",
     "claim_type_identity",
     "resolve_backlink_target",
     "review_guidance",
@@ -541,4 +701,5 @@ __all__ = [
     "service_playbill_backlinks",
     "service_section_backlinks",
     "service_subject_backlinks",
+    "service_subject_notes",
 ]

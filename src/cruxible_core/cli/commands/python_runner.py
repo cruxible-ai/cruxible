@@ -221,18 +221,31 @@ def _check(targets: Sequence[Path], labels: Mapping[str, str], scratch: Path) ->
 def python_cmd(code: str | None, check: bool, args: tuple[str, ...]) -> None:
     """Run a script with Cruxible's interpreter, its connection in the environment.
 
-    SCRIPT [ARGS]... runs a file, -c CODE [ARGS]... a string, and - [ARGS]...
-    standard input, with the interpreter this CLI runs on, so `import
-    cruxible_client` is the SDK installed with it. `Cruxible.connect()` in the
-    script finds the daemon, instance and principal this command resolved
-    (--env-file, --server-url/--server-socket, --instance-id, --principal-id);
-    nothing secret is printed or put on a command line. Options for the script
-    go after SCRIPT. The exit status is the script's.
+    The way to use the typed Python SDK from any repository (Go, Rust,
+    TypeScript, or Python with its own venv): `import cruxible_client` is the
+    SDK installed with this CLI, at its exact version, with nothing installed
+    in the repository. `Cruxible.connect()` finds the daemon, instance and
+    principal this command resolved (--env-file, --server-url/--server-socket,
+    --instance-id, --principal-id); nothing secret is printed or put on a
+    command line. Options for the script go after SCRIPT. The exit status is
+    the script's.
 
-    --check type-checks the script (or CODE, or standard input) with pyright
-    against this instance's world stub, cached per instance in the per-user
-    Cruxible directory and refreshed when the vocabulary moves; import it as
-    `from world import World` under TYPE_CHECKING. Needs pyright on PATH.
+    \b
+    cruxible python script.py [ARGS]...
+    cruxible python -c 'from cruxible_client import Cruxible; print(Cruxible.connect().whoami())'
+    cruxible python - <<'PY'
+    from cruxible_client import Cruxible
+    with Cruxible.connect() as cx:
+        w = cx.world()
+    PY
+
+    .cruxible/world.pyi types the instance's vocabulary (its kinds, fields and
+    enums) for an editor or pyright: floor delivery keeps it current, and
+    `cruxible stub --out .cruxible/world.pyi` writes it. --check type-checks
+    the script (or CODE, or standard input) with pyright against this
+    instance's world stub, cached per instance in the per-user Cruxible
+    directory and refreshed when the vocabulary moves; import it as `from
+    world import World` under TYPE_CHECKING. Needs pyright on PATH.
     """
 
     obj = _root_ctx_obj()

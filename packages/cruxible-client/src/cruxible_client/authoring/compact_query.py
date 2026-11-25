@@ -37,7 +37,7 @@ from cruxible_client.contracts.compact_query import (
 )
 from cruxible_client.contracts.public_names import public_name
 from cruxible_client.contracts.read_values import ShownObject, TruncatedText
-from cruxible_client.contracts.shapes import claim_value_kind, value_type_name
+from cruxible_client.contracts.shapes import claim_value_kind, ordered_enum, value_type_name
 from cruxible_client.contracts.temporal import temporal_value_text
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -169,14 +169,21 @@ class QueryResult:
 
 _CELL_WIDTH = 60
 
+#: Columns that name a row's identity: never cut, so an id can be copied whole.
+_WHOLE_COLUMNS = frozenset({"subject", "subject_id"})
 
-def _cell(value: object) -> str:
+
+def _cut(text: str, width: int | None) -> str:
+    return text if width is None or len(text) <= width else text[: width - 1] + "…"
+
+
+def _cell(value: object, width: int | None = _CELL_WIDTH) -> str:
     if value is None:
         return "-"
     if isinstance(value, TruncatedText):
         # A preview always reads as cut, however short the shown part is.
         text = " ".join(value.preview.split())
-        return (text if len(text) < _CELL_WIDTH else text[: _CELL_WIDTH - 1]) + "…"
+        return (text if width is None or len(text) < width else text[: width - 1]) + "…"
     if isinstance(value, ShownObject):
         value = json.dumps(value.object, ensure_ascii=False, sort_keys=True)
     if isinstance(value, BaseModel):
@@ -184,21 +191,20 @@ def _cell(value: object) -> str:
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, list | tuple):
-        text = ", ".join(_cell(item) for item in value) if value else "-"
+        text = ", ".join(_cell(item, width) for item in value) if value else "-"
     else:
         text = str(value)
-    text = " ".join(text.split())
-    return text if len(text) <= _CELL_WIDTH else text[: _CELL_WIDTH - 1] + "…"
+    return _cut(" ".join(text.split()), width)
 
 
-def _none_text(none: object) -> str:
+def _none_text(none: object, width: int | None = _CELL_WIDTH) -> str:
     """A none (an inverse Claim) as ``get`` names it: ``none``, or ``none of <unit>``."""
 
     of = none.get("of") if isinstance(none, Mapping) else getattr(none, "of", None)
-    return "none" if of is None else f"none of {_cell(of)}"
+    return "none" if of is None else f"none of {_cell(of, width)}"
 
 
-def _cell_with_nones(row: Mapping[str, Any], name: str) -> str:
+def _cell_with_nones(row: Mapping[str, Any], name: str, width: int | None = _CELL_WIDTH) -> str:
     """A cell's value, then each live none behind it: a held none is never ``-``.
 
     ``-`` stays the cell of a field with no value and no none (unknown).
@@ -208,9 +214,9 @@ def _cell_with_nones(row: Mapping[str, Any], name: str) -> str:
     nones = row.get("nones")
     held = nones.get(name) if isinstance(nones, Mapping) else None
     if not held:
-        return _cell(value)
-    shown = [] if value is None or value == [] or value == () else [_cell(value)]
-    return _cell(", ".join([*shown, *(_none_text(none) for none in held)]))
+        return _cell(value, width)
+    shown = [] if value is None or value == [] or value == () else [_cell(value, width)]
+    return _cell(", ".join([*shown, *(_none_text(none, width) for none in held)]), width)
 
 
 #: Columns whose cells name stored identities, by row kind: a table shows each
@@ -229,8 +235,12 @@ def _public_cell(value: object) -> object:
     return value
 
 
-def render_query_table(page: QueryResultRecord) -> str:
-    """An aligned table of the page's values and flags, then its notes."""
+def render_query_table(page: QueryResultRecord, *, truncate: bool = True) -> str:
+    """An aligned table of the page's values and flags, then its notes.
+
+    A cell longer than 60 characters is cut with an ellipsis, except the
+    ``subject`` and ``subject_id`` columns; ``truncate=False`` cuts none.
+    """
 
     names = [column.name for column in page.columns]
     rows: list[dict[str, Any]] = [dict(row) for row in page.rows]
@@ -246,7 +256,11 @@ def render_query_table(page: QueryResultRecord) -> str:
         header.append("flags")
     if not rows:
         header = header or names
-    cells = [[_cell_with_nones(row, name) for name in header] for row in rows]
+
+    def width(name: str) -> int | None:
+        return None if not truncate or name in _WHOLE_COLUMNS else _CELL_WIDTH
+
+    cells = [[_cell_with_nones(row, name, width(name)) for name in header] for row in rows]
     widths = [
         max([len(name), *(len(line[index]) for line in cells)]) for index, name in enumerate(header)
     ]
@@ -486,10 +500,16 @@ class CompactQuery:
             if not isinstance(value, bool):
                 raise QueryNameError(f"{name}__exists takes true or false")
             return value
-        if operator in {"lt", "lte", "gt", "gte"} and (members or declared not in _ORDERED):
+        ranked = ordered_enum(claim_type.value_type)
+        if (
+            operator in {"lt", "lte", "gt", "gte"}
+            and ranked is None
+            and (members or declared not in _ORDERED)
+        ):
             raise QueryNameError(
                 f"{operator!r} does not apply to {name}; use eq, ne, in, exists"
                 + (", contains" if members or declared == "string" else "")
+                + (" (its enum is unordered)" if members else "")
             )
         if operator == "contains" and declared not in {"string", "subject"}:
             raise QueryNameError(f"'contains' does not apply to {name}, which is not text")

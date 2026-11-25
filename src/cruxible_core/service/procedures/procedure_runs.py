@@ -2327,6 +2327,25 @@ def _unavailable_run_state(stored, *, admission=None) -> ProcedureRunStateV2:  #
     )
 
 
+def _internal_failure_detail(details: object) -> str:
+    """Why an internal failure happened, when its journaled details say so.
+
+    A provider's capture field that failed Capture conversion journals its node,
+    field and the conversion error (bounded, without input values); the terminal
+    message carries them so a provider author sees the cause. A failure journaled
+    without a ``detail`` keeps its message's exact bytes.
+    """
+
+    if not isinstance(details, dict) or not isinstance(details.get("detail"), str):
+        return ""
+    where = ".".join(
+        str(details[key]) for key in ("node_id", "field") if isinstance(details.get(key), str)
+    )
+    reason = details.get("reason")
+    lead = reason if isinstance(reason, str) else "detail"
+    return f" {lead}" + (f" at {where}" if where else "") + f": {details['detail']}"
+
+
 def _provider_admission_terminal(
     exc: ProviderLocalRuntimeRefused,
     *,
@@ -2952,9 +2971,8 @@ def _state_from_records(
                     terminal = ProcedureInternalFailure.model_validate(
                         {
                             "code": failure_code,
-                            "message": (
-                                "Provider execution violated an internal integrity contract."
-                            ),
+                            "message": "Provider execution violated an internal integrity "
+                            "contract." + _internal_failure_detail(final.get("failure_details")),
                             "correlation_id": run_id,
                             "journal_coordinate": _journal_coordinate(final_record),
                         }

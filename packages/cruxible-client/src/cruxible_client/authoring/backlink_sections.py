@@ -8,8 +8,8 @@ The daemon never reads workspace files, so an adapter beside the workspace
 - ``observe_drift`` compares each section row's cited bytes with the section
   in the file now: ``unchanged`` or ``changed_since_cited`` (a section that is
   gone has changed). A row whose file is not catalogued here keeps the
-  daemon's answer. ``observe_get_drift`` does the same for ``get`` with
-  ``detail="backlinks"``.
+  daemon's answer. ``observe_get_drift`` does the same for ``get``: its
+  ``detail="backlinks"`` and ``detail="notes"`` rows and a Subject card's notes.
 
 Cost: one catalog parse (cached by revision) and one parse per distinct file
 on the page.
@@ -18,6 +18,7 @@ on the page.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TypeVar
 
 from cruxible_client._safe_files import read_regular_file
 from cruxible_client.authoring.selectors import workspace_files
@@ -28,7 +29,7 @@ from cruxible_client.contracts.doc_sections import (
     parse_sections,
     section_digest,
 )
-from cruxible_client.contracts.get_reads import GetResult
+from cruxible_client.contracts.get_reads import GetNoteLink, GetResult
 
 
 def section_source(workspace: Path | None, file: str) -> str:
@@ -55,19 +56,35 @@ def observe_drift(result: BacklinksResult, workspace: Path | None) -> BacklinksR
 
 
 def observe_get_drift(result: GetResult, workspace: Path | None) -> GetResult:
-    """``get`` with ``detail="backlinks"``: the same drift the backlinks read shows,
-    so one note reads one status whichever read asked."""
+    """``get``: the same drift the backlinks read shows, so one note reads one status
+    whichever read asked -- ``detail="backlinks"`` rows, ``detail="notes"`` and the
+    note pointers on a Subject card. Anything else comes back unchanged."""
 
+    from cruxible_client.contracts.get_reads import GetSubjectCard
+
+    update: dict[str, object] = {}
     page = result.backlinks
-    if page is None:
-        return result
-    links = _observed(page.links, workspace)
-    if links is None:
-        return result
-    return result.model_copy(update={"backlinks": page.model_copy(update={"links": links})})
+    if page is not None:
+        links = _observed(page.links, workspace)
+        if links is not None:
+            update["backlinks"] = page.model_copy(update={"links": links})
+    notes = result.notes
+    if notes is not None:
+        observed = _observed(notes.notes, workspace)
+        if observed is not None:
+            update["notes"] = notes.model_copy(update={"notes": observed})
+    card = result.card
+    if isinstance(card, GetSubjectCard) and card.notes:
+        pointers = _observed(card.notes, workspace)
+        if pointers is not None:
+            update["card"] = card.model_copy(update={"notes": pointers})
+    return result.model_copy(update=update) if update else result
 
 
-def _observed(links: tuple[Backlink, ...], workspace: Path | None) -> tuple[Backlink, ...] | None:
+_Link = TypeVar("_Link", Backlink, GetNoteLink)
+
+
+def _observed(links: tuple[_Link, ...], workspace: Path | None) -> tuple[_Link, ...] | None:
     """The rows with each section row's drift now; None when none can be checked here."""
 
     if workspace is None or not any(link.file for link in links):
@@ -77,7 +94,7 @@ def _observed(links: tuple[Backlink, ...], workspace: Path | None) -> tuple[Back
     except ValueError:
         return None
     documents: dict[str, SectionDocument | None] = {}
-    observed = []
+    observed: list[_Link] = []
     for link in links:
         if link.file is None or link.section is None or link.cited_digest is None:
             observed.append(link)

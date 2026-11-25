@@ -368,8 +368,9 @@ def test_fresh_consumer_installs_the_bundled_provider_with_no_contract_prerequis
     provider_checkout: ProviderCheckout,
     independent: bool,
 ) -> None:
-    """A fresh add governs the provider, then the definitions: the package carries
-    its own operation Contracts (registration schema 3), so none is a prerequisite."""
+    """A fresh add governs the provider and the definitions in one change: the
+    package carries its own operation Contracts (registration schema 3), so none
+    is a prerequisite."""
     from cruxible_client.contracts.authoring.inputs import ProcedureInput
     from tests.support.provider_installation import local_call_contract_files
     from tests.test_server.test_provider_installation import _run_call
@@ -421,26 +422,26 @@ def test_fresh_consumer_installs_the_bundled_provider_with_no_contract_prerequis
         assert not any(path.startswith("providers/kit-call/") for path in before)
         added = _add(consumer, release, dry_run=False)
         if independent:
-            assert added.status == "awaiting_providers", added
-            assert added.approval_required
+            # One proposal holds the build and the definitions: no kit_resume wait.
+            assert added.status == "proposed", added
+            assert added.approval_required and added.proposal_id is not None
             assert _tree(consumer) == before
             (step,) = added.providers
-            assert step.proposal_id is not None
-            consumer.approve(step.proposal_id)
-            # Creation's base kit add stopped at its proposal too; it has its own row.
-            resumed = [
+            assert step.action == "awaiting_approval"
+            assert step.proposal_id == added.proposal_id
+            assert not [
                 row
                 for row in playbill_api.playbill_kit_status(consumer.instance_id).resumes
                 if row.kit_id == "acme"
             ]
-            assert len(resumed) == 1 and resumed[0].proposal_id is not None
-            consumer.approve(resumed[0].proposal_id)
+            consumer.approve(added.proposal_id)
         else:
             assert added.status == "accepted", added
             assert [step.action for step in added.providers] == ["install"]
+            assert added.providers[0].proposal_id == added.proposal_id
         with instance.accepted_history_reader() as history:
-            # The provider's build, then the definitions: no Contract change first.
-            assert int(history.sequence) - before_generation == 2
+            # The provider's build and the definitions together: no Contract change first.
+            assert int(history.sequence) - before_generation == 1
         assert not any(path in _tree(consumer) for path in local_call_contract_files())
         tree = _tree(consumer)
         assert all(tree[path] == content for path, content in release.contents().items())
@@ -466,8 +467,9 @@ def test_fresh_consumer_installs_the_bundled_provider_with_no_contract_prerequis
             assert result.status == "accepted", result
             assert result.transition == "upgrade"
             with instance.accepted_history_reader() as history:
-                # Identical operation Contracts need no prerequisite change.
-                assert int(history.sequence) - before_upgrade == 2
+                # Identical operation Contracts need no prerequisite change, and the
+                # new build lands with the release's definitions.
+                assert int(history.sequence) - before_upgrade == 1
     finally:
         for _ in opened:
             pass
