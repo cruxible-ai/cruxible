@@ -63,7 +63,12 @@ from cruxible_core.runtime.permissions import reset_permissions
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.credentials import reset_runtime_credential_store
 from cruxible_core.server.registry import get_registry, reset_registry
-from cruxible_core.service.authoring.write_verbs import _lower, _Planner, _with_default_subject
+from cruxible_core.service.authoring.write_verbs import (
+    _UNASSIGNED_OPERATION,
+    _lower,
+    _Planner,
+    _with_default_subject,
+)
 from tests.core_support._write_support import KIND
 from tests.test_scale import _counters, _worlds
 from tests.test_scale._counters import COUNTERS, counting, trace_sqlite
@@ -192,7 +197,12 @@ def _plan(world: World, request: WriteRequest) -> object:
         head = instance.accepted_coordinate()
         request = _with_default_subject(request)
         plan = _Planner(instance, head=head, read_at=head, request=request).build()
-        return _lower(plan, because=request.because, planned_at=head)
+        return _lower(
+            plan,
+            because=request.because,
+            planned_at=head,
+            operation=_UNASSIGNED_OPERATION,
+        )
 
 
 def _dry_run(world: World, request: WriteRequest) -> object:
