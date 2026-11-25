@@ -13,7 +13,7 @@ import base64
 import hashlib
 import json
 import sqlite3
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextlib import closing
 from functools import partial
 from typing import Any
@@ -243,6 +243,11 @@ def _build(
     cardinality = claim_type_cardinality(
         lambda path: instance.proposal_blobs(tree_oid, (path,), proposal_id=proposal_id).get(path)
     )
+
+    def read_claims(paths: tuple[str, ...]) -> Mapping[str, bytes]:
+        # The Claims a member's based_on pins name, in the candidate's tree.
+        return instance.proposal_blobs(tree_oid, paths, proposal_id=proposal_id)
+
     # Only immutable changed paths drive this explicit cold rebuild. No population scan.
     for start in range(0, len(candidate.members), BATCH_SIZE):
         members = candidate.members[start : start + BATCH_SIZE]
@@ -320,6 +325,7 @@ def _build(
                     verdict=(verdict.get("initial_verdict") if isinstance(verdict, dict) else None),
                     cardinality=cardinality,
                     base_oid=base_oid,
+                    read_claims=read_claims,
                 )
             elif member.artifact_kind == "subject" and member.disposition != "replace":
                 row_key, row_kind, row_field, op, row = subject_change_row(

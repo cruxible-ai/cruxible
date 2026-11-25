@@ -139,8 +139,30 @@ made from.
   `{"procedure": "NAME"}` instead of a single Line; preview and execution fan
   out across every enabled Line bound to that Procedure in deterministic order,
   so newly adopted source Lines join the Runbook without editing it.
+- **`cruxible write --example`** prints a worked, valid write file (about 20
+  lines): a `docs` append, a `create` named by `{"created": label}`, a `set`
+  with `file` evidence, `role: "normative"` and `based_on`, and a `set` citing
+  the appended section. `--schema` is unchanged; `write --help` names both.
+- **`cruxible query NAME --param k=v`** runs the named query NAME: a
+  positional name given `--param`, `--budgets` or `--receipt` (and no compact
+  option such as `--where` or `--select`) binds as `--name`, instead of
+  refusing `cruxible.query.mode_invalid`.
+- **`based_on` pins in review:** `proposal review` (text, `--json`, MCP, SDK)
+  shows each proposed value's `based_on` Claims with the Subject and field
+  each is about (`based on CLM-... kind/id field`), and `get CLM --detail
+  proof` prints them as `based on:` lines (in `--json`, `proof.based_on`). The
+  disposable review projection moves to format 8 and rebuilds.
 
 ### Changed
+
+- **The typed Python SDK is the primary authoring surface.** README, For AI
+  agents, the quickstart and the SDK reference now say which surface to use:
+  the typed SDK (`cruxible python` with `.cruxible/world.pyi`) whenever an
+  agent can run code, MCP for agents without a code environment, and the CLI
+  for shell inspection, people and backup. `cruxible python --help` shows
+  `cruxible python -c ...`, `cruxible python - <<'PY'` and the world stub, and
+  `cruxible orient` names `cruxible python` when the folder holds
+  `.cruxible/world.pyi`.
 
 - **Provider review shows what is installed:** a proposal that adds, revises
   or retires a Provider build now reviews (CLI `proposal review` and
@@ -158,6 +180,14 @@ made from.
 
 ### Fixed
 
+- **Approve hints never name the author:** a write stopped for independent
+  approval (or kept with `accept: never`) names its one eligible approver, or
+  else `--signer-id '<INDEPENDENT_REVIEWER>'` (MCP `signer_id`, SDK
+  `cx.signer(...)`), never the author or the caller's own signer; `init`'s
+  base kit and a compiler upgrade awaiting independent approval say the same.
+- **`--commit --yes` composes:** on every command with `--dry-run|--commit`
+  (`principal add` among them), `--yes` beside `--commit` is a no-op instead of
+  a usage error; `--yes` with `--dry-run` still refuses.
 - **An observation grant may create a composite key's ends:** `scope:
   "observations"` now reads the pair ends a Subject spec creates (an
   occurrence's `inventory` and `component` with `create: if_absent`, nested to

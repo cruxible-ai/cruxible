@@ -186,7 +186,8 @@ def change_control_options(fn: Callable[..., Any]) -> Callable[..., Any]:
     default renders the preview and asks ``Commit this change? [y/N]``; yes
     commits against the exact coordinate the preview answered with, and so
     refuses the same way ``--commit --at OID`` would if that state moved.
-    ``--yes`` commits the preview without asking. Anywhere else the preview
+    ``--yes`` commits the preview without asking; with ``--commit`` it is a
+    no-op, since ``--commit`` already commits. Anywhere else the preview
     prints the ``--commit --at`` hint, unchanged.
     """
 
@@ -194,6 +195,9 @@ def change_control_options(fn: Callable[..., Any]) -> Callable[..., Any]:
     def run(*args: Any, **kwargs: Any) -> Any:
         yes = bool(kwargs.pop("yes", False))
         output_json = bool(kwargs.get("output_json", False))
+        if yes and kwargs.get("dry_run") is False:
+            # --commit already commits without a preview to confirm: --yes adds nothing.
+            yes = False
         if yes and output_json:
             raise click.UsageError(
                 "--yes renders the preview and then commits it; with --json, commit the "
@@ -201,7 +205,7 @@ def change_control_options(fn: Callable[..., Any]) -> Callable[..., Any]:
             )
         if yes and kwargs.get("dry_run") is not None:
             raise click.UsageError(
-                "--yes commits a change that previews by default; drop --dry-run/--commit"
+                "--yes commits a change that previews by default; drop --dry-run"
             )
         ctx = click.get_current_context()
         offer = kwargs.get("dry_run") is None and not output_json

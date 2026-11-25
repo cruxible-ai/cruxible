@@ -91,7 +91,7 @@ def test_agent_forms_are_unchanged(
         assert f"Commit it: rerun the same command with --commit --at {PIN}" in result.output
 
 
-@pytest.mark.parametrize("extra", [["--json"], ["--commit"]], ids=["json", "commit"])
+@pytest.mark.parametrize("extra", [["--json"], ["--dry-run"]], ids=["json", "dry-run"])
 def test_yes_refuses_forms_it_cannot_honor(
     stub: _StubClient, monkeypatch: pytest.MonkeyPatch, extra: list[str]
 ) -> None:
@@ -99,6 +99,19 @@ def test_yes_refuses_forms_it_cannot_honor(
     result = CliRunner().invoke(cli, [*BASE, "remove", "acme", "--yes", *extra])
     assert result.exit_code == 2
     assert stub.sent == []
+
+
+@pytest.mark.parametrize("extra", [[], ["--json"]], ids=["text", "json"])
+def test_yes_beside_commit_commits_once_without_asking(
+    stub: _StubClient, monkeypatch: pytest.MonkeyPatch, extra: list[str]
+) -> None:
+    """--commit already commits: --yes beside it changes nothing (benchmark friction)."""
+
+    _terminal(monkeypatch, True)
+    result = CliRunner().invoke(cli, [*BASE, "remove", "acme", "--commit", "--yes", *extra])
+    assert result.exit_code == 0, result.output
+    assert "Commit this change?" not in result.output
+    assert [item.dry_run for item in stub.sent] == [False]
 
 
 def test_every_change_controlled_command_takes_yes() -> None:

@@ -1,7 +1,12 @@
 # Cruxible Python SDK reference
 
 `cruxible-client` is the Python client for a Cruxible daemon; `pip install
-cruxible` installs it together with the daemon, CLI and MCP server. This is an
+cruxible` installs it together with the daemon, CLI and MCP server. It is the
+primary authoring surface for any agent that can run code (MCP serves agents
+without one; the CLI serves the shell and people): `cruxible python script.py`
+(or `-c CODE`, or `- <<'PY'`) runs a script with the CLI's own interpreter and
+this SDK from any repository, and `.cruxible/world.pyi` types the instance's
+vocabulary. This is an
 API reference. A Procedure is authored in one typed form, the `ProcedureSpec`;
 `Sequence` is a thin typed builder over it. The reference also covers
 contract-derived records, typed query and run results, and child calls. Names and typed handles are authoring inputs; exact versions and

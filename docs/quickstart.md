@@ -174,8 +174,11 @@ OS user can read. See [Review and governance](review-and-governance.md).
 
 ## 8. Bring in your agent
 
-Connect a coding agent to the same instance through MCP or the CLI
-([For AI agents](for-ai-agents.md)). Started in this project, it acts as the
+Connect a coding agent to the same instance ([For AI
+agents](for-ai-agents.md)): an agent that can run code writes through the
+typed Python SDK with `cruxible python` (vocabulary types in
+`.cruxible/world.pyi`), a general agent through MCP, and the CLI serves the
+shell and people. Started in this project, it acts as the
 owner with no further setup. `cruxible orient` and `cruxible next` show it
 what is there and what needs attention, and the kit's governed guidance
 (`cruxible get Document:security.guidance.dependency`) says how to judge an

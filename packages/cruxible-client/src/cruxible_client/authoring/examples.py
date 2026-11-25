@@ -709,6 +709,30 @@ def authoring_example(
     return AUTHORING_EXAMPLE_FACTORIES[name]()
 
 
+#: What `cruxible write --example` prints: a worked FILE that validates as one.
+WRITE_FILE_EXAMPLE: Final = """\
+{
+  "because": "Audit of src/auth/login.py: login retries are unlimited.",
+  "docs": [
+    {"op": "append", "file": "notes/audit.md", "under": ["Findings"],
+     "heading": "Login has no rate limit",
+     "text": "POST /login accepts unlimited retries (src/auth/login.py, def login)."}
+  ],
+  "changes": [
+    {"op": "create", "label": "f1", "subject_kind": "security.finding",
+     "key": "login-no-rate-limit"},
+    {"op": "set", "subject": {"created": "f1"}, "field": "severity", "value": "high",
+     "role": "normative",
+     "evidence": {"kind": "file", "file": "src/auth/login.py#def login("},
+     "based_on": ["security.code_fact/login-handler#rate_limit"]},
+    {"op": "set", "subject": {"created": "f1"}, "field": "status", "value": "open",
+     "evidence": {"kind": "section", "file": "notes/audit.md",
+                  "section": ["Findings", "Login has no rate limit"]}}
+  ]
+}
+"""
+
+
 __all__ = [
     "AUTHORING_EXAMPLE_FACTORIES",
     "AUTHORING_EXAMPLE_NAMES",
@@ -731,4 +755,5 @@ __all__ = [
     "query_claims_by_type_example",
     "query_definition_example",
     "subject_example",
+    "WRITE_FILE_EXAMPLE",
 ]

@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 from cruxible_client._error_base import printable
 from cruxible_client.contracts.claim_type_inputs import CLAIM_TYPE_LINT_TEXT
 from cruxible_client.contracts.get_display import get_value_display
-from cruxible_client.contracts.get_text import file_shown
+from cruxible_client.contracts.get_text import based_on_text, file_shown
 from cruxible_client.contracts.public_names import public_name as _public_name
 
 if TYPE_CHECKING:
@@ -650,6 +650,8 @@ def review_change_lines(
             lines.extend(f"      | {printable(line)}" for line in text_lines)
     if item.citations_more:
         lines.append(f"    cites {item.citations_more} more")
+    for pin in item.based_on:
+        lines.append(f"    based on {based_on_text(pin.claim, pin.subject, pin.field)}")
     if item.rationale:
         lines.append(f"    because: {printable(item.rationale)}")
     return lines

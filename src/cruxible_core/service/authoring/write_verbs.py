@@ -342,7 +342,7 @@ def _render_proposal_call(
         if verb == "approve":
             # No key: the signer's client finds it (remembered settings) or
             # refuses with the repair.
-            who = signer or "'<SIGNER_ID>'"
+            who = shlex.quote(signer or placeholder("SIGNER_ID"))
             return f"cruxible proposal approve {proposal_id} --signer-id {who}"
         return f"cruxible proposal activate {proposal_id}"
     if surface == "sdk":
@@ -4807,7 +4807,7 @@ def _approval(
                     surface,
                     "approve",
                     proposal_id,
-                    signer=approvers[0] if approvers else None,
+                    signer=_independent_signer(approvers, author=caller.actor.actor_id),
                 ),
                 permitted=caller.may_approve,
             )
@@ -4819,6 +4819,21 @@ def _approval(
             permitted=caller.may_activate,
         ),
     )
+
+
+def _independent_signer(approvers: Sequence[str], *, author: str) -> str:
+    """Who a reviewed write's approve call names: never its author, never the caller.
+
+    The one eligible approver when exactly one is registered; otherwise a
+    placeholder the caller fills with an independent reviewer. Leaving the
+    signer out would name the caller's own key (``cx.signer()``, the MCP
+    server's configured signer), which cannot count toward the approval.
+    """
+
+    others = [item for item in approvers if item != author]
+    if len(others) == 1:
+        return others[0]
+    return placeholder("INDEPENDENT_REVIEWER")
 
 
 def _for_caller(call: str, *, permitted: bool) -> str:

@@ -79937,10 +79937,58 @@
             "title": "PriorRefusalCoverage",
             "type": "object"
           },
+          "ReviewBasedOn": {
+            "additionalProperties": false,
+            "description": "A Claim a proposed value was judged from (a ``based_on`` pin), and what it is about.\n\n``subject`` and ``field`` name the pinned Claim's Subject and field when its\nversion is readable in the candidate's tree; ``claim`` alone otherwise.",
+            "properties": {
+              "claim": {
+                "description": "CLM-<32 hex>; get accepts it.",
+                "title": "Claim",
+                "type": "string"
+              },
+              "field": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Field"
+              },
+              "subject": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Subject"
+              }
+            },
+            "required": [
+              "claim"
+            ],
+            "title": "ReviewBasedOn",
+            "type": "object"
+          },
           "ReviewChange": {
             "additionalProperties": false,
-            "description": "One proposed value change, in the write outcome's form, with what it cites.\n\n``change`` is a ``ChangeOutcome`` exactly as ``write`` answers one: op,\nSubject, field, before and after, the Claim and its candidate verdict.\n``role`` is the Claim's role; ``rationale`` the item's own reason, when a\nProcedure proposed it (the change set's ``rationale`` covers the rest).",
+            "description": "One proposed value change, in the write outcome's form, with what it cites.\n\n``change`` is a ``ChangeOutcome`` exactly as ``write`` answers one: op,\nSubject, field, before and after, the Claim and its candidate verdict.\n``role`` is the Claim's role; ``rationale`` the item's own reason, when a\nProcedure proposed it (the change set's ``rationale`` covers the rest).\n``based_on`` lists the Claims the value was judged from, which a reviewer\nchecks it against.",
             "properties": {
+              "based_on": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/ReviewBasedOn"
+                },
+                "title": "Based On",
+                "type": "array"
+              },
               "change": {
                 "$ref": "#/$defs/ChangeOutcome"
               },

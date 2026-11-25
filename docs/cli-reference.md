@@ -163,7 +163,8 @@ preview answered with, exactly as `--commit --at OID` would, so it refuses
 `cruxible.preview.state_moved` if that state moved in between; no commits
 nothing and prints the `--commit --at OID` to run later. `--yes` (on every
 command that takes `--dry-run|--commit`) commits the preview without asking,
-on a terminal or not; it refuses with `--json`, `--dry-run` or `--commit`.
+on a terminal or not; it refuses with `--json` or `--dry-run`, and beside
+`--commit`, which already commits, it changes nothing.
 Off a terminal, and with `--json`, nothing asks: the preview prints the
 `--commit --at OID` hint as before.
 
@@ -2535,6 +2536,7 @@ cruxible query [KIND] [--where 'f=v'|'f!=v'|'f<v'|'f<=v'|'f>v'|'f>=v'|'f in a,b'
     [--limit N | --all] [--cursor C]
     [--spec FILE | --name N --param k=v ... [--budgets JSON] [--receipt compact|full]]
     [--at GIT_OID] [--evaluation-time TS] [--json]
+cruxible query NAME --param k=v ... [--budgets JSON] [--receipt compact|full]
 ~~~
 
 `query` has no subcommands: it answers any question over accepted state in one
@@ -2631,7 +2633,9 @@ past the page. Cells show each slot's answer as `get` shows it; `--status` adds 
 resolution overturned or reads ineligible, or retired ones, and `--claims` names each
 cell's Claims (ID, status, verdict, role) beneath the table. `--spec` runs a
 `QueryDefinitionSpec` file inline; `--name` with `--param` runs an accepted
-named query (`orient --section queries` lists them, `get query:NAME --detail
+named query (so does a positional NAME given `--param`, `--budgets` or
+`--receipt` and no compact option: `cruxible query security.code_facts --param
+repo=acme`) (`orient --section queries` lists them, `get query:NAME --detail
 proof` reads one), `--budgets` sets its budgets up to the definition's maximum,
 and `--receipt full` adds its replay receipt (`receipt.replay`: the Claims each
 row read, traversal paths, bound parameters, verdict, and the
@@ -4214,6 +4218,7 @@ cruxible rebind CLAIM (--file FILE#ANCHOR | --section FILE#Heading/Path | --capt
   [--citation HEX] [--workspace-root DIR] [--dry-run] [--no-accept] [--at GIT_OID] [--json]
 cruxible write FILE [--because TEXT] [--based-on CLAIM_ID]... [--workspace-root DIR]
   [--dry-run] [--no-accept] [--at GIT_OID] [--json]
+cruxible write --example
 cruxible write --schema
 ~~~
 
@@ -4284,8 +4289,12 @@ the file cannot be anchored, since any text taken from it is found more than
 once: the write refuses with the occurrences' byte offsets (`anchor resolved
 to N occurrences at byte offsets [...]`). Anchor a nearby line that is unique.
 
-Use `write - --workspace-root DIR` for stdin and `write --schema` for the
-payload schema. Docs-only writes create no change set. Accepted and
+Use `write - --workspace-root DIR` for stdin, `write --example` for a worked
+FILE to start from (a `docs` append, a `create` named by `{"created":
+label}`, a `set` with `file` evidence, `role` and `based_on`, and a `set`
+citing the appended section), and `write --schema` for the payload schema.
+With a code environment, the typed SDK through `cruxible python` writes the
+same changes without hand-written JSON. Docs-only writes create no change set. Accepted and
 awaiting-approval outcomes write files; dry runs and refusals do not. Inspect
 `docs[].written`, digests, refusal/repair, and `next`: post-admission conflicts
 retain Claims but leave the file untouched. Projection blocks and paths under
@@ -4956,8 +4965,11 @@ Runs a script with the interpreter the CLI itself runs on, so `import
 cruxible_client` is the SDK installed with this `cruxible`, from any repository
 or worktree and with nothing installed into that project's environment.
 `-c CODE` runs a string and `-` reads the script from standard input, as
-`python` does; options for the script go after SCRIPT, and the exit status is
-the script's.
+`python` does (`cruxible python - <<'PY'` takes a heredoc); options for the
+script go after SCRIPT, and the exit status is the script's. It is how an agent
+in any repository (Go, Rust, TypeScript, or Python with an unrelated virtual
+environment) uses the typed SDK, the primary authoring surface whenever it can
+run code, with `.cruxible/world.pyi` typing the vocabulary.
 
 The connection this command resolved reaches the script through its
 environment: the daemon (`--server-url` / `--server-socket`, as

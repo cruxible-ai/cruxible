@@ -1448,7 +1448,9 @@ def init_playbill(
         if kit.status == "accepted":
             click.echo(f"Base kit: {kit.kit_id} {kit.version} installed")
         else:
-            approver = _INIT_REVIEWER_ID if reviewer is not None else _SIGNER_PLACEHOLDER
+            approver = (
+                _INIT_REVIEWER_ID if reviewer is not None else _INDEPENDENT_SIGNER_PLACEHOLDER
+            )
             click.echo(
                 f"Base kit: {kit.kit_id} {kit.version} awaits approval, proposal "
                 f"{kit.proposal_id} (cruxible proposal approve {kit.proposal_id} "
@@ -4925,6 +4927,8 @@ def _awaiting_approve_steps(receipt: contracts.ApprovalReceipt) -> list[str]:
 
 #: A signer only the caller can name, as every suggested command shows it.
 _SIGNER_PLACEHOLDER = "'<SIGNER_ID>'"
+#: A signer who must not be the proposal's author (independent approval).
+_INDEPENDENT_SIGNER_PLACEHOLDER = "'<INDEPENDENT_REVIEWER>'"
 
 
 @proposal_group.command("activate")
@@ -7898,6 +7902,12 @@ def rebind(
 @click.option("--because", default=None, help="Why; overrides the file's because.")
 @click.option("--schema", is_flag=True, help="Print the JSON schema FILE is validated against.")
 @click.option(
+    "--example",
+    "example",
+    is_flag=True,
+    help="Print a worked FILE (docs, create, set with file and section evidence, based_on).",
+)
+@click.option(
     "--workspace-root",
     default=".",
     show_default=True,
@@ -7917,6 +7927,7 @@ def write_changes(
     file: str | None,
     because: str | None,
     schema: bool,
+    example: bool,
     workspace_root: str,
     based_on: tuple[str, ...],
     dry_run: bool,
@@ -7933,17 +7944,31 @@ def write_changes(
     {field: value, ...} (e.g. {"occurrence": "kind/id", "vulnerability":
     "kind/id"}); other changes name a created Subject {"created": label}, as
     subject or value. A top-level "subject" is
-    the Subject of every change that names none. --schema prints the schema.
-    Optional docs hold append {file, under, text} or replace {file, section,
-    text, expect}. Paths are heading lists; [] selects the preamble. Section
-    evidence {kind: section, file, section} cites the edited text in the same call.
+    the Subject of every change that names none. Optional docs hold append
+    {file, under, text} or replace {file, section, text, expect}. Paths are
+    heading lists; [] selects the preamble. Section evidence {kind: section,
+    file, section} cites the edited text in the same call.
+
+    --example prints a worked FILE to start from (cruxible write --example >
+    changes.json); --schema prints the JSON schema FILE is validated against.
+    With a Python environment, the typed SDK (cruxible python, with
+    .cruxible/world.pyi) writes the same changes without hand-written JSON.
     """
 
+    if schema and example:
+        raise click.UsageError("pass --schema or --example, not both")
     if schema:
         _emit_json(_WriteFileV1.model_json_schema())
         return
+    if example:
+        from cruxible_client.authoring.examples import WRITE_FILE_EXAMPLE
+
+        click.echo(WRITE_FILE_EXAMPLE, nl=False)
+        return
     if file is None:
-        raise click.UsageError("pass FILE, or --schema to see what FILE holds")
+        raise click.UsageError(
+            "pass FILE, --example for a worked FILE, or --schema to see what FILE holds"
+        )
     source = payload_label(file)
     payload = read_payload_document(file)
     if isinstance(payload, list):
@@ -8552,14 +8577,21 @@ def get_by_ref(
         result = observe_get_drift(result, Path("."))
     proof = result.proof
     claim_summary = result.kind == "claim" and result.detail == "proof" and not proof_full
+    context = (
+        _based_on_context(proof, result.coordinate.git_oid)
+        if claim_summary and proof is not None
+        else None
+    )
     if output_json:
         if claim_summary and proof is not None:
-            result = result.model_copy(update={"proof": claim_proof_summary(proof)})
+            result = result.model_copy(
+                update={"proof": claim_proof_summary(proof, based_on_context=context)}
+            )
         _emit_json(result.model_dump(mode="json"))
         return
     if claim_summary and proof is not None:
         click.echo(f"{result.ref}  ({result.coordinate.git_oid})")
-        for line in claim_proof_summary_lines(proof):
+        for line in claim_proof_summary_lines(proof, based_on_context=context):
             click.echo(line)
         return
     _emit_get_text(result, evidence_erased=_stale_claim_evidence_erased(request, result))
@@ -8569,6 +8601,39 @@ def get_by_ref(
             f"next: cruxible get {shlex.quote(ref)} --detail {detail}{narrowed} "
             f"--cursor {result.next_cursor}"
         )
+
+
+def _based_on_context(
+    proof: Mapping[str, Any], at: str
+) -> dict[str, tuple[str | None, str | None]] | None:
+    """Each Claim a proof's based_on pins name, as (Subject, field), in one batched read.
+
+    None when the Claim pins nothing; a pin whose Claim does not read keeps its id alone.
+    """
+
+    from cruxible_client.contracts.get_reads import (
+        GET_BATCH_MAX_REFS,
+        GetBatchRequest,
+        GetClaimCard,
+    )
+    from cruxible_client.contracts.get_text import claim_proof_based_on
+
+    pinned = claim_proof_based_on(proof)[:GET_BATCH_MAX_REFS]
+    if not pinned:
+        return None
+    request = GetBatchRequest(refs=pinned, detail="summary", at=at, surface="cli")
+    try:
+        batch = _server_call(
+            lambda client, instance_id: client.get_batch(instance_id, request=request),
+            command_name="cruxible get",
+        )
+    except (CoreError, click.ClickException):
+        return {}
+    context: dict[str, tuple[str | None, str | None]] = {}
+    for claim, item in zip(pinned, batch.results, strict=False):
+        if isinstance(item.card, GetClaimCard):
+            context[claim] = (item.card.subject, item.card.predicate)
+    return context
 
 
 def _write_body(request: Any, destination: Path, *, whole: bool) -> None:
@@ -9230,7 +9295,10 @@ def _land_compiler_upgrade(
                 "not activated: the approval policy needs an ordinary principal other than "
                 "the proposer; that principal's `cruxible proposal approve` activates it"
             ),
-            next=f"cruxible proposal approve {proposal_id} --signer-id {_SIGNER_PLACEHOLDER}",
+            next=(
+                f"cruxible proposal approve {proposal_id} "
+                f"--signer-id {_INDEPENDENT_SIGNER_PLACEHOLDER}"
+            ),
         )
     elif key is None or signer_id is None:
         stop = CompilerUpgradeProposed(
@@ -9565,8 +9633,9 @@ def query_group(
     CaptureContract, ProcedureMandate or QueryDefinition (each lists its
     definitions with typed columns; --select adds the rest, such as a
     ClaimType's role, stale_after or kit, or a Trigger's cron); --name runs
-    an accepted named query (orient --section queries lists them), --spec a
-    full definition. A page holds at most 500 rows: --limit above that, or
+    an accepted named query (orient --section queries lists them), and so
+    does a positional NAME given --param (cruxible query NAME --param k=v);
+    --spec runs a full definition. A page holds at most 500 rows: --limit above that, or
     --all, follows the cursor and prints the pages as one table.
     """
 
@@ -9607,8 +9676,28 @@ def query_group(
             raise click.ClickException(
                 f"{spec_path} is not a QueryDefinitionSpec: {_validation_problems(exc)}"
             ) from exc
+    kind = ctx.meta.get("playbill_query_kind")
+    compact_options = (
+        where_expressions,
+        contains,
+        select_fields,
+        follow,
+        order_fields,
+        statuses,
+        with_claims,
+        spec,
+    )
+    if (
+        query_name is None
+        and kind is not None
+        and (params is not None or budgets_json is not None or receipt != "compact")
+        and not any(compact_options)
+    ):
+        # `cruxible query NAME --param k=v`: only a named query takes params,
+        # budgets or a receipt, so the positional is the query's name.
+        query_name, kind = kind, None
     fields: dict[str, object] = {
-        "kind": ctx.meta.get("playbill_query_kind"),
+        "kind": kind,
         "where": [item.model_dump(mode="json", by_alias=True) for item in where],
         "contains": contains,
         "select": _split_fields(select_fields),
@@ -11650,6 +11739,12 @@ def orient(
         _emit_json(rendered)
         return
     click.echo(_render_orient(rendered))
+    if workspace_root is not None:
+        from cruxible_client.contracts.workspace_layout import WORLD_STUB_PATH
+
+        if (workspace_root / WORLD_STUB_PATH).is_file():
+            # The typed authoring surface, when this folder has its vocabulary stub.
+            click.echo(f"SDK: cruxible python SCRIPT (types: {WORLD_STUB_PATH})")
 
 
 @playbill_group.command("stub")

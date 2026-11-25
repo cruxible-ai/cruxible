@@ -210,15 +210,25 @@ Cruxible combines typed state, linked prose, and deterministic automation:
 
 ## Use it from your agent
 
-One daemon owns the state; three clients talk to it:
+One daemon owns the state; three clients talk to it. Pick by what the agent
+can run:
 
-- **MCP:** configure your MCP client to launch `cruxible mcp` (`uvx cruxible
-  mcp` from the registry listing). See [MCP tools](docs/mcp-tools.md).
-- **CLI:** every command above, with `--json` for scripts and shell-capable
-  agents. See the [CLI reference](docs/cli-reference.md).
-- **Python SDK:** `cruxible-client`, installed with `cruxible`, loads your
-  vocabulary into typed Python handles and atomic write batches. See the
+- **Python SDK, for any agent that can run code:** the primary authoring
+  surface. `cruxible-client`, installed with `cruxible`, loads your vocabulary
+  into typed Python handles and atomic write batches: kinds, fields and enum
+  members are closed types (`.cruxible/world.pyi`), and `define()`,
+  `AuthoredSection` and `based_on` replace hand-written JSON. `cruxible python
+  script.py` (or `-c`, or `-` for a heredoc) runs a script with the CLI's own
+  interpreter and SDK from any repository, Go, Rust or TypeScript included,
+  with nothing installed there. See the
   [SDK reference](packages/cruxible-client/README.md).
+- **MCP, for agents without a code environment:** configure your MCP client to
+  launch `cruxible mcp` (`uvx cruxible mcp` from the registry listing). See
+  [MCP tools](docs/mcp-tools.md).
+- **CLI, for the shell, people and backup:** `orient`, `next`, `proposal
+  review` and every command above, with `--json` for scripts; `cruxible write
+  --example` prints a worked write file. See the
+  [CLI reference](docs/cli-reference.md).
 
 All three share the same verbs: `orient`, `query` and `get` read; `set` and
 `write` change values; `authoring` changes definitions. `cruxible init` starts

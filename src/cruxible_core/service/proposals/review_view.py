@@ -26,6 +26,7 @@ from cruxible_client.contracts.procedures.line_specs import LineSpec
 from cruxible_client.contracts.proposal_summary import (
     REVIEW_CITATIONS_MAX,
     REVIEW_CITED_TEXT_MAX_CHARS,
+    ReviewBasedOn,
     ReviewChange,
     ReviewCitation,
     ReviewClaimTypeDefinition,
@@ -131,6 +132,59 @@ def _claim_id(path: str) -> str:
     return path.rsplit("/", 1)[-1].removesuffix(".json")
 
 
+def based_on_claim_ids(artifact: Mapping[str, Any] | None) -> tuple[str, ...]:
+    """The Claims a stored Claim artifact's ``based-on`` pins name, in pin order."""
+
+    from cruxible_client.contracts.claims import BASED_ON_CLAIM_PIN_ROLE
+
+    found: list[str] = []
+    for pin in (artifact or {}).get("pins", ()):
+        if not isinstance(pin, Mapping) or pin.get("role") != BASED_ON_CLAIM_PIN_ROLE:
+            continue
+        target = pin.get("target")
+        name = target.get("name") if isinstance(target, Mapping) else None
+        if isinstance(name, str) and name not in found:
+            found.append(name)
+    return tuple(found)
+
+
+def based_on_rows(
+    claim_ids: tuple[str, ...], read: Callable[[tuple[str, ...]], Mapping[str, bytes]]
+) -> list[dict[str, str]]:
+    """Each pinned Claim with the Subject and field it is about, where its artifact reads.
+
+    ``read`` maps Claim paths to their stored bytes in the tree the pins resolve
+    in (one batched read per call); an unreadable Claim keeps only its id.
+    Cost: one read of the pinned Claims, bounded by the pins of one Claim.
+    """
+
+    from cruxible_client.contracts.claims import claim_path
+
+    if not claim_ids:
+        return []
+    paths: dict[str, str] = {}
+    for claim in claim_ids:
+        try:
+            paths[claim] = claim_path(claim)
+        except ValueError:
+            continue
+    contents = read(tuple(paths.values())) if paths else {}
+    rows: list[dict[str, str]] = []
+    for claim in claim_ids:
+        row = {"claim": claim}
+        content = contents.get(paths.get(claim, ""))
+        if content is not None:
+            try:
+                statement = json.loads(content)["statement"]
+                kind, subject = _subject_ref(str(statement["subject"]["artifact_path"]))
+                row["subject"] = subject
+                row["field"] = _field(str(statement["predicate"]), kind)
+            except (KeyError, TypeError, ValueError):
+                pass
+        rows.append(row)
+    return rows
+
+
 def _live(artifact: Mapping[str, Any] | None) -> bool:
     return artifact is not None and artifact.get("lifecycle", {}).get("state", "live") == "live"
 
@@ -163,8 +217,13 @@ def claim_change_row(
     verdict: str | None,
     cardinality: Callable[[str], str | None],
     base_oid: str,
+    read_claims: Callable[[tuple[str, ...]], Mapping[str, bytes]] | None = None,
 ) -> tuple[tuple[str, ...], str, str | None, str, dict[str, Any]]:
-    """One Claim member as a change row: (sort key, Subject kind, field, op, stored data)."""
+    """One Claim member as a change row: (sort key, Subject kind, field, op, stored data).
+
+    ``read_claims`` reads Claim paths in the candidate's tree, so each
+    ``based_on`` pin is stored with the Subject and field it is about.
+    """
 
     artifact = new if new is not None else old
     assert artifact is not None
@@ -236,6 +295,9 @@ def claim_change_row(
         "citations": citations,
         "spans": [list(span) for span in spans],
     }
+    pinned = based_on_claim_ids(new) if op != "retire" else ()
+    if pinned:
+        data["based_on"] = based_on_rows(pinned, read_claims or (lambda paths: {}))
     return (subject, "1", field, claim), kind, field, op, data
 
 
@@ -387,6 +449,7 @@ def review_change(
         rationale=rationale,
         citations=shown,
         citations_more=max(0, len(citations) - REVIEW_CITATIONS_MAX),
+        based_on=tuple(ReviewBasedOn.model_validate(item) for item in data.get("based_on", ())),
     )
 
 
@@ -696,6 +759,8 @@ def subject_revision_row(path: str) -> tuple[tuple[Any, ...], dict[str, Any]]:
 
 __all__ = [
     "CitedText",
+    "based_on_claim_ids",
+    "based_on_rows",
     "claim_change_row",
     "claim_type_cardinality",
     "definition_row",

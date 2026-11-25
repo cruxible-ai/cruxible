@@ -12,6 +12,21 @@ examples use the car parts example from
 
 ## Connect
 
+Pick the surface by what the agent can run:
+
+1. **The typed Python SDK, whenever the agent can run code.** It is the
+   primary authoring surface: `.cruxible/world.pyi` types the instance's kinds,
+   fields and enum members, so a wrong name fails in the editor or pyright, not
+   at the daemon; `define()`, `AuthoredSection` and `based_on` take Python
+   values instead of JSON shapes. `cruxible python script.py` (or `-c CODE`, or
+   `- <<'PY'`) runs it with the CLI's own interpreter and connection, from any
+   repository, whatever its language or virtual environment. See [Writing from
+   the SDK](#writing-from-the-sdk).
+2. **MCP, for a general agent with no code environment.** The tools below.
+3. **The CLI, for shell inspection, people and backup.** `cruxible orient`,
+   `cruxible next`, `cruxible proposal review` and `approve`; `cruxible write
+   --example` prints a worked write file to start from.
+
 **MCP.** An MCP client launches `cruxible mcp` (`uvx cruxible mcp` from the
 registry listing). Every tool runs on a daemon; the server is only its client.
 
@@ -310,6 +325,19 @@ is a signal, not a success: `uncovered` usually means the field's rules don't
 admit your evidence for that role. Run `next` again after a batch of work.
 
 ## Writing from the SDK
+
+An agent with a code environment writes here. `cruxible python` runs the
+script with the CLI's own SDK, so nothing is installed in the agent's
+repository and the SDK always matches the CLI:
+
+~~~bash
+cruxible python - <<'PY'
+from cruxible_client import Cruxible
+with Cruxible.connect() as cx:
+    w = cx.world()
+    print(cx.orient())
+PY
+~~~
 
 The value verbs on each surface:
 

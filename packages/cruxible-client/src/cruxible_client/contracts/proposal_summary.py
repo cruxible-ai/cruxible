@@ -118,6 +118,18 @@ class ReviewCitation(_SummaryModel):
     unavailable: bool = Field(default=False, exclude_if=lambda value: not value)
 
 
+class ReviewBasedOn(_SummaryModel):
+    """A Claim a proposed value was judged from (a ``based_on`` pin), and what it is about.
+
+    ``subject`` and ``field`` name the pinned Claim's Subject and field when its
+    version is readable in the candidate's tree; ``claim`` alone otherwise.
+    """
+
+    claim: str = Field(description="CLM-<32 hex>; get accepts it.")
+    subject: str | None = Field(default=None, exclude_if=_omit_none)
+    field: str | None = Field(default=None, exclude_if=_omit_none)
+
+
 class ReviewChange(_SummaryModel):
     """One proposed value change, in the write outcome's form, with what it cites.
 
@@ -125,6 +137,8 @@ class ReviewChange(_SummaryModel):
     Subject, field, before and after, the Claim and its candidate verdict.
     ``role`` is the Claim's role; ``rationale`` the item's own reason, when a
     Procedure proposed it (the change set's ``rationale`` covers the rest).
+    ``based_on`` lists the Claims the value was judged from, which a reviewer
+    checks it against.
     """
 
     change: ChangeOutcome
@@ -132,6 +146,7 @@ class ReviewChange(_SummaryModel):
     rationale: str | None = Field(default=None, exclude_if=_omit_none)
     citations: tuple[ReviewCitation, ...] = Field(default=(), exclude_if=_omit_empty)
     citations_more: int = Field(default=0, ge=0, exclude_if=lambda value: not value)
+    based_on: tuple[ReviewBasedOn, ...] = Field(default=(), exclude_if=_omit_empty)
 
 
 class ReviewChangeCount(_SummaryModel):

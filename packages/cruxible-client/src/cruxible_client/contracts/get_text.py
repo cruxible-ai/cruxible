@@ -849,12 +849,44 @@ def claim_view_lines(view: Any) -> list[str]:
     ]
 
 
-def claim_proof_summary(proof: Mapping[str, Any]) -> dict[str, Any]:
-    """A Claim's proof as a summary: its verdict and each cited Capture on one line.
+def based_on_text(claim: str, subject: str | None, field: str | None) -> str:
+    """A ``based_on`` pin as one cell: the Claim id, then its Subject and field when known."""
+
+    about = " ".join(part for part in (subject, field) if part)
+    return printable(f"{claim} {about}" if about else claim)
+
+
+def claim_proof_based_on(proof: Mapping[str, Any]) -> tuple[str, ...]:
+    """The Claims a Claim proof's ``based-on`` pins name, from its lifecycle fact."""
+
+    found: list[str] = []
+    for fact in proof.get("facts", ()):
+        if not isinstance(fact, Mapping) or fact.get("schema_id") != "cruxible.claim.lifecycle":
+            continue
+        value = fact.get("value")
+        pins = value.get("pins", ()) if isinstance(value, Mapping) else ()
+        for pin in pins:
+            if not isinstance(pin, Mapping) or pin.get("role") != "based-on":
+                continue
+            target = pin.get("target")
+            name = target.get("name") if isinstance(target, Mapping) else None
+            if isinstance(name, str) and name not in found:
+                found.append(name)
+    return tuple(found)
+
+
+def claim_proof_summary(
+    proof: Mapping[str, Any],
+    *,
+    based_on_context: Mapping[str, tuple[str | None, str | None]] | None = None,
+) -> dict[str, Any]:
+    """A Claim's proof as a summary: its verdict, each cited Capture, and its based_on pins.
 
     ``get CLM --detail proof`` answers this by default (S1); ``--detail
     proof-full`` (MCP ``proof_full``) answers the whole envelope and facts.
     Each Capture line is ``CAP-<12 hex>  <status>  <contract>  <role>``.
+    ``based_on`` lists each pinned Claim, with its Subject and field when
+    ``based_on_context`` (Claim id to (Subject, field)) knows them.
     """
 
     verdict = ""
@@ -874,16 +906,39 @@ def claim_proof_summary(proof: Mapping[str, Any]) -> dict[str, Any]:
         for item in proof.get("admission_accounts", ())
         if isinstance(item, Mapping)
     ]
-    return {"verdict": verdict, "captures": captures, "full": "detail proof_full"}
+    summary: dict[str, Any] = {"verdict": verdict, "captures": captures}
+    pinned = claim_proof_based_on(proof)
+    if pinned:
+        context = based_on_context or {}
+        rows: list[dict[str, str]] = []
+        for claim in pinned:
+            subject, field = context.get(claim, (None, None))
+            row = {"claim": claim}
+            if subject:
+                row["subject"] = subject
+            if field:
+                row["field"] = field
+            rows.append(row)
+        summary["based_on"] = rows
+    summary["full"] = "detail proof_full"
+    return summary
 
 
-def claim_proof_summary_lines(proof: Mapping[str, Any]) -> list[str]:
+def claim_proof_summary_lines(
+    proof: Mapping[str, Any],
+    *,
+    based_on_context: Mapping[str, tuple[str | None, str | None]] | None = None,
+) -> list[str]:
     """The summary as the CLI prints it."""
 
-    summary = claim_proof_summary(proof)
+    summary = claim_proof_summary(proof, based_on_context=based_on_context)
     lines = [f"verdict: {summary['verdict'] or '-'}"]
     lines.extend(f"  {line}" for line in summary["captures"])
     if not summary["captures"]:
         lines.append("  (cites no Capture)")
+    for row in summary.get("based_on", ()):
+        lines.append(
+            "based on: " + based_on_text(row["claim"], row.get("subject"), row.get("field"))
+        )
     lines.append("(--detail proof-full prints the whole envelope and facts)")
     return lines
