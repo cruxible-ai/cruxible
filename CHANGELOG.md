@@ -152,13 +152,17 @@ made from.
   each is about (`based on CLM-... kind/id field`), and `get CLM --detail
   proof` prints them as `based on:` lines (in `--json`, `proof.based_on`). The
   disposable review projection moves to format 8 and rebuilds.
-- **`based_on=` on typed World writes:** `draft.set(...)`, `draft.add(...)`,
-  `edit.set(...)`, `edit.add(...)`, `subject.set(...)` and `subject.add(...)`
-  take `based_on=` (a `CLM-...` id, `kind/id#field`, a `ClaimRef`, the
-  `ClaimView`s a field read answers, or a list of them), and the world stub
-  (`.cruxible/world.pyi`) types it, so `cruxible python --check` accepts it.
-  A pin still names an accepted Claim: one created in the same change set has
-  no Claim id until the write lowers, so it is not resolved in-batch.
+- **`based_on=` on typed World writes and same-write pinning:** `draft.set(...)`,
+  `draft.add(...)`, `edit.set(...)`, `edit.add(...)`, `subject.set(...)` and
+  `subject.add(...)` take `based_on=` (a `CLM-...` id, `kind/id#field`, a
+  `ClaimRef`, the `ClaimView`s a field read answers, `draft.pin("field")`, or a
+  list of them), and the world stub (`.cruxible/world.pyi`) types it so
+  `cruxible python --check` accepts it. Pins can now name Claims written or
+  created in the same write batch via `draft.pin("field")` (including key
+  fields), `label#field`, or `kind/id#field` for Subjects whose key determines
+  their ID; change-set lowering stages Claim members (and ClaimType succession
+  re-authored Claims together with their ordinary `based_on` prerequisites) in
+  dependency order and refuses cycles (`based_on_cycle`) and self-pins.
 - **`cruxible query --no-truncate`** shows every cell whole. A query table
   never cuts its `subject` and `subject_id` columns, whatever their length.
 - **Dry runs show `role` and `based_on`:** a write outcome (CLI text, `--json`,
@@ -176,6 +180,9 @@ made from.
   `cruxible orient` names `cruxible python` when the folder holds
   `.cruxible/world.pyi`.
 
+- **Compact `ClaimsDiagnostic` findings with `incomplete_reasons`:** diagnostic
+  findings omit unset fields on the wire and include `incomplete_reasons` when
+  completeness evaluation is partial.
 - **Provider review shows what is installed:** a proposal that adds, revises
   or retires a Provider build now reviews (CLI `proposal review` and
   `approve`, MCP, SDK) its package, build key, control domain, declared
@@ -192,6 +199,11 @@ made from.
 
 ### Fixed
 
+- **Cached world stubs invalidate on renderer upgrades:** the world stub cache
+  (`state.json`, bumped to `cruxible-world-stub-cache-v2`) records a renderer
+  key hashing the client version and `world_stub.py` source (falling back to
+  version alone when source is unavailable), re-rendering old v1 or upgraded
+  caches automatically instead of serving stale type stubs.
 - **A statement-style World `.set()` no longer drops its Claim:** `Draft` and
   `Edit` `.set()`, `.add()` and `.retire()` record the change on the draft or
   edit itself and return it for chaining, so `d.set(...)` without reassigning
