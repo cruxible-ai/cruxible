@@ -30,7 +30,7 @@ from cruxible_client.authoring.examples import WRITE_FILE_EXAMPLE as WRITE_EXAMP
 from cruxible_client.contracts.compact_query import QueryRequest
 from cruxible_client.contracts.get_reads import GetRequest
 from cruxible_client.contracts.get_text import claim_proof_summary, claim_proof_summary_lines
-from cruxible_client.contracts.text_display import render_review_summary
+from cruxible_client.contracts.text_display import render_review_summary, render_write_outcome
 from cruxible_core.cli.commands.playbill import _WriteFileV1
 from cruxible_core.cli.main import cli
 from cruxible_core.service.authoring.write_verbs import (
@@ -162,6 +162,44 @@ def test_based_on_pins_show_in_proposal_review_and_proof_summary(tmp_path: Path)
     assert claim_proof_summary(proof)["based_on"] == [{"claim": scope}]
     lines = claim_proof_summary_lines(proof, based_on_context={scope: (occurrence, "scope")})
     assert f"based on: {scope} {occurrence} scope" in lines
+
+
+def test_a_dry_run_shows_the_named_role_and_based_on_and_review_shows_the_role(
+    tmp_path: Path,
+) -> None:
+    instance, scope, judgment, _occurrence = _world(tmp_path)
+    exposure = (
+        service_playbill_get(
+            instance, request=GetRequest(ref=judgment), access=_READER
+        ).card.subject  # type: ignore[union-attr]
+    )
+    change = {
+        "op": "set",
+        "subject": exposure,
+        "field": "justification",
+        "value": "component_not_present",
+        "based_on": [scope],
+    }
+    kept = write(instance, change, accept="never")
+    assert kept.proposal is not None
+    summary = service_review_summary(
+        instance, proposal_id=kept.proposal.proposal_id, access=_READER
+    )
+    (reviewed,) = [item for item in summary.changes if item.change.field == "justification"]
+    assert reviewed.role is not None
+    text = render_review_summary(summary, command="cruxible proposal review P")
+    # The role shows in review even when it is the common normative one.
+    assert f"role {reviewed.role}" in text
+    assert text.count(f"based on {scope}") == 1
+
+    preview = write(instance, {**change, "role": reviewed.role}, dry_run=True)
+    (planned,) = [item for item in preview.changes if item.field == "justification"]
+    assert planned.role == reviewed.role and planned.based_on == (scope,)
+    rendered = render_write_outcome(preview)
+    assert f"role {reviewed.role}" in rendered and f"based on {scope}" in rendered
+    # A write that names no role shows none: the default says nothing new.
+    plain = write(instance, change, dry_run=True)
+    assert all(item.role is None for item in plain.changes)
 
 
 # -- query NAME --param -------------------------------------------------------------

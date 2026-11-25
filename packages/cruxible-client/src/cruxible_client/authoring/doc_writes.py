@@ -20,7 +20,7 @@ from cruxible_client.authoring.files import (
     default_catalog_name,
 )
 from cruxible_client.authoring.page_writes import PageWriteError, replace_page_file
-from cruxible_client.authoring.sdk_types import SourceSelectionError
+from cruxible_client.authoring.sdk_types import SourceAnchorNotFound, SourceSelectionError
 from cruxible_client.authoring.selectors import (
     FileSelector,
     catalog_file_paths,
@@ -484,12 +484,20 @@ def _write_workspace(
                 else:
                     try:
                         selection = selector.anchor(evidence.anchor)
+                    except SourceAnchorNotFound as exc:
+                        raise DocSectionError(
+                            "anchor_not_found",
+                            f"{evidence.anchor!r} in {cited}: {exc}",
+                            repair="Quote text as the file reads now: copy one line "
+                            "(leading indentation may stay)",
+                        ) from exc
                     except SourceSelectionError as exc:
                         raise DocSectionError(
                             "anchor_not_unique",
                             f"{evidence.anchor!r} in {cited}: {exc}",
                             repair="Quote text that occurs exactly once in the file "
-                            "(a longer phrase, or a whole line)",
+                            "(a longer phrase, a whole line, or the line with its "
+                            "indentation)",
                         ) from exc
                     evidence = evidence.model_copy(update={"observation": selection.observation()})
                 change = change.model_copy(update={"evidence": evidence})

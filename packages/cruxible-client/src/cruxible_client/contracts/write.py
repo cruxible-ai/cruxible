@@ -1136,6 +1136,12 @@ class ChangeOutcome(_StrictWriteModel):
         exclude_if=_omit_none,
         description="An about change: the Subjects the note links after it ([] = retired).",
     )
+    role: WriteRole | None = Field(
+        default=None, exclude_if=_omit_none, description="The role the write named."
+    )
+    based_on: tuple[str, ...] = Field(
+        default=(), exclude_if=_omit_empty, description="Claims the value rests on, by ID."
+    )
 
 
 class WriteProposalRef(_StrictWriteModel):

@@ -267,7 +267,11 @@ def test_without_the_filled_dispositions_the_same_adds_refuse(
     monkeypatch.setattr(write_verbs, "_with_dispositions", lambda member, _claims: member)
     outcome = _write(instance, _add(WI1, "governs", WI2), _add(WI1, "governs", WI3))
     assert outcome.status == "refused"
-    assert _refusal(outcome).code == "cruxible.authoring.existing_claim_dispositions_incomplete"
+    refusal = _refusal(outcome)
+    assert refusal.code == "cruxible.authoring.existing_claim_dispositions_incomplete"
+    # The refusal names the colliding slot and the Claims left undispositioned.
+    assert WI1 in refusal.message and "governs" in refusal.message, refusal.message
+    assert "not dispositioned: CLM-" in refusal.message, refusal.message
 
 
 def test_a_relation_value_never_creates_the_subject_it_names(instance: PlaybillInstance) -> None:
@@ -2517,6 +2521,41 @@ def test_rebind_names_the_citation_when_none_of_that_file_is_held(
     assert refusal.repair == 'Name one of the listed citations with citation: "<ID>"'
 
 
+def test_an_indented_anchor_tells_equal_lines_at_different_depths_apart(
+    tmp_path: Path,
+) -> None:
+    """A quoted code line keeps its leading indentation; blank anchors still refuse."""
+
+    from cruxible_client.authoring.sdk_types import SourceSelectionError
+    from cruxible_client.authoring.selectors import FileSelector
+
+    content = b"def check(x):\r\n    if x:\r\n        return None\r\n    return None\r\n"
+    selector = FileSelector(tmp_path / "check.py", "doc-check.py", content)
+    deep = selector.anchor("        return None\r\n")
+    assert deep.anchor_text == "        return None"
+    assert content[deep.start_byte : deep.end_byte] == b"        return None"
+    observation = deep.observation()
+    assert observation.selector.anchor == "        return None"
+    with pytest.raises(SourceSelectionError) as repeated:
+        selector.anchor("    return None")
+    assert repeated.value.code == "cruxible.doc.anchor_not_unique"
+    for blank in ("", "   ", "\t\r\n"):
+        with pytest.raises(SourceSelectionError, match="blank|empty"):
+            selector.anchor(blank)
+
+
+def test_the_anchor_window_admits_indentation_but_not_blank_or_trailing_space() -> None:
+    from cruxible_client.contracts.authoring.models import WorkingAnchorWindow
+
+    window = WorkingAnchorWindow(
+        anchor="    return None", start_byte=0, end_byte=15, observed_occurrence_count=1
+    )
+    assert window.anchor == "    return None"
+    for bad in ("", "   ", "return None ", "return None\n", "\n    return None"):
+        with pytest.raises(ValueError, match="nonblank"):
+            WorkingAnchorWindow(anchor=bad, start_byte=0, end_byte=15, observed_occurrence_count=1)
+
+
 def test_selection_and_section_refusals_name_their_repair() -> None:
     """gapb-24/25: a missing or repeated anchor, and a heading-less note, say what to do."""
 
@@ -2528,6 +2567,12 @@ def test_selection_and_section_refusals_name_their_repair() -> None:
         _unique_window(b"alpha\nbeta\n", "gamma")
     with pytest.raises(SourceSelectionError, match="occurs 2 times .*repair: quote more"):
         _unique_window(b"alpha\nalpha\n", "alpha")
+    with pytest.raises(SourceSelectionError) as missing:
+        _unique_window(b"alpha\n", "gamma")
+    assert missing.value.code == "cruxible.doc.anchor_not_found"
+    with pytest.raises(SourceSelectionError) as repeated:
+        _unique_window(b"alpha\nalpha\n", "alpha")
+    assert repeated.value.code == "cruxible.doc.anchor_not_unique"
     with pytest.raises(DocSectionError) as heading:
         append_section(b"# Notes\n", text="no heading here")
     assert heading.value.repair is not None and "--heading TITLE" in heading.value.repair

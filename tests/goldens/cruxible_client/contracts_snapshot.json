@@ -79523,6 +79523,15 @@
                 "title": "Already Live",
                 "type": "boolean"
               },
+              "based_on": {
+                "default": [],
+                "description": "Claims the value rests on, by ID.",
+                "items": {
+                  "type": "string"
+                },
+                "title": "Based On",
+                "type": "array"
+              },
               "before": {
                 "$ref": "#/$defs/ShownValue",
                 "default": null
@@ -79659,6 +79668,24 @@
                 ],
                 "default": null,
                 "title": "Revises"
+              },
+              "role": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "normative",
+                      "observation",
+                      "environment_binding"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "The role the write named.",
+                "title": "Role"
               },
               "section": {
                 "anyOf": [

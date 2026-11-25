@@ -2866,8 +2866,9 @@ class _Planner:
         }
         if isinstance(change.evidence, SectionEvidence) and change.evidence.own_words:
             values["located_at"] = change.evidence.observation
+        pins: tuple[str, ...] | None = None
         if change.based_on is not None:
-            values["based_on"] = self.based_on(change.based_on, index=index)
+            pins = values["based_on"] = self.based_on(change.based_on, index=index)
         member = ClaimAuthoringPayload(**values)
         used_contract = (
             COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity.name
@@ -2898,6 +2899,9 @@ class _Planner:
                 "revises": revises,
                 "contenders_created": contenders,
                 "capture": None if capture is None else capture_handle(capture),
+                # Shown when the writer named it; a default role says nothing new.
+                "role": change.role,
+                "based_on": pins or (),
             },
             member=member,
             capture=capture,

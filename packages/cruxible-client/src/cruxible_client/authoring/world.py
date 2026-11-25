@@ -33,12 +33,13 @@ from __future__ import annotations
 import keyword
 import re
 from collections.abc import Iterator, Mapping, Sequence
-from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, Literal, cast
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
 
 from cruxible_client.authoring.sdk_types import (
     AbsentSubject,
     Cardinality,
+    ClaimRef,
     ClaimRole,
     ClaimTypeRef,
     ClaimValueError,
@@ -95,7 +96,43 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
         WriteRole,
     )
 
+    #: What ``based_on=`` takes on a World write: Claim ids (``CLM-...``), the
+    #: ``kind/id#field`` shorthand for a field's one live Claim, ``ClaimRef``s,
+    #: or the ``ClaimView``s a Subject's field read answers.
+    WorldBasedOn: TypeAlias = str | ClaimRef | ClaimView | Sequence[str | ClaimRef | ClaimView]
+
 _SEGMENT_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+
+
+def _world_based_on(claims: WorldBasedOn | None) -> tuple[str, ...] | None:
+    """``based_on`` as wire names; ``None`` keeps a revision's pins as they are."""
+
+    from cruxible_client.authoring.sdk import ClaimView
+
+    if claims is None:
+        return None
+    items: Sequence[object] = (
+        (claims,) if isinstance(claims, str | ClaimRef | ClaimView) else claims
+    )
+    if not isinstance(items, Sequence):
+        raise TypeError(
+            "based_on takes a Claim (CLM-..., kind/id#field, a ClaimRef or a ClaimView) "
+            f"or a list of them, not {type(claims).__name__}"
+        )
+    names: list[str] = []
+    for item in items:
+        if isinstance(item, ClaimView):
+            names.append(item.claim_id)
+        elif isinstance(item, ClaimRef):
+            names.append(item.address)
+        elif isinstance(item, str):
+            names.append(item.removeprefix("Claim:"))
+        else:
+            raise TypeError(
+                "based_on names Claims as CLM-..., kind/id#field, a ClaimRef or a "
+                f"ClaimView, not {type(item).__name__}"
+            )
+    return tuple(names)
 
 
 def _write_value(value: object) -> Any:
@@ -555,6 +592,7 @@ class WorldSubject(SubjectRef):
         evidence: Evidence | AuthoredSection | None = None,
         role: WriteRole | None = None,
         contend: bool = False,
+        based_on: WorldBasedOn | None = None,
         dry_run: bool = False,
         accept: WriteAccept = "if_allowed",
         **fields: object,
@@ -562,6 +600,9 @@ class WorldSubject(SubjectRef):
         """Set single-value fields of this Subject, by leaf: ``set(status="done", because=...)``.
 
         ``evidence=cx.section(file, path, text=...)`` carries prose and its citation.
+        ``based_on=`` names the Claims each value was judged from (``CLM-...``,
+        ``kind/id#field`` for that field's one live Claim, or the ``ClaimView``s
+        a field read answers); the write pins them.
         Every field set here is one change of one change set. The names are
         checked against this World before the wire; a leaf that is a Python
         keyword takes one trailing underscore (``class_``). A value may be a new
@@ -575,7 +616,9 @@ class WorldSubject(SubjectRef):
 
         _refuse_positional_fields("set", positional)
 
-        edit = self.edit().set(evidence=evidence, role=role, contend=contend, **fields)
+        edit = self.edit().set(
+            evidence=evidence, role=role, contend=contend, based_on=based_on, **fields
+        )
         return edit.write(because=because, dry_run=dry_run, accept=accept)
 
     def add(
@@ -586,6 +629,7 @@ class WorldSubject(SubjectRef):
         evidence: Evidence | AuthoredSection | None = None,
         role: WriteRole | None = None,
         expect_absent: bool = False,
+        based_on: WorldBasedOn | None = None,
         dry_run: bool = False,
         accept: WriteAccept = "if_allowed",
         **fields: object,
@@ -600,7 +644,13 @@ class WorldSubject(SubjectRef):
 
         _refuse_positional_fields("add", positional)
 
-        edit = self.edit().add(evidence=evidence, role=role, expect_absent=expect_absent, **fields)
+        edit = self.edit().add(
+            evidence=evidence,
+            role=role,
+            expect_absent=expect_absent,
+            based_on=based_on,
+            **fields,
+        )
         return edit.write(because=because, dry_run=dry_run, accept=accept)
 
     def retire(
@@ -628,6 +678,7 @@ class WorldSubject(SubjectRef):
         evidence: Evidence | AuthoredSection | None = None,
         role: WriteRole | None = None,
         contend: bool = False,
+        based_on: WorldBasedOn | None = None,
         **fields: object,
     ) -> WorldSubjectEdit:
         """Start changes to this Subject that are written later, in one change set.
@@ -636,7 +687,8 @@ class WorldSubject(SubjectRef):
         ``set``, ``add`` and ``retire`` take, but return the edit instead of
         writing, so it can be sent beside new Subjects' drafts. Fields given
         here are set at once: ``edit(status="done")`` is ``edit().set(status="done")``
-        (with ``evidence=``, ``role=`` and ``contend=`` as ``set`` takes them),
+        (with ``evidence=``, ``role=``, ``contend=`` and ``based_on=`` as ``set``
+        takes them),
         and the edit still chains ``.add(...)`` and ``.retire(...)``.
 
         Next: ``w.write(edit, *drafts, because=...)`` or ``edit.write(because=...)``.
@@ -645,13 +697,13 @@ class WorldSubject(SubjectRef):
         _refuse_positional_fields("edit", positional)
         edit = WorldSubjectEdit(address=self.address, _world=self._world)
         if not fields:
-            if evidence is not None or role is not None or contend:
+            if evidence is not None or role is not None or contend or based_on is not None:
                 raise TypeError(
-                    "edit() takes evidence=, role= and contend= only beside the fields they "
-                    "set: edit(<field>=<value>, evidence=...)"
+                    "edit() takes evidence=, role=, contend= and based_on= only beside the "
+                    "fields they set: edit(<field>=<value>, evidence=...)"
                 )
             return edit
-        return edit.set(evidence=evidence, role=role, contend=contend, **fields)
+        return edit.set(evidence=evidence, role=role, contend=contend, based_on=based_on, **fields)
 
     def __getitem__(self, predicate: str | ClaimTypeRef) -> tuple[ClaimView, ...]:
         """Read the live Claims under one predicate, named in full or by leaf."""
@@ -692,8 +744,8 @@ class WorldSubject(SubjectRef):
 class _FieldChange:
     """One field change a draft or an edit carries until ``World.write`` sends it.
 
-    Compared by identity: a draft derived by ``.set``/``.add`` shares its
-    parent's changes, so a change is sent once however many drafts carry it.
+    Compared by identity: a change is sent once however many times one write
+    reaches the draft or edit that carries it.
     """
 
     op: Literal["set", "add"]
@@ -703,10 +755,11 @@ class _FieldChange:
     role: WriteRole | None = None
     contend: bool = False
     expect_absent: bool = False
+    based_on: tuple[str, ...] | None = None
 
 
 class _Landing:
-    """Where one new Subject landed: shared by a draft and every draft derived from it.
+    """Where one new Subject landed, once a write of its draft was accepted.
 
     ``accepted`` holds the changes an accepted write already sent, by identity,
     so a landed draft reused later sends only what it gained since.
@@ -729,12 +782,13 @@ class WorldWritable:
 class WorldNewSubject(WorldWritable):
     """A new Subject of one kind, drafted by ``w.<kind>.define(...)``; nothing is sent yet.
 
-    The draft is frozen: ``.set``/``.add`` return a new draft carrying one more
-    change. Pass it as a Subject value anywhere in the same ``w.write`` (or to
+    ``.set``/``.add`` record their changes on this draft and return it, so both
+    ``draft.set(...)`` as a statement and ``draft = draft.set(...)`` keep every
+    change, and calls chain. Pass it as a Subject value anywhere in the same ``w.write`` (or to
     ``edit().set``): it is sent as a reference to its own ``create``, so the
     order of drafts never matters. ``w.write`` (or ``draft.write``) creates it,
     or lands on the one live Subject its key already names. Once accepted,
-    ``address`` is the id core assigned, and the draft (or one derived from it)
+    ``address`` is the id core assigned, and the draft
     passed to a later write is a reference to that Subject: its key, fields and
     sections are not sent again, only changes added after the acceptance. Reads
     at this World's coordinate still do not see it: ``cx.world()`` again for those.
@@ -767,9 +821,15 @@ class WorldNewSubject(WorldWritable):
         *positional: object,
         evidence: Evidence | AuthoredSection | None = None,
         role: WriteRole | None = None,
+        based_on: WorldBasedOn | None = None,
         **fields: object,
     ) -> WorldNewSubject:
-        """Set fields; evidence may carry ``cx.section(..., text=...)`` prose.
+        """Set fields on this draft and return it; evidence may carry ``cx.section(...)`` prose.
+
+        The change is recorded on this draft, so ``draft.set(...)`` needs no
+        reassignment; the draft is returned so calls chain. ``based_on=`` names
+        the accepted Claims the values were judged from, as ``WorldSubject.set``
+        takes it.
 
         Next: ``.write(because=...)`` authors the section and creates this Subject.
         """
@@ -777,9 +837,10 @@ class WorldNewSubject(WorldWritable):
         _refuse_positional_fields("set", positional)
 
         changes = self._world._field_changes(
-            self.subject_kind, "set", fields, evidence=evidence, role=role
+            self.subject_kind, "set", fields, evidence=evidence, role=role, based_on=based_on
         )
-        return replace(self, _changes=self._changes + changes)
+        self._extend(changes)
+        return self
 
     def add(
         self,
@@ -787,16 +848,26 @@ class WorldNewSubject(WorldWritable):
         *positional: object,
         evidence: Evidence | AuthoredSection | None = None,
         role: WriteRole | None = None,
+        based_on: WorldBasedOn | None = None,
         **fields: object,
     ) -> WorldNewSubject:
-        """This draft with one more value in many-valued fields. Next: ``.write(because=...)``."""
+        """Add one more value to many-valued fields of this draft, and return it.
+
+        Recorded on this draft, as ``set`` records. Next: ``.write(because=...)``.
+        """
 
         _refuse_positional_fields("add", positional)
 
         changes = self._world._field_changes(
-            self.subject_kind, "add", fields, evidence=evidence, role=role
+            self.subject_kind, "add", fields, evidence=evidence, role=role, based_on=based_on
         )
-        return replace(self, _changes=self._changes + changes)
+        self._extend(changes)
+        return self
+
+    def _extend(self, changes: tuple[_FieldChange, ...]) -> None:
+        # The dataclass is frozen against field reassignment by callers; the
+        # change list is the one member a draft grows, in place.
+        object.__setattr__(self, "_changes", self._changes + changes)
 
     def write(
         self, *, because: str, dry_run: bool = False, accept: WriteAccept = "if_allowed"
@@ -817,8 +888,9 @@ class WorldNewSubject(WorldWritable):
 class WorldSubjectEdit(WorldWritable):
     """Changes to one accepted Subject, started by ``subject.edit()``; nothing is sent yet.
 
-    Frozen: ``.set``, ``.add`` and ``.retire`` return a new edit with one more
-    change. ``w.write(edit, ...)`` sends it beside new Subjects' drafts.
+    ``.set``, ``.add`` and ``.retire`` record their change on this edit and
+    return it, so a statement call and a reassignment both keep every change,
+    and calls chain. ``w.write(edit, ...)`` sends it beside new Subjects' drafts.
     """
 
     address: str
@@ -832,9 +904,13 @@ class WorldSubjectEdit(WorldWritable):
         evidence: Evidence | AuthoredSection | None = None,
         role: WriteRole | None = None,
         contend: bool = False,
+        based_on: WorldBasedOn | None = None,
         **fields: object,
     ) -> WorldSubjectEdit:
-        """Set fields with optional ``cx.section(..., text=...)`` evidence.
+        """Set fields on this edit and return it; evidence may carry ``cx.section(...)`` prose.
+
+        Recorded on this edit, so ``edit.set(...)`` needs no reassignment.
+        ``based_on=`` as ``WorldSubject.set`` takes it.
 
         Next: ``.write(because=...)``, then inspect ``outcome.docs`` for file conflicts.
         """
@@ -843,9 +919,16 @@ class WorldSubjectEdit(WorldWritable):
 
         kind = self.address.split("/", 1)[0]
         changes = self._world._field_changes(
-            kind, "set", fields, evidence=evidence, role=role, contend=contend
+            kind,
+            "set",
+            fields,
+            evidence=evidence,
+            role=role,
+            contend=contend,
+            based_on=based_on,
         )
-        return replace(self, _changes=self._changes + changes)
+        self._extend(changes)
+        return self
 
     def add(
         self,
@@ -854,17 +937,25 @@ class WorldSubjectEdit(WorldWritable):
         evidence: Evidence | AuthoredSection | None = None,
         role: WriteRole | None = None,
         expect_absent: bool = False,
+        based_on: WorldBasedOn | None = None,
         **fields: object,
     ) -> WorldSubjectEdit:
-        """This edit with one more value in many-valued fields, as ``WorldSubject.add``."""
+        """Add one more value to many-valued fields on this edit, as ``WorldSubject.add``."""
 
         _refuse_positional_fields("add", positional)
 
         kind = self.address.split("/", 1)[0]
         changes = self._world._field_changes(
-            kind, "add", fields, evidence=evidence, role=role, expect_absent=expect_absent
+            kind,
+            "add",
+            fields,
+            evidence=evidence,
+            role=role,
+            expect_absent=expect_absent,
+            based_on=based_on,
         )
-        return replace(self, _changes=self._changes + changes)
+        self._extend(changes)
+        return self
 
     def retire(
         self,
@@ -873,7 +964,7 @@ class WorldSubjectEdit(WorldWritable):
         *,
         reason: WriteRetireReason = "was-rescinded",
     ) -> WorldSubjectEdit:
-        """This edit with one field's live value retired, as ``WorldSubject.retire``."""
+        """Retire one field's live value on this edit, as ``WorldSubject.retire``."""
 
         from cruxible_client.contracts.write import RetireChange, SlotRef
 
@@ -884,7 +975,12 @@ class WorldSubjectEdit(WorldWritable):
             else self._world._write_field(self.address.split("/", 1)[0], name)
         )
         change = RetireChange(target=SlotRef(subject=self.address, field=predicate), reason=reason)
-        return replace(self, _changes=(*self._changes, change))
+        self._extend((change,))
+        return self
+
+    def _extend(self, changes: tuple[_FieldChange | RetireChange, ...]) -> None:
+        # Frozen against reassignment by callers; the change list grows in place.
+        object.__setattr__(self, "_changes", self._changes + changes)
 
     def write(
         self, *, because: str, dry_run: bool = False, accept: WriteAccept = "if_allowed"
@@ -1380,6 +1476,7 @@ class World:
                         evidence=evidence,
                         role=item.role,
                         contend=item.contend,
+                        based_on=item.based_on,
                     )
                     if item.op == "set"
                     else AddChange(
@@ -1389,6 +1486,7 @@ class World:
                         evidence=evidence,
                         role=item.role,
                         expect_absent=item.expect_absent,
+                        based_on=item.based_on,
                     )
                 )
 
@@ -1664,10 +1762,12 @@ class World:
         role: WriteRole | None,
         contend: bool = False,
         expect_absent: bool = False,
+        based_on: WorldBasedOn | None = None,
     ) -> tuple[_FieldChange, ...]:
         """One change per field keyword, each name checked against this World."""
 
         self._assert_current()
+        pins = _world_based_on(based_on)
         self._refuse_reserved_keywords(kind, op, role=role, evidence=evidence)
         if not fields:
             raise TypeError("a write needs at least one field=value")
@@ -1693,6 +1793,7 @@ class World:
                     role=role,
                     contend=contend,
                     expect_absent=expect_absent,
+                    based_on=pins,
                 )
                 for item in items
             )

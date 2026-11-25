@@ -247,6 +247,21 @@ def test_named_query_runs_its_accepted_definition(instance: Any) -> None:
         _query(instance, name=QUERY_NAME, params={"stray": "x"})
 
 
+def test_a_bare_kind_that_names_only_a_query_runs_that_query(instance: Any) -> None:
+    """`cruxible query NAME` without --param once refused unknown_kind and exited 1."""
+
+    result = _query(instance, kind=QUERY_NAME)
+    assert result.receipt.mode == "named"
+    assert [row["item_id"] for row in result.rows] == ["wi-42", "wi-43"]
+    # Shaped, it stays a compact query and still refuses the unknown kind.
+    with pytest.raises(ReadRefusalError) as shaped:
+        _query(instance, kind=QUERY_NAME, select=["status"])
+    assert shaped.value.error_code == "cruxible.query.unknown_kind"
+    with pytest.raises(ReadRefusalError) as unknown:
+        _query(instance, kind="project.nothing_here")
+    assert unknown.value.error_code == "cruxible.query.unknown_kind"
+
+
 def test_spec_query_pins_claim_types_at_the_coordinate(instance: Any) -> None:
     declared = work_item_query("project.adhoc")
     spec = QueryDefinitionSpec.model_validate(declared.model_dump(mode="json"))

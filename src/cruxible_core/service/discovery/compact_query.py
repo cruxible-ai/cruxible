@@ -2529,6 +2529,35 @@ def _decode_cursor(cursor: str, *, selection: str) -> _QueryCursor:
 
 
 @positioned_read
+def _bare_kind_names_query(instance: PlaybillInstance, request: QueryRequest) -> bool:
+    """Whether a compact query's kind, given alone, names an accepted QueryDefinition.
+
+    Only a request that carries nothing but the kind (and paging or a
+    coordinate) qualifies, and only when no Subject kind holds that name.
+    Cost: one indexed envelope lookup; the vocabulary is read only on a match.
+    """
+
+    kind = request.kind
+    if (
+        kind is None
+        or kind in ARTIFACT_KINDS
+        or kind in LISTED_KINDS
+        or request.contains is not None
+        or request.where
+        or request.select
+        or request.follow
+        or request.order_by
+        or request.claims
+        or request.status != _LIVE_ONLY
+    ):
+        return False
+    coordinate = resolve_read_coordinate(instance, request.at)
+    with instance.bind_accepted_projection(coordinate) as projection:
+        if projection.typed.envelope(f"QueryDefinition:{kind}") is None:
+            return False
+    return kind not in load_query_vocabulary(instance, coordinate).kinds
+
+
 def service_playbill_query(
     instance: PlaybillInstance,
     *,
@@ -2543,6 +2572,11 @@ def service_playbill_query(
     """
 
     mode = _mode(request)
+    if mode == "inline" and _bare_kind_names_query(instance, request):
+        # `query NAME` alone, where NAME is an accepted QueryDefinition and no
+        # Subject kind: run it by name rather than refuse an unknown kind.
+        request = request.model_copy(update={"kind": None, "name": request.kind})
+        mode = "named"
     selection = _selection(request, mode)["query"]
     continuation = (
         None if request.cursor is None else _decode_cursor(request.cursor, selection=selection)

@@ -619,6 +619,22 @@ def _refuse(
 _WORKING_SELECTION_REFUSALS = (CaptureFormatError, CanonicalEncodingError, ValidationError)
 
 
+def _few(names: Sequence[str], *, shown: int = 5) -> str:
+    """The first few names, and how many more the repair lists."""
+
+    head = ", ".join(names[:shown])
+    return head if len(names) <= shown else f"{head} and {len(names) - shown} more"
+
+
+def _subject_shown(address: SemanticAddress) -> str:
+    """A statement subject as an author names it: ``kind/id`` for a Subject."""
+
+    path = address.artifact_path
+    if path.startswith("subjects/") and path.endswith(".json"):
+        return path.removeprefix("subjects/").removesuffix(".json")
+    return path
+
+
 def _refuse_unserved_action(action: str, offending_element: str) -> None:
     """Refuse naming an internal action this release does not serve."""
 
@@ -1885,14 +1901,35 @@ def _lower_claim(
     required_ids = expected - inferred
     if not required_ids.issubset(supplied) or not supplied.issubset(dispositionable):
         required = tuple(sorted(slot_claims, key=lambda item: item.identity.name.encode("ascii")))
+        subject_shown = _subject_shown(statement.subject)
+        missing_ids = sorted(
+            (required_ids - supplied), key=lambda identity: identity.encode("ascii")
+        )
+        unexpected_ids = sorted(
+            supplied - dispositionable, key=lambda identity: identity.encode("ascii")
+        )
+        slot_shown = f"{subject_shown} {statement.predicate}" + (
+            "" if statement.qualifier is None else f" (qualifier {statement.qualifier!r})"
+        )
+        named = "; ".join(
+            part
+            for part in (
+                f"not dispositioned: {_few(missing_ids)}" if missing_ids else "",
+                f"not in this slot: {_few(unexpected_ids)}" if unexpected_ids else "",
+            )
+            if part
+        )
         _refuse(
             "cruxible.authoring.existing_claim_dispositions_incomplete",
             "existing_claim_dispositions",
-            "Every live Claim in this statement's (subject, predicate, qualifier) "
-            "slot must receive an explicit disposition.",
+            f"Every live Claim in the slot {slot_shown} must receive an explicit "
+            f"disposition ({named}).",
             repair_kind="replace_dispositions",
             repair_description="Disposition exactly the listed existing Claim IDs.",
             replacement={
+                "subject": subject_shown,
+                "predicate": statement.predicate,
+                "qualifier": statement.qualifier,
                 "required_claims": [
                     {"claim_id": claim.identity.name, "status": claim.lifecycle.state}
                     for claim in required

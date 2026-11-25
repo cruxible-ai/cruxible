@@ -2966,7 +2966,7 @@ Python keyword and member collisions.
 | `world.claim_type("security.asset.status")` | WorldClaimType |
 | `claim_type("active")` or `claim_type.active` | Predicate-bound LiteralValue, validated locally |
 | `claim_type.as_kind` | KindNamespace when a predicate name is also a Subject kind |
-| `kind.define(<key>, <field>=...)` | WorldNewSubject: a frozen draft of a new Subject by its key (as the kind's SubjectKind names it: one value, each composite part by leaf, or none when minted); `.set`/`.add` return a new draft; nothing is sent until `world.write(...)` or `draft.write(...)` |
+| `kind.define(<key>, <field>=...)` | WorldNewSubject: a draft of a new Subject by its key (as the kind's SubjectKind names it: one value, each composite part by leaf, or none when minted); `.set`/`.add` record on the draft and return it (both `d.set(...)` and `d = d.set(...)` keep every change; `based_on=` pins Claims); nothing is sent until `world.write(...)` or `draft.write(...)` |
 | `subject.edit().set(...)` | WorldSubjectEdit: `set`/`add`/`retire` changes to an accepted Subject, sent later; `subject.edit(field=...)` sets at once |
 | `world.section(file, heading=..., body=...)` | A section authored and cited by one write (`evidence=`) |
 | `world.write(*drafts, *edits, because=...)` | One change set: each draft is a `create` change, named by a label from the others, in any order; after acceptance `draft.address` is the id core assigned |

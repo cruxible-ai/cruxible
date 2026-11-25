@@ -41,10 +41,15 @@ DEFAULT_PROFILE_MODEL_VISIBLE_TOKENS = 10_400
 #: cruxible_write. ``provider install --move`` (0.6.0 slice D2) adds ``move`` and
 #: ``move_only`` to cruxible_provider_install's request, measured at 18,715.25:
 #: ceiling 18,750, approved by the maintainer (2026-11-23) for slice D2's ``move``
-#: and ``move_only`` on cruxible_provider_install. The ceiling exists so each
-#: addition is a deliberate decision, not drift.
+#: and ``move_only`` on cruxible_provider_install. 0.6.0 kit recipes and scripts
+#: (``KitRecipeSpec``, ``KitRecipeParamSpec`` and ``KitScriptSpec`` in
+#: cruxible_kit_add's inline ``bundle`` schema) add 736, and the get and set
+#: description touch-ups 6.5, measured at 19,457.75: ceiling 19,460, raised for
+#: the 0.6.0 kit manifest (needs the maintainer's ratification, as each earlier
+#: raise had). The ceiling exists so each addition is a deliberate decision, not
+#: drift.
 #: This separate ceiling does not widen the existing default profile's budget.
-PLUGIN_PROFILE_MODEL_VISIBLE_TOKENS = 18_750
+PLUGIN_PROFILE_MODEL_VISIBLE_TOKENS = 19_460
 
 
 def model_visible_tokens(tool: Any) -> float:

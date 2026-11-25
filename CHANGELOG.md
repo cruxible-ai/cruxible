@@ -152,6 +152,18 @@ made from.
   each is about (`based on CLM-... kind/id field`), and `get CLM --detail
   proof` prints them as `based on:` lines (in `--json`, `proof.based_on`). The
   disposable review projection moves to format 8 and rebuilds.
+- **`based_on=` on typed World writes:** `draft.set(...)`, `draft.add(...)`,
+  `edit.set(...)`, `edit.add(...)`, `subject.set(...)` and `subject.add(...)`
+  take `based_on=` (a `CLM-...` id, `kind/id#field`, a `ClaimRef`, the
+  `ClaimView`s a field read answers, or a list of them), and the world stub
+  (`.cruxible/world.pyi`) types it, so `cruxible python --check` accepts it.
+  A pin still names an accepted Claim: one created in the same change set has
+  no Claim id until the write lowers, so it is not resolved in-batch.
+- **`cruxible query --no-truncate`** shows every cell whole. A query table
+  never cuts its `subject` and `subject_id` columns, whatever their length.
+- **Dry runs show `role` and `based_on`:** a write outcome (CLI text, `--json`,
+  MCP, SDK) names the role a change was written with when the writer named one
+  (`role normative`) and the Claims it rests on (`based on CLM-...`).
 
 ### Changed
 
@@ -180,6 +192,29 @@ made from.
 
 ### Fixed
 
+- **A statement-style World `.set()` no longer drops its Claim:** `Draft` and
+  `Edit` `.set()`, `.add()` and `.retire()` record the change on the draft or
+  edit itself and return it for chaining, so `d.set(...)` without reassigning
+  `d` keeps every Claim (it used to return a new draft and silently drop the
+  change while `cruxible python --check` and dry runs passed).
+- **A missing `file:` anchor says so:** an anchor that occurs nowhere in the
+  cited file refuses `cruxible.doc.anchor_not_found` (it used to report
+  `cruxible.doc.anchor_not_unique`); one that occurs more than once still
+  refuses `anchor_not_unique`.
+- **A quoted code line keeps its indentation:** a `file:` anchor's leading
+  spaces and tabs are part of what it matches, so equal lines at different
+  nesting depths no longer collide as duplicates, and an indented anchor no
+  longer refuses `working selection anchor must be nonblank and normalized`.
+  A trailing line break (LF or CRLF) is dropped; a blank anchor still refuses.
+- **`existing_claim_dispositions_incomplete` names the slot:** the refusal
+  says which Subject, field (and qualifier) collided and which Claim IDs went
+  undispositioned; the repair adds `subject`, `predicate` and `qualifier`.
+- **`cruxible query NAME` runs a named query with no parameters:** a bare
+  positional that is no Subject kind but names an accepted QueryDefinition runs
+  it (exit 0, an empty answer included) instead of refusing
+  `cruxible.query.unknown_kind` and exiting 1.
+- **`proposal review` shows every value's role,** the common `normative` role
+  included, so a reviewer sees the role being approved.
 - **Approve hints never name the author:** a write stopped for independent
   approval (or kept with `accept: never`) names its one eligible approver, or
   else `--signer-id '<INDEPENDENT_REVIEWER>'` (MCP `signer_id`, SDK

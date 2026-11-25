@@ -1075,7 +1075,10 @@ produce `duplicate_key` findings with the key and every record locator.
 Findings stay in the run report unless the Line explicitly routes their kinds
 to its inbox, for example `findings: {inbox: [extract_refused, duplicate_key]}`.
 Routing is bounded and deduplicated across identical reruns; omitting
-`findings` routes nothing.
+`findings` routes nothing. A finding carries only the fields it has. An
+`incomplete_source` finding lists its `incomplete_reasons`: each node and
+kind that made its input incomplete (for example `entries` with
+`count_mismatch`), traced back to the root cause.
 
 A ClaimType declares the members that need complete input, for example
 `requires_complete_input: [fixed, not_affected]` with

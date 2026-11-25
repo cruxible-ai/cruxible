@@ -505,6 +505,10 @@ def change_outcome_line(
         details.append(f"also retires {', '.join(change.retired)}")
     if change.contenders_created:
         details.append(f"contends with {', '.join(change.contenders_created)}")
+    if change.role is not None:
+        details.append(f"role {change.role}")
+    if change.based_on:
+        details.append(f"based on {', '.join(change.based_on)}")
     details.extend(extra)
     return line + (f"  [{'; '.join(details)}]" if details else "")
 
@@ -621,8 +625,12 @@ def review_change_lines(
     when ``file_paths`` maps its catalog name (``file_shown``).
     """
 
-    extra = [] if item.role in (None, "normative") else [f"role {item.role}"]
-    lines = [f"  {change_outcome_line(item.change, extra=extra, file_paths=file_paths)}"]
+    # The role a value is stated in is part of what a reviewer approves, the
+    # common normative role included; the outcome's own role is not repeated.
+    shown_role = item.role is not None and item.change.op not in ("create", "retire")
+    extra = [f"role {item.role}"] if shown_role and item.change.role is None else []
+    change = item.change.model_copy(update={"based_on": ()}) if item.based_on else item.change
+    lines = [f"  {change_outcome_line(change, extra=extra, file_paths=file_paths)}"]
     for citation in item.citations:
         where = file_shown(citation.source, file_paths, public=True) if citation.source else "-"
         if citation.section:

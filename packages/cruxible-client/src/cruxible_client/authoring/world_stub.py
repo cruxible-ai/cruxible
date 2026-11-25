@@ -78,7 +78,24 @@ _WORLD_MEMBERS = frozenset(
 #: set with ``draft.set(...)`` instead.
 _DEFINE_OPTIONS = frozenset({"create_new", "expect_new", "evidence", "role"})
 #: ``edit()`` keywords that are not fields, as for ``define()``.
-_EDIT_OPTIONS = frozenset({"contend", "evidence", "role"})
+_EDIT_OPTIONS = frozenset({"based_on", "contend", "evidence", "role"})
+
+#: ``based_on=`` on a write member: the Claims each value was judged from.
+_BASED_ON_PARAMETER = (
+    "    based_on: str | ClaimRef | ClaimView | Sequence[str | ClaimRef | ClaimView] | None = ...,"
+)
+
+
+def _fields_beside(lines: Iterable[str], options: Iterable[str]) -> list[str]:
+    """Field parameter lines less any a member's own keyword already spells.
+
+    A field whose leaf is a write keyword (``role``, ``based_on``) is reached by
+    its full predicate name; listing it again would repeat the parameter.
+    """
+
+    names = {option.strip().split(":", 1)[0] for option in options}
+    return [line for line in lines if line.strip().split(":", 1)[0] not in names]
+
 
 _STUB_IMPORTS = (
     "from collections.abc import Sequence",
@@ -90,6 +107,7 @@ _STUB_IMPORTS = (
     "from cruxible_client.authoring.sdk import ClaimView",
     "from cruxible_client.authoring.sdk_types import (",
     "    Cardinality,",
+    "    ClaimRef,",
     "    ClaimRole,",
     "    ClaimTypeRef,",
     "    LiteralValue,",
@@ -307,6 +325,7 @@ def _subject_block(world: World, node: _Node) -> list[str]:
             "    evidence: Evidence | AuthoredSection | None = ...,",
             "    role: WriteRole | None = ...,",
             "    contend: bool = ...,",
+            _BASED_ON_PARAMETER,
             *(
                 line
                 for line in _field_parameters(world, node.path)["one"]
@@ -379,22 +398,16 @@ def _write_members(world: World, kind: str, body: _Body) -> None:
         "    role: WriteRole | None = ...,",
     ]
     tail = ["    dry_run: bool = ...,", "    accept: WriteAccept = ...,"]
+    set_options = [*common, "    contend: bool = ...,", _BASED_ON_PARAMETER, *tail]
     body.declare_lines(
-        ["def set(", "    self,", "    /,", "    *,", *common, "    contend: bool = ...,", *tail]
-        + by_cardinality["one"]
+        ["def set(", "    self,", "    /,", "    *,", *set_options]
+        + _fields_beside(by_cardinality["one"], set_options)
         + [") -> WriteOutcome: ..."]
     )
+    add_options = [*common, "    expect_absent: bool = ...,", _BASED_ON_PARAMETER, *tail]
     body.declare_lines(
-        [
-            "def add(",
-            "    self,",
-            "    /,",
-            "    *,",
-            *common,
-            "    expect_absent: bool = ...,",
-            *tail,
-        ]
-        + by_cardinality["many"]
+        ["def add(", "    self,", "    /,", "    *,", *add_options]
+        + _fields_beside(by_cardinality["many"], add_options)
         + [") -> WriteOutcome: ..."]
     )
     body.declare_lines(
@@ -433,13 +446,15 @@ def _edit_block(world: World, node: _Node) -> list[str]:
         "    role: WriteRole | None = ...,",
     ]
     # ``address`` is the runtime edit's own.
+    set_options = [*common, "    contend: bool = ...,", _BASED_ON_PARAMETER]
     body.declare_lines(
-        ["def set(  # type: ignore[override]", "    self,", "    /,", "    *,", *common]
-        + ["    contend: bool = ...,", *by_cardinality["one"], f") -> {edit}: ..."]
+        ["def set(  # type: ignore[override]", "    self,", "    /,", "    *,", *set_options]
+        + [*_fields_beside(by_cardinality["one"], set_options), f") -> {edit}: ..."]
     )
+    add_options = [*common, "    expect_absent: bool = ...,", _BASED_ON_PARAMETER]
     body.declare_lines(
-        ["def add(  # type: ignore[override]", "    self,", "    /,", "    *,", *common]
-        + ["    expect_absent: bool = ...,", *by_cardinality["many"], f") -> {edit}: ..."]
+        ["def add(  # type: ignore[override]", "    self,", "    /,", "    *,", *add_options]
+        + [*_fields_beside(by_cardinality["many"], add_options), f") -> {edit}: ..."]
     )
     body.declare_lines(
         [
@@ -469,13 +484,14 @@ def _new_block(world: World, node: _Node) -> list[str]:
         "    role: WriteRole | None = ...,",
     ]
     # ``subject_kind`` and ``address`` are the runtime draft's own.
+    options = [*common, _BASED_ON_PARAMETER]
     body.declare_lines(
-        ["def set(  # type: ignore[override]", "    self,", "    /,", "    *,", *common]
-        + [*by_cardinality["one"], f") -> {draft}: ..."]
+        ["def set(  # type: ignore[override]", "    self,", "    /,", "    *,", *options]
+        + [*_fields_beside(by_cardinality["one"], options), f") -> {draft}: ..."]
     )
     body.declare_lines(
-        ["def add(  # type: ignore[override]", "    self,", "    /,", "    *,", *common]
-        + [*by_cardinality["many"], f") -> {draft}: ..."]
+        ["def add(  # type: ignore[override]", "    self,", "    /,", "    *,", *options]
+        + [*_fields_beside(by_cardinality["many"], options), f") -> {draft}: ..."]
     )
     body.declare_lines(_SEND_MEMBER)
     lines.extend(body.rendered())

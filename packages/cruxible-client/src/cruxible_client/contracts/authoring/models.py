@@ -141,7 +141,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.6.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:9af0c8508799e3b7170414a9428d63b6d58e1aa6fd1e98bb5dcb8b8904e6310a"
+    "sha256:52f69a111d8ff3ee06cbdc2714546aa9512369b56f9722ab9cf39088ddacf02f"
 )
 
 MAX_DIAGNOSTICS = 128
@@ -535,8 +535,15 @@ class WorkingAnchorWindow(_StrictAuthoringModel):
     @field_validator("anchor")
     @classmethod
     def _anchor(cls, value: str) -> str:
-        if not value or value.strip() != value:
-            raise ValueError("working selection anchor must be nonblank and normalized")
+        # Leading indentation (spaces, tabs) is kept: it tells equal code lines
+        # at different depths apart. Trailing whitespace and a leading line
+        # break are not part of a quoted anchor.
+        indented = value.lstrip(" \t")
+        if not value.strip() or value.rstrip() != value or indented.lstrip() != indented:
+            raise ValueError(
+                "working selection anchor must be nonblank, with no trailing whitespace "
+                "and no leading line break"
+            )
         return value
 
     @model_validator(mode="after")

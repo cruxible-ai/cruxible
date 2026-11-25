@@ -9600,6 +9600,12 @@ def _follow_entry(spec: str, option: str) -> dict[str, str]:
     ),
 )
 @click.option("--evaluation-time", default=None, help="ISO-8601 instant; default now.")
+@click.option(
+    "--no-truncate",
+    "no_truncate",
+    is_flag=True,
+    help="Show every cell whole (by default a cell past 60 characters is cut; ids never are).",
+)
 @json_option
 @click.pass_context
 @handle_errors
@@ -9623,6 +9629,7 @@ def query_group(
     receipt: str,
     at_oid: str | None,
     evaluation_time: str | None,
+    no_truncate: bool,
     output_json: bool,
 ) -> None:
     """Query accepted state: cruxible query [KIND] [--where 'f=v']...
@@ -9733,7 +9740,7 @@ def query_group(
     if output_json:
         _emit_json(result.model_dump(mode="json"))
         return
-    click.echo(render_query_table(result))
+    click.echo(render_query_table(result, truncate=not no_truncate))
     for row in result.rows if with_claims else ():
         cells = row.get("claims") or {}
         for column, entries in cells.items() if isinstance(cells, dict) else ():
