@@ -139,7 +139,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # Before this lineage's first public release, a version's digest may be re-pinned
 # only with its audited snapshot, SDK handshake, and digest guardrail in the same
 # commit. After first public release, every contract change must succeed the version.
-AUTHORING_SDK_VERSION = "0.6.0"
+AUTHORING_SDK_VERSION = "0.6.1"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
     "sha256:52f69a111d8ff3ee06cbdc2714546aa9512369b56f9722ab9cf39088ddacf02f"
 )

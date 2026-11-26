@@ -7,6 +7,21 @@ that lands it; entries move under a version heading when the release is
 tagged. Work items for these changes live on the active release line in
 the project's own state instance.
 
+## [0.6.1] - 2026-11-25
+
+### Changed
+
+- **Bare registry kit names resolve to the latest semver release:** `cruxible
+  kit add security`, `cruxible kit pull security`, and MCP `cruxible_kit_add`
+  now resolve bare registry names (without `:VERSION` or `@sha256:...`) by
+  listing repository tags and selecting the highest published `MAJOR.MINOR.PATCH`
+  release (ignoring non-semver tags such as `latest`), then pinning the pulled
+  kit by its manifest digest. Explicit `:VERSION` tags, `@sha256:...` digests,
+  local path precedence, and the bundled `base` kit are unchanged.
+- **Accurate repository target in tag-list refusals:** HTTP failures while
+  listing kit tags now report `REGISTRY/REPOSITORY` without a misleading
+  `:latest` suffix.
+
 ## [0.6.0] - 2026-11-23
 
 This release cuts the ceremony around routine change: one command sets up an

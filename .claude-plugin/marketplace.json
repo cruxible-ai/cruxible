@@ -7,7 +7,7 @@
   "plugins": [
     {
       "name": "cruxible",
-      "version": "0.6.0",
+      "version": "0.6.1",
       "description": "Typed, governed shared state and evidence for agents.",
       "source": "./plugins/cruxible"
     }
