@@ -64,27 +64,32 @@ class RegistryRefusal(ConfigError):
 
 
 def _status_refusal(
-    response: httpx.Response, ref: Reference, *, anonymous: bool
+    response: httpx.Response,
+    ref: Reference,
+    *,
+    anonymous: bool,
+    target: str | None = None,
 ) -> RegistryRefusal | None:
     """The refusal an error status means, or None for a status this module does not name."""
 
+    subject = target or str(ref)
     status = response.status_code
     if status == 404 or (status in {401, 403} and anonymous):
-        detail = f"{ref} is not published (HTTP {status})"
+        detail = f"{subject} is not published (HTTP {status})"
         if anonymous:
             detail += ", " + _PRIVATE_HINT.format(registry=ref.registry)
         return RegistryRefusal("not_found", detail, status=status)
     if status in {401, 403}:
         return RegistryRefusal(
             "registry_denied",
-            f"{ref.registry} refused the CRUXIBLE_REGISTRY_USERNAME credentials for {ref} "
+            f"{ref.registry} refused the CRUXIBLE_REGISTRY_USERNAME credentials for {subject} "
             f"(HTTP {status}); check they grant read access to it",
             status=status,
         )
     if status == 429 or status >= 500:
         return RegistryRefusal(
             "registry_unavailable",
-            f"{ref.registry} could not serve {ref} now (HTTP {status}); retry later",
+            f"{ref.registry} could not serve {subject} now (HTTP {status}); retry later",
             status=status,
         )
     return None
@@ -252,17 +257,29 @@ class RegistryClient:
     def _url(self, ref: Reference, suffix: str) -> str:
         return f"{self._scheme}://{ref.registry}/v2/{ref.repository}/{suffix}"
 
-    def _check(self, response: httpx.Response, ref: Reference) -> None:
+    def _check(
+        self, response: httpx.Response, ref: Reference, *, target: str | None = None
+    ) -> None:
         """Raise the typed refusal an error status means; any other error status raw."""
 
         if response.status_code < 400:
             return
-        refusal = _status_refusal(response, ref, anonymous=self._credentials(ref.registry) is None)
+        refusal = _status_refusal(
+            response, ref, anonymous=self._credentials(ref.registry) is None, target=target
+        )
         if refusal is not None:
             raise refusal
         response.raise_for_status()
 
-    def _token(self, ref: Reference, host: str, challenge: str, scope: str) -> str | None:
+    def _token(
+        self,
+        ref: Reference,
+        host: str,
+        challenge: str,
+        scope: str,
+        *,
+        target: str | None = None,
+    ) -> str | None:
         """A bearer token for ``host``; credentials only to that host's own realm."""
 
         if not challenge.lower().startswith("bearer "):
@@ -283,7 +300,7 @@ class RegistryClient:
         response, body = self._send(
             "GET", realm + "?" + urllib.parse.urlencode(query), headers, None, MAX_TOKEN_BYTES
         )
-        self._check(response, ref)
+        self._check(response, ref, target=target)
         payload = json.loads(body)
         token = payload.get("token") or payload.get("access_token")
         return token if isinstance(token, str) else None
@@ -346,6 +363,7 @@ class RegistryClient:
         headers: dict[str, str] | None = None,
         content: bytes | None = None,
         limit: int = MAX_ACK_BYTES,
+        target: str | None = None,
     ) -> tuple[httpx.Response, bytes]:
         origin = _origin(url)
         if origin[0] != self._scheme:
@@ -358,7 +376,9 @@ class RegistryClient:
         response, body = self._send(method, url, sent, content, limit)
         if response.status_code == 401:
             host = origin[1] if origin[2] is None else f"{origin[1]}:{origin[2]}"
-            token = self._token(ref, host, response.headers.get("www-authenticate", ""), scope)
+            token = self._token(
+                ref, host, response.headers.get("www-authenticate", ""), scope, target=target
+            )
             if token is not None:
                 self._tokens[key] = token
                 sent["Authorization"] = f"Bearer {token}"
@@ -404,10 +424,15 @@ class RegistryClient:
     def list_tags(self, ref: Reference) -> tuple[str, ...]:
         """The tags the registry holds for ``ref``'s repository."""
 
+        target = f"{ref.registry}/{ref.repository}"
         response, body = self._request(
-            "GET", ref, self._url(ref, "tags/list?n=1000"), limit=MAX_MANIFEST_BYTES
+            "GET",
+            ref,
+            self._url(ref, "tags/list?n=1000"),
+            limit=MAX_MANIFEST_BYTES,
+            target=target,
         )
-        self._check(response, ref)
+        self._check(response, ref, target=target)
         payload = json.loads(body)
         tags = payload.get("tags") if isinstance(payload, dict) else None
         if tags is None:

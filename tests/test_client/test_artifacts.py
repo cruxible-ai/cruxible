@@ -33,7 +33,13 @@ from cruxible_client.contracts.kits import (
     KitBundle,
     KitManifest,
 )
-from cruxible_client.kits import KIT_ARTIFACT, fetch_kit_image, resolve_kit
+from cruxible_client.kits import (
+    KIT_ARTIFACT,
+    fetch_kit_image,
+    resolve_kit,
+    resolve_kit_image,
+    write_kit_directory,
+)
 
 
 class FakeRegistry:
@@ -55,6 +61,7 @@ class FakeRegistry:
         self.manifests: dict[tuple[str, str], bytes] = {}
         self.uploads: dict[str, str] = {}
         self.blob_gets = 0
+        self.tag_list_requests: list[str] = []
         self.token_requests: list[httpx.Request] = []
         self.corrupt: set[str] = set()
 
@@ -85,6 +92,7 @@ class FakeRegistry:
         parts = url.path.split("/")
         if parts[-2:] == ["tags", "list"]:
             repository = "/".join(parts[2:-2])
+            self.tag_list_requests.append(repository)
             tags = sorted(
                 {
                     tag
@@ -557,3 +565,187 @@ def test_kit_status_reports_the_latest_release_of_registry_kits_only(tmp_path: P
         ("local_source", None),
     ]
     assert [kit.update_check for kit in offline.kits] == ["offline", "local_source"]
+
+
+def _versioned_bundle(kit_id: str, version: str) -> KitBundle:
+    content = json.dumps({"version": version}).encode() + b"\n"
+    path = f"claim-types/{kit_id}.account/seats.json"
+    return KitBundle(
+        manifest=KitManifest(
+            kit_id=kit_id,
+            version=version,
+            owns=(f"{kit_id}.",),
+            artifacts=(KitArtifact(path=path, artifact_digest="sha256:" + "a" * 64),),
+        ),
+        artifacts=(KitArtifactBytes.of(path, content),),
+    )
+
+
+def test_bare_kit_name_resolves_highest_semver_release_and_pins_digest(tmp_path: Path) -> None:
+    from cruxible_client.contracts.kits import InstalledKit, KitStatus
+    from cruxible_client.kits import check_kit_updates
+
+    registry = FakeRegistry()
+    v1_9 = _versioned_bundle("security", "1.9.0")
+    v1_10 = _versioned_bundle("security", "1.10.0")
+    non_semver = _versioned_bundle("security", "0.1.0")
+    with registry.client(tmp_path / "cache") as client:
+        client.push(pack_artifact(KIT_ARTIFACT, v1_9), parse_reference("security:1.9.0"))
+        latest_digest = client.push(
+            pack_artifact(KIT_ARTIFACT, v1_10), parse_reference("security:1.10.0")
+        )
+        client.push(pack_artifact(KIT_ARTIFACT, non_semver), parse_reference("security:latest"))
+        client.push(pack_artifact(KIT_ARTIFACT, non_semver), parse_reference("security:v2.0.0"))
+        client.push(pack_artifact(KIT_ARTIFACT, non_semver), parse_reference("security:2.0.0-rc1"))
+
+        fetched_image, fetched_origin = fetch_kit_image("security", registry=client)
+        assert fetched_image.digest == latest_digest
+        assert fetched_origin == f"ghcr.io/cruxible-ai/kits/security@{latest_digest}"
+        assert unpack_artifact(KIT_ARTIFACT, fetched_image) == v1_10
+        assert registry.tag_list_requests == ["cruxible-ai/kits/security"]
+
+        resolved_bundle, resolved_origin = resolve_kit("security", registry=client)
+        assert resolved_bundle == v1_10
+        assert resolved_origin == f"ghcr.io/cruxible-ai/kits/security@{latest_digest}"
+
+        resolved_image, image_origin = resolve_kit_image("security", registry=client)
+        assert resolved_image.digest == latest_digest
+        assert image_origin == f"ghcr.io/cruxible-ai/kits/security@{latest_digest}"
+
+        # Status update check works cleanly with the digest-pinned origin from a bare install.
+        status = check_kit_updates(
+            KitStatus(
+                kits=(
+                    InstalledKit(
+                        kit_id="security",
+                        version=resolved_bundle.manifest.version,
+                        content_digest=resolved_bundle.manifest.content_digest,
+                        source=resolved_origin,
+                    ),
+                )
+            ),
+            registry=client,
+        )
+        assert [(k.update_check, k.latest_available) for k in status.kits] == [
+            ("checked", "1.10.0")
+        ]
+
+
+def test_bare_full_registry_reference_resolves_highest_semver_release(tmp_path: Path) -> None:
+    registry = FakeRegistry()
+    v1_0 = _versioned_bundle("security", "1.0.0")
+    v2_0 = _versioned_bundle("security", "2.0.0")
+    with registry.client(tmp_path / "cache") as client:
+        client.push(
+            pack_artifact(KIT_ARTIFACT, v1_0),
+            parse_reference("registry.test/org/kits/security:1.0.0"),
+        )
+        digest_2_0 = client.push(
+            pack_artifact(KIT_ARTIFACT, v2_0),
+            parse_reference("registry.test/org/kits/security:2.0.0"),
+        )
+        bundle, origin = resolve_kit("registry.test/org/kits/security", registry=client)
+    assert bundle == v2_0
+    assert origin == f"registry.test/org/kits/security@{digest_2_0}"
+    assert registry.tag_list_requests == ["org/kits/security"]
+
+
+def test_bare_kit_name_with_no_semver_tags_refuses_not_found(tmp_path: Path) -> None:
+    registry = FakeRegistry()
+    with registry.client(tmp_path / "cache") as client:
+        # Empty repository (no tags at all).
+        with pytest.raises(RegistryRefusal) as empty_refused:
+            resolve_kit("security", registry=client)
+        assert empty_refused.value.reason == "not_found"
+        assert empty_refused.value.error_code == "cruxible.kit.not_found"
+        assert "ghcr.io/cruxible-ai/kits/security" in str(empty_refused.value)
+        assert "either" not in str(empty_refused.value)
+
+        # Repository with only non-semver tags such as "latest".
+        client.push(pack_artifact(KIT_ARTIFACT, _bundle()), parse_reference("security:latest"))
+        with pytest.raises(RegistryRefusal) as latest_only:
+            fetch_kit_image("security", registry=client)
+        assert latest_only.value.reason == "not_found"
+        assert latest_only.value.error_code == "cruxible.kit.not_found"
+        assert "ghcr.io/cruxible-ai/kits/security" in str(latest_only.value)
+
+        # Path-like source keeps the dual-hint message when no semver tags exist.
+        with pytest.raises(RegistryRefusal) as path_like:
+            resolve_kit("kits/missing", registry=client)
+        assert path_like.value.reason == "not_found"
+        assert "no local kit directory or layout exists at kits/missing either" in str(
+            path_like.value
+        )
+
+
+def test_bare_kit_name_404_on_tag_list_does_not_report_latest_tag(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404)
+
+    client = RegistryClient(
+        transport=httpx.MockTransport(handler),
+        cache=BlobCache(tmp_path / "cache"),
+        credentials=lambda _host: None,
+    )
+    with client, pytest.raises(RegistryRefusal) as refused:
+        fetch_kit_image("security", registry=client)
+    assert refused.value.reason == "not_found"
+    assert refused.value.status == 404
+    assert "ghcr.io/cruxible-ai/kits/security is not published (HTTP 404)" in str(refused.value)
+    assert ":latest" not in str(refused.value)
+
+
+def test_explicit_tag_or_digest_pulls_directly_without_listing_tags(tmp_path: Path) -> None:
+    registry = FakeRegistry()
+    v1_3 = _versioned_bundle("security", "1.3.0")
+    v1_4 = _versioned_bundle("security", "1.4.0")
+    with registry.client(tmp_path / "cache") as client:
+        digest_1_3 = client.push(
+            pack_artifact(KIT_ARTIFACT, v1_3), parse_reference("security:1.3.0")
+        )
+        client.push(pack_artifact(KIT_ARTIFACT, v1_4), parse_reference("security:1.4.0"))
+
+        by_tag, tag_origin = resolve_kit("security:1.3.0", registry=client)
+        assert by_tag == v1_3
+        assert tag_origin == f"ghcr.io/cruxible-ai/kits/security@{digest_1_3}"
+
+        by_digest, digest_origin = resolve_kit(f"security@{digest_1_3}", registry=client)
+        assert by_digest == v1_3
+        assert digest_origin == f"ghcr.io/cruxible-ai/kits/security@{digest_1_3}"
+
+        by_tag_and_digest, both_origin = resolve_kit(
+            f"security:1.3.0@{digest_1_3}", registry=client
+        )
+        assert by_tag_and_digest == v1_3
+        assert both_origin == f"ghcr.io/cruxible-ai/kits/security@{digest_1_3}"
+
+    assert registry.tag_list_requests == []
+
+
+def test_local_directory_takes_precedence_over_bare_registry_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bundle = _versioned_bundle("security", "1.2.0")
+    local_dir = tmp_path / "security"
+    write_kit_directory(bundle, local_dir)
+    monkeypatch.chdir(tmp_path)
+
+    def fail_if_called(request: httpx.Request) -> httpx.Response:
+        raise AssertionError(f"local kit must resolve before touching registry: {request.url}")
+
+    client = RegistryClient(
+        transport=httpx.MockTransport(fail_if_called),
+        cache=BlobCache(tmp_path / "cache"),
+    )
+    with client:
+        resolved_bare, bare_origin = resolve_kit("security", registry=client)
+        assert resolved_bare == bundle
+        assert bare_origin == "security"
+
+        resolved_dot, dot_origin = resolve_kit("./security", registry=client)
+        assert resolved_dot == bundle
+        assert dot_origin == "security"
+
+        image_bare, image_origin = resolve_kit_image("security", registry=client)
+        assert unpack_artifact(KIT_ARTIFACT, image_bare) == bundle
+        assert image_origin == "security"

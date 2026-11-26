@@ -3004,7 +3004,8 @@ def add_kit(
 
     KIT is ``base`` (the base kit this core bundles: installs or upgrades it, offline),
     a kit directory, an OCI image layout, or a registry reference such as
-    ``project-state:1.0.0`` or ``ghcr.io/acme/kits/foo@sha256:...``. A definition
+    ``security`` (resolves to the highest published semver release), ``security:1.4.0``,
+    or ``ghcr.io/acme/kits/foo@sha256:...``. A definition
     this instance holds differently takes the release's version (the preview
     says what that does: overwrites your edit, re-adds a retired definition,
     takes over one defined outside the kit) unless --keep or --keep-local-edits
@@ -3086,7 +3087,8 @@ def pull_kit(reference: str, out: Path, layout: bool, output_json: bool) -> None
     """Fetch and verify a kit into OUT, without installing it.
 
     REFERENCE is what ``kit add`` takes: a kit directory, an OCI image layout, or a
-    registry reference such as ``security:1.3.0``.
+    registry reference such as ``security`` (highest published semver release) or
+    ``security:1.4.0``.
     """
     if out.exists():
         raise click.UsageError(f"{out} already exists")
@@ -3127,7 +3129,7 @@ def kit_status(offline: bool, output_json: bool) -> None:
 
     For a kit installed from a registry the client lists the repository's tags
     (short timeout) to show the latest available version; installing it stays
-    explicit (kit add REFERENCE:VERSION).
+    explicit (kit add REFERENCE or kit add REFERENCE:VERSION).
     """
     result = check_kit_updates(
         _server_call(

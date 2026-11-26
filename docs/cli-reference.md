@@ -1301,9 +1301,11 @@ sha256; a missing copy is fetched from the recorded source or `--from`, and
 `cruxible.kit.recipe_invalid`.
 
 `KIT` is a kit directory, an OCI image layout directory, or a registry
-reference. A bare name such as `project-state:1.0.0` resolves under
-`ghcr.io/cruxible-ai/kits`; a full reference names its registry
-(`ghcr.io/acme/kits/foo:2`, `localhost:5000/kits/foo@sha256:...`).
+reference. A short name resolves under `ghcr.io/cruxible-ai/kits`: a bare name
+without a tag (`security`, or `ghcr.io/acme/kits/foo`) resolves to the highest
+published `MAJOR.MINOR.PATCH` release tag and pins its manifest digest, while an
+explicit tag (`security:1.4.0`) or digest (`localhost:5000/kits/foo@sha256:...`)
+pulls that exact release.
 
 Distributed, a kit is an OCI artifact (`application/vnd.cruxible.kit.v1`): the
 manifest is its config blob and the artifacts (with any bundled provider files
@@ -1548,7 +1550,7 @@ at its proposal (the base kit add of `init --require-independent-approval`,
 or a resumed add) is listed with its state and proposal, and while that
 proposal is open, `next: cruxible proposal approve ID --signer-id
 '<SIGNER_ID>'`; `No kits installed.` prints only when there is neither. Installing an update stays explicit:
-`kit add REFERENCE:VERSION`. `remove` retires what a kit owns (never what it only
+`kit add REFERENCE` (highest published release) or `kit add REFERENCE:VERSION`. `remove` retires what a kit owns (never what it only
 carries, and never a bundled provider, which stays installed). It keeps the
 kit's Contracts, capabilities, Documents and the endpoint ClaimTypes of its pair
 kinds, with the reason on each `keep` plan line. A path edited
