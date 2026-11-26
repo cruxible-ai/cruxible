@@ -2,8 +2,8 @@
   "format": "playbill-served-surface-v1",
   "succession": {
     "ratified_by": "maintainer",
-    "register_entry": "2026-11-24:post-benchmark-ergonomics-060",
-    "surface_digest": "sha256:dffb66547629cdc84d329010e7841d684408a548de38d46da78e1d867612da15"
+    "register_entry": "2026-11-25:core-061-bare-kit-name",
+    "surface_digest": "sha256:ac795b54228431dfeac8488b417266460e0d0de4e2930a58e9ca6e5cb14e84c3"
   },
   "surface": {
     "cli_leaves": [
@@ -2518,7 +2518,7 @@
           "store_body"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_kit_add",
-        "input_schema_digest": "sha256:ceafa18edf266a4a9972650b0b7f833c927362fdffa7bd65dabbd34f5da27f0c",
+        "input_schema_digest": "sha256:c1438c13032e53bfa6fe63c109501119f86aa4710d022133e0462a06655e3f42",
         "name": "cruxible_kit_add",
         "output_schema_digest": "sha256:8e3c795d4c6d63d5a393a71b889f48a7a60b8eb5cf8f2d898c4b7b3887aec575",
         "permission": "GOVERNED_WRITE"

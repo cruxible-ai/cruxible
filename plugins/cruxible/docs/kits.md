@@ -76,9 +76,11 @@ car-parts 2.0.0 content sha256:7a99e029…; update check local source
 Where a second principal must approve, the same commit prints `proposed` and
 the approve command, and the kit is installed once that proposal is approved.
 
-A kit id with a version (`cruxible kit add car-parts:2.0.0`) names a release
-in the kit registry. No kit is published there yet, so today that form refuses
-`cruxible.kit.not_found`; use the folder path.
+A bare kit name (`cruxible kit add security`) resolves to the highest published
+semver release in the kit registry and pins it by manifest digest; add a version
+tag (`cruxible kit add security:1.4.0`) to pin a specific release. For a kit that
+is not published to the registry yet, that form refuses `cruxible.kit.not_found`;
+use the folder path.
 
 Reads say who owns each definition: `orient --section claim_types` ends each
 row the kit owns with `kit=car-parts`. From here the vocabulary is yours to
@@ -381,16 +383,19 @@ operations:
 ### Find and inspect
 
 A kit comes from a kit directory, an OCI image layout, or a registry
-reference. A directory works today: a checkout of the kits repository, a
-folder `kit build` wrote, or one `kit pull --out` wrote. Registry references
-resolve once kits are published to the registry, which no kit is yet: a bare
-name resolves under `ghcr.io/cruxible-ai/kits`, so `car-parts:2.0.0` means
-`ghcr.io/cruxible-ai/kits/car-parts:2.0.0`, and until that release exists
-`kit add` and `kit pull` refuse it (`cruxible.kit.not_found`).
+reference. A directory works locally: a checkout of the kits repository, a
+folder `kit build` wrote, or one `kit pull --out` wrote. A bare registry name
+resolves under `ghcr.io/cruxible-ai/kits` to the highest published semver
+release tag and pins the pulled manifest digest (`security` resolves the newest
+`MAJOR.MINOR.PATCH` release under `ghcr.io/cruxible-ai/kits/security`); append
+a tag (`security:1.4.0`) or digest (`security@sha256:...`) to pin a specific
+release. If no semver release is published there, `kit add` and `kit pull`
+refuse it (`cruxible.kit.not_found`).
 
 ~~~bash
 cruxible kit pull ../kits/kits/car-parts --out ./car-parts    # verify and copy, install nothing
-cruxible kit pull car-parts:2.0.0 --out ./car-parts-2.0.0     # from the registry, once published
+cruxible kit pull security --out ./security                   # highest published semver release
+cruxible kit pull security:1.4.0 --out ./security-1.4.0       # pin a specific release
 ~~~
 
 `kit pull` of a registry reference prints the digest-pinned reference it
@@ -406,10 +411,10 @@ cruxible kit add /abs/path/kits/security
 ~~~
 
 KIT is a local kit directory (one holding `cruxible-kit.json`, such as a
-checkout or a `kit pull --out` folder), an OCI image layout, or, once kits are
-published, a registry reference
-(`ghcr.io/cruxible-ai/kits/car-parts@sha256:<digest>`).
-`cruxible_kit_add` takes the same local paths.
+checkout or a `kit pull --out` folder), an OCI image layout, or a registry
+reference (`security`, `security:1.4.0`, or
+`ghcr.io/cruxible-ai/kits/security@sha256:<digest>`).
+`cruxible_kit_add` takes the same local paths and registry references.
 
 The preview lists the plan grouped by kind (what each definition does and
 how many dependents it has), each provider package and what happens to it

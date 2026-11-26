@@ -499,10 +499,9 @@ def register_tools(
             str | None,
             Field(
                 description=(
-                    "A kit directory (holding cruxible-kit.json) or OCI image layout on "
-                    "this adapter's disk, or a registry reference (project-state:1.0.0 or "
-                    "ghcr.io/acme/kits/foo@sha256:...) it pulls and verifies. "
-                    "Or give bundle."
+                    "Kit dir (with cruxible-kit.json), OCI layout, or registry ref "
+                    "(security, security:1.4.0, or ghcr.io/acme/kits/foo@sha256:...); "
+                    "bare name pulls latest semver. Or give bundle."
                 )
             ),
         ] = None,

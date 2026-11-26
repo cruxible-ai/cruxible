@@ -81,7 +81,7 @@ if TYPE_CHECKING:
 
 _KIT_FORMS = (
     "a kit directory (holding cruxible-kit.json), an OCI image layout, or a registry "
-    "reference such as project-state:1.0.0 or ghcr.io/acme/kits/foo@sha256:..."
+    "reference such as security, security:1.4.0, or ghcr.io/acme/kits/foo@sha256:..."
 )
 
 
@@ -574,17 +574,34 @@ KIT_ARTIFACT: ArtifactKind[KitBundle] = ArtifactKind(
 def fetch_kit_image(
     source: str, *, registry: RegistryClient | None = None
 ) -> tuple[ArtifactImage, str]:
-    """The verified kit artifact at a registry reference, exactly as published."""
+    """The verified kit artifact at a registry reference, exactly as published.
+
+    A bare registry reference (no tag and no digest, such as ``security`` or
+    ``ghcr.io/acme/kits/security``) lists the repository's tags, selects the
+    highest published MAJOR.MINOR.PATCH release, pulls it, and returns the
+    manifest digest-pinned reference.
+    """
 
     ref = kit_reference(source)
     client = registry if registry is not None else RegistryClient()
     try:
-        image = client.pull(ref)
+        if ref.tag is None and ref.digest is None:
+            version = latest_release(client.list_tags(ref))
+            if version is None:
+                raise RegistryRefusal(
+                    "not_found",
+                    f"no published semver release tags exist for {ref.registry}/{ref.repository}",
+                    status=None,
+                )
+            resolved_ref = Reference(ref.registry, ref.repository, tag=version)
+        else:
+            resolved_ref = ref
+        image = client.pull(resolved_ref)
     finally:
         if registry is None:
             client.close()
     unpack_artifact(KIT_ARTIFACT, image)
-    return image, str(ref.pinned(image.digest))
+    return image, str(resolved_ref.pinned(image.digest))
 
 
 def _local_kit(path: Path) -> tuple[KitBundle, ArtifactImage | None, str] | None:

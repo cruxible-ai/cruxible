@@ -312,3 +312,23 @@ def test_mcp_kit_build_carries_workspace_files(tmp_path, monkeypatch) -> None:  
     assert readme.sha256 == "sha256:" + hashlib.sha256(b"# Acme kit\n").hexdigest()
     with pytest.raises(KitFileRefused, match="is not a file"):
         handlers.handle_playbill_kit_build("inst", request, files=("absent.md",))
+
+
+def test_mcp_kit_add_bundled_base_resolves_before_registry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from cruxible_core.kits.base_kit import bundled_base_kit
+
+    client = _RecordingClient()
+    bind_mcp_daemon(monkeypatch, client)
+
+    def fail_resolve(_ref: str) -> Any:
+        raise AssertionError("bundled base kit must not fall through to resolve_kit_image")
+
+    monkeypatch.setattr(handlers, "resolve_kit_image", fail_resolve)
+
+    handlers.handle_playbill_kit_add("inst", reference="base")
+
+    (request,) = client.sent
+    assert request.source == "bundled"
+    assert request.bundle.manifest == bundled_base_kit().manifest
