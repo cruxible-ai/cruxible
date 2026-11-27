@@ -1,41 +1,49 @@
 # Quickstart
 
-Point Cruxible at one of your projects, read in its dependencies, and find out
-which of them carry a known vulnerability, which of those attackers are
-exploiting (CISA's KEV catalog) and how likely exploitation is (FIRST's EPSS
-score). Every answer traces back to its source.
+Attach Cruxible to any Git repository, record a typed claim citing a passage in
+your own docs, watch `cruxible next` wake up when that passage changes, and
+browse the live State graph in your browser. Everything runs locally with no
+LLM inside Cruxible.
 
-The steps below start with a single owner (`self_approval_allowed`) so you
-reach your first answer in a few commands, then turn on two-principal **cosign**
-(step 7) before bringing in an agent so every judgment waits for a reviewer.
+### What you'll have by the end
 
-You'll need Python 3.11+, Git, a project in a Git repository, a tool that
-writes a CycloneDX SBOM for it (step 3), and network access to `pypi.org`,
-`api.osv.dev`, `www.cisa.gov` and `api.first.org`. Until the security kit's
-registry release, you also need a clone of the
-[kits repository](https://github.com/cruxible-ai/cruxible-kits); the commands
-below assume it sits beside your project as `../cruxible-kits`.
+- A local Cruxible instance attached to your repository, backed by a signed Git
+  ledger and `.cruxible/world.pyi` Python type stubs.
+- A starter vocabulary (either tailored to your repo by `/survey` or installed
+  from the `project-state` kit).
+- A cited Claim that automatically surfaces as `citation_drifted` in
+  `cruxible next` when its underlying text changes.
+- The local read-only Cruxible Console running in your browser, plus a clear
+  path to two-principal cosign review and automated domain kits.
 
-## Supported platforms
+### What you'll do (~5 minutes)
 
-Supported: Linux x86-64 and macOS on Apple silicon; on Windows, use WSL2.
-Cruxible does not run natively on Windows yet: install Python and Cruxible
-inside your WSL2 Linux distribution and run every command there.
+1. Install Cruxible and initialize your repository.
+2. Pick a starting vocabulary (`/survey` with your agent, or `project-state`).
+3. Record a cited decision through the typed Python SDK.
+4. Edit the cited passage and watch `cruxible next` flag only what drifted.
+5. Inspect the State graph in `cruxible console`.
+6. Turn on two-principal cosign review for agent writes.
 
-## 1. Install Cruxible and attach your project
+### Prerequisites
+
+Python 3.11+ and Git on Linux (x86-64) or macOS (Apple silicon). On Windows,
+install Python and Cruxible inside WSL2 and run every command there.
+
+---
+
+## 1. Install Cruxible and attach your repository
 
 ~~~bash
-pip install cruxible        # or: uv tool install cruxible
+uv tool install cruxible        # or: pip install cruxible
 cd your-project
 cruxible init --principal-id owner
 ~~~
 
-`init` starts a daemon if none is running (`cruxible server stop` stops it),
-creates this project's instance with you as its owner under
+`init` starts a local daemon if none is running (`cruxible server stop` stops
+it), creates this project's instance with you as its owner under
 `self_approval_allowed`, installs the base kit at once, and remembers the
-connection so later commands in this folder need no flags. (To start with
-two-principal cosign from the first command instead, see step 7 or the
-[Security walkthrough](security-walkthrough.md).)
+connection so later commands in this folder need no flags.
 
 What lands in `.cruxible/`, and what to commit:
 
@@ -48,101 +56,143 @@ What lands in `.cruxible/`, and what to commit:
 | `files.yaml` | the first file you catalogue | yes: the portable file catalog (`files.yaml.lock` is excluded) |
 | `vocabulary.yaml` | `cruxible vocabulary export` | yes: your kinds and fields as one editable file |
 
-In a Git repository the daemon also mirrors the ledger into the repository as
-the `cruxible-ledger` remote (`cruxible-ledger/accepted` and
-`cruxible-ledger/proposals/*`, in `.git/config`, nothing to commit):
-`git diff cruxible-ledger/accepted...cruxible-ledger/proposals/<key>` shows a
-proposal's change, which `cruxible proposal review --detail` prints.
+In a Git repository the daemon also mirrors the ledger as the `cruxible-ledger`
+remote (`cruxible-ledger/accepted` and `cruxible-ledger/proposals/*` in
+`.git/config`, nothing to commit).
 
-## 2. Install the security kit
+## 2. Pick a starting vocabulary
 
-<!-- publish: kit tag -->
-~~~bash
-cruxible kit add ../cruxible-kits/kits/security                   # shows what it would install; writes nothing
-cruxible kit add ../cruxible-kits/kits/security --commit --at OID # OID: the coordinate the preview printed
-~~~
+Choose either path: let your coding agent design a minimal vocabulary tailored
+to your repo, or install a starter kit in one command.
 
-After the registry release, `cruxible kit add security:1.3.0` does the same.
-Under `self_approval_allowed`, `--commit` installs the kit's three provider
-packages (OSV, a web fetcher for KEV and EPSS, a SARIF reader) and its
-definitions in one step.
+### Option A: Have your agent `/survey` your repository (recommended for custom domains)
 
-## 3. Write an SBOM
-
-The kit reads your dependencies from a CycloneDX JSON SBOM in the repository.
-For a `requirements.txt`:
+Install the agent plugin for Claude Code (or Codex, see
+[For AI agents](for-ai-agents.md#connect)):
 
 ~~~bash
-uvx --from cyclonedx-bom cyclonedx-py requirements requirements.txt --of JSON -o sbom.cdx.json
+claude plugin marketplace add cruxible-ai/cruxible
+claude plugin install cruxible@cruxible-plugins
 ~~~
 
-[Step 3 of the walkthrough](security-walkthrough.md#step-3-describe-your-dependencies)
-names generators for other ecosystems.
+Then ask your agent to run `/survey`. It reads your repo, notes, and docs,
+proposes the handful of recurring kinds and fields worth holding as state, and
+writes `.cruxible/vocabulary.yaml` (`cruxible vocabulary export`, `plan`,
+`apply`).
 
-## 4. Adopt the automation
+### Option B: Start from a published kit (`project-state`)
 
-The kit brings definitions only. The checks that run on their own, called
-**Lines**, come as a template, `automation.json` in the kit directory, which
-you copy and tailor: the SBOM path (`relative_path`, `sbom.cdx.json` as
-shipped), each **Mandate**'s `valid_from` and `expires_at`, and the daily cron
-time (14:00 UTC as shipped). Then submit it:
+To try the typed workflow right away on any software repo, install the
+`project-state` kit (roadmap items, decisions, batches, tracks, and laws):
 
 ~~~bash
-cp ../cruxible-kits/kits/security/automation.json .
-# edit relative_path, the Mandate dates and the cron time
-cruxible authoring submit automation.json --brief
+cruxible kit add project-state --commit
+cruxible orient
 ~~~
 
-This lands the Lines, Triggers and Mandates so the four source Lines (SBOM
-import, OSV, KEV, EPSS) can settle what they copy from their sources; no
-Mandate settles a judgment.
+A bare kit name resolves to the highest published release in
+`ghcr.io/cruxible-ai/kits` (currently `project-state:2.0.0`) and pins it by
+digest. Omit `--commit` whenever you want a dry-run preview first. Other
+starter kits include `security`, `iot-fleet`, `supply-chain`, and
+`legal-research` ([browse all kits](https://cruxible.ai/kits)).
 
-## 5. Run it once, then keep it current
+## 3. Record a cited Claim through the typed Python SDK
+
+Cruxible does not replace your Markdown docs or code. Prose stays where it
+lives, and Claims cite the exact passages they rest on.
+
+Suppose your repository has an `ARCHITECTURE.md` containing:
+
+~~~markdown
+# Architecture
+
+## Database
+
+We use Postgres 16 for primary transactional storage.
+~~~
+
+Run `cruxible python` to write a typed decision citing that passage (the CLI's
+own interpreter includes `cruxible-client`, so nothing needs to be installed in
+your project's virtualenv):
 
 ~~~bash
-cruxible runbook preview security.start     # what each step reads, writes and calls; runs nothing
-cruxible line enable security.osv-unkeyed --runbook security.start   # the seven Lines
-cruxible runbook run security.start         # SBOM import, OSV, KEV, EPSS, then the attention Lines
+cruxible python - <<'PY'
+from cruxible_client import Cruxible, FileEvidence
+
+with Cruxible.connect() as cx:
+    w = cx.world()  # typed against .cruxible/world.pyi
+    w.dev.decision.define(slug="primary-database").set(
+        standing="ratified",
+        ruling="Use Postgres 16 for primary transactional storage.",
+        evidence=FileEvidence(
+            file="ARCHITECTURE.md#We use Postgres 16 for primary transactional storage."
+        ),
+    ).write(because="Recorded from ARCHITECTURE.md.")
+PY
 ~~~
 
-The run's calls are real and took about half a minute on the project below.
-With the seven Lines enabled, the `security.maintain-daily` Trigger runs OSV,
-KEV, EPSS and the attention Lines once a day while the daemon is running, and
-`security.osv-unkeyed` runs whenever an OSV result lands (enable it before the
-first run, or that run's result posts nothing). The SBOM import is not on the
-clock: rerun `cruxible runbook run security.start` when the SBOM changes.
-
-## 6. Ask the first question
-
-**Which vulnerabilities do we look at first?**
+Read it back from the CLI (or via MCP / SDK):
 
 ~~~text
-$ cruxible query --name security.urgent_exposures --limit 5
-subject                                component            cve_id          epss_percentile  epss_score  inventory      kev_date_added  kev_due_date  kev_ransomware_use  occurrence                          scope     flags
-security.vulnerability/cve-2023-46695  pkg:pypi/django@4.2  CVE-2023-46695  0.99008          0.53447     sbom.cdx.json  -               -             -                   sbom.cdx.json--pkg-pypi-django-4.2  required  -
-security.vulnerability/cve-2024-39614  pkg:pypi/django@4.2  CVE-2024-39614  0.98169          0.28637     sbom.cdx.json  -               -             -                   sbom.cdx.json--pkg-pypi-django-4.2  required  -
-security.vulnerability/cve-2025-57833  pkg:pypi/django@4.2  CVE-2025-57833  0.98149          0.28271     sbom.cdx.json  -               -             -                   sbom.cdx.json--pkg-pypi-django-4.2  required  -
-...
+$ cruxible query dev.decision --select slug,standing,ruling
+subject                        slug              standing  ruling                                              flags
+dev.decision/primary-database  primary-database  ratified  Use Postgres 16 for primary transactional storage.  -
 ~~~
 
-This lists every exposure nobody has judged: each vulnerability OSV lists for
-a release your SBOM names, KEV-listed first (the `kev_` columns), then by EPSS
-score. On [pygoat](https://github.com/adeyosemanputra/pygoat), the project the
-walkthrough uses, none is on KEV, and Django 4.2's CVE-2023-46695 is the most
-likely to be exploited. `cruxible next` lists what needs attention: here the
-exposures the attention Line posted to your inbox, and one summary item for
-the OSV advisories that have no CVE id yet.
+Invalid enum values (like `standing="active"` instead of `"ratified"`) or
+unknown fields are refused deterministically before anything touches the
+ledger. Run `cruxible python --check SCRIPT` to type-check agent scripts
+against `.cruxible/world.pyi` before executing them.
 
-Whether the vulnerable code is reachable in your project is a judgment: a
-write that cites the code. [Step 7 of the walkthrough](security-walkthrough.md#step-7-judge-an-exposure)
-records one.
+## 4. Edit the cited passage and watch `cruxible next` catch drift
 
-## 7. Turn on two-principal cosign
+Now change that line in `ARCHITECTURE.md` to say:
 
-Before letting an agent propose judgments, switch the instance to
-`independent_approval_required` so nothing its author proposes activates until
-a second principal (`reviewer`) reviews and signs it. Add the reviewer first,
-then submit the approval policy:
+~~~markdown
+We migrated primary transactional storage to SQLite with Litestream.
+~~~
+
+Run `cruxible next`:
+
+~~~text
+$ cruxible next
+repair  citation_drifted  Claim:CLM-a088996d...  next=cruxible.rebind
+  repair: cruxible rebind CLM-a088996d... --citation 89984942d1a1 --file '<FILE#ANCHOR>' --because '<TEXT>'
+  or: cruxible set dev.decision/primary-database dev.decision.ruling '<VALUE>' --role normative --evidence-file '<FILE#ANCHOR>' --because '<TEXT>'
+  or: cruxible retire CLM-a088996d... --because '<TEXT>'
+~~~
+
+Every unaffected Claim in the instance stays current and silent; only the Claim
+whose cited passage moved reopens, with the exact repair commands printed right
+beside it. (Unrelated edits elsewhere in `ARCHITECTURE.md` do not trigger
+drift.)
+
+## 5. Inspect the State graph in the Console
+
+~~~bash
+cruxible console
+~~~
+
+This opens a read-only local UI in your browser (`127.0.0.1`) showing the
+State graph, Type map, Evidence flow, open `next` repairs, proposals, and the
+signed Git ledger. The link it prints signs one browser in once; Ctrl-C stops
+it.
+
+## 6. Turn on two-principal cosign for agents
+
+Before letting coding agents propose high-stakes judgments, switch to
+`independent_approval_required` so nothing an author proposes lands until a
+second principal (`reviewer`, either a human or a second isolated agent
+session) reviews and signs it.
+
+On a fresh project, pass `--require-independent-approval` to `init`:
+
+~~~bash
+cruxible init --principal-id owner --require-independent-approval
+~~~
+
+`init` generates the `reviewer` key beside `owner` in your per-user config
+directory (outside the repo). To upgrade the instance you just created instead:
 
 ~~~bash
 cruxible principal add reviewer --key-dir ../reviewer-keys --signer-key OWNER_KEY --mode graph_write
@@ -150,94 +200,49 @@ cruxible authoring example approval-policy > policy.json
 cruxible authoring submit policy.json
 ~~~
 
-Add the reviewer before submitting `policy.json`: once
-`independent_approval_required` lands, the owner can no longer activate a
-change alone. From then on, `CRUXIBLE_PRINCIPAL_ID=reviewer` makes one command
-act as the reviewer (`cruxible context use --principal reviewer` switches the
-shell until you switch back):
+From then on, the reviewer inspects proposals with exact citations and signs
+off:
 
 ~~~bash
-CRUXIBLE_PRINCIPAL_ID=reviewer cruxible next                                 # what waits for the reviewer
-CRUXIBLE_PRINCIPAL_ID=reviewer cruxible proposal review PROPOSAL_ID          # inspect the change and cited evidence
-CRUXIBLE_PRINCIPAL_ID=reviewer cruxible proposal approve PROPOSAL_ID --yes   # sign and activate it
+CRUXIBLE_PRINCIPAL_ID=reviewer cruxible next
+CRUXIBLE_PRINCIPAL_ID=reviewer cruxible proposal review PROPOSAL_ID
+CRUXIBLE_PRINCIPAL_ID=reviewer cruxible proposal approve PROPOSAL_ID --yes
 ~~~
 
-On a new project, `cruxible init --principal-id owner
---require-independent-approval` sets up both principals and the policy from
-the start: every setup step then waits for the reviewer, as in the
-[Security walkthrough](security-walkthrough.md). The reviewer's key goes
-beside the owner's in your per-user config directory (`--reviewer-key-dir DIR`
-puts it elsewhere), and init prints the `cruxible context use --principal
-reviewer` that switches to it. Cosign between agents on
-one machine is a convention, not a security boundary: both keys are files your
-OS user can read. See [Review and governance](review-and-governance.md).
-
-## 8. Bring in your agent
-
-Connect a coding agent to the same instance ([For AI
-agents](for-ai-agents.md)): an agent that can run code writes through the
-typed Python SDK with `cruxible python` (vocabulary types in
-`.cruxible/world.pyi`), a general agent through MCP, and the CLI serves the
-shell and people. Started in this project, it acts as the
-owner with no further setup. `cruxible orient` and `cruxible next` show it
-what is there and what needs attention, and the kit's governed guidance
-(`cruxible get Document:security.guidance.dependency`) says how to judge an
-exposure. With cosign enabled, what it proposes waits for a second agent (or
-person) running as `reviewer`, as above. The agent plugin for Claude Code and
-Codex adds five general skills (`survey`, `adopt-kit`, `create-state`,
-`automate-state` and `review-state`); [For AI agents](for-ai-agents.md#connect)
-says where to find it.
-
-## 9. Look around in the console
-
-~~~bash
-cruxible console
-~~~
-
-This opens a read-only console in your browser: the dashboard, what each kind
-of thing holds, open proposals, the Lines and their runs, the ledger. It runs
-on your machine only (`127.0.0.1`), reads from the daemon `init` started, and
-cannot change anything; approving and the like stay on the command line. The
-link it prints signs one browser in, once; Ctrl-C stops it.
+Cosign between agents on one machine is a convention, not a security boundary
+(both keys are files your OS user can read). See
+[Review and governance](review-and-governance.md).
 
 ## If something goes wrong
 
 - **The daemon warns `Provider lane unavailable` when it starts.** The daemon
-  runs the kit's providers in a separate process reached through a Unix socket
-  under its state root, and that path is too long, with no `TMPDIR` (macOS) or
-  `XDG_RUNTIME_DIR` (Linux) to fall back on. Everything else works, but
-  `kit add` and the runs refuse with the same cause. The warning names the
-  budget: the directory may be at most 57 bytes long. Set
+  runs provider packages over a Unix socket under its state root, and that
+  directory path is over the 57-byte budget with no `TMPDIR` (macOS) or
+  `XDG_RUNTIME_DIR` (Linux) fallback. Set
   `TMPDIR=$(getconf DARWIN_USER_TEMP_DIR)` on macOS or
-  `XDG_RUNTIME_DIR=/run/user/$UID` on Linux (any short private directory you
-  own, mode 0700, works), or use a shorter `--state-root`, and restart the
-  daemon.
-- **A proposal does not activate.** Under `independent_approval_required` its
+  `XDG_RUNTIME_DIR=/run/user/$UID` on Linux (or pass a shorter `--state-root`)
+  and restart the daemon.
+- **A proposal does not activate.** Under `independent_approval_required`, the
   author's own `proposal approve` is refused
-  (`cruxible.approval.creator_forbidden`): the reviewer approves it.
-  `CRUXIBLE_PRINCIPAL_ID=reviewer cruxible next` lists what waits.
-- **The daily run stops at its first step.** A run the Trigger starts runs
-  each step under its Line's own enablement, and a step whose Line is not
-  enabled stops the run there; `next` lists a Line that was never enabled as
-  `line_not_enabled`. Enable the Lines (step 5). (A `runbook run` you start
-  yourself runs every step as you, enabled or not.)
-- **The daily run did not happen.** A scheduled Trigger fires only while the
-  daemon is running, and an instant missed while it was down is not run
-  afterwards: `next` shows a `trigger_instants_missed` row for
-  `security.maintain-daily`. Run `cruxible runbook run security.maintain` to
-  catch up.
-- **New dependencies have no answer yet.** OSV is asked once a day. After
-  writing a new SBOM, run `cruxible runbook run security.start`.
+  (`cruxible.approval.creator_forbidden`): approve it as `reviewer` instead.
+  `CRUXIBLE_PRINCIPAL_ID=reviewer cruxible next` lists what is waiting.
 
-## What's next
+## Where to go next
 
-<!-- publish: kit tag -->
-
-- The [Security walkthrough](security-walkthrough.md) goes through the same
-  steps with their outputs, then judges three exposures, from the SDK, the CLI
-  and MCP, each approved by the reviewer.
-- [Concepts](concepts.md) explains the ideas behind what you just did.
-- The [security kit's README](https://github.com/cruxible-ai/cruxible-kits/blob/security-1.3.0/kits/security/README.md)
-  covers everything else it answers, including the audit loop for findings in
-  your own code.
-- [For AI agents](for-ai-agents.md) covers connecting an agent in depth.
+- **Security triage & code audits:** The
+  [Security walkthrough](security-walkthrough.md) imports an SBOM, pulls OSV,
+  CISA KEV, and FIRST EPSS on a schedule, and runs the kit's `security-audit`
+  skill under cosign review.
+- **Connect your coding agents:** [For AI agents](for-ai-agents.md) covers the
+  typed Python SDK, MCP (`uvx cruxible mcp`), CLI, and the five built-in
+  skills (`survey`, `adopt-kit`, `create-state`, `automate-state`,
+  `review-state`).
+- **Build automated pipelines & custom Python providers:**
+  [Lines and automation](lines-and-automation.md) shows how scheduled Lines and
+  `@derive` providers keep observed facts fresh automatically.
+- **Mental model & modeling habits:** [Concepts](concepts.md) and
+  [Building team knowledge](building-team-knowledge.md) cover what belongs in
+  typed state vs. Markdown prose.
+- **Browse all starter kits:** [Kits](kits.md) and
+  [cruxible.ai/kits](https://cruxible.ai/kits) (`project-state`, `security`,
+  `iot-fleet`, `supply-chain`, `legal-research`, `car-parts`).

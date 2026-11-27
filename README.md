@@ -7,6 +7,13 @@
   </a>
 </p>
 
+<p align="center">
+  <a href="https://cruxible.ai">Website</a> |
+  <a href="https://docs.cruxible.ai">Docs</a> |
+  <a href="https://cruxible.ai/kits">Kits</a> |
+  <a href="https://github.com/cruxible-ai/cruxible/releases">Releases</a>
+</p>
+
 # Cruxible
 
 **Make every agent persistent.**
@@ -14,6 +21,12 @@
 Cruxible lets your agents treat domain knowledge like what they're already good
 at: typed, Git-versioned, reviewable code, so every run compounds instead of
 starting from scratch.
+
+<p align="center">
+  <a href="https://cruxible.ai">
+    <img src="https://raw.githubusercontent.com/cruxible-ai/cruxible/main/assets/brand/console-state-graph.png" alt="Cruxible Console State graph showing linked Subjects, Claims, and drift status" width="100%">
+  </a>
+</p>
 
 It lets you:
 
@@ -49,7 +62,7 @@ With Cruxible's **security kit** on a Django app with 32 components:
 
 One Runbook reads the SBOM and queries OSV, CISA KEV, and EPSS. In this kit,
 pulling those declared feeds is mechanical, so they settle under explicit,
-expiring mandates—recording both what was found and verified absences (like
+expiring mandates, recording both what was found and verified absences (like
 "not in KEV" only when the full catalog was read). Seven unjudged exposures
 above the exploit-likelihood threshold land in the inbox:
 
@@ -69,31 +82,25 @@ the app's SBOM pins `PyYAML 5.1` while the only `yaml.load` lives in a separate
 container, and proposes a VEX justification citing that exact line:
 
 ```python
-from cruxible_client import Cruxible
-from cruxible_client.contracts.write import FileEvidence
+from cruxible_client import Cruxible, FileEvidence
 
-cx = Cruxible.connect()
-batch = cx.changes(
-    because="CVE-2020-14343: the only yaml.load in the repo is in dockerized_labs/a9_uckv_lab, "
-            "a separate container with its own requirements; the Django app never imports yaml.",
-)
-pair = batch.create(
-    "security.app_exposure",
-    label="pair",
-    key={
-        "occurrence": "security.occurrence/sbom.cdx.json--pkg-pypi-pyyaml-5.1",
-        "vulnerability": "security.vulnerability/cve-2020-14343",
-    },
-)
-batch.set(
-    pair,
-    "justification",
-    "vulnerable_code_not_in_execute_path",
-    evidence=FileEvidence(
-        file="dockerized_labs/a9_uckv_lab/app.py#data = yaml.load(file.stream, Loader=yaml.Loader)"
-    ),
-)
-batch.write(accept="never")  # -> proposal; a second principal reviews and signs it
+with Cruxible.connect() as cx:
+    w = cx.world()  # typed against .cruxible/world.pyi
+    w.security.app_exposure.define(
+        occurrence="security.occurrence/sbom.cdx.json--pkg-pypi-pyyaml-5.1",
+        vulnerability="security.vulnerability/cve-2020-14343",
+    ).set(
+        justification="vulnerable_code_not_in_execute_path",
+        evidence=FileEvidence(
+            file="dockerized_labs/a9_uckv_lab/app.py#data = yaml.load(file.stream, Loader=yaml.Loader)"
+        ),
+    ).write(
+        because=(
+            "CVE-2020-14343: the only yaml.load in the repo is in dockerized_labs/a9_uckv_lab, "
+            "a separate container with its own requirements; the Django app never imports yaml."
+        ),
+        accept="never",  # -> proposal; a second principal reviews and signs it
+    )
 ```
 
 A second agent (or human) acting as `reviewer` sees the domain guidance, the
@@ -146,20 +153,20 @@ Requirements: Python 3.11+ and Git. Linux x86-64 and macOS on Apple silicon; on
 Windows, use WSL2.
 
 ```bash
-pip install cruxible        # or: uv tool install cruxible
+uv tool install cruxible                 # or: pip install cruxible
 cd your-project
 cruxible init --principal-id owner
-cruxible orient             # map of kinds, fields, and counts
-cruxible next               # what needs attention right now
+cruxible kit add project-state --commit  # or security, iot-fleet, /survey
+cruxible orient && cruxible next
 ```
 
 `cruxible init` starts a local daemon if none is running and creates this
-project's instance. For two-principal **cosign**—where a second agent or person
-must approve every proposal before it counts—initialize with a reviewer:
+project's instance. Run `cruxible console` to open the local read-only UI.
+For two-principal **cosign** (where a second agent or person must approve
+every proposal before it counts), initialize with independent approval:
 
 ```bash
-cruxible init --principal-id owner \
-  --reviewer-key-dir ../reviewer-keys --require-independent-approval
+cruxible init --principal-id owner --require-independent-approval
 ```
 
 Continue with the [Quickstart](docs/quickstart.md) to install the security kit
@@ -187,7 +194,7 @@ single-purpose tools alike:
   Cruxible gives you that layer out of the box.
 - **Single-purpose tools do not own cross-source judgments.** Your repos,
   databases, and SaaS tools remain the sources of truth for their own records.
-  Cruxible sits at the judgment layer across them—joining external feeds, local
+  Cruxible sits at the judgment layer across them, joining external feeds, local
   files, and team decisions without copying whole tables or locking your
   decision history inside one vendor.
 
@@ -199,7 +206,7 @@ Cruxible combines typed state, linked prose, and deterministic automation:
 - **Freshness and completeness, not silent drift.** Pipelines re-check facts on
   a schedule, `stale_after` flags expired evidence, `citation_drifted` catches
   edited files, and Cruxible distinguishes **found**, verified **none** (from a
-  complete source read), and **unknown**—so a failed lookup never reads as
+  complete source read), and **unknown**, so a failed lookup never reads as
   "safe."
 - **Graduated automation (`observe` → `propose` → `settle`).** Pipelines start
   by observing or proposing for review, and only settle named fields on their
@@ -261,14 +268,14 @@ skills: `survey` works out what in a project is worth holding as state,
   graph of steps that reads accepted state, invokes pinned provider builds
   through typed capability slots, extracts typed records, and proposes,
   settles, or posts to the inbox. Because computation lives in pinned provider
-  packages—anything from API fetches and SQL queries to static analyzers or
-  custom ML models—teams and agents can push any repeatable retrieval or
+  packages (anything from API fetches and SQL queries to static analyzers or
+  custom ML models), teams and agents can push any repeatable retrieval or
   derivation into a governed pipeline. A Line binds a Procedure's inputs,
   budgets, and authority ceiling to Triggers (cron, cadence, capture landing,
   or accepted changes).
   ([Lines and automation](docs/lines-and-automation.md))
-- **Kits.** A domain—its vocabulary, queries, guidance documents, Procedures,
-  and bundled providers—travels between instances as a kit, installed and
+- **Kits.** A domain (its vocabulary, queries, guidance documents, Procedures,
+  skills, and bundled providers) travels between instances as a kit, installed and
   upgraded as reviewed changes. ([Kits](docs/kits.md))
 - **Credentials and principals.** A credential is a daemon bearer token with a
   permission tier (`read_only`, `governed_write`, `graph_write`, `admin`); a
@@ -284,9 +291,9 @@ Pick a starting point based on what you're trying to do (or browse the
 
 | If you want to… | Start here |
 |---|---|
-| **Try Cruxible on a real repo in minutes** | [Quickstart](docs/quickstart.md) · [Security walkthrough](docs/security-walkthrough.md) (full outputs + reviewed judgments) |
-| **Understand the mental model and vocabulary** | [Concepts](docs/concepts.md) · [Architecture](docs/architecture.md) |
-| **Connect an AI agent (MCP, CLI, SDK, skills)** | [For AI agents](docs/for-ai-agents.md) · [Agent plugin](plugins/README.md) (`survey`, `adopt-kit`, `create-state`, `automate-state`, `review-state`) |
+| **Try Cruxible on a real repo in minutes** | [Quickstart](docs/quickstart.md), [Security walkthrough](docs/security-walkthrough.md) (full outputs + reviewed judgments) |
+| **Understand the mental model and vocabulary** | [Concepts](docs/concepts.md), [Architecture](docs/architecture.md) |
+| **Connect an AI agent (MCP, CLI, SDK, skills)** | [For AI agents](docs/for-ai-agents.md), [Agent plugin](plugins/README.md) (`survey`, `adopt-kit`, `create-state`, `automate-state`, `review-state`) |
 | **Decide what to model as state vs. prose** | [Building team knowledge](docs/building-team-knowledge.md) (modeling habits and *Mistakes we made ourselves*) |
 | **Keep Markdown docs in sync with live state** | [Documents and notes](docs/documents-and-notes.md) (atomic note+Claim writes, review guidance, and self-updating **projection blocks**) |
 | **Require stronger evidence or track predictions** | [Evidence and admission](docs/evidence-and-admission.md) (admission rules, freshness, attestations, and **predictions**) |
@@ -294,14 +301,14 @@ Pick a starting point based on what you're trying to do (or browse the
 | **Work drift queues and decide what to verify** | [Keeping knowledge current](docs/keeping-knowledge-current.md) (`next` repairs, duplicates, `audit` ranking, and none vs. unknown) |
 | **Build scheduled pipelines or custom providers** | [Lines and automation](docs/lines-and-automation.md) (Procedures, pinned providers, inbox posts, and earning `settle` mandates) |
 | **Lock down review, cosign, or propose-only agents** | [Review and governance](docs/review-and-governance.md) (approval policies, `governed_write` agents, and trust boundaries) |
-| **Evolve schemas or package reusable domains** | [Evolving your vocabulary](docs/evolving-your-vocabulary.md) (migrating Claims without losing history) · [Kits](docs/kits.md) |
+| **Evolve schemas or package reusable domains** | [Evolving your vocabulary](docs/evolving-your-vocabulary.md) (migrating Claims without losing history), [Kits](docs/kits.md) |
 
-**Reference & operations:** [CLI reference](docs/cli-reference.md) ·
-[MCP tools](docs/mcp-tools.md) ·
-[Python SDK](packages/cruxible-client/README.md) ·
-[Isolated deployment](docs/isolated-deployment.md) ·
-[Upgrading](docs/upgrading.md) ·
-[Data and network](docs/data-and-network.md) ·
+**Reference & operations:** [CLI reference](docs/cli-reference.md) |
+[MCP tools](docs/mcp-tools.md) |
+[Python SDK](packages/cruxible-client/README.md) |
+[Isolated deployment](docs/isolated-deployment.md) |
+[Upgrading](docs/upgrading.md) |
+[Data and network](docs/data-and-network.md) |
 [Hosted runtime image](docs/hosted-runtime-image.md)
 
 ## Develop

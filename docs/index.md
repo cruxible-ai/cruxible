@@ -2,27 +2,28 @@
 
 Cruxible is a state layer that gives your agents and teams a shared model of
 what they believe to be true. It lets agents and people build on what's already
-verified instead of starting from scratch or overwriting each other—recording
+verified instead of starting from scratch or overwriting each other, recording
 typed facts and reviewed judgments with citations, running autonomous pipelines
 to pull from APIs, scanners, analyzers, and custom ML models, and drawing
 attention only to what changed when inputs move.
 
-Cruxible doesn't replace your Markdown notes, code, or databases—prose and
+Cruxible doesn't replace your Markdown notes, code, or databases: prose and
 source records stay where they live, while Cruxible holds the typed claims
 pointing to them and tracks when they change. No language model runs inside
-Cruxible: people and agents supply the judgment, pinned providers supply domain
-retrieval and computation, and Cruxible checks, records, and serves it back
-with full history.
+Cruxible. Your team and agents supply the judgment, pinned providers supply
+domain retrieval and computation, and Cruxible checks, records, and serves it
+back with full history.
 
 ## Start here
 
-- [Quickstart](quickstart.md): set Cruxible up on a project, read in its
-  dependencies, and find out which carry a known vulnerability and which of
-  those attackers are exploiting, with every answer traced to its source.
+- [Quickstart](quickstart.md): attach Cruxible to any Git repo in five minutes,
+  pick a starting vocabulary (`/survey` or `project-state`), write a cited
+  Claim, watch `cruxible next` catch drift, and open the Console.
 - [Concepts](concepts.md): the ideas behind Cruxible, and the words the rest
   of these docs use.
-- [Security walkthrough](security-walkthrough.md): the same steps one at a
-  time with their outputs, through to a judgment a second agent reviews.
+- [Security walkthrough](security-walkthrough.md): import an SBOM, pull OSV,
+  CISA KEV, and FIRST EPSS automatically, and run the kit's `security-audit`
+  skill under two-principal cosign review.
 
 ## Guides
 
@@ -37,8 +38,8 @@ with full history.
 - [Documents and notes](documents-and-notes.md): writing notes together with
   the facts they support, and pages that stay in step.
 - [Lines and automation](lines-and-automation.md): scheduled and event-driven
-  pipelines that run pinned providers—API fetches, analyzers, or custom ML
-  models—and settle or propose what they find.
+  pipelines that run pinned providers (API fetches, analyzers, or custom ML
+  models) and settle or propose what they find.
 - [Review and governance](review-and-governance.md): who can change what, and
   how changes get reviewed.
 - [Evolving your vocabulary](evolving-your-vocabulary.md): the vocabulary

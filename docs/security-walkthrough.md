@@ -1,26 +1,149 @@
 # Security walkthrough
 
-The [Quickstart](quickstart.md) gets to the first answer in a few commands.
-This walkthrough takes the same steps one at a time, with their outputs, so you
-can see what each step does. We'll
-point Cruxible at one of your projects, find which of its dependencies carry a
-known vulnerability, rank them by whether attackers exploit them (CISA's Known
-Exploited Vulnerabilities catalog, KEV) and how likely they are to (FIRST's
-EPSS score), and then record judgments about three of them, each approved by
-a second principal. Every answer traces back to the source it came from.
+Point Cruxible at a repository, import its dependencies from an SBOM, pull
+live vulnerability intelligence (OSV, CISA KEV, and FIRST EPSS), and run your
+coding agent with the kit's **`security-audit` skill** to triage reachability
+and audit code under two-principal cosign review. Every answer traces back to
+its source.
 
-We'll use the **security kit**, a ready-made set of definitions for exactly
-this job. Along the way you'll see the core ideas of Cruxible at work:
-knowledge kept as typed facts with their evidence, automation whose authority
-you grant explicitly, and judgments that wait for review.
+### What you'll have by the end
 
-The outputs below come from running these steps on
+- A governed security instance with `security:1.4.0` and its three pinned
+  providers (`cruxible-provider-web`, `security-osv-provider`,
+  `security-sarif-provider`).
+- Automated Lines that import your CycloneDX or SPDX SBOM and query OSV, CISA
+  KEV, and FIRST EPSS, recording both hits and verified absences.
+- An urgent exposure queue in `cruxible next` and `security.urgent_exposures`.
+- The **`security-audit` skill** wired into your coding agent to triage
+  exposures and audit code with separated Reporter, Verifier, and Approver
+  sessions, plus deterministic OpenVEX or CycloneDX VEX export.
+
+### What you'll do
+
+1. Install Cruxible, initialize your repo, and add `security:1.4.0` from GHCR.
+2. Generate (or copy an example) CycloneDX JSON SBOM.
+3. Adopt the kit's Lines and Runbooks with `cruxible kit adopt` (zero JSON
+   authoring) and run `security.start`.
+4. Load the `security-audit` skill into your coding agent to triage exposures
+   and review code under two-principal cosign.
+5. Read the full step-by-step trace below (recorded on
+   [pygoat](https://github.com/adeyosemanputra/pygoat)) to see exact CLI, SDK,
+   and MCP outputs at every stage.
+
+### Prerequisites
+
+Python 3.11+, Git, Linux (x86-64) or macOS (Apple silicon; Windows via WSL2),
+and network access to `ghcr.io`, `pypi.org`, `api.osv.dev`, `www.cisa.gov`,
+and `api.first.org`.
+
+---
+
+## Fast track: Cruxible 0.6.1 + `security:1.4.0`
+
+If you want to go from zero to live exposures and an agent audit in a few
+minutes without hand-editing JSON templates, run these steps on your
+repository:
+
+### 1. Initialize and install `security:1.4.0`
+
+~~~bash
+uv tool install cruxible        # or: pip install cruxible
+cd your-project
+cruxible init --principal-id owner
+cruxible kit add security --commit
+~~~
+
+`cruxible kit add security --commit` resolves `security:1.4.0` from
+`ghcr.io/cruxible-ai/kits`, prepares its three pinned providers, and installs
+the kit atomically. (Omit `--commit` first if you want a dry-run preview.)
+
+### 2. Generate a CycloneDX SBOM
+
+Ask the kit to inspect your lockfiles and print the matching generator command:
+
+~~~bash
+cruxible kit run security:init-plan
+~~~
+
+Common one-liners:
+
+~~~bash
+# Python (requirements.txt)
+uvx --from cyclonedx-bom cyclonedx-py requirements requirements.txt --of JSON -o sbom.cdx.json
+
+# Node.js (package-lock.json)
+npx --yes @cyclonedx/cyclonedx-npm --output-file sbom.cdx.json
+
+# Any ecosystem (or container image) with Syft
+syft dir:. -o cyclonedx-json=sbom.cdx.json
+~~~
+
+If you want a zero-dependency Python starter your agent can run or adapt
+(covering `uv.lock`, `requirements.txt`, `package-lock.json`, `Cargo.lock`,
+and `go.mod`), or a ready-made fixture to test live OSV/KEV hits right away,
+see the
+[security kit SBOM examples](https://github.com/cruxible-ai/cruxible-kits/tree/main/kits/security/examples/sboms)
+(`lockfile_sbom.py`, `env_sbom.py`, and `log4j-demo-app.cdx.json`).
+
+### 3. Adopt automation recipes and run `security.start`
+
+~~~bash
+cruxible kit adopt security --yes
+cruxible kit adopt security:sbom --param name=app --param relative_path=sbom.cdx.json --yes
+cruxible kit adopt security:schedule --yes   # optional: daily 14:00 UTC Trigger
+cruxible line enable security.osv-unkeyed --runbook security.start
+cruxible runbook run security.start
+cruxible query --name security.urgent_exposures --limit 5
+cruxible next
+~~~
+
+### 4. Run an agent audit with the `security-audit` skill
+
+Enable two-principal cosign (see Step 1 below or
+[Quickstart](quickstart.md#6-turn-on-two-principal-cosign-for-agents)), then pull the
+verified kit bundle and install the **`security-audit`** skill into your
+agent's skills folder (`.claude/skills/` for Claude Code or `.agents/skills/`
+for Codex):
+
+~~~bash
+cruxible kit pull security --out .cruxible/kits/security
+mkdir -p .claude/skills/security-audit
+cp .cruxible/kits/security/skills/security-audit/SKILL.md .claude/skills/security-audit/SKILL.md
+~~~
+
+Ask your agent to run either loop with `/security-audit`:
+
+- **Dependency triage:** *"Use the `security-audit` skill to triage the top
+  unjudged exposures in `cruxible next`, check whether each vulnerable path is
+  reachable in this repo, and propose code-cited verdicts."*
+- **Code audit:** *"Use the `security-audit` skill to partition this repo's
+  entry points into coverage units, run isolated Hunter sessions to report
+  findings with exact code citations, and dispatch a fresh Verifier session to
+  judge each finding."*
+
+The skill reads the live governed guidance Documents
+(`security.guidance.dependency`, `security.guidance.hunter`,
+`security.guidance.verifier`, `security.guidance.coverage`), authors typed
+Claims via `cruxible python`, and leaves proposals for an independent reviewer:
+
+~~~bash
+CRUXIBLE_PRINCIPAL_ID=reviewer cruxible proposal review PROPOSAL_ID
+CRUXIBLE_PRINCIPAL_ID=reviewer cruxible proposal approve PROPOSAL_ID --yes
+cruxible kit run security:export-vex -- --format openvex -o vex.openvex.json
+~~~
+
+---
+
+## Detailed walkthrough (step-by-step outputs on pygoat)
+
+The sections below walk through the same workflow one step at a time with full
+command outputs, showing two-principal cosign from the very first command and
+recording three reviewed judgments through the SDK, CLI, and MCP.
+
+The recorded outputs below come from running these steps on
 [pygoat](https://github.com/adeyosemanputra/pygoat), a deliberately
-vulnerable Django application, with Cruxible 0.5 and security kit 1.3.0.
-
-You'll need Python 3.11+, Git, a project to look at, a tool that writes a
-CycloneDX SBOM (step 3), and network access to `pypi.org`, `api.osv.dev`,
-`www.cisa.gov` and `api.first.org`.
+vulnerable Django application, with Cruxible 0.5 and security kit 1.3.0
+(the fast track above uses the current 0.6.1 recipes and `security:1.4.0`).
 
 ## Step 1: Install Cruxible and attach it to your project
 
