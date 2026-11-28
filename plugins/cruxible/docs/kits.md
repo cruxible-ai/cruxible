@@ -29,12 +29,13 @@ kit suggests, and building and documenting kits. Command details are in the CLI 
 
 ## A worked example: installing car parts
 
-The car parts kit is a folder, `kits/car-parts` in a checkout of the kits
-repository. `kit add` takes the folder's path, previews first and writes
-nothing:
+The car parts kit is published to the kit registry (`ghcr.io/cruxible-ai/kits`)
+and also lives at `kits/car-parts` in a checkout of the kits repository.
+`kit add` takes a registry name or a local folder path, previews first, and
+writes nothing:
 
 ~~~text
-$ cruxible kit add ../kits/kits/car-parts
+$ cruxible kit add car-parts
 car-parts 2.0.0: would_propose (install)
 Built by owner on inst_de98fea953864570 at 34f5e2a690f7 (claimed)
 CaptureContract:
@@ -59,7 +60,7 @@ Committing at the previewed coordinate lands exactly what you saw, or refuses
 if the instance moved in between:
 
 ~~~text
-$ cruxible kit add ../kits/kits/car-parts --commit --at 4d1d73961885
+$ cruxible kit add car-parts --commit --at 4d1d73961885
 car-parts 2.0.0: accepted (install)
 ...
 Proposal: sha256:90d28c62…
@@ -393,9 +394,9 @@ release. If no semver release is published there, `kit add` and `kit pull`
 refuse it (`cruxible.kit.not_found`).
 
 ~~~bash
-cruxible kit pull ../kits/kits/car-parts --out ./car-parts    # verify and copy, install nothing
 cruxible kit pull security --out ./security                   # highest published semver release
 cruxible kit pull security:1.4.0 --out ./security-1.4.0       # pin a specific release
+cruxible kit pull ../cruxible-kits/kits/car-parts --out ./car-parts  # from a local checkout
 ~~~
 
 `kit pull` of a registry reference prints the digest-pinned reference it
@@ -407,14 +408,14 @@ if the tag later moves.
 `kit add` previews by default and writes nothing:
 
 ~~~bash
-cruxible kit add /abs/path/kits/security
+cruxible kit add security
 ~~~
 
-KIT is a local kit directory (one holding `cruxible-kit.json`, such as a
-checkout or a `kit pull --out` folder), an OCI image layout, or a registry
-reference (`security`, `security:1.4.0`, or
-`ghcr.io/cruxible-ai/kits/security@sha256:<digest>`).
-`cruxible_kit_add` takes the same local paths and registry references.
+KIT is a registry reference (`security`, `security:1.4.0`, or
+`ghcr.io/cruxible-ai/kits/security@sha256:<digest>`), an OCI image layout, or a
+local kit directory (one holding `cruxible-kit.json`, such as a checkout or a
+`kit pull --out` folder).
+`cruxible_kit_add` takes the same registry references and local paths.
 
 The preview lists the plan grouped by kind (what each definition does and
 how many dependents it has), each provider package and what happens to it
@@ -428,7 +429,7 @@ record is claimed by the builder, not proven. The preview ends with the
 command that commits exactly what you saw:
 
 ~~~bash
-cruxible kit add /abs/path/kits/security --commit --at <oid>
+cruxible kit add security --commit --at <oid>
 ~~~
 
 The result is one of:
@@ -781,7 +782,7 @@ refusal follows, one code per kind with a count. The commit prints the same
 and exits 1:
 
 ~~~text
-$ cruxible kit add ../kits/kits/car-parts
+$ cruxible kit add car-parts
 car-parts 2.0.0: would_block (install)
 ...
 ClaimType:

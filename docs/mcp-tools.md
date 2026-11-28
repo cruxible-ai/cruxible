@@ -93,7 +93,7 @@ credential (Cruxible tokens and keys, API keys, cloud or forge tokens).
 The MCP server, the CLI and the SDK each ask the daemon's `/version` once per
 process before their first real request. The same authoring contract snapshot
 digest proceeds silently whatever the package versions. A different digest in
-the same `major.minor` release series (a 0.5.0 client and a 0.5.1 daemon)
+the same `major.minor` release series (a 0.6.0 client and a 0.6.1 daemon)
 still serves reads (orient, query, get, since, next, whoami, server info,
 proposal list and review, inbox list and get, capture read, floor export), and
 refuses each write before sending it. A daemon in another release series, or

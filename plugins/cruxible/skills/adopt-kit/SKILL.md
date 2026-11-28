@@ -44,9 +44,9 @@ revised locally like any definition; new vocabulary can also go in a local
 namespace. An upgrade preview names your local edits and dependent
 definitions; the release's version replaces an edit unless you keep it. Keep or retire each one deliberately.
 
-The bundled [kits reference](../../docs/kits.md) explains manifests, releases,
+The bundled [kits reference](references/kits.md) explains manifests, releases,
 upgrades and kit automation. For proposal handling read
-[governance](../_shared/references/governance-flow.md); for guarded edits read
-[concurrent edits](../_shared/references/concurrent-edits.md). Kit adoption
+[governance](references/governance-flow.md); for guarded edits read
+[concurrent edits](references/concurrent-edits.md). Kit adoption
 does not itself justify copying external data: apply the
-[copy-in rule](../_shared/references/copy-in.md).
+[copy-in rule](references/copy-in.md).

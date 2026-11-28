@@ -100,10 +100,15 @@ cruxible next
 ### 4. Run an agent audit with the `security-audit` skill
 
 Enable two-principal cosign (see Step 1 below or
-[Quickstart](quickstart.md#6-turn-on-two-principal-cosign-for-agents)), then pull the
-verified kit bundle and install the **`security-audit`** skill into your
-agent's skills folder (`.claude/skills/` for Claude Code or `.agents/skills/`
-for Codex):
+[Quickstart](quickstart.md#6-require-a-second-reviewer-optional)), then install
+the **`security-audit`** skill with `npx skills` (works across Claude Code,
+Codex, Cursor, and 75+ agents) or copy it from a `cruxible kit pull`:
+
+~~~bash
+npx skills add cruxible-ai/cruxible-kits --skill security-audit
+~~~
+
+Or pull the verified kit bundle and copy it manually:
 
 ~~~bash
 cruxible kit pull security --out .cruxible/kits/security
@@ -144,6 +149,8 @@ The recorded outputs below come from running these steps on
 [pygoat](https://github.com/adeyosemanputra/pygoat), a deliberately
 vulnerable Django application, with Cruxible 0.5 and security kit 1.3.0
 (the fast track above uses the current 0.6.1 recipes and `security:1.4.0`).
+Long digests and run IDs in the outputs below are abbreviated to 12 characters
+for readability; proposal commands accept any unambiguous prefix.
 
 ## Step 1: Install Cruxible and attach it to your project
 
@@ -168,7 +175,7 @@ Cruxible initialized: inst_e4c09942a5fd412e at 2ccaf29d197e
 Owner: owner, private key .../keys/inst_e4c09942a5fd412e/owner/owner.ed25519
 ...
 Approval policy: independent_approval_required
-Base kit: base 1.0.0 awaits approval, proposal sha256:0b5b6186… (cruxible proposal approve sha256:0b5b6186… --signer-id reviewer, as a second principal)
+Base kit: base 1.0.0 awaits approval, proposal 0b5b6186ce2d (cruxible proposal approve 0b5b6186ce2d --signer-id reviewer, as a second principal)
 Reviewer: reviewer, private key .../reviewer-keys/reviewer.ed25519 (cruxible context use --principal reviewer)
 More: cruxible context show
 ~~~
@@ -183,14 +190,14 @@ the key and settings `init` wrote to `../reviewer-keys`, and the reviewer's
 ~~~text
 $ CRUXIBLE_PRINCIPAL_ID=reviewer cruxible next
 ...
-repair  proposal_awaiting_approval  sha256:0b5b6186ce2dec43be515afb2a2af15a83b887f6260c515118f4b77b5cd798fa  next=cruxible.proposal.approve
-  repair: cruxible proposal approve sha256:0b5b6186ce2dec43be515afb2a2af15a83b887f6260c515118f4b77b5cd798fa --signer-id reviewer
+repair  proposal_awaiting_approval  0b5b6186ce2d...  next=cruxible.proposal.approve
+  repair: cruxible proposal approve 0b5b6186ce2d... --signer-id reviewer
 
-$ CRUXIBLE_PRINCIPAL_ID=reviewer cruxible proposal approve sha256:0b5b6186… --yes
-Signing sha256:760331c45c0d908c5b68c755c0d9bfdb849f99e9d95eb6b4eca561fc1ab9b4c3 (sha256:0b5b6186ce2dec43be515afb2a2af15a83b887f6260c515118f4b77b5cd798fa): 29 changes (29 create)
+$ CRUXIBLE_PRINCIPAL_ID=reviewer cruxible proposal approve 0b5b6186ce2d --yes
+Signing 760331c45c0d... (0b5b6186ce2d...): 29 changes (29 create)
 Signing key for reviewer: .../reviewer-keys/reviewer.ed25519 (from remembered settings .../reviewer-keys/cruxible.env)
-Approved sha256:760331c45c0d908c5b68c755c0d9bfdb849f99e9d95eb6b4eca561fc1ab9b4c3 (sha256:0b5b6186ce2dec43be515afb2a2af15a83b887f6260c515118f4b77b5cd798fa) as reviewer
-Activated at b0a3ac708d13e024573ded3abe361450abd7374a
+Approved 760331c45c0d... (0b5b6186ce2d...) as reviewer
+Activated at b0a3ac708d13
 ~~~
 
 `proposal approve` shows what you're signing and asks before it signs;
@@ -251,9 +258,9 @@ installed, because they are checked against them:
 ~~~text
 $ cruxible kit add security:1.3.0 --commit --at b0a3ac708d13
 security 1.3.0: awaiting_providers (install)
-  provider cruxible-provider-web (cruxible-provider-web 0.7.0): awaiting approval, proposal sha256:e4d45ca1ff3348365e599fc2d8a953e9078b4fde62163de5028f0f1c3a3c5b28
-  provider security-osv-provider (security-osv-provider 0.1.0.dev0): awaiting approval, proposal sha256:c7ba6329cb58c481b5c6ce3d8293139db2f28d1f4cf7eb85753f51c5419d9a5b
-  provider security-sarif-provider (security-sarif-provider 0.1.0.dev0): awaiting approval, proposal sha256:d351f95412ed026b4b2db585343c26b00dfb052b7e1a130dbf9e76924446c601
+  provider cruxible-provider-web (cruxible-provider-web 0.7.0): awaiting approval, proposal e4d45ca1ff33
+  provider security-osv-provider (security-osv-provider 0.1.0.dev0): awaiting approval, proposal c7ba6329cb58
+  provider security-sarif-provider (security-sarif-provider 0.1.0.dev0): awaiting approval, proposal d351f95412ed
   requires base >= 1.0.0: met (installed 1.0.0)
 ...
 the kit's definitions are proposed once its bundled providers are installed: ...; the definitions are proposed automatically, as you, once these installs activate (kit status shows the pending resume)
@@ -263,19 +270,19 @@ The owner cannot approve them; the reviewer approves the three installs, one
 at a time:
 
 ~~~text
-$ cruxible proposal approve sha256:d351f954… --yes
+$ cruxible proposal approve d351f95412ed --yes
 Error: cruxible.approval.creator_forbidden: independent_approval_required mode needs an active ordinary approver other than the candidate creator, whose approval activates it
 
-$ CRUXIBLE_PRINCIPAL_ID=reviewer cruxible proposal approve sha256:d351f954… --yes
+$ CRUXIBLE_PRINCIPAL_ID=reviewer cruxible proposal approve d351f95412ed --yes
 ...
-Approved sha256:3af9c2366540ced32b4b5813c63eb0b0a12323f19d0d9fa7100f0f2fbbfe5090 (sha256:d351f95412ed026b4b2db585343c26b00dfb052b7e1a130dbf9e76924446c601) as reviewer
-Activated at fc52d509fed86acbf912328664ee8d226c7e0504
+Approved 3af9c2366540... (d351f95412ed...) as reviewer
+Activated at fc52d509fed8
 
-$ CRUXIBLE_PRINCIPAL_ID=reviewer cruxible proposal approve sha256:c7ba6329… --yes
+$ CRUXIBLE_PRINCIPAL_ID=reviewer cruxible proposal approve c7ba6329cb58 --yes
 ...
-Landed at the head as sha256:28b994ba45ffb3f4e1a1b3768a24ceba7e41fdb0d79718063a6186c194b22386: the same change set (proposed as sha256:c7ba6329cb58c481b5c6ce3d8293139db2f28d1f4cf7eb85753f51c5419d9a5b); signing it
-Approved sha256:2d4f2b5f796c6c1633148212514616509291cc4982bcb883f5590ad2298e4641 (sha256:28b994ba45ffb3f4e1a1b3768a24ceba7e41fdb0d79718063a6186c194b22386) as reviewer
-Activated at f706d5490b0d7be2cf0af75b4380916c3e363b5c
+Landed at the head as 28b994ba45ff...: the same change set (proposed as c7ba6329cb58...); signing it
+Approved 2d4f2b5f796c... (28b994ba45ff...) as reviewer
+Activated at f706d5490b0d
 ~~~
 
 The second and third were proposed before the first landed, so each approval
@@ -285,25 +292,25 @@ proposal:
 
 ~~~text
 $ cruxible kit status --offline
-security 1.3.0: kit add proposed (as owner); proposal sha256:11b0a727f61032db1a428c4233021df5aaab6a138cd85f7f7eae80d20b55b0f1
+security 1.3.0: kit add proposed (as owner); proposal 11b0a727f610...
 ...
 
-$ CRUXIBLE_PRINCIPAL_ID=reviewer cruxible proposal review sha256:11b0a727…
-Proposal: sha256:11b0a727f61032db1a428c4233021df5aaab6a138cd85f7f7eae80d20b55b0f1
-Candidate: sha256:2490b0425ef5acaf200338a1fe0401d4b8a06dacfb20e840a3ecb26539d8f475
+$ CRUXIBLE_PRINCIPAL_ID=reviewer cruxible proposal review 11b0a727f610
+Proposal: 11b0a727f610...
+Candidate: 2490b0425ef5...
 Why: Install kit security 1.3.0.
 ...
 Changes: 183 created / 0 revised / 0 retired
 ...
 
-$ CRUXIBLE_PRINCIPAL_ID=reviewer cruxible proposal approve sha256:11b0a727… --yes
+$ CRUXIBLE_PRINCIPAL_ID=reviewer cruxible proposal approve 11b0a727f610 --yes
 ...
-Activated at 353785f2e945c9057e1b6c8697ed1348ee124097
+Activated at 353785f2e945
 
 $ cruxible kit status
-base 1.0.0 content sha256:07e64748e385c0dc51a69cb154b8c3fb3d57906ab59aba9d1dac93bbf3b60845; up to date
+base 1.0.0 content sha256:07e64748e385...; up to date
   source: bundled
-security 1.3.0 content sha256:7273e50106d70fac67e04dec3a603d42e067cde167385b1503e0d78ad947c729; update check local source
+security 1.3.0 content sha256:7273e50106d7...; update check local source
 ...
   provider cruxible-provider-web (cruxible-provider-web 0.7.0): installed
   provider security-osv-provider (security-osv-provider 0.1.0.dev0): installed
@@ -362,10 +369,10 @@ submit it for review:
 ~~~text
 $ cruxible authoring submit automation.json --no-accept --brief
 outcome: submitted (awaiting_external_approval)
-intent: AIT-14347b81a027ed75c81905f5dc2bb096
-proposal: sha256:6e3265c187748b641d31266b27a4187c943340476b8b3f99858477049545a7e7
+intent: AIT-14347b81a027...
+proposal: 6e3265c18774...
 reason: not activated: the candidate needs an external approval from one of: reviewer. That signer's approval activates it.
-next: cruxible proposal approve sha256:6e3265c187748b641d31266b27a4187c943340476b8b3f99858477049545a7e7 --signer-id reviewer
+next: cruxible proposal approve 6e3265c18774... --signer-id reviewer
 ~~~
 
 The one decision here is what may land without asking anyone. `proposal
@@ -373,7 +380,7 @@ review` shows each Line (what it runs, bound to which provider build, with
 which parameters and budget) and each Mandate (what it lets a Line settle):
 
 ~~~text
-$ CRUXIBLE_PRINCIPAL_ID=reviewer cruxible proposal review sha256:6e3265c1…
+$ CRUXIBLE_PRINCIPAL_ID=reviewer cruxible proposal review 6e3265c18774
 ...
 Changes: 19 created / 0 revised / 0 retired
   line: 7 created / 0 revised / 0 retired
@@ -416,11 +423,11 @@ other three (the two attention Lines and `security.osv-unkeyed`) only post to
 the inbox. No Mandate settles a judgment. The reviewer approves it:
 
 ~~~text
-$ CRUXIBLE_PRINCIPAL_ID=reviewer cruxible proposal approve sha256:6e3265c1… --yes
-Signing sha256:5856e7cab08271b4134b2cf4c19b01eb912734961db737350fc17dd44351556a (sha256:6e3265c187748b641d31266b27a4187c943340476b8b3f99858477049545a7e7): 19 changes (19 create)
+$ CRUXIBLE_PRINCIPAL_ID=reviewer cruxible proposal approve 6e3265c18774 --yes
+Signing 5856e7cab082... (6e3265c18774...): 19 changes (19 create)
 Signing key for reviewer: ...
-Approved sha256:5856e7cab08271b4134b2cf4c19b01eb912734961db737350fc17dd44351556a (sha256:6e3265c187748b641d31266b27a4187c943340476b8b3f99858477049545a7e7) as reviewer
-Activated at c034a7537dcef23a83baa2ff4b059643928bd164
+Approved 5856e7cab082... (6e3265c18774...) as reviewer
+Activated at c034a7537dce
 ~~~
 
 ## Step 5: Run it once
@@ -460,18 +467,18 @@ took about half a minute here:
 
 ~~~text
 $ cruxible runbook run security.start
-Runbook security.start: completed; needs attention: step 5  [RBR-41ae12e5ba38447789431eb8b2712fc5]
-   1  succeeded   Line:security.sbom-import.app  (RUN-fa589b00f641944727ec9202e9f0eec8e6028fab054db1e000868c6bb7e5c4ec)
+Runbook security.start: completed; needs attention: step 5  [RBR-41ae12e5ba38...]
+   1  succeeded   Line:security.sbom-import.app  (RUN-fa589b00f641...)
       written 32 (settled 32, proposed 0); unchanged 0; refused 0; inbox 0
-   2  succeeded   Line:security.osv-query  (RUN-8c2fa0e801008886d59a2c38beaa05fa8537ff9067b3a349d7ac19e7ec64023d)
+   2  succeeded   Line:security.osv-query  (RUN-8c2fa0e80100...)
       written 181 (settled 181, proposed 0); unchanged 0; refused 0; inbox 0
-   3  succeeded   Line:security.kev-triage  (RUN-720a3fed3b76c35b6f1fbff8dcc6ea6983dee6a4371ba8224a4426463678657b)
+   3  succeeded   Line:security.kev-triage  (RUN-720a3fed3b76...)
       written 181 (settled 181, proposed 0); unchanged 0; refused 0; inbox 0
-   4  succeeded   Line:security.epss-triage  (RUN-396be8aff3e25ba519e3a7d15a0c0d3ec661beb3ce2bc8a5edf7b2059947c722)
+   4  succeeded   Line:security.epss-triage  (RUN-396be8aff3e2...)
       written 543 (settled 543, proposed 0); unchanged 0; refused 0; inbox 0
-   5  succeeded   Line:security.exposure-attention.unjudged  (RUN-c1e52648a728c60e0beed99bcca7274eab500157750d76ea5e3e10eec3c96e8b)
+   5  succeeded   Line:security.exposure-attention.unjudged  (RUN-c1e52648a728...)
     ! written 0 (settled 0, proposed 0); unchanged 0; refused 0; inbox 7 new
-   6  succeeded   Line:security.exposure-attention.contested  (RUN-53623eaf06928fcbb939c5d1ac8062b66312d694a60cbaa7662d4d174122efc9)
+   6  succeeded   Line:security.exposure-attention.contested  (RUN-53623eaf0692...)
       written 0 (settled 0, proposed 0); unchanged 0; refused 0; inbox 0
 ~~~
 
@@ -541,18 +548,18 @@ security.vulnerability/cve-2025-57833  (live, 1 incoming)
   epss_score       0.28271
   epss_score_date  2026-11-17
   listed_in        (no value)
-                   none of security.catalog/cisa-kev  CLM-71b0e514276e63767512c26c0b3ee41b [supported]
+                   none of security.catalog/cisa-kev  CLM-71b0e514276e... [supported]
 ...
 
-$ cruxible get CLM-71b0e514276e63767512c26c0b3ee41b --detail evidence
+$ cruxible get CLM-71b0e514276e... --detail evidence
 value: {"none": "security.catalog/cisa-kev"}
 capture CAP-1ca83f90829b  CaptureContract:security.kev-catalog v1  source=cisa.kev.catalog  observed=2026-11-17T22:53:58.980422+00:00  evidence: admitted
 rationale: Complete source establishes the declared inverse.
 
 $ cruxible get security.vulnerability/cve-2025-57833 --detail incoming
-security.component/pkg-pypi-django-4.2  security.component.affected_by  CLM-2df9a2ea9ddbbc40debc4b02eefb51ba
+security.component/pkg-pypi-django-4.2  security.component.affected_by  CLM-2df9a2ea9ddb...
 
-$ cruxible get CLM-2df9a2ea9ddbbc40debc4b02eefb51ba --detail evidence
+$ cruxible get CLM-2df9a2ea9ddb... --detail evidence
 value: security.vulnerability/cve-2025-57833
 capture CAP-895d061ac923  CaptureContract:security.osv-matches v1  source=osv.dev.query  observed=2026-11-17T22:53:44.183703+00:00  evidence: admitted
 rationale: OSV GHSA-6w2r-r2m5-xq5w lists CVE-2025-57833 for pkg:pypi/django@4.2.
@@ -574,7 +581,7 @@ unread  INB-f414715538fc  Line:security.exposure-attention.unjudged  post  1  co
 ...
 unread  INB-47fe039489bc  Line:security.exposure-attention.unjudged  post  1  component=pkg:pypi/django@4.2 cve_id=CVE-2023-46695 inventory=sbom.cdx.json
 ...
-unread  INB-0573b8a3bf53  Line:security.osv-unkeyed  post  1  count=10 matches=sha256:895d061ac923a62732f1d03757e194c42f1fa9562c6061b1cd7b826…
+unread  INB-0573b8a3bf53  Line:security.osv-unkeyed  post  1  count=10 matches=sha256:895d061ac923...
 ~~~
 
 `cruxible inbox get ITEM` prints one item whole. The inbox is never accepted
@@ -619,31 +626,31 @@ container with its own requirements. From Python (the `cruxible` install
 includes the SDK), in the project directory:
 
 ~~~python
-from cruxible_client import Cruxible
-from cruxible_client.contracts.write import FileEvidence
+from cruxible_client import Cruxible, FileEvidence
 
-cx = Cruxible.connect()
-batch = cx.changes(
-    because="CVE-2020-14343: the only yaml.load in the repo is in dockerized_labs/a9_uckv_lab, a separate container with its own requirements; the Django app this SBOM describes never imports yaml.",
-)
-pair = batch.create(
-    "security.app_exposure",
-    label="pair",
-    key={
-        "occurrence": "security.occurrence/sbom.cdx.json--pkg-pypi-pyyaml-5.1",
-        "vulnerability": "security.vulnerability/cve-2020-14343",
-    },
-)
-batch.set(
-    pair,
-    "justification",
-    "vulnerable_code_not_in_execute_path",
-    evidence=FileEvidence(
-        file="dockerized_labs/a9_uckv_lab/app.py#data = yaml.load(file.stream, Loader=yaml.Loader)"
-    ),
-)
-outcome = batch.write(accept="never")
-outcome.status    # 'awaiting_approval'
+with Cruxible.connect() as cx:
+    w = cx.world()
+    outcome = (
+        w.security.app_exposure.define(
+            occurrence=w.security.occurrence["sbom.cdx.json--pkg-pypi-pyyaml-5.1"],
+            vulnerability=w.security.vulnerability["cve-2020-14343"],
+        )
+        .set(
+            justification="vulnerable_code_not_in_execute_path",
+            evidence=FileEvidence(
+                file="dockerized_labs/a9_uckv_lab/app.py#data = yaml.load(file.stream, Loader=yaml.Loader)"
+            ),
+        )
+        .write(
+            because=(
+                "CVE-2020-14343: the only yaml.load in the repo is in dockerized_labs/a9_uckv_lab, "
+                "a separate container with its own requirements; the Django app this SBOM describes "
+                "never imports yaml."
+            ),
+            accept="never",
+        )
+    )
+    outcome.status    # 'awaiting_approval'
 ~~~
 
 `print(outcome)` shows what it did. The cited file is catalogued by the write
@@ -653,11 +660,11 @@ itself:
 awaiting approval (generation 10, bb4afd8c9e8e)
   catalogued dockerized_labs/a9_uckv_lab/app.py (as doc-dockerized_labs-a9_uckv_lab-app.py)
   create security.app_exposure/sbom.cdx.json--pkg-pypi-pyyaml-5.1--cve-2020-14343: created
-  set security.app_exposure/sbom.cdx.json--pkg-pypi-pyyaml-5.1--cve-2020-14343 justification: vulnerable_code_not_in_execute_path  [CLM-34cb42d700cd69862c47456014f0634f; verdict supported]
+  set security.app_exposure/sbom.cdx.json--pkg-pypi-pyyaml-5.1--cve-2020-14343 justification: vulnerable_code_not_in_execute_path  [CLM-34cb42d700cd...; verdict supported]
   + subject security.app_exposure/sbom.cdx.json--pkg-pypi-pyyaml-5.1--cve-2020-14343
-proposal: sha256:54251d28f92133c36a9de073190d93ba6412bfc3ac4aed94d8d87f083ec38998 (awaiting_external_approval)
+proposal: 54251d28f921... (awaiting_external_approval)
 awaiting: independent approval; approvers: reviewer
-next: cx.proposal("sha256:54251d28…").approve(signer=cx.signer("reviewer"), reviewed=cx.proposal("sha256:54251d28…").review())
+next: cx.proposal("54251d28f921").approve(signer=cx.signer("reviewer"), reviewed=cx.proposal("54251d28f921").review())
 ~~~
 
 The same write over MCP is one `cruxible_write` call. This is the write
@@ -701,21 +708,21 @@ before approving it. Its `next` lists the proposal
 text each one cites:
 
 ~~~text
-$ CRUXIBLE_PRINCIPAL_ID=reviewer cruxible proposal review sha256:54251d28…
+$ CRUXIBLE_PRINCIPAL_ID=reviewer cruxible proposal review 54251d28f921
 ...
 Guidance for ClaimType:security.app_exposure.justification: document:security.guidance.dependency (Judging a dependency exposure)
 ...
 Values (4):
   create security.app_exposure/sbom.cdx.json--pkg-pypi-pyyaml-5.1--cve-2020-14343: created
-  set security.app_exposure/sbom.cdx.json--pkg-pypi-pyyaml-5.1--cve-2020-14343 justification: vulnerable_code_not_in_execute_path  [CLM-34cb42d700cd69862c47456014f0634f; verdict supported]
+  set security.app_exposure/sbom.cdx.json--pkg-pypi-pyyaml-5.1--cve-2020-14343 justification: vulnerable_code_not_in_execute_path  [CLM-34cb42d700cd...; verdict supported]
     cites CAP-0e7901adf211 dockerized_labs/a9_uckv_lab/app.py#data = yaml.load(file.stream, Loader=yaml.Loader)
       | data = yaml.load(file.stream, Loader=yaml.Loader)
 ...
 
-$ CRUXIBLE_PRINCIPAL_ID=reviewer cruxible proposal approve sha256:54251d28… --yes
+$ CRUXIBLE_PRINCIPAL_ID=reviewer cruxible proposal approve 54251d28f921 --yes
 ...
-Approved sha256:b31e4f5d835970ff827a0ef93da51ffb1da0bd01350fed6c543557973493c09e (sha256:54251d28f92133c36a9de073190d93ba6412bfc3ac4aed94d8d87f083ec38998) as reviewer
-Activated at b262ac828637ab6fbdc3df3a8806c9bc214a933f
+Approved b31e4f5d8359... (54251d28f921...) as reviewer
+Activated at b262ac828637
 ~~~
 
 A reviewer that disagrees rejects instead (`cruxible proposal reject
@@ -745,11 +752,11 @@ $ cruxible write cve-2023-36053.yaml --no-accept
 awaiting approval (generation 11, b262ac828637)
   catalogued introduction/forms.py (as doc-introduction-forms.py)
   create security.app_exposure/sbom.cdx.json--pkg-pypi-django-4.2--cve-2023-36053: created
-  set security.app_exposure/sbom.cdx.json--pkg-pypi-django-4.2--cve-2023-36053 verdict: affected  [CLM-2c1eebb499ac88f0f3ea0ab7131d75f4; verdict supported]
+  set security.app_exposure/sbom.cdx.json--pkg-pypi-django-4.2--cve-2023-36053 verdict: affected  [CLM-2c1eebb499ac...; verdict supported]
   + subject security.app_exposure/sbom.cdx.json--pkg-pypi-django-4.2--cve-2023-36053
-proposal: sha256:5e06bd1cbc8f251fc9156639336dfa47f76f39cacc19fede4145271aa47dea9b (awaiting_external_approval)
+proposal: 5e06bd1cbc8f... (awaiting_external_approval)
 awaiting: independent approval; approvers: reviewer
-next: cruxible proposal approve sha256:5e06bd1cbc8f251fc9156639336dfa47f76f39cacc19fede4145271aa47dea9b --signer-id reviewer
+next: cruxible proposal approve 5e06bd1cbc8f... --signer-id reviewer
 ~~~
 
 A third judgment here was written over MCP, in the `cruxible_write` form shown
@@ -791,11 +798,11 @@ same item, counted as seen again, with its status and decision kept:
 
 ~~~text
 $ cruxible runbook run security.maintain
-Runbook security.maintain: completed  [RBR-02296f3a09244938babce18dd4463dd2]
-   1  succeeded   Line:security.osv-query  (RUN-8abfc81035a6fc29906c0b2538eb31a3a7c5235a6df55d91c02c10c366784d4b)
+Runbook security.maintain: completed  [RBR-02296f3a0924...]
+   1  succeeded   Line:security.osv-query  (RUN-8abfc81035a6...)
       written 0 (settled 0, proposed 0); unchanged 181; refused 0; inbox 0
 ...
-   4  succeeded   Line:security.exposure-attention.unjudged  (RUN-7c3038f9629b7acdd0325e5a2d6f060be99259cd07a181f81e7eb1f38102f29e)
+   4  succeeded   Line:security.exposure-attention.unjudged  (RUN-7c3038f9629b...)
       written 0 (settled 0, proposed 0); unchanged 0; refused 0; inbox 0 new, 6 seen again
 ...
 ~~~
@@ -822,10 +829,10 @@ complete:
 
 ~~~text
 $ cruxible get Line:security.osv-query --detail runs
-RUN-8abfc81035a6fc29906c0b2538eb31a3a7c5235a6df55d91c02c10c366784d4b  succeeded  started 2026-11-17T22:55:04.013652+00:00  nodes_done=5  Procedure:security.osv-query
-RUN-8c2fa0e801008886d59a2c38beaa05fa8537ff9067b3a349d7ac19e7ec64023d  succeeded  started 2026-11-17T22:53:38.631764+00:00  nodes_done=5  Procedure:security.osv-query
+RUN-8abfc81035a6...  succeeded  started 2026-11-17T22:55:04.013652+00:00  nodes_done=5  Procedure:security.osv-query
+RUN-8c2fa0e80100...  succeeded  started 2026-11-17T22:53:38.631764+00:00  nodes_done=5  Procedure:security.osv-query
 
-$ cruxible get RUN-8c2fa0e801008886d59a2c38beaa05fa8537ff9067b3a349d7ac19e7ec64023d
+$ cruxible get RUN-8c2fa0e80100...
 ...
 nodes:
   components read succeeded: 32 rows
@@ -846,13 +853,13 @@ certifi, cryptography, pillow, pyjwt and sqlparse):
 ~~~text
 $ cruxible inbox list --line security.osv-unkeyed
 STATUS  ITEM  LINE  KIND  SEEN  TITLE
-unread  INB-0573b8a3bf53  Line:security.osv-unkeyed  post  1  count=10 matches=sha256:895d061ac923a62732f1d03757e194c42f1fa9562c6061b1cd7b826…
+unread  INB-0573b8a3bf53  Line:security.osv-unkeyed  post  1  count=10 matches=sha256:895d061ac923...
 
 $ cruxible inbox get INB-0573b8a3bf53
 ...
 {
   "count": 10,
-  "matches": "sha256:895d061ac923a62732f1d03757e194c42f1fa9562c6061b1cd7b826b319ddefb",
+  "matches": "sha256:895d061ac923...",
   "sample": [
     {
       "osv_id": "GHSA-6q48-6c7w-9gw2",
@@ -860,7 +867,7 @@ $ cruxible inbox get INB-0573b8a3bf53
     },
 ...
   ],
-  "set_digest": "sha256:22f6ca2f0b162c8deca5f882cfefe07da3b77b2d7464b901cc69fa35158b7696"
+  "set_digest": "sha256:22f6ca2f0b16..."
 }
 ~~~
 

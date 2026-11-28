@@ -70,7 +70,7 @@ only setup tool: it takes `principal_id` and creates the owner only under
   default `~/.config/cruxible/keys/INSTANCE/reviewer`; `--reviewer-key-dir DIR`
   puts them elsewhere). On an already-initialized instance, `init` answers
   "already initialized" and adds nothing.
-- **Adding cosign to an existing instance**: run these two CLI steps in order—add
+- **Adding cosign to an existing instance**: run these two CLI steps in order: add
   the reviewer first, because once `independent_approval_required` lands, the
   owner can no longer land a change alone (`graph_write` is the tier that may
   submit approvals when the daemon runs with auth):
@@ -129,11 +129,19 @@ Cosign between agents on one machine is a convention, not a security boundary:
 any process of the OS user can read both keys ([Review and
 governance](review-and-governance.md#what-approval-protects-and-what-it-doesnt)).
 
-The agent plugin's README (`plugins/README.md`) walks the same path through to
-installing a kit. The plugin, for Claude Code and Codex, also supplies five
-general skills: `survey` for a project with no instance or kit yet,
-`adopt-kit` to start from a kit, and `create-state`, `automate-state` and
-`review-state` for the work after that.
+Install the five general Cruxible skills into Claude Code, Codex, Cursor,
+OpenCode, or any other Agent Skills host with:
+
+~~~bash
+npx skills add cruxible-ai/cruxible
+# Optional domain kit skills (security-audit, project-state):
+npx skills add cruxible-ai/cruxible-kits
+~~~
+
+`survey` assesses a project with no instance or kit yet, `adopt-kit` starts
+from a kit, and `create-state`, `automate-state` and `review-state` cover the
+work after that. Optional Claude Code and Codex plugin bundles (which package
+the same five skills with `uvx cruxible mcp`) also live in `plugins/README.md`.
 
 The `default` profile advertises 13 tools, the everyday loop: `orient`,
 `query`, `get`, `next`, `set`, `retire`, `write`, `proposal_list`,
@@ -306,7 +314,7 @@ in the SDK).
   knowledge](building-team-knowledge.md), [Evidence and
   admission](evidence-and-admission.md)).
 - **Notes**: write the reasoning into a document section in the same `write`
-  as the Claims that cite it (`w.section(FILE, heading=..., body=...)` as
+  as the Claims that cite it (`cx.section(FILE, heading=..., body=...)` as
   `evidence=`, or `set --section FILE#Heading --section-body ...`); a Subject's
   `get` card points to the notes about it, and `cruxible section
   FILE#Heading/Path` reads one ([Documents and notes](documents-and-notes.md)).
@@ -345,19 +353,29 @@ The value verbs on each surface:
 |---|---|---|
 | MCP | `cruxible_set`, `cruxible_retire` | `cruxible_write` (`set`, `add`, `retire` changes, plus `docs`) |
 | CLI | `cruxible set`, `add`, `retire`, `rebind` | `cruxible write FILE` or `write -` |
-| SDK | `cx.set(...)`, `cx.add(...)`, `cx.retire(...)`, `cx.rebind(...)` | `cx.changes(because=...)`, then `.set`, `.add`, `.retire`, `.write()` |
+| SDK | `subject.set(...)`, `subject.add(...)`, `subject.retire(...)`, `cx.rebind(...)` | `w.write(draft, subject.edit()..., because=...)` (or `cx.changes(because=...)` for untyped batches) |
 
-A batch can write the note and the Claim that cites it together:
+A typed world write can author the note and the Claim that cites it together:
 
 ~~~python
-batch = cx.changes(because="Fitment check at the shop.", subject="catalog.part/af-208")
-batch.append_section("docs/fitment.md", under=("Fitment notes",), id="check",
-                     text="## af-208 on the 2019 Civic\n\nFitted at the shop on 2026-10-21: no issues.\n")
-batch.add("fits", "catalog.vehicle/honda-civic-2019", evidence=batch.section("check"))
-outcome = batch.write()
-outcome.status                                        # 'accepted'
-[(c.field, c.after, c.verdict) for c in outcome.changes]
-# [('fits', 'catalog.vehicle/honda-civic-2019', 'supported')]
+from cruxible_client import Cruxible
+
+with Cruxible.connect() as cx:
+    w = cx.world()
+    check = cx.section(
+        "docs/fitment.md",
+        heading="af-208 on the 2019 Civic",
+        under=("Fitment notes",),
+        body="Fitted at the shop on 2026-10-21: no issues.",
+    )
+    outcome = w.catalog.part["af-208"].add(
+        fits=w.catalog.vehicle["honda-civic-2019"],
+        evidence=check,
+        because="Fitment check at the shop.",
+    )
+    outcome.status                                    # 'accepted'
+    [(c.field, c.after, c.verdict) for c in outcome.changes]
+    # [('fits', 'catalog.vehicle/honda-civic-2019', 'supported')]
 ~~~
 
 For MCP-only clients, the same write is one `cruxible_write` call:
@@ -386,13 +404,15 @@ For MCP-only clients, the same write is one `cruxible_write` call:
 }
 ~~~
 
-A Subject the write creates is part of the same batch: `batch.create(kind,
-key=...)` returns a handle that names it as `subject=` or as a value, and a
-`cx.new_subject(...)` draft works in the same places (`create` changes over
-MCP and in a CLI write file). A key is the value of a kind's one key, or
+A Subject the write creates is part of the same change set: `w.<kind>.define(...)`
+returns a typed draft you can pass straight into `w.write(...)` and use as an
+edge target on sibling edits (in an explicit untyped batch, `batch.create(kind,
+key=...)` or `cx.new_subject(...)` does the same; `create` changes over MCP and
+in a CLI write file). A key is the value of a kind's one key, or
 `{field: value}` for each key field.
 
-`replace_section(..., expect=digest)` replaces a section only if nobody
+`cx.section(..., replace=True, expect=digest)` (or `replace_section(..., expect=digest)`
+on a prose-only batch) replaces a section only if nobody
 changed it since you read it. Each write accepts in the same call when the
 approval policy and your tier allow it; otherwise the outcome says `awaiting
 approval` and names who may approve. `dry_run` runs every check and writes

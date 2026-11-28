@@ -5,15 +5,23 @@ description: Author or adapt requested Cruxible Procedures, Lines, Triggers, Man
 
 # Automate state
 
+Procedures and Lines keep accepted state aligned with reality. Normative Claims
+hold hypotheses, baselines, criteria, and verdicts; Procedures gather
+observations (fetching APIs, running scanners, executing experiments or
+benchmarks, or scoring with custom Python or ML models) at zero LLM tokens so
+new Captures and observation Claims either confirm standing beliefs or wake
+`cruxible next` for review and signed attestation.
+
 Procedures describe deterministic work over accepted state and contracted
-provider results. A Procedure names no provider: each slot names a
-capability, a versioned kind of call with a request Contract, a result
-Contract and an effect (`cruxible orient --section capabilities`; the base kit
-holds the shared `workspace.` and `web.` ones). A Line binds each slot to a
-provider operation that serves its capability and fits it, and binds its
-`parameters` to the Procedure's params, under an authority ceiling. Mandates state the grant, scope and
-validity interval. A Runbook orders Line runs and actions; it does not widen
-their authority.
+provider results, and can be as simple or as sophisticated as the domain needs.
+A Procedure names no provider: each slot names a capability, a versioned kind
+of call with a request Contract, a result Contract and an effect (`cruxible
+orient --section capabilities`; the base kit holds the shared `workspace.` and
+`web.` ones). A Line binds each slot to a provider operation that serves its
+capability and fits it, and binds its `parameters` to the Procedure's params,
+under an authority ceiling. Mandates state the grant, scope and validity
+interval. A Runbook orders Line runs and actions; it does not widen their
+authority.
 
 Read `cruxible orient` and the relevant definitions before adding automation.
 A kit's Procedures and its automation template's Lines are a
@@ -34,7 +42,8 @@ CaptureKind's layout (header fields and named record sets); an extract names
 a record set. Computation beyond read, call, extract, claims, filter, dedupe
 and inbox posts lives in a provider's derive operation behind a capability.
 
-Keep parsing, filtering and scoring in Python, not in a long Procedure graph. A
+Keep heavy computation, parsing, filtering, experiments, and ML scoring in
+Python providers rather than cramming logic into a long Procedure graph. A
 pure provider is one file of `@derive` functions (`cruxible-provider-runtime`
 0.6.0): a `CaptureView` parameter reads a Capture input, and `derived_capture`
 (or `view.derive(...)`) returns a computed document, such as a
@@ -71,7 +80,7 @@ on a `procedure_mandate`. A mandate takes a span `expires` (`"90d"`) instead of
 Mandate, not assumptions.
 
 Served examples, contracts and refusals define legal syntax; the bundled
-[automation reference](../../docs/lines-and-automation.md) explains each
-construct. See also the [copy-in rule](../_shared/references/copy-in.md),
-[guarded edits](../_shared/references/concurrent-edits.md) and
-[governance](../_shared/references/governance-flow.md).
+[automation reference](references/lines-and-automation.md) explains each
+construct. See also the [copy-in rule](references/copy-in.md),
+[guarded edits](references/concurrent-edits.md) and
+[governance](references/governance-flow.md).

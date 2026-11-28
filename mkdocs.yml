@@ -1,4 +1,4 @@
-# docs.cruxible.ai — built from this repo's docs/ at the documented
+# docs.cruxible.ai: built from this repo's docs/ at the documented
 # commit, so the site mirrors the repo by construction.
 # Local preview:  uvx --with mkdocs-material mkdocs serve
 # Build:          uvx --with mkdocs-material mkdocs build
@@ -50,6 +50,7 @@ extra:
 markdown_extensions:
   - admonition
   - attr_list
+  - md_in_html
   - tables
   - toc:
       permalink: true
@@ -70,7 +71,9 @@ nav:
       - Concepts: concepts.md
       - For AI agents: for-ai-agents.md
   - Walkthroughs:
+      - Project state: project-state-walkthrough.md
       - Security: security-walkthrough.md
+      - IoT fleet: iot-fleet-walkthrough.md
   - Guides:
       - Building team knowledge: building-team-knowledge.md
       - Evidence and admission: evidence-and-admission.md

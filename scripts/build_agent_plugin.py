@@ -5,31 +5,61 @@ from __future__ import annotations
 import argparse
 import json
 import re
+from collections.abc import Collection
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = Path("plugins/cruxible")
-#: Core docs the skills link, copied into the package so links resolve offline at
-#: the release's own version. A skill links ``../../docs/NAME.md``: the checkout's
-#: docs/ from source, the package's docs/ once installed.
+#: Core docs the skills link, copied into each skill's own ``references/`` folder
+#: (for standalone ``npx skills add`` installs) and into ``plugins/cruxible/docs/``.
 BUNDLED_DOCS = (
     "documents-and-notes.md",
     "evolving-your-vocabulary.md",
     "kits.md",
     "lines-and-automation.md",
 )
+#: Shared reference sheets copied from ``skills/_shared/references/`` into each
+#: skill's own ``references/`` directory so every skill folder is self-contained.
+SKILL_SHARED_REFS: dict[str, tuple[str, ...]] = {
+    "adopt-kit": ("copy-in.md", "governance-flow.md", "concurrent-edits.md"),
+    "automate-state": ("copy-in.md", "governance-flow.md", "concurrent-edits.md"),
+    "create-state": (
+        "copy-in.md",
+        "data-readiness.md",
+        "governance-flow.md",
+        "concurrent-edits.md",
+    ),
+    "review-state": ("governance-flow.md", "concurrent-edits.md"),
+    "survey": ("copy-in.md", "governance-flow.md"),
+}
+#: Core docs copied into each skill's own ``references/`` directory.
+SKILL_BUNDLED_DOCS: dict[str, tuple[str, ...]] = {
+    "adopt-kit": ("kits.md",),
+    "automate-state": ("lines-and-automation.md",),
+    "create-state": ("evolving-your-vocabulary.md", "documents-and-notes.md"),
+    "review-state": (),
+    "survey": ("evolving-your-vocabulary.md",),
+}
 PLUGIN_ICON_SOURCE = Path("assets/brand/cruxible-org-avatar.png")
 PLUGIN_ICON_TARGET = Path("assets/icon.png")
 _LINK = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
 
 
-def bundled_doc(text: str, name: str, version: str) -> bytes:
+def bundled_doc(
+    text: str,
+    name: str,
+    version: str,
+    *,
+    allowed_docs: Collection[str] = BUNDLED_DOCS,
+) -> bytes:
     """One core doc as packaged: links to docs left out of the bundle keep only their text."""
+
+    allowed = set(allowed_docs)
 
     def link(match: re.Match[str]) -> str:
         target = match.group(2)
         local = target.split("#", 1)[0]
-        if "://" in target or not local or local in BUNDLED_DOCS:
+        if "://" in target or not local or local in allowed:
             return match.group(0)
         return match.group(1)
 
@@ -101,8 +131,31 @@ def plugin_files(root: Path = ROOT) -> dict[Path, bytes]:
     files = {
         path: (json.dumps(value, indent=2) + "\n").encode() for path, value in documents.items()
     }
+    # Sync per-skill self-contained references/ so `npx skills add cruxible-ai/cruxible`
+    # works cleanly without dangling relative links outside each skill directory.
+    generated_skill_refs: dict[Path, bytes] = {}
+    for skill_name, shared_refs in SKILL_SHARED_REFS.items():
+        for ref in shared_refs:
+            rel = Path("skills") / skill_name / "references" / ref
+            generated_skill_refs[rel] = (root / "skills/_shared/references" / ref).read_bytes()
+    for skill_name, doc_names in SKILL_BUNDLED_DOCS.items():
+        for doc_name in doc_names:
+            rel = Path("skills") / skill_name / "references" / doc_name
+            text = (root / "docs" / doc_name).read_text()
+            generated_skill_refs[rel] = bundled_doc(
+                text,
+                doc_name,
+                release["version"],
+                allowed_docs=doc_names,
+            )
+    files.update(generated_skill_refs)
     for source in sorted((root / "skills").rglob("*.md")):
-        files[PACKAGE / source.relative_to(root)] = source.read_bytes()
+        rel = source.relative_to(root)
+        if rel in generated_skill_refs:
+            continue
+        files[PACKAGE / rel] = source.read_bytes()
+    for rel, body in generated_skill_refs.items():
+        files[PACKAGE / rel] = body
     for name in BUNDLED_DOCS:
         text = (root / "docs" / name).read_text()
         files[PACKAGE / "docs" / name] = bundled_doc(text, name, release["version"])
@@ -116,6 +169,12 @@ def synchronize(*, root: Path = ROOT, check: bool = False) -> list[Path]:
 
     files = plugin_files(root)
     existing = {path.relative_to(root) for path in (root / PACKAGE).rglob("*") if path.is_file()}
+    for skill_name in SKILL_SHARED_REFS:
+        refs_dir = root / "skills" / skill_name / "references"
+        if refs_dir.is_dir():
+            existing.update(
+                path.relative_to(root) for path in refs_dir.rglob("*") if path.is_file()
+            )
     stale = existing - files.keys()
     changed = {
         path

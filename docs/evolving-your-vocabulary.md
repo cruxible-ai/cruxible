@@ -429,7 +429,7 @@ is the namespace of Cruxible's built-in fields `semantic.alias` and
 `semantic.distinct_from`, which apply to Subjects of every kind (their
 `allowed_subject_kinds` is the pseudo-kind `semantic.subject`). There is no
 `semantic` SubjectKind and no `semantic/...` Subject. Leave the group as export
-writes it ([Duplicates](keeping-knowledge-current.md#duplicates-beta) says what
+writes it ([Duplicates](keeping-knowledge-current.md#duplicates) says what
 the two fields are for).
 
 ## A worked example: splitting a category
@@ -488,7 +488,7 @@ Each Claim keeps its identity, so the field's history reads as revisions
 When the old member's Claims go different ways (some pads, some rotors), a
 mapping can't say which is which. Split in three steps instead, each a
 reviewed change: add the new members in the file and apply; move each Claim
-with a write (`batch.set(part, "category", "brake-rotors")`, one `write` for
+with a write (`w.write(part.edit(category="brake-rotors"), ..., because=...)`, one `write` for
 all of them); then drop the old member in the file and apply. With nothing
 left on it, dropping it carries every Claim. A narrowing that would strand a
 value is refused before anything lands, and names the value.
@@ -605,32 +605,40 @@ document, keep a short value that points at it, and retire the long field.
 
 Here, `catalog.decision.ruling` holds each decision's full ruling. Create the
 page and name it (`cruxible files add decisions docs/decisions.md`), then make
-the move in one write: each ruling becomes a section with an `id`, a one-line
-`summary` cites its section, and the long Claim is retired. Preview it with
-`dry_run=True`, then write it:
+the move in one write: each ruling becomes a section authored via `cx.section`,
+a one-line `summary` cites that section, and the long Claim is retired. Preview
+it with `dry_run=True`, then write it:
 
 ~~~python
-from cruxible_client import Cruxible, SlotRef
+from cruxible_client import Cruxible
 
-cx = Cruxible.connect()
-batch = cx.changes(
-    because="Move decision rulings into the decisions page; keep a one-line summary that cites each.",
-    subject="catalog.decision/ceramic-pads-default",
-)
-batch.append_section("docs/decisions.md", under=("Decisions",), id="ceramic", text=(
-    "## Ceramic pads by default\n\n"
-    "We stock ceramic front pads (bp-2210) as the default for the 2019 Civic instead of\n"
-    "the semi-metallic bp-1142. Customers complained about brake dust and noise ...\n"
-))
-batch.set("summary", "Ceramic front pads (bp-2210) are the default for the 2019 Civic.",
-          evidence=batch.section("ceramic"))
-batch.retire(SlotRef(field="ruling"), reason="superseded")
-preview = batch.write(dry_run=True)
-preview.status                                    # 'would_accept'
-[(c.op, c.field, c.verdict) for c in preview.changes]
-# [('set', 'summary', 'supported'), ('retire', 'ruling', None)]
-outcome = batch.write()                           # refused if either field moved since the preview
-outcome.status                                    # 'accepted'
+with Cruxible.connect() as cx:
+    w = cx.world()
+    ruling = cx.section(
+        "docs/decisions.md",
+        heading="Ceramic pads by default",
+        under=("Decisions",),
+        body=(
+            "We stock ceramic front pads (bp-2210) as the default for the 2019 Civic instead of\n"
+            "the semi-metallic bp-1142. Customers complained about brake dust and noise ..."
+        ),
+    )
+    move = (
+        w.catalog.decision["ceramic-pads-default"]
+        .edit()
+        .set(
+            summary="Ceramic front pads (bp-2210) are the default for the 2019 Civic.",
+            evidence=ruling,
+        )
+        .retire("ruling", reason="superseded")
+    )
+    why = "Move decision rulings into the decisions page; keep a one-line summary that cites each."
+    preview = move.write(because=why, dry_run=True)
+    preview.status                                    # 'would_accept'
+    [(c.op, c.field, c.verdict) for c in preview.changes]
+    # [('set', 'summary', 'supported'), ('retire', 'ruling', None)]
+    outcome = move.write(because=why)                 # refused if either field moved since the preview
+    outcome.status                                    # 'accepted'
 ~~~
 
 The write is checked against the coordinate the connection read at, so a
@@ -699,7 +707,7 @@ one first.
 ### Adopt a built-in field
 
 Cruxible ships `semantic.alias` and `semantic.distinct_from` ([Keeping
-knowledge current](keeping-knowledge-current.md#duplicates-beta)). An instance
+knowledge current](keeping-knowledge-current.md#duplicates)). An instance
 created before one shipped adopts it with `cruxible claim-type propose
 --builtin NAME`.
 

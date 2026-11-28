@@ -161,9 +161,9 @@ car parts and the vehicles they fit. If you came from the
 it is the exact same model: `security.app_exposure` is a **SubjectKind**,
 `security.osv-query` is a **Line**, and a VEX reachability justification is a
 **Claim**. A parts catalog is a solved problem in practice; it's here because
-nobody has to learn the domain first. To follow along from a checkout of the
-[kits repository](https://github.com/cruxible-ai/cruxible-kits), install the
-example kit (`cruxible kit add ../cruxible-kits/kits/car-parts`; see
+nobody has to learn the domain first. To follow along, install the example kit
+from the registry (`cruxible kit add car-parts --commit`, or point at a local
+checkout of [cruxible-kits](https://github.com/cruxible-ai/cruxible-kits); see
 [Kits](kits.md#a-worked-example-installing-car-parts)).
 
 A **Subject** is a thing the instance knows about, named `kind/id`:
@@ -306,7 +306,7 @@ evidence is one or more of:
 Which citation fits depends on what the judgment rests on. A quoted code line
 (`--evidence-file PATH#TEXT`) detects edits to *that exact passage* (surfacing
 `citation_drifted` when the line changes), so it is useful for pointing
-reviewers at a specific call site—but it cannot catch a semantic change
+reviewers at a specific call site, but it cannot catch a semantic change
 elsewhere in the codebase, such as a new caller added in another file. Where an
 automated check exists (such as a scanner or static analyzer), cite its Capture
 too so the evidence moves whenever the check's answer does. Prose keeps quote
@@ -340,15 +340,20 @@ prose to a Markdown file and record the Claims that rest on it:
 ~~~python
 from cruxible_client import Cruxible
 
-cx = Cruxible.connect()
-batch = cx.changes(because="Acme catalog 2026, brakes page.")
-batch.append_section("docs/fitment.md", under=("Fitment notes",), id="bp1142", text=(
-    "## bp-1142 front brake pads\n\n"
-    "Acme catalog 2026, page 12: fits the 2019 Honda Civic (front axle).\n"
-))
-batch.add("catalog.part/bp-1142", "fits", "catalog.vehicle/honda-civic-2019",
-          evidence=batch.section("bp1142"))
-batch.write().status                              # 'accepted'
+with Cruxible.connect() as cx:
+    w = cx.world()
+    note = cx.section(
+        "docs/fitment.md",
+        heading="bp-1142 front brake pads",
+        under=("Fitment notes",),
+        body="Acme catalog 2026, page 12: fits the 2019 Honda Civic (front axle).",
+    )
+    outcome = w.catalog.part["bp-1142"].add(
+        fits=w.catalog.vehicle["honda-civic-2019"],
+        evidence=note,
+        because="Acme catalog 2026, brakes page.",
+    )
+    outcome.status                                    # 'accepted'
 ~~~
 
 The same write is a YAML file for `cruxible write FILE`, and for MCP-only
@@ -449,7 +454,7 @@ follow-up.
 
 A Capture under a contract the daemon fetches for (not an author's own words or
 a quoted file) counts as evidence only when the journal records a run producing
-it—either a Source read the run selected or an `emit_capture` terminal. That is
+it: either a Source read the run selected or an `emit_capture` terminal. That is
 what makes fetched evidence trustworthy: arbitrary bytes stored by hand cannot
 be passed off as something a pipeline observed. See
 [Evidence and admission](evidence-and-admission.md) and the
@@ -511,9 +516,11 @@ or refused as a whole. Two lanes lead to a change set, over the same engine.
 **Values** change with `set` (replace one field's value), `add` (one more
 value in a many-valued field), `retire` (end one Claim, by its ID or by
 naming its value) and `write` (several of these, plus any document sections,
-as one atomic change with one reason). In the SDK, `cx.set(...)`,
-`cx.retire(...)` and `cx.changes(because=...)` with `.set`, `.add`, `.retire`
-and `.write()`. A value change is accepted in the same call when the approval
+as one atomic change with one reason). In the SDK, use the typed world
+(`w = cx.world()` with `define()`, `edit()`, `set()`, `add()`, `retire()`,
+`w.write(...)`, and `cx.section(...)`), or the lower-level `cx.set(...)`,
+`cx.retire(...)`, and `cx.changes(because=...)`. A value change is accepted in
+the same call when the approval
 policy and the caller's tier allow it, and otherwise stops at a proposal that
 names who may approve it. `--no-accept` stops it at a proposal anyway;
 `--dry-run` runs every check and writes nothing; `--expect` and
@@ -829,8 +836,8 @@ A **Provider** is a pinned, installed Python package whose operations declare
 the capabilities they serve and carry their own copies of the shapes they
 accept and return. Because providers sit behind typed capability slots and
 return Captures, a provider can run any repeatable retrieval or computation
-your domain needs—fetching an HTTP API, querying a database, running a static
-analyzer, or scoring inputs with a custom ML model—without putting
+your domain needs (fetching an HTTP API, querying a database, running a static
+analyzer, or scoring inputs with a custom ML model) without putting
 domain-specific logic or models inside Cruxible core.
 
 A Line binds each slot to one exact provider build and operation when it is

@@ -52,8 +52,8 @@ per definition (a Line's bindings and parameters, a mandate's ClaimType table,
 a Runbook's steps, a Trigger's schedule, a provider build's package and
 each operation's effect, capability, Contracts and endpoints; a `--move`
 proposal says which observation settle grants and Line enablements it keeps); `--json` adds the stored fields
-grouped by kind, `--detail` every member. The [governance reference](../_shared/references/governance-flow.md)
+grouped by kind, `--detail` every member. The [governance reference](references/governance-flow.md)
 covers acceptance and changed candidates. Authorized repairs use
-[guarded edits](../_shared/references/concurrent-edits.md). Report findings with
+[guarded edits](references/concurrent-edits.md). Report findings with
 references, evidence, repair and limits of what was checked; do not turn
 diagnosis into an unrequested mutation.

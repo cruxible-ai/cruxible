@@ -42,20 +42,24 @@ change, or neither does:
 ~~~python
 from cruxible_client import Cruxible
 
-cx = Cruxible.connect()
-batch = cx.changes(because="Fitment check at the shop.")
-batch.append_section("docs/fitment.md", under=("Fitment notes",), id="check", text=(
-    "## bp-1142 on the 2019 Civic\n\n"
-    "Fitted to a 2019 Civic at the shop on 2026-10-21: front axle, no issues.\n"
-))
-batch.add("catalog.part/bp-1142", "fits", "catalog.vehicle/honda-civic-2019",
-          evidence=batch.section("check"))
-outcome = batch.write()
-outcome.status                                    # 'accepted'
-[(c.field, c.after, c.verdict) for c in outcome.changes]
-# [('fits', 'catalog.vehicle/honda-civic-2019', 'supported')]
-note = outcome.docs[0]
-note.section, note.written                        # (('Fitment notes', 'bp-1142 on the 2019 Civic'), True)
+with Cruxible.connect() as cx:
+    w = cx.world()
+    check = cx.section(
+        "docs/fitment.md",
+        heading="bp-1142 on the 2019 Civic",
+        under=("Fitment notes",),
+        body="Fitted to a 2019 Civic at the shop on 2026-10-21: front axle, no issues.",
+    )
+    outcome = w.catalog.part["bp-1142"].add(
+        fits=w.catalog.vehicle["honda-civic-2019"],
+        evidence=check,
+        because="Fitment check at the shop.",
+    )
+    outcome.status                                    # 'accepted'
+    [(c.field, c.after, c.verdict) for c in outcome.changes]
+    # [('fits', 'catalog.vehicle/honda-civic-2019', 'supported')]
+    note = outcome.docs[0]
+    note.section, note.written                        # (('Fitment notes', 'bp-1142 on the 2019 Civic'), True)
 ~~~
 
 On the CLI, `cruxible write FILE` takes the same write as a YAML file. For
@@ -88,17 +92,22 @@ MCP-only clients, it is one `cruxible_write` call:
 You choose where documents live and how they're organized; Cruxible only needs
 heading paths to find sections:
 
-- **`append_section`** (`op: append`) adds a new section under the heading
-  path in `under` (`()` appends at the end of the file). Its text must start
-  with a heading. Only an append at the root (`under` empty) creates a missing
-  file; an append under a heading needs the file and that heading to exist,
-  and refuses `cruxible.doc.section_not_found` otherwise, writing nothing. To
-  start a new file under a heading, append the heading at the root first.
-- **`replace_section`** (`op: replace`) replaces the section at a heading
-  path, including its heading, in a file that exists. By default it overwrites the current text and
-  keeps the old version in history. Pass `expect` when others may be editing,
-  using the section's digest when you read it (each write reports the digest
-  it wrote): if someone changed the section since then, nothing is written.
+- **`cx.section(file, heading=..., body=..., under=...)`** (or
+  `append_section` / `op: append` in an explicit batch or write file) adds a
+  new section under the heading path in `under` (`()` appends at the end of the
+  file). With `cx.section`, Cruxible writes the heading line at the depth its
+  place needs; with `append_section`, `text` starts with the heading line. Only
+  an append at the root (`under` empty) creates a missing file; an append under
+  a heading needs the file and that heading to exist, and refuses
+  `cruxible.doc.section_not_found` otherwise, writing nothing. To start a new
+  file under a heading, append the heading at the root first.
+- **`cx.section(..., replace=True, expect=digest)`** (or **`replace_section`**
+  / `op: replace` in an explicit batch or prose-only write) replaces the section
+  at a heading path, including its heading, in a file that exists. By default it
+  overwrites the current text and keeps the old version in history. Pass `expect`
+  when others may be editing, using the section's digest when you read it (each
+  write reports the digest it wrote): if someone changed the section since then,
+  nothing is written.
   Read `get file:<catalog-name> --detail history` to see the old version's
   digest and the author who replaced it; each entry links to its retained bytes.
   History records an edit only after the file write succeeds; a local file
@@ -113,12 +122,14 @@ heading paths to find sections:
   leave that edit without retained history.
   File overwrite history is live operational state. An `at` pin to an earlier
   accepted generation refuses; a pin to the current head is allowed.
-- **`id`** names the section so changes can cite it: `batch.section(ID)`, or
-  `{kind: section, ref: ID}` in a write file.
+- **Shared section evidence:** pass the same `cx.section(...)` object as
+  `evidence=` on every Claim in a World write to author the section once and
+  cite it on all of them (in an explicit batch or write file, name it with `id`
+  and cite it with `batch.section(ID)` or `{kind: section, ref: ID}`).
 
-Here the note is tidied with the digest the write above reported, and a
-second replace that still passes that digest is refused, because the first one
-changed the section:
+Here the note is tidied in a prose-only `cx.changes` batch using the digest the
+write above reported, and a second replace that still passes that digest is
+refused, because the first one changed the section:
 
 ~~~python
 read = note.after_digest
@@ -151,19 +162,26 @@ governs), and each one cites the section that gives the reasoning. Write them
 in one `write` with the section, so every Claim cites it, the date included:
 
 ~~~python
-batch = cx.changes(because="Brake pad choice for the 2019 Civic.",
-                   subject="catalog.decision/civic-brake-pads")
-batch.append_section("docs/decisions.md", under=("Decisions",), id="why", text=(
-    "## Ceramic pads for the 2019 Civic\n\n"
-    "Decided 2026-11-12. We stock ceramic pads (bp-2210) rather than organic ones\n"
-    "for the 2019 Civic: they last about twice as long in city driving.\n"
-))
-why = batch.section("why")
-batch.set("summary", "Stock ceramic pads (bp-2210) for the 2019 Civic", evidence=why)
-batch.set("status", "accepted", evidence=why)
-batch.set("decided_on", "2026-11-12", evidence=why)
-batch.add("governs", "catalog.vehicle/honda-civic-2019", evidence=why)
-batch.write()
+why = cx.section(
+    "docs/decisions.md",
+    heading="Ceramic pads for the 2019 Civic",
+    under=("Decisions",),
+    body=(
+        "Decided 2026-11-12. We stock ceramic pads (bp-2210) rather than organic ones\n"
+        "for the 2019 Civic: they last about twice as long in city driving."
+    ),
+)
+(
+    w.catalog.decision.define("civic-brake-pads")
+    .set(
+        summary="Stock ceramic pads (bp-2210) for the 2019 Civic",
+        status="accepted",
+        decided_on="2026-11-12",
+        evidence=why,
+    )
+    .add(governs=w.catalog.vehicle["honda-civic-2019"], evidence=why)
+    .write(because="Brake pad choice for the 2019 Civic.")
+)
 ~~~
 
 A value written later, in a write that does not produce the section, cites

@@ -51,32 +51,39 @@ rest on it, so neither lands without the other:
 ~~~python
 from cruxible_client import Cruxible
 
-cx = Cruxible.connect()
-batch = cx.changes(because="Brake pad choice for the 2019 Civic.",
-                   subject="catalog.decision/civic-brake-pads")
-batch.append_section("docs/decisions.md", under=("Decisions",), id="why", text=(
-    "## Ceramic pads for the 2019 Civic\n\n"
-    "We stock ceramic pads (bp-2210) rather than organic ones for the 2019\n"
-    "Civic: they last about twice as long in city driving, and Acme lists them\n"
-    "as the replacement for bp-1142.\n"
-))
-why = batch.section("why")
-batch.set("summary", "Stock ceramic pads (bp-2210) for the 2019 Civic", evidence=why)
-batch.set("status", "accepted", evidence=why)
-batch.add("governs", "catalog.vehicle/honda-civic-2019", evidence=why)
-outcome = batch.write()
-outcome.status                                    # 'accepted'
-outcome.subjects_added                            # ('catalog.decision/civic-brake-pads',)
-[(c.field, c.after, c.verdict) for c in outcome.changes]
-# [('summary', 'Stock ceramic pads (bp-2210) for the 2019 Civic', 'supported'),
-#  ('status', 'accepted', 'supported'),
-#  ('governs', 'catalog.vehicle/honda-civic-2019', 'supported')]
+with Cruxible.connect() as cx:
+    w = cx.world()
+    why = cx.section(
+        "docs/decisions.md",
+        heading="Ceramic pads for the 2019 Civic",
+        under=("Decisions",),
+        body=(
+            "We stock ceramic pads (bp-2210) rather than organic ones for the 2019\n"
+            "Civic: they last about twice as long in city driving, and Acme lists them\n"
+            "as the replacement for bp-1142."
+        ),
+    )
+    outcome = (
+        w.catalog.decision.define("civic-brake-pads")
+        .set(
+            summary="Stock ceramic pads (bp-2210) for the 2019 Civic",
+            status="accepted",
+            evidence=why,
+        )
+        .add(governs=w.catalog.vehicle["honda-civic-2019"], evidence=why)
+        .write(because="Brake pad choice for the 2019 Civic.")
+    )
+    outcome.status                                    # 'accepted'
+    outcome.subjects_added                            # ('catalog.decision/civic-brake-pads',)
+    [(c.field, c.after, c.verdict) for c in outcome.changes]
+    # [('summary', 'Stock ceramic pads (bp-2210) for the 2019 Civic', 'supported'),
+    #  ('status', 'accepted', 'supported'),
+    #  ('governs', 'catalog.vehicle/honda-civic-2019', 'supported')]
 ~~~
 
-`batch.section("why")` cites the section the same write appends, and
-`subject=` names the decision once for every change. On the CLI, `cruxible
-write FILE` takes the same write as a YAML file. For MCP-only clients, it is
-one `cruxible_write` call:
+The shared `why = cx.section(...)` object appends the section once and cites it
+on every Claim in the write. On the CLI, `cruxible write FILE` takes the same
+write as a YAML file. For MCP-only clients, it is one `cruxible_write` call:
 
 ~~~json
 {

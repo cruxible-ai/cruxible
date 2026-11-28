@@ -47,11 +47,11 @@ The released stdio command is `uvx --from cruxible==VERSION cruxible mcp`.
 Install uv first. The lean 26-tool MCP catalog includes `cruxible_init` (with
 optional `reviewer_id` and `require_independent_approval`),
 `cruxible_authoring_submit_file`, `cruxible_kit_add` (both registry pulls like
-`security:1.3.0` and local kit directories), and `cruxible_console` (with
+`security` or `security:1.4.0` and local kit directories), and `cruxible_console` (with
 `no_open=true` to skip launching a browser). Keep the matching CLI available for
-commands the lean catalog omits — `vocabulary`, `inbox get/ack/link/dismiss`,
+commands the lean catalog omits (`vocabulary`, `inbox get/ack/link/dismiss`,
 `proposal reject`, `capture read`, `context use`, `workspace attach`, and
-`principal add` — using the same pinned
+`principal add`), using the same pinned
 `uvx --from cruxible==VERSION cruxible ...` prefix.
 
 ## First run, step by step
@@ -84,7 +84,7 @@ from another daemon into this shell: `unset CRUXIBLE_SERVER_BEARER_TOKEN`.
 | 4 | Check `workspace_advertisement.status` in the init result. `updated`: done. `not_attached`: `git init` if needed, then `cruxible workspace attach` | Attaching writes `.cruxible/coverage.json`, which binds the project to the daemon and instance. From then on CLI commands in the project need no flags, and the MCP server finds the daemon and instance from it. |
 | 5 | Call `cruxible_whoami` from the agent started in the project | `identity_source: folder`, `actor_id` the owner and `can_author: true`: the MCP server acts as the folder's owner with no config edit, for writes, approvals and attestations. `identity_source: none` with `cruxible.identity.principal_unconfigured` means the folder has no record: run `init` there. A session that should be another principal sets the environment below. |
 | 6 | `cruxible principal add verifier --key-dir /abs/keys/verifier` | Optional third principal, for guidance that asks for a reporter, a verifier and an approver. The CLI signs the registration with the owner's remembered key (`--signer-key /abs/keys/owner/owner.ed25519` otherwise); the verifier's settings land in `/abs/keys/verifier/cruxible.env`. |
-| 7 | `cruxible kit add /abs/kit-dir`, then `cruxible kit add /abs/kit-dir --commit --at OID` | `OID` is the coordinate the preview printed. `cruxible_kit_add` takes the same local kit directory, layout or registry release (`NAME:VERSION`). |
+| 7 | `cruxible kit add security` (or `/abs/kit-dir`), then `cruxible kit add security --commit --at OID` | `OID` is the coordinate the preview printed. `cruxible_kit_add` takes the same registry release (`NAME`, `NAME:VERSION`) or local kit directory / layout. |
 | 8 | Tailor the kit's automation template, submit it, have a separate session approve it, then preview and run its start Runbook | See [Kits and teams](#kits-and-teams). |
 
 **MCP environment per principal.** Solo on one machine, the folder record is

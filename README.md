@@ -11,60 +11,102 @@
   <a href="https://cruxible.ai">Website</a> |
   <a href="https://docs.cruxible.ai">Docs</a> |
   <a href="https://cruxible.ai/kits">Kits</a> |
+  <a href="https://cruxible.ai/skills">Skills</a> |
   <a href="https://github.com/cruxible-ai/cruxible/releases">Releases</a>
 </p>
 
 # Cruxible
 
-**Make every agent persistent.**
+**A knowledge layer worth building.**
 
-Cruxible lets your agents treat domain knowledge like what they're already good
-at: typed, Git-versioned, reviewable code, so every run compounds instead of
-starting from scratch.
+Cruxible aligns organizations, agent swarms, and future runs on shared, grounded
+state by letting your agents treat domain knowledge like what they're trained
+for: typed, Git-versioned, reviewable code. Your code, docs, and databases
+remain the sources of truth: typed state holds the structured claims and
+decisions pointing to them, reasoning stays in plain Markdown to read and grep,
+and deterministic Python pipelines seed and refresh observations from reality
+(APIs, analyzers, experiments, or custom models). Reviewed judgments stay pinned
+to their evidence and live observations, retrieved minimally and valid until the
+underlying facts or premises move.
 
 <p align="center">
   <a href="https://cruxible.ai">
-    <img src="https://raw.githubusercontent.com/cruxible-ai/cruxible/main/assets/brand/console-state-graph.png" alt="Cruxible Console State graph showing linked Subjects, Claims, and drift status" width="100%">
+    <img src="https://raw.githubusercontent.com/cruxible-ai/cruxible/main/assets/brand/console-state-graph.png" alt="Cruxible Console State graph showing linked Subjects, Claims, and relationships" width="100%">
   </a>
 </p>
 
 It lets you:
 
-- **Model domain knowledge like code:** agents and teams record typed facts and
-  judgments with citations, signed review, and per-field history through a
-  typed Python SDK, MCP, or CLI, building on what is already verified instead
-  of rediscovering or overwriting it.
-- **Keep it current automatically:** autonomous pipelines pull from APIs,
-  scanners, static analyzers, or custom models on a schedule or trigger,
-  without an agent in the loop.
-- **Surface only what changed:** when an input moves, only the affected claims
-  and judgments surface for review; everything else stays current and
-  untouched.
-
-Cruxible does not replace your Markdown notes, code, or databases. Prose and
-source records stay where they live, while Cruxible holds the typed claims
-pointing to them and tracks when they change.
+- **Separate fast observations from slower judgments:** deterministic Python
+  pipelines run on a fast path (keeping high-rate telemetry and run logs in an
+  exhaust journal outside the ledger) to pull live facts from APIs, sensors,
+  experiments, scanners, or custom models at zero LLM tokens, marking failed
+  sources `unknown`.
+- **Investigate once, align teams and swarms:** people and parallel agents
+  propose narrow typed judgments pinned to exact evidence (no silent clobbers,
+  no two-page essays to audit), so future runs retrieve settled truth minimally
+  instead of rediscovering it from company prose.
+- **Falsifiable and valid until inputs move:** when a cited file, live
+  observation, or upstream premise is overturned by new data or a smarter model,
+  only the judgments and dependent work resting on it re-open; everything else
+  stays current.
 
 No LLM runs inside Cruxible. Everything runs locally on Linux (x86-64) and
 macOS (Apple silicon) with Python 3.11+ (Windows via WSL2), backed by a signed
-Git ledger with per-field history. [Install and start](#install-and-start).
+Git ledger with per-field history.
+
+**Try it on your own repo in ~60 seconds:** install Cruxible and the core skills
+below, ask your coding agent to run `/survey`, and open `cruxible console` to
+inspect a live, cited State graph of your repository's real decisions and
+dependencies.
+
+## Install and start
+
+Requirements: Python 3.11+ and Git. Linux x86-64 and macOS on Apple silicon; on
+Windows, use WSL2.
+
+```bash
+uv tool install cruxible             # or: pip install cruxible
+cd your-project
+cruxible init --principal-id owner
+npx skills add cruxible-ai/cruxible  # then ask your agent to run /survey
+cruxible console                     # inspect the live State graph in your browser
+```
+
+`cruxible init` starts a local daemon if none is running and creates this
+project's instance. Prefer a ready-made starter vocabulary instead of `/survey`?
+Run `cruxible kit add project-state --commit` (or `security`, `iot-fleet`), then
+`cruxible orient && cruxible next`.
+
+For two-principal **cosign** (where a second agent or person must approve every
+proposal before it counts), initialize with independent approval:
+
+```bash
+cruxible init --principal-id owner --require-independent-approval
+```
+
+Follow the [Quickstart](docs/quickstart.md) to watch drift detection and
+dependency cascades catch a live edit.
 
 ## See it work: vulnerability triage across five sources
 
-Deciding whether a CVE actually affects an application combines an SBOM, OSV,
-CISA KEV, EPSS, your own source code, and a team's waiver rationale. No single
-scanner owns the whole picture, and Markdown notes drift as soon as a
-dependency or file changes.
+Deciding whether a security alert actually affects an application means
+combining your dependency list, three public vulnerability feeds (advisories,
+known active exploits, and exploit likelihood), your own source code, and a
+reviewer's sign-off. No single scanner owns the whole picture, and Markdown
+notes drift as soon as a package or file changes.
 
-With Cruxible's **security kit** on a Django app with 32 components:
+With Cruxible's **security kit** on a Django app with 32 packages:
 
 ### 1. Pull external facts and surface what needs judgment
 
-One Runbook reads the SBOM and queries OSV, CISA KEV, and EPSS. In this kit,
-pulling those declared feeds is mechanical, so they settle under explicit,
-expiring mandates, recording both what was found and verified absences (like
-"not in KEV" only when the full catalog was read). Seven unjudged exposures
-above the exploit-likelihood threshold land in the inbox:
+One automated pipeline reads the app's dependency list and pulls those three
+feeds (OSV advisories, CISA's known-exploited catalog, and EPSS exploit
+scores). Because pulling declared feeds is mechanical, they settle
+automatically under explicit, expiring mandates, recording both matches and
+verified absences (only marking "not actively exploited" when the full catalog
+loaded). Out of 181 findings, only the 7 high-risk unjudged exposures land in
+the inbox:
 
 ```text
 $ cruxible runbook run security.start
@@ -77,9 +119,10 @@ $ cruxible runbook run security.start
 
 ### 2. Record a judgment citing exact code; review and sign it
 
-Judging reachability is the agent's job. It inspects the repository, finds that
-the app's SBOM pins `PyYAML 5.1` while the only `yaml.load` lives in a separate
-container, and proposes a VEX justification citing that exact line:
+Judging whether a vulnerability is actually reachable is the agent's job. It
+inspects the repository, finds that the app lists `PyYAML 5.1` while the only
+`yaml.load` call lives in a separate container, and proposes a `not_affected`
+judgment citing that exact line:
 
 ```python
 from cruxible_client import Cruxible, FileEvidence
@@ -107,19 +150,17 @@ A second agent (or human) acting as `reviewer` sees the domain guidance, the
 proposed verdict, and the cited line before signing off:
 
 ```text
-$ CRUXIBLE_PRINCIPAL_ID=reviewer cruxible proposal review sha256:54251d28...
-Guidance for ClaimType:security.app_exposure.justification: document:security.guidance.dependency (Judging a dependency exposure)
-Values (4):
-  create security.app_exposure/sbom.cdx.json--pkg-pypi-pyyaml-5.1--cve-2020-14343: created
-  set security.app_exposure/sbom.cdx.json--pkg-pypi-pyyaml-5.1--cve-2020-14343 justification: vulnerable_code_not_in_execute_path  [CLM-34cb42d7...; verdict supported]
-    cites CAP-0e7901adf211 dockerized_labs/a9_uckv_lab/app.py#data = yaml.load(file.stream, Loader=yaml.Loader)
+$ CRUXIBLE_PRINCIPAL_ID=reviewer cruxible proposal review 54251d28...
+Guidance: document:security.guidance.dependency (Judging a dependency exposure)
+  set ...pyyaml-5.1--cve-2020-14343 justification: vulnerable_code_not_in_execute_path  [verdict supported]
+    cites dockerized_labs/a9_uckv_lab/app.py
       | data = yaml.load(file.stream, Loader=yaml.Loader)
 ```
 
 ### 3. When inputs move, re-check only what changed
 
-When `PyYAML` is upgraded and the Runbook runs again, only the changed
-dependency and vulnerability are written; every other component and judgment is
+When `PyYAML` is upgraded and the pipeline runs again, only the changed
+package and advisory are written; every other package and judgment is
 re-checked and left alone:
 
 ```text
@@ -143,50 +184,29 @@ justification
       separate container with its own requirements; the Django app this SBOM describes never imports yaml.
 ```
 
-See the full [security walkthrough](docs/security-walkthrough.md) to run this
-on your own repository. `cruxible console` opens a read-only view of the same
-state in your browser.
-
-## Install and start
-
-Requirements: Python 3.11+ and Git. Linux x86-64 and macOS on Apple silicon; on
-Windows, use WSL2.
-
-```bash
-uv tool install cruxible                 # or: pip install cruxible
-cd your-project
-cruxible init --principal-id owner
-cruxible kit add project-state --commit  # or security, iot-fleet, /survey
-cruxible orient && cruxible next
-```
-
-`cruxible init` starts a local daemon if none is running and creates this
-project's instance. Run `cruxible console` to open the local read-only UI.
-For two-principal **cosign** (where a second agent or person must approve
-every proposal before it counts), initialize with independent approval:
-
-```bash
-cruxible init --principal-id owner --require-independent-approval
-```
-
-Continue with the [Quickstart](docs/quickstart.md) to install the security kit
-or define your own vocabulary.
+See the full [Security walkthrough](docs/security-walkthrough.md) to run this
+on your own repository. Security is one domain: see also the
+[Project state walkthrough](docs/project-state-walkthrough.md) (coding-agent
+session handoffs, doc citations, and selective dependency cascades) and the
+[IoT fleet walkthrough](docs/iot-fleet-walkthrough.md) (deterministic EWMA
+telemetry at zero LLM tokens). `cruxible console` opens a read-only view of any
+instance in your browser.
 
 ## Why Cruxible
 
-Autonomous, multi-session work hits structural limits with plain notes and
-single-purpose tools alike:
+Autonomous, multi-session work breaks down when knowledge lives only in prose
+or gets locked inside single-purpose tools:
 
-- **Notes + grep/RAG cannot track invalidation or exact sets.** Markdown holds
-  reasoning well, but it cannot wake up when an upstream dependency or cited
-  line changes, reliably answer closed-world questions (`NOT EXISTS`, exact
-  counts), resolve contradictions across append-only files, or refuse a bad
-  write. Benchmarks show both sides of the trade-off: in
-  [LongMemEval](https://arxiv.org/abs/2410.10813) (ICLR 2025), keeping only
-  extracted facts lowered accuracy while indexing text alongside structured
-  facts beat text alone; in
-  [MemoryAgentBench](https://arxiv.org/abs/2507.05257), tested memory systems
-  frequently failed to prefer newer statements over older contradicting ones.
+- **Text alone and facts alone both lose; pairing them wins.** In
+  [LongMemEval](https://arxiv.org/abs/2410.10813) (ICLR 2025), reducing memory
+  to extracted facts lowered accuracy, while indexing structured facts
+  alongside full text beat text alone; in
+  [MemoryAgentBench](https://arxiv.org/abs/2507.05257), note-based systems
+  repeatedly failed to let newer statements override older contradicting ones.
+  Cruxible marries the two: long-form reasoning stays in plain Markdown for
+  reading and grep, while typed claims hold the single current truth, answer
+  exact set queries (`NOT EXISTS`, counts), and wake up when cited passages or
+  upstream claims move.
 - **A plain database still needs this layer built around it.** SQLite or
   Postgres stores rows cleanly (Cruxible itself indexes into SQLite), but for
   agent-maintained knowledge you still end up building citations, freshness,
@@ -198,57 +218,49 @@ single-purpose tools alike:
   files, and team decisions without copying whole tables or locking your
   decision history inside one vendor.
 
-Cruxible combines typed state, linked prose, and deterministic automation:
+Cruxible gives agents and teams:
 
-- **Typed state linked to prose.** Each fact has one current value (with full
-  history) and types grow as your domain does. Reasoning stays in your own
-  Markdown pages, and facts cite the exact passages they rest on.
-- **Freshness and completeness, not silent drift.** Pipelines re-check facts on
-  a schedule, `stale_after` flags expired evidence, `citation_drifted` catches
-  edited files, and Cruxible distinguishes **found**, verified **none** (from a
-  complete source read), and **unknown**, so a failed lookup never reads as
-  "safe."
+- **The structure coding agents naturally want.** Agents can run exact typed
+  queries, grep plain Markdown and readable local YAML mirrors in
+  `.cruxible/floor/`, and write Python to batch updates or turn any repeatable
+  retrieval, analysis, simulation, or model into a deterministic pipeline.
+- **Freshness, cascades, and completeness, not silent drift.** Pipelines
+  re-check facts on a trigger or schedule, freshness windows flag expired
+  evidence, drift checks catch edited citations and wake dependent claims when
+  upstream decisions change, and Cruxible distinguishes **found**, verified
+  **none** (from a complete source read), and **unknown**, so a failed lookup
+  never reads as "safe."
 - **Graduated automation (`observe` → `propose` → `settle`).** Pipelines start
   by observing or proposing for review, and only settle named fields on their
   own under explicit, scoped, expiring mandates.
-- **Governed and verifiable.** Every change is a proposal checked
+- **Governed, verifiable history.** Every change is a proposal checked
   deterministically under your approval policy, recorded in a signed Git ledger
   where any earlier generation can be read back as it stood.
 - **Stable subassemblies across sessions.** Like Hora in Herbert Simon's
   [watchmakers](https://faculty.sites.iastate.edu/tesfatsi/archive/tesfatsi/ArchitectureOfComplexity.HSimon1962.pdf#page=5),
-  agents build reusable, verified intermediate facts instead of re-deriving
-  context from scratch every time a window resets.
+  agents build reusable, verified intermediate facts and repeatable pipelines
+  instead of re-deriving context from scratch every time a window resets.
 
 ## Use it from your agent
 
-One daemon owns the state; three clients talk to it. Pick by what the agent
-can run:
+One local daemon owns accepted state (`cruxible init` starts it automatically,
+or run `cruxible server start` explicitly); agents interact with it however
+they work best:
 
-- **Python SDK, for any agent that can run code:** the primary authoring
-  surface. `cruxible-client`, installed with `cruxible`, loads your vocabulary
-  into typed Python handles and atomic write batches: kinds, fields and enum
-  members are closed types (`.cruxible/world.pyi`), and `define()`,
-  `AuthoredSection` and `based_on` replace hand-written JSON. `cruxible python
-  script.py` (or `-c`, or `-` for a heredoc) runs a script with the CLI's own
-  interpreter and SDK from any repository, Go, Rust or TypeScript included,
-  with nothing installed there. See the
-  [SDK reference](packages/cruxible-client/README.md).
-- **MCP, for agents without a code environment:** configure your MCP client to
-  launch `cruxible mcp` (`uvx cruxible mcp` from the registry listing). See
-  [MCP tools](docs/mcp-tools.md).
-- **CLI, for the shell, people and backup:** `orient`, `next`, `proposal
-  review` and every command above, with `--json` for scripts; `cruxible write
-  --example` prints a worked write file. See the
-  [CLI reference](docs/cli-reference.md).
+- **Python SDK (`cruxible python`):** typed handles from `.cruxible/world.pyi`,
+  atomic write batches, and zero-setup execution from any repository
+  ([SDK reference](packages/cruxible-client/README.md)).
+- **CLI & local files:** `orient`, `query`, `get`, `next`, `set`, `write`, and
+  `authoring` (with `--json`), plus readable YAML mirrors in `.cruxible/floor/`
+  to grep alongside your Markdown docs ([CLI reference](docs/cli-reference.md)).
+- **MCP:** `uvx cruxible mcp` for agents without a shell or code environment
+  ([MCP tools](docs/mcp-tools.md)).
 
-All three share the same verbs: `orient`, `query` and `get` read; `set` and
-`write` change values; `authoring` changes definitions. `cruxible init` starts
-a local daemon automatically; `cruxible server start` runs one explicitly.
-
-The [agent plugin](plugins/README.md) for Claude Code and Codex adds five
-skills: `survey` works out what in a project is worth holding as state,
-`adopt-kit` starts from a kit, and `create-state`, `automate-state` and
-`review-state` cover ongoing work. See [For AI agents](docs/for-ai-agents.md).
+Add the five core skills across Claude Code, Codex, Cursor, and 75+ agents with
+`npx skills add cruxible-ai/cruxible` (`survey`, `adopt-kit`, `create-state`,
+`automate-state`, `review-state`), or kit skills with
+`npx skills add cruxible-ai/cruxible-kits`. See [For AI agents](docs/for-ai-agents.md)
+(optional plugin bundles live in [plugins/README.md](plugins/README.md)).
 
 ## How it works
 
@@ -291,9 +303,9 @@ Pick a starting point based on what you're trying to do (or browse the
 
 | If you want to… | Start here |
 |---|---|
-| **Try Cruxible on a real repo in minutes** | [Quickstart](docs/quickstart.md), [Security walkthrough](docs/security-walkthrough.md) (full outputs + reviewed judgments) |
+| **Try Cruxible on a real repo in minutes** | [Quickstart](docs/quickstart.md), plus walkthroughs for [Project state](docs/project-state-walkthrough.md), [Security](docs/security-walkthrough.md), and [IoT fleet](docs/iot-fleet-walkthrough.md) |
 | **Understand the mental model and vocabulary** | [Concepts](docs/concepts.md), [Architecture](docs/architecture.md) |
-| **Connect an AI agent (MCP, CLI, SDK, skills)** | [For AI agents](docs/for-ai-agents.md), [Agent plugin](plugins/README.md) (`survey`, `adopt-kit`, `create-state`, `automate-state`, `review-state`) |
+| **Connect an AI agent (MCP, CLI, SDK, skills)** | [For AI agents](docs/for-ai-agents.md), [Skills](skills/) (`npx skills add cruxible-ai/cruxible`) |
 | **Decide what to model as state vs. prose** | [Building team knowledge](docs/building-team-knowledge.md) (modeling habits and *Mistakes we made ourselves*) |
 | **Keep Markdown docs in sync with live state** | [Documents and notes](docs/documents-and-notes.md) (atomic note+Claim writes, review guidance, and self-updating **projection blocks**) |
 | **Require stronger evidence or track predictions** | [Evidence and admission](docs/evidence-and-admission.md) (admission rules, freshness, attestations, and **predictions**) |

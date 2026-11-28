@@ -748,17 +748,17 @@ or `ack` it as seen:
 ~~~python
 from cruxible_client import Cruxible
 
-cx = Cruxible.connect()
-recall = (
-    cx.changes(because="Acme's recall notice of 2026-10-20: bp-2210 batch 4471.",
-               subject="catalog.note/acme-recall-bp-2210-4471")
-    .set("title", "Acme recall: bp-2210 batch 4471 may delaminate")
-    .add("about", "catalog.part/bp-2210")
-    .write()
-)
-[(c.field, c.after, c.verdict) for c in recall.changes]
-# [('title', 'Acme recall: bp-2210 batch 4471 may delaminate', 'supported'),
-#  ('about', 'catalog.part/bp-2210', 'supported')]
+with Cruxible.connect() as cx:
+    w = cx.world()
+    recall = (
+        w.catalog.note.define("acme-recall-bp-2210-4471")
+        .set(title="Acme recall: bp-2210 batch 4471 may delaminate")
+        .add(about=w.catalog.part["bp-2210"])
+        .write(because="Acme's recall notice of 2026-10-20: bp-2210 batch 4471.")
+    )
+    [(c.field, c.after, c.verdict) for c in recall.changes]
+    # [('title', 'Acme recall: bp-2210 batch 4471 may delaminate', 'supported'),
+    #  ('about', 'catalog.part/bp-2210', 'supported')]
 ~~~
 
 For MCP-only clients, the same write is one `cruxible_write` call:
